@@ -19,7 +19,6 @@
   const archiveListEl = document.getElementById("archiveList");
   const newAgentBtn = document.getElementById("newAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
-  const archiveCountBadge = document.getElementById("archiveCountBadge");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
@@ -183,20 +182,6 @@
     if (screen === "chat") {
       setContextUsage(contextUsed, contextMax);
       focusPrompt();
-    }
-  }
-
-  function setArchiveCount(count) {
-    if (!archiveCountBadge) {
-      return;
-    }
-    const n = Number(count) || 0;
-    if (n > 0) {
-      archiveCountBadge.hidden = false;
-      archiveCountBadge.textContent = n > 99 ? "99+" : String(n);
-    } else {
-      archiveCountBadge.hidden = true;
-      archiveCountBadge.textContent = "0";
     }
   }
 
@@ -977,9 +962,6 @@
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
         renderAgentsList();
-        if (typeof msg.archiveCount === "number") {
-          setArchiveCount(msg.archiveCount);
-        }
         if (msg.screen === "agents" || msg.screen === "chat") {
           showScreen(msg.screen);
         }
@@ -987,9 +969,6 @@
       case "archiveList":
         archiveAgentsData = Array.isArray(msg.agents) ? msg.agents : [];
         renderArchiveList();
-        if (typeof msg.archiveCount === "number") {
-          setArchiveCount(msg.archiveCount);
-        }
         showScreen("archive");
         setBusy(false);
         break;
