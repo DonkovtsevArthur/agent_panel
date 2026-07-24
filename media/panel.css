@@ -361,45 +361,69 @@ body {
   justify-content: flex-end;
   align-items: center;
   margin-top: 8px;
-  padding-right: 0;
-  min-height: 24px;
+  padding-right: 6px;
+  min-height: 18px;
+  overflow: visible;
+  position: relative;
+  z-index: 40;
 }
 
 .context-meter {
+  position: relative;
   display: inline-flex !important;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px 3px 5px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
   color: var(--vscode-foreground);
   cursor: default;
-  font: inherit;
   opacity: 1;
   visibility: visible;
 }
 
 .context-meter:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  opacity: 0.9;
 }
 
-.context-meter-label {
+.context-tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 50;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   font-size: 11px;
-  line-height: 1;
+  line-height: 1.2;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  color: var(--vscode-foreground);
-  opacity: 0.75;
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
-.context-meter.is-warn .context-meter-label,
+.context-meter:hover .context-tip,
+.context-meter:focus-visible .context-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .context-meter.is-warn .context-ring-value {
-  color: var(--vscode-charts-orange, #e2a03f);
+  stroke: #e2a03f;
+  stroke: var(--vscode-charts-orange, #e2a03f);
 }
 
-.context-meter.is-danger .context-meter-label,
 .context-meter.is-danger .context-ring-value {
-  color: var(--vscode-errorForeground, #f14c4c);
+  stroke: #f14c4c;
+  stroke: var(--vscode-errorForeground, #f14c4c);
 }
 
 .context-ring {
@@ -429,16 +453,6 @@ body {
   stroke: #3794ff;
   stroke: var(--vscode-charts-blue, #3794ff);
   transition: stroke-dasharray 0.25s ease, stroke 0.2s ease;
-}
-
-.context-meter.is-warn .context-ring-value {
-  stroke: #e2a03f;
-  stroke: var(--vscode-charts-orange, #e2a03f);
-}
-
-.context-meter.is-danger .context-ring-value {
-  stroke: #f14c4c;
-  stroke: var(--vscode-errorForeground, #f14c4c);
 }
 
 .context-ring-inline.is-warn .context-ring-value {
@@ -559,34 +573,6 @@ body {
 
 .orphan-wrap {
   margin: 0 4px 2px;
-}
-
-.row-restore {
-  right: 6px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  color: var(--vscode-foreground);
-  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-  box-shadow:
-    0 1px 2px color-mix(in srgb, #000 18%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
-}
-
-.row-restore.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.row-restore:hover {
-  color: var(--vscode-foreground);
-  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
-}
-
-.agent-row-wrap:hover .row-restore,
-.chat-row-wrap:hover .row-restore {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .model-picker {
@@ -822,12 +808,13 @@ button.primary:disabled {
 .chat-row-wrap {
   position: relative;
   display: flex;
-  align-items: stretch;
-  gap: 2px;
+  align-items: center;
+  gap: 6px;
 }
 
 .agent-row-wrap {
   border-radius: 8px;
+  padding-right: 6px;
 }
 
 .agent-row-wrap:hover {
@@ -853,7 +840,7 @@ button.primary:disabled {
 }
 
 .agent-row.flat {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
 }
 
 .agent-row.no-expand {
@@ -929,26 +916,31 @@ button.primary:disabled {
 .agent-time {
   font-size: 10px;
   color: var(--vscode-descriptionForeground, #888);
-  padding-top: 3px;
   white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 2.5em;
+  text-align: right;
+  padding-top: 0;
 }
 
-.agent-row-wrap:hover .agent-time,
-.chat-row-wrap:hover .chat-row-time {
-  visibility: hidden;
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  order: 0;
 }
 
 .row-action {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 22px;
-  height: 22px;
+  position: static;
+  transform: none;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0;
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
@@ -958,15 +950,14 @@ button.primary:disabled {
   transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
-.row-new-chat {
-  right: 34px;
+.archive-row-wrap .row-action,
+.agent-row-wrap:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .row-archive {
-  right: 6px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
   color: var(--vscode-foreground);
   background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
   box-shadow:
@@ -988,16 +979,30 @@ button.primary:disabled {
     inset 0 1px 2px color-mix(in srgb, #000 18%, transparent);
 }
 
-.agent-row-wrap:hover .row-action,
-.chat-row-wrap:hover .row-action,
-.row-action:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
+.row-restore {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
 }
 
-.row-new-chat:hover {
+.row-restore:hover {
   color: var(--vscode-foreground);
-  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+.row-delete {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+}
+
+.row-delete:hover {
+  color: var(--vscode-errorForeground, #f14c4c);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 16%, transparent);
 }
 
 .row-action svg {
