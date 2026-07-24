@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Panel — preview</title>
+  <link rel="stylesheet" href="panel.css" />
+  <style>
+    body.preview-frame {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #f3f3f3;
+      padding: 32px 16px;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    .stage {
+      width: min(420px, 100%);
+      height: min(420px, 90vh);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 24px 80px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      background: #f8f8f8;
+      color: #1a1a1a;
+      --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+      --vscode-font-size: 13px;
+      --vscode-foreground: #1a1a1a;
+      --vscode-sideBar-background: #f8f8f8;
+      --vscode-input-background: #ffffff;
+      --vscode-input-foreground: #1a1a1a;
+      --vscode-input-border: #d6d6d6;
+      --vscode-focusBorder: #007fd4;
+      --vscode-editorWidget-background: #fff;
+      --vscode-widget-border: #ddd;
+    }
+    .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .panel-body #messages { flex: 1; }
+  </style>
+</head>
+<body class="preview-frame">
+  <div class="stage">
+    <div class="panel-body">
+      <div id="messages">
+        <div class="msg assistant">Кастомный селект модели как в Cursor.</div>
+      </div>
+      <div class="composer-wrap">
+        <div class="composer">
+          <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
+          <div class="composer-footer">
+            <div class="composer-footer-left">
+              <button class="icon-btn" id="newChatBtn">
+                <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+              <div class="model-picker is-open" id="modelPicker">
+                <button type="button" class="model-trigger" id="modelTrigger" aria-expanded="true">
+                  <span class="model-label" id="modelLabel">DeepSeek V4 Flash</span>
+                  <svg class="model-chevron" viewBox="0 0 12 12" width="10" height="10">
+                    <path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <div class="model-menu" id="modelMenu" role="listbox">
+                  <button type="button" class="model-option is-active">
+                    <span class="model-option-label">DeepSeek V4 Flash</span>
+                    <svg class="model-check" viewBox="0 0 16 16" width="12" height="12"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button type="button" class="model-option"><span class="model-option-label">Qwen3 Coder Next</span></button>
+                  <button type="button" class="model-option"><span class="model-option-label">Gemma 4 31B</span></button>
+                </div>
+              </div>
+            </div>
+            <div class="composer-footer-right">
+              <button class="primary">
+                <svg class="icon-send" viewBox="0 0 16 16" width="14" height="14"><path d="M8 12.5V3.5M8 3.5L4 7.5M8 3.5l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

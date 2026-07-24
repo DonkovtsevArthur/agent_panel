@@ -1,0 +1,189 @@
+{
+  "name": "vscode-agent-panel",
+  "displayName": "Agent Panel",
+  "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
+  "version": "0.4.20",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:agentPanel.chat",
+    "onCommand:agentPanel.open",
+    "onCommand:agentPanel.newChat",
+    "onCommand:agentPanel.clearChat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentPanel",
+          "title": "Agent Panel",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentPanel": [
+        {
+          "type": "webview",
+          "id": "agentPanel.chat",
+          "name": "Agent",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentPanel.open",
+        "title": "Agent Panel: Open",
+        "category": "Agent Panel"
+      },
+      {
+        "command": "agentPanel.newChat",
+        "title": "New Chat",
+        "category": "Agent Panel"
+      },
+      {
+        "command": "agentPanel.clearChat",
+        "title": "New Chat",
+        "category": "Agent Panel"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "agentPanel.open"
+        },
+        {
+          "command": "agentPanel.newChat"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "agentPanel.newChat",
+          "when": "view == agentPanel.chat",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Agent Panel",
+      "properties": {
+        "agentPanel.baseUrl": {
+          "type": "string",
+          "default": "https://ai-platform.kube.severstal.severstalgroup.com/openai",
+          "description": "Base URL OpenAI-compatible API (Severstal: .../openai)"
+        },
+        "agentPanel.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key из Давинчи (sk-...). Не коммитьте ключ в git."
+        },
+        "agentPanel.models": {
+          "type": "array",
+          "default": [
+            {
+              "id": "DeepSeek-V4-Flash",
+              "label": "DeepSeek V4 Flash"
+            },
+            {
+              "id": "Qwen3-Coder-Next",
+              "label": "Qwen3 Coder Next"
+            },
+            {
+              "id": "Gemma-4-31b",
+              "label": "Gemma 4 31B"
+            },
+            {
+              "id": "claude-sonnet-4-5",
+              "label": "Claude Sonnet 4.5"
+            },
+            {
+              "id": "gpt-4.1",
+              "label": "GPT-4.1"
+            },
+            {
+              "id": "Gemini 2.5 Flash",
+              "label": "Gemini 2.5 Flash"
+            }
+          ],
+          "description": "Список моделей, доступных в панели агента (id как в /openai/models)",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "ID модели, который уходит в API"
+              },
+              "label": {
+                "type": "string",
+                "description": "Отображаемое имя в селекторе"
+              }
+            }
+          }
+        },
+        "agentPanel.defaultModel": {
+          "type": "string",
+          "default": "DeepSeek-V4-Flash",
+          "description": "Модель по умолчанию (должна совпадать с id из agentPanel.models)"
+        },
+        "agentPanel.systemPrompt": {
+          "type": "string",
+          "default": "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.",
+          "description": "Системный промпт агента"
+        },
+        "agentPanel.maxToolRounds": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Максимум раундов tool-calling за один запрос (после лимита запрашивается финальный ответ без tools)"
+        },
+        "agentPanel.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 64,
+          "maximum": 128000,
+          "description": "max_tokens для chat/completions"
+        },
+        "agentPanel.maxResponseChars": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 1000,
+          "maximum": 200000,
+          "description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы."
+        },
+        "agentPanel.rejectUnauthorized": {
+          "type": "boolean",
+          "default": false,
+          "description": "Проверять TLS-сертификат. Для Severstal обычно false (корпоративный CA), либо true + caBundlePath"
+        },
+        "agentPanel.caBundlePath": {
+          "type": "string",
+          "default": "~/Documents/Cline/severstal-ca-bundle.pem",
+          "description": "Путь к CA bundle (как в Continue requestOptions.caBundlePath)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc --noEmit",
+    "package": "vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}
