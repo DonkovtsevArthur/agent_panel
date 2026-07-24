@@ -33,11 +33,23 @@ export interface ChatTool {
   };
 }
 
+export interface ChatCompletionUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
 export interface ChatCompletionResponse {
   choices: Array<{
     message: ChatMessage;
     finish_reason?: string;
   }>;
+  usage?: ChatCompletionUsage;
+}
+
+export interface ChatCompletionResult {
+  message: ChatMessage;
+  usage?: ChatCompletionUsage;
 }
 
 export interface ClientTlsOptions {
@@ -140,7 +152,7 @@ export class OpenAICompatibleClient {
       max_tokens?: number;
     },
     signal?: AbortSignal
-  ): Promise<ChatMessage> {
+  ): Promise<ChatCompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -170,7 +182,7 @@ export class OpenAICompatibleClient {
     if (!message) {
       throw new Error("Пустой ответ от API");
     }
-    return message;
+    return { message, usage: data.usage };
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
