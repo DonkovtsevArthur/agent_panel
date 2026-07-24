@@ -22,7 +22,7 @@ type WebviewToHost =
   | { type: "ready" }
   | { type: "send"; text: string; model: string }
   | { type: "stop" }
-  | { type: "newChat" }
+  | { type: "newChat"; agentId?: string }
   | { type: "newAgent" }
   | { type: "openChat"; agentId: string; chatId: string }
   | { type: "toggleAgent"; agentId: string }
@@ -109,8 +109,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.postInit();
   }
 
-  /** Новый чат в текущем агенте (или новый агент, если агентов нет). */
-  newChat(): void {
+  /** Новый чат в указанном или текущем агенте (или новый агент, если агентов нет). */
+  newChat(agentId?: string): void {
     this.abort?.abort();
     this.abort = undefined;
 
@@ -118,7 +118,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const model =
       this.selectedModel || config.defaultModel || config.models[0]?.id || "";
 
-    let agent = this.store.agents.find((a) => a.id === this.store.activeAgentId);
+    let agent = agentId
+      ? this.store.agents.find((a) => a.id === agentId)
+      : this.store.agents.find((a) => a.id === this.store.activeAgentId);
     if (!agent) {
       const created = createEmptyAgent(model);
       this.store.agents.unshift(created.agent);
@@ -132,6 +134,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.store.chats[chat.id] = chat;
       agent.chatIds.unshift(chat.id);
       agent.updatedAt = chat.updatedAt;
+      this.store.activeAgentId = agent.id;
       this.store.activeChatId = chat.id;
       if (!this.store.expandedAgentIds.includes(agent.id)) {
         this.store.expandedAgentIds.push(agent.id);
@@ -296,7 +299,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.saveSession();
         break;
       case "newChat":
-        this.newChat();
+        this.newChat(message.agentId);
         break;
       case "newAgent":
         await this.createAgent();
