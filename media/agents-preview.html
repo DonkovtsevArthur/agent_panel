@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Panel — мокап списка агентов</title>
+  <style>
+    :root {
+      --bg: #f8f8f8;
+      --fg: #1a1a1a;
+      --muted: #6e6e6e;
+      --border: rgba(127, 127, 127, 0.28);
+      --input: #ffffff;
+      --hover: rgba(0, 0, 0, 0.05);
+      --active: rgba(0, 122, 204, 0.12);
+      --accent: #007acc;
+      --font: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #e8e8e8;
+      font-family: var(--font);
+      color: var(--fg);
+    }
+    .stage {
+      width: min(360px, 94vw);
+      height: min(640px, 92vh);
+      background: var(--bg);
+      border-radius: 12px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.08), 0 24px 80px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 12px 8px;
+      gap: 8px;
+    }
+    .title {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .icon-btn {
+      width: 26px;
+      height: 26px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .icon-btn:hover { background: var(--hover); color: var(--fg); }
+    .search {
+      margin: 0 12px 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--input);
+      font: inherit;
+      font-size: 12px;
+      color: var(--fg);
+      outline: none;
+    }
+    .search:focus { border-color: var(--accent); }
+    .list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 6px 12px;
+    }
+    .agent {
+      border-radius: 8px;
+      margin-bottom: 2px;
+    }
+    .agent.is-open { background: color-mix(in srgb, var(--fg) 3%, transparent); }
+    .agent-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 16px 1fr auto;
+      gap: 8px;
+      align-items: start;
+      padding: 8px 8px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+    }
+    .agent-row:hover { background: var(--hover); }
+    .agent.is-active > .agent-row { background: var(--active); }
+    .chev {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      transition: transform 0.15s ease;
+    }
+    .agent.is-open .chev { transform: rotate(90deg); }
+    .agent-main { min-width: 0; }
+    .agent-name {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-meta {
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .chip {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      font-size: 10px;
+    }
+    .preview {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .time {
+      font-size: 10px;
+      color: var(--muted);
+      padding-top: 3px;
+      white-space: nowrap;
+    }
+    .chats {
+      display: none;
+      padding: 0 8px 8px 28px;
+      gap: 2px;
+      flex-direction: column;
+    }
+    .agent.is-open .chats { display: flex; }
+    .chat-row {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 8px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+      color: var(--fg);
+      font-size: 12px;
+    }
+    .chat-row:hover { background: var(--hover); }
+    .chat-row.is-active {
+      background: var(--active);
+      color: var(--fg);
+    }
+    .chat-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chat-count {
+      color: var(--muted);
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+    .hint {
+      max-width: 360px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #555;
+      text-align: center;
+      line-height: 1.45;
+    }
+    .variants {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 10px;
+    }
+    .variants button {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .variants button.is-on {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .stage.flat .chats { display: none !important; }
+    .stage.flat .chev { visibility: hidden; }
+  </style>
+</head>
+<body>
+  <div>
+    <div class="stage" id="stage">
+      <div class="top">
+        <div class="title">Агенты</div>
+        <button class="icon-btn" title="Новый агент">+</button>
+      </div>
+      <input class="search" placeholder="Поиск агентов и чатов…" />
+      <div class="list" id="list"></div>
+    </div>
+    <p class="hint">Мокап боковой панели. Клик по агенту раскрывает его чаты.</p>
+    <div class="variants">
+      <button type="button" class="is-on" data-mode="nested">Агент → чаты</button>
+      <button type="button" data-mode="flat">Плоский список чатов</button>
+    </div>
+  </div>
+  <script>
+    const agents = [
+      {
+        name: "Рефакторинг модалок",
+        model: "DeepSeek V4 Flash",
+        preview: "Готово, Modal вынесен в shared/ui",
+        time: "18:40",
+        active: true,
+        open: true,
+        chats: [
+          { title: "Поиск Modal в src/", active: true },
+          { title: "Unsaved changes leave" },
+          { title: "Проверка сборки" },
+        ],
+      },
+      {
+        name: "Bump version",
+        model: "Qwen3 Coder Next",
+        preview: "Версия обновлена до 0.0.16",
+        time: "17:12",
+        chats: [
+          { title: "package.json bump" },
+          { title: "Коммит и push" },
+        ],
+      },
+      {
+        name: "Настройка CI",
+        model: "Gemma 4 31B",
+        preview: "Добавил workflow для PR checks",
+        time: "вчера",
+        chats: [{ title: "GitHub Actions" }],
+      },
+      {
+        name: "Баг со скроллом",
+        model: "DeepSeek V4 Flash",
+        preview: "Скроллбар стал тонким",
+        time: "пн",
+        chats: [
+          { title: "Отступы сообщений" },
+          { title: "Scrollbar CSS" },
+        ],
+      },
+    ];
+
+    const list = document.getElementById("list");
+    const stage = document.getElementById("stage");
+
+    function render() {
+      list.innerHTML = agents
+        .map((a, i) => {
+          const chats = (a.chats || [])
+            .map(
+              (c) =>
+                `<button class="chat-row${c.active ? " is-active" : ""}" type="button">` +
+                `<span class="chat-title">${c.title}</span>` +
+                `<span class="chat-count">чат</span>` +
+                `</button>`
+            )
+            .join("");
+          return (
+            `<div class="agent${a.open ? " is-open" : ""}${a.active ? " is-active" : ""}" data-i="${i}">` +
+            `<button class="agent-row" type="button">` +
+            `<span class="chev">▸</span>` +
+            `<span class="agent-main">` +
+            `<div class="agent-name">${a.name}</div>` +
+            `<div class="agent-meta"><span class="chip">${a.model}</span><span class="preview">${a.preview}</span></div>` +
+            `</span>` +
+            `<span class="time">${a.time}</span>` +
+            `</button>` +
+            `<div class="chats">${chats}</div>` +
+            `</div>`
+          );
+        })
+        .join("");
+
+      list.querySelectorAll(".agent-row").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const wrap = btn.closest(".agent");
+          const i = Number(wrap.dataset.i);
+          agents.forEach((a, idx) => {
+            a.open = idx === i ? !a.open : false;
+            a.active = idx === i;
+          });
+          render();
+        });
+      });
+    }
+
+    document.querySelectorAll(".variants button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".variants button").forEach((b) => b.classList.remove("is-on"));
+        btn.classList.add("is-on");
+        stage.classList.toggle("flat", btn.dataset.mode === "flat");
+      });
+    });
+
+    render();
+  </script>
+</body>
+</html>

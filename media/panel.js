@@ -12,6 +12,17 @@
   const modelMenu = document.getElementById("modelMenu");
 
   const agentStatusEl = document.getElementById("agentStatus");
+  const agentsScreen = document.getElementById("agentsScreen");
+  const chatScreen = document.getElementById("chatScreen");
+  const agentsListEl = document.getElementById("agentsList");
+  const agentsSearch = document.getElementById("agentsSearch");
+  const newAgentBtn = document.getElementById("newAgentBtn");
+  const backToAgentsBtn = document.getElementById("backToAgentsBtn");
+  const chatAgentNameEl = document.getElementById("chatAgentName");
+  const chatTitleEl = document.getElementById("chatTitle");
+
+  let agentsData = [];
+  let agentsFilter = "";
 
   const DEFAULT_MODELS = [
     { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
@@ -84,7 +95,124 @@
     }
   }
 
-  function focusPrompt() {
+  function showScreen(name) {
+    const isAgents = name === "agents";
+    if (agentsScreen) {
+      agentsScreen.hidden = !isAgents;
+    }
+    if (chatScreen) {
+      chatScreen.hidden = isAgents;
+    }
+    if (!isAgents) {
+      focusPrompt();
+    }
+  }
+
+  function renderAgentsList() {
+    if (!agentsListEl) {
+      return;
+    }
+    const q = agentsFilter.trim().toLowerCase();
+    const list = !q
+      ? agentsData
+      : agentsData
+          .map((a) => {
+            const chats = (a.chats || []).filter(
+              (c) =>
+                (c.title || "").toLowerCase().includes(q) ||
+                (c.preview || "").toLowerCase().includes(q)
+            );
+            const hitAgent =
+              (a.name || "").toLowerCase().includes(q) ||
+              (a.preview || "").toLowerCase().includes(q) ||
+              (a.model || "").toLowerCase().includes(q);
+            if (!hitAgent && !chats.length) {
+              return null;
+            }
+            return {
+              ...a,
+              open: hitAgent || a.open || chats.length > 0,
+              chats: hitAgent ? a.chats || [] : chats,
+            };
+          })
+          .filter(Boolean);
+
+    if (!list.length) {
+      agentsListEl.innerHTML =
+        '<div class="agents-empty">Нет агентов. Нажмите +, чтобы создать.</div>';
+      return;
+    }
+
+    agentsListEl.innerHTML = list
+      .map((a) => {
+        const chats = (a.chats || [])
+          .map(
+            (c) =>
+              `<div class="chat-row-wrap">` +
+              `<button type="button" class="chat-row${c.active ? " is-active" : ""}" data-agent="${a.id}" data-chat="${c.id}">` +
+              `<span class="chat-row-main">` +
+              `<span class="chat-row-title"></span>` +
+              `<span class="chat-row-preview"></span>` +
+              `</span>` +
+              `<span class="chat-row-time"></span>` +
+              `</button>` +
+              `<button type="button" class="row-delete" data-delete-chat="${c.id}" data-agent="${a.id}" title="Удалить чат" aria-label="Удалить чат">` +
+              `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">` +
+              `<path d="M6 3h4M3.5 5h9M6.5 5v7.5M9.5 5v7.5M5 5l.5 8.5h5L11 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
+              `</svg>` +
+              `</button>` +
+              `</div>`
+          )
+          .join("");
+        return (
+          `<div class="agent-block${a.open ? " is-open" : ""}${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
+          `<div class="agent-row-wrap">` +
+          `<button type="button" class="agent-row" data-agent="${a.id}">` +
+          `<span class="agent-chevron">▸</span>` +
+          `<span class="agent-main">` +
+          `<div class="agent-name"></div>` +
+          `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
+          `</span>` +
+          `<span class="agent-time"></span>` +
+          `</button>` +
+          `<button type="button" class="row-delete" data-delete-agent="${a.id}" title="Удалить агента" aria-label="Удалить агента">` +
+          `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">` +
+          `<path d="M6 3h4M3.5 5h9M6.5 5v7.5M9.5 5v7.5M5 5l.5 8.5h5L11 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
+          `</svg>` +
+          `</button>` +
+          `</div>` +
+          `<div class="agent-chats">${chats}</div>` +
+          `</div>`
+        );
+      })
+      .join("");
+
+    list.forEach((a, index) => {
+      const block = agentsListEl.children[index];
+      if (!block) {
+        return;
+      }
+      block.querySelector(".agent-name").textContent = a.name || "Агент";
+      block.querySelector(".agent-chip").textContent = a.model || "—";
+      block.querySelector(".agent-preview").textContent = a.preview || "";
+      block.querySelector(".agent-time").textContent = a.time || "";
+      const chatRows = block.querySelectorAll(".chat-row");
+      (a.chats || []).forEach((c, ci) => {
+        const row = chatRows[ci];
+        if (!row) {
+          return;
+        }
+        row.querySelector(".chat-row-title").textContent = c.title || "Чат";
+        const previewEl = row.querySelector(".chat-row-preview");
+        if (previewEl) {
+          previewEl.textContent = c.preview || "";
+        }
+        row.querySelector(".chat-row-time").textContent = c.time || "";
+      });
+    });
+  }
+
+    function focusPrompt() {
     requestAnimationFrame(() => {
       promptEl.focus();
     });
@@ -620,6 +748,69 @@
     vscode.postMessage({ type: "newChat" });
   });
 
+  if (newAgentBtn) {
+    newAgentBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "newAgent" });
+    });
+  }
+
+  if (backToAgentsBtn) {
+    backToAgentsBtn.addEventListener("click", () => {
+      if (busy) {
+        return;
+      }
+      vscode.postMessage({ type: "showAgents" });
+    });
+  }
+
+  if (agentsSearch) {
+    agentsSearch.addEventListener("input", () => {
+      agentsFilter = agentsSearch.value || "";
+      renderAgentsList();
+    });
+  }
+
+  if (agentsListEl) {
+    agentsListEl.addEventListener("click", (event) => {
+      const deleteBtn = event.target.closest(".row-delete");
+      if (deleteBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (deleteBtn.dataset.deleteAgent) {
+          vscode.postMessage({
+            type: "deleteAgent",
+            agentId: deleteBtn.dataset.deleteAgent,
+          });
+        } else if (deleteBtn.dataset.deleteChat) {
+          vscode.postMessage({
+            type: "deleteChat",
+            agentId: deleteBtn.dataset.agent,
+            chatId: deleteBtn.dataset.deleteChat,
+          });
+        }
+        return;
+      }
+      const chatRow = event.target.closest(".chat-row");
+      if (chatRow) {
+        event.preventDefault();
+        vscode.postMessage({
+          type: "openChat",
+          agentId: chatRow.dataset.agent,
+          chatId: chatRow.dataset.chat,
+        });
+        return;
+      }
+      const agentRow = event.target.closest(".agent-row");
+      if (agentRow) {
+        event.preventDefault();
+        vscode.postMessage({
+          type: "toggleAgent",
+          agentId: agentRow.dataset.agent,
+        });
+      }
+    });
+  }
+
   messagesEl.addEventListener("click", (event) => {
     const file = event.target.closest("a.md-file");
     if (file) {
@@ -654,6 +845,40 @@
       case "init":
         fillModels(msg.models, msg.selectedModel);
         renderMessages(msg.uiMessages || []);
+        if (chatAgentNameEl && msg.agentName) {
+          chatAgentNameEl.textContent = msg.agentName;
+        }
+        if (chatTitleEl && msg.chatTitle) {
+          chatTitleEl.textContent = msg.chatTitle;
+        }
+        showScreen(msg.screen === "chat" ? "chat" : "agents");
+        setBusy(false);
+        break;
+      case "agentsList":
+        agentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        renderAgentsList();
+        if (msg.screen) {
+          showScreen(msg.screen === "chat" ? "chat" : "agents");
+        }
+        break;
+      case "showAgents":
+        showScreen("agents");
+        setBusy(false);
+        break;
+      case "showChat":
+        if (msg.models) {
+          fillModels(msg.models, msg.selectedModel);
+        }
+        if (msg.uiMessages) {
+          renderMessages(msg.uiMessages);
+        }
+        if (chatAgentNameEl && msg.agentName) {
+          chatAgentNameEl.textContent = msg.agentName;
+        }
+        if (chatTitleEl && msg.chatTitle) {
+          chatTitleEl.textContent = msg.chatTitle;
+        }
+        showScreen("chat");
         setBusy(false);
         break;
       case "modelsUpdated":
