@@ -1,0 +1,32 @@
+---
+description: UI-иконки — Material Symbols Outlined (Google Fonts)
+alwaysApply: true
+---
+
+# Иконки: Material Symbols Outlined
+
+Источник: [Material Symbols](https://fonts.google.com/icons?icon.set=Material+Symbols&icon.style=Outlined).
+
+## Параметры (фиксируем в проекте)
+
+- Style: **Outlined**
+- Fill: **0** (off)
+- Weight: **400**
+- Grade: **0**
+- Optical Size: **24**
+
+## Правила
+
+- Все UI-иконки панели — **Material Symbols Outlined**, не произвольный SVG и не emoji.
+- В разметке: `<span class="material-symbols-outlined" aria-hidden="true">icon_name</span>`.
+- Имя иконки — как в каталоге Google (`settings`, `inventory_2`, `add`, `arrow_back`, `delete`, `unarchive`, `arrow_upward`, `stop`, `expand_more`, `check`, `close`, `account_tree`).
+- Цвет через `currentColor`; размер через CSS (`.material-symbols-outlined` / `.icon-btn` / `.row-action`).
+- Шрифт локально: `media/fonts/MaterialSymbolsOutlined-24-400.ttf` (оси уже зафиксированы: opsz 24, wght 400, FILL 0, GRAD 0). Без Google CDN в webview.
+- В CSS держим `font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24` для явности.
+- Исключение: кастомная графика не из каталога (кольцо контекста / progress) — SVG допустим.
+
+## Как добавить новую иконку
+
+1. Найти имя на fonts.google.com/icons (Material Symbols → Outlined).
+2. Вставить `<span class="material-symbols-outlined" …>name</span>`.
+3. Не рисовать path вручную и не тащить другой icon set.
