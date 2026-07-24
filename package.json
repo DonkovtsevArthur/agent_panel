@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.5.5",
+  "version": "0.5.7",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -61,13 +61,6 @@
         },
         {
           "command": "agentPanel.newChat"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "agentPanel.newChat",
-          "when": "view == agentPanel.chat",
-          "group": "navigation"
         }
       ]
     },

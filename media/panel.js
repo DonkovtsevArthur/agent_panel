@@ -145,7 +145,10 @@
 
     agentsListEl.innerHTML = list
       .map((a) => {
-        const chats = (a.chats || [])
+        const chatItems = a.chats || [];
+        const hasChats = chatItems.length > 0;
+        const isOpen = hasChats && a.open;
+        const chats = chatItems
           .map(
             (c) =>
               `<div class="chat-row-wrap">` +
@@ -165,10 +168,12 @@
           )
           .join("");
         return (
-          `<div class="agent-block${a.open ? " is-open" : ""}${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
+          `<div class="agent-block${isOpen ? " is-open" : ""}${a.active ? " is-active" : ""}${hasChats ? "" : " no-chats"}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
-          `<button type="button" class="agent-row" data-agent="${a.id}">` +
-          `<span class="agent-chevron">▸</span>` +
+          `<button type="button" class="agent-row${hasChats ? "" : " no-expand"}" data-agent="${a.id}" data-has-chats="${hasChats ? "1" : "0"}"${hasChats ? "" : " aria-disabled=\"true\""}>` +
+          (hasChats
+            ? `<span class="agent-chevron">▸</span>`
+            : `<span class="agent-chevron is-hidden" aria-hidden="true"></span>`) +
           `<span class="agent-main">` +
           `<div class="agent-name"></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
@@ -181,7 +186,7 @@
           `</svg>` +
           `</button>` +
           `</div>` +
-          `<div class="agent-chats">${chats}</div>` +
+          (hasChats ? `<div class="agent-chats">${chats}</div>` : "") +
           `</div>`
         );
       })
@@ -803,6 +808,9 @@
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
+        if (agentRow.dataset.hasChats !== "1") {
+          return;
+        }
         vscode.postMessage({
           type: "toggleAgent",
           agentId: agentRow.dataset.agent,

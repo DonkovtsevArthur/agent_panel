@@ -60,6 +60,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.loadStore();
   }
 
+  private setScreen(screen: AgentsStoreV2["screen"]): void {
+    this.store.screen = screen;
+  }
+
   resolveWebviewView(
     webviewView: vscode.WebviewView,
     _context: vscode.WebviewViewResolveContext,
@@ -134,7 +138,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    this.store.screen = "chat";
+    this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
     this.postChatScreen();
@@ -301,13 +305,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.abort?.abort();
         this.abort = undefined;
         this.persistActiveChat();
-        this.store.screen = "agents";
+        this.setScreen("agents");
         this.saveStore();
         this.postAgentsList();
         this.view?.webview.postMessage({ type: "showAgents" });
         break;
       case "toggleAgent": {
         const id = message.agentId;
+        const agent = this.store.agents.find((a) => a.id === id);
+        if (!agent || agent.chatIds.length === 0) {
+          break;
+        }
         const set = new Set(this.store.expandedAgentIds);
         if (set.has(id)) {
           set.delete(id);
@@ -380,7 +388,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.store.activeAgentId = agentId;
     this.store.activeChatId = chatId;
-    this.store.screen = "chat";
+    this.setScreen("chat");
     if (!this.store.expandedAgentIds.includes(agentId)) {
       this.store.expandedAgentIds.push(agentId);
     }
@@ -414,7 +422,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       created.agent.id,
       ...this.store.expandedAgentIds.filter((id) => id !== created.agent.id),
     ];
-    this.store.screen = "chat";
+    this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
     this.postChatScreen();
@@ -445,7 +453,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!deleteAgentFromStore(this.store, agentId)) {
       return;
     }
-    this.store.screen = "agents";
+    this.setScreen("agents");
     this.hydrateActiveChat();
     this.saveStore();
     this.postAgentsList();
@@ -485,7 +493,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.store.screen = "agents";
+    this.setScreen("agents");
     this.hydrateActiveChat();
     this.saveStore();
     this.postAgentsList();
