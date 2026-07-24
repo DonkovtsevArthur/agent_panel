@@ -1,0 +1,39 @@
+---
+description: Сборка в VS Code и хранение агентов по workspace
+alwaysApply: true
+---
+
+# Agent Panel: сборка и хранение
+
+## Куда ставить расширение
+
+Пользователь смотрит расширение в **VS Code**, не в Cursor.
+
+После изменений UI/логики панели:
+
+1. `npm run compile`
+2. `npx @vscode/vsce package --allow-missing-repository --skip-license`
+3. Установка **только** через бинарь VS Code:
+
+```bash
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+  --uninstall-extension local.vscode-agent-panel || true
+rm -rf ~/.vscode/extensions/local.vscode-agent-panel-*
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
+  --install-extension ./vscode-agent-panel-<version>.vsix --force
+```
+
+Не использовать `/usr/local/bin/code` — он может указывать на Cursor.
+
+После установки напомнить: **Developer: Reload Window** в VS Code.
+
+Перед пакетом поднимать `version` в `package.json`.
+
+## Хранение агентов
+
+Список агентов/чатов/архива хранится в **`workspaceState`** (`agentPanel.session.v2`) — у каждого workspace свой список.
+
+- `saveStore` пишет только в `workspaceState` (если есть открытая папка).
+- Не писать агентов в `globalState` (кроме одноразовой миграции global → текущий workspace при пустом workspace).
+- При смене `workspaceFolders` — перезагружать store и обновлять webview.
+- При загрузке/смене workspace всегда открывать **экран чата** последнего активного агента; если видимого чата нет — создать агента автоматически (`ensureChatReady`).

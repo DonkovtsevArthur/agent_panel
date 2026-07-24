@@ -14,12 +14,18 @@
   const agentStatusEl = document.getElementById("agentStatus");
   const agentsScreen = document.getElementById("agentsScreen");
   const archiveScreen = document.getElementById("archiveScreen");
+  const settingsScreen = document.getElementById("settingsScreen");
   const chatScreen = document.getElementById("chatScreen");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
+  const settingsModelsList = document.getElementById("settingsModelsList");
   const newAgentBtn = document.getElementById("newAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
+  const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
+  const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
+  const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+  const addModelBtn = document.getElementById("addModelBtn");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
@@ -29,28 +35,45 @@
     : null;
   const contextTipEl = document.getElementById("contextTip");
 
+  const settingsDefaultModel = document.getElementById("settingsDefaultModel");
+  const settingsDefaultContext = document.getElementById("settingsDefaultContext");
+  const settingsBaseUrl = document.getElementById("settingsBaseUrl");
+  const settingsApiKey = document.getElementById("settingsApiKey");
+  const settingsRejectUnauthorized = document.getElementById(
+    "settingsRejectUnauthorized"
+  );
+  const settingsCaBundle = document.getElementById("settingsCaBundle");
+  const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
+  const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
+  const settingsMaxTokens = document.getElementById("settingsMaxTokens");
+  const settingsMaxResponseChars = document.getElementById(
+    "settingsMaxResponseChars"
+  );
+
   let agentsData = [];
   let archiveAgentsData = [];
+  let settingsModels = [];
+  let settingsDefaultModelId = "";
   let contextUsed = 0;
   let contextMax = 128000;
 
   const ARCHIVE_ICON =
-    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
-    `<path fill="currentColor" d="M2.5 2.25h11a1.25 1.25 0 0 1 1.25 1.25v1.1c0 .48-.39.9-.88.9H2.13a.9.9 0 0 1-.88-.9V3.5c0-.69.56-1.25 1.25-1.25z"/>` +
-    `<path fill="currentColor" d="M3.25 6.25h9.5v5.9c0 .97-.78 1.75-1.75 1.75h-6c-.97 0-1.75-.78-1.75-1.75v-5.9zm3.1 1.35a.55.55 0 0 0 0 1.1h3.3a.55.55 0 1 0 0-1.1h-3.3z"/>` +
-    `</svg>`;
+    '<span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>';
 
   const RESTORE_ICON =
-    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
-    `<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 9.5V3.5M5.5 5.75 8 3.25l2.5 2.5"/>` +
-    `<path fill="currentColor" d="M3 10.75h10v1.6c0 .9-.7 1.65-1.6 1.65H4.6c-.9 0-1.6-.75-1.6-1.65v-1.6z"/>` +
-    `</svg>`;
+    '<span class="material-symbols-outlined" aria-hidden="true">unarchive</span>';
 
   const DELETE_ICON =
-    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
-    `<path fill="currentColor" d="M6.2 1.75h3.6c.4 0 .7.3.7.7V3h2.75a.5.5 0 0 1 0 1H2.75a.5.5 0 0 1 0-1H5.5V2.45c0-.4.3-.7.7-.7z"/>` +
-    `<path fill="currentColor" fill-rule="evenodd" d="M3.85 5.25h8.3l-.58 7.55A1.85 1.85 0 0 1 9.73 14.5H6.27a1.85 1.85 0 0 1-1.84-1.7L3.85 5.25zm2.55 2.1a.55.55 0 0 1 .55.55v4.1a.55.55 0 0 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55zm3.2 0a.55.55 0 0 1 .55.55v4.1a.55.55 0 1 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55z"/>` +
-    `</svg>`;
+    '<span class="material-symbols-outlined" aria-hidden="true">delete</span>';
+
+  const CLOSE_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">close</span>';
+
+  const CHECK_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">check</span>';
+
+  const SCM_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
   const DEFAULT_MODELS = [
     { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
@@ -169,12 +192,18 @@
   }
 
   function showScreen(name) {
-    const screen = name === "chat" || name === "archive" ? name : "agents";
+    const screen =
+      name === "chat" || name === "archive" || name === "settings"
+        ? name
+        : "agents";
     if (agentsScreen) {
       agentsScreen.hidden = screen !== "agents";
     }
     if (archiveScreen) {
       archiveScreen.hidden = screen !== "archive";
+    }
+    if (settingsScreen) {
+      settingsScreen.hidden = screen !== "settings";
     }
     if (chatScreen) {
       chatScreen.hidden = screen !== "chat";
@@ -183,6 +212,161 @@
       setContextUsage(contextUsed, contextMax);
       focusPrompt();
     }
+  }
+
+  function syncDefaultModelSelect() {
+    if (!settingsDefaultModel) {
+      return;
+    }
+    const current = settingsDefaultModelId;
+    settingsDefaultModel.innerHTML = "";
+    for (const model of settingsModels) {
+      const id = String(model.id || "").trim();
+      if (!id) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = model.label ? `${model.label} (${id})` : id;
+      settingsDefaultModel.appendChild(option);
+    }
+    if (
+      current &&
+      Array.from(settingsDefaultModel.options).some((o) => o.value === current)
+    ) {
+      settingsDefaultModel.value = current;
+    } else if (settingsDefaultModel.options.length) {
+      settingsDefaultModel.selectedIndex = 0;
+      settingsDefaultModelId = settingsDefaultModel.value;
+    }
+  }
+
+  function renderSettingsModels() {
+    if (!settingsModelsList) {
+      return;
+    }
+    settingsModelsList.innerHTML = "";
+    settingsModels.forEach((model, index) => {
+      const row = document.createElement("div");
+      row.className = "settings-model-row";
+      row.innerHTML =
+        `<div class="settings-model-head">` +
+        `<span class="settings-model-title">Модель ${index + 1}</span>` +
+        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        CLOSE_ICON +
+        `</button>` +
+        `</div>` +
+        `<label class="settings-field">` +
+        `<span class="settings-label">ID</span>` +
+        `<input class="settings-input" data-field="id" data-index="${index}" type="text" placeholder="как в API, напр. gpt-4.1" />` +
+        `</label>` +
+        `<label class="settings-field">` +
+        `<span class="settings-label">Название</span>` +
+        `<input class="settings-input" data-field="label" data-index="${index}" type="text" placeholder="как видно в списке" />` +
+        `</label>` +
+        `<label class="settings-field">` +
+        `<span class="settings-label">Контекст (токены)</span>` +
+        `<input class="settings-input" data-field="contextWindow" data-index="${index}" type="number" min="1024" step="1024" placeholder="необязательно" />` +
+        `</label>`;
+      const idInput = row.querySelector('[data-field="id"]');
+      const labelInput = row.querySelector('[data-field="label"]');
+      const ctxInput = row.querySelector('[data-field="contextWindow"]');
+      idInput.value = model.id || "";
+      labelInput.value = model.label || "";
+      ctxInput.value =
+        model.contextWindow && Number(model.contextWindow) > 0
+          ? String(model.contextWindow)
+          : "";
+      settingsModelsList.appendChild(row);
+    });
+    syncDefaultModelSelect();
+  }
+
+  function readModelsFromDom() {
+    if (!settingsModelsList) {
+      return settingsModels.slice();
+    }
+    const rows = Array.from(
+      settingsModelsList.querySelectorAll(".settings-model-row")
+    );
+    return rows.map((row) => {
+      const id = row.querySelector('[data-field="id"]').value.trim();
+      const label = row.querySelector('[data-field="label"]').value.trim();
+      const ctxRaw = row.querySelector('[data-field="contextWindow"]').value;
+      const contextWindow = Number(ctxRaw);
+      const model = { id, label };
+      if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
+        model.contextWindow = Math.floor(contextWindow);
+      }
+      return model;
+    });
+  }
+
+  function fillSettings(settings) {
+    if (!settings || typeof settings !== "object") {
+      return;
+    }
+    settingsModels = Array.isArray(settings.models)
+      ? settings.models.map((m) => ({
+          id: m.id || "",
+          label: m.label || "",
+          contextWindow: m.contextWindow,
+        }))
+      : [];
+    settingsDefaultModelId = settings.defaultModel || "";
+    if (settingsDefaultContext) {
+      settingsDefaultContext.value = String(
+        settings.defaultContextWindow || 128000
+      );
+    }
+    if (settingsBaseUrl) {
+      settingsBaseUrl.value = settings.baseUrl || "";
+    }
+    if (settingsApiKey) {
+      settingsApiKey.value = settings.apiKey || "";
+    }
+    if (settingsRejectUnauthorized) {
+      settingsRejectUnauthorized.checked = Boolean(settings.rejectUnauthorized);
+    }
+    if (settingsCaBundle) {
+      settingsCaBundle.value = settings.caBundlePath || "";
+    }
+    if (settingsSystemPrompt) {
+      settingsSystemPrompt.value = settings.systemPrompt || "";
+    }
+    if (settingsMaxToolRounds) {
+      settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
+    }
+    if (settingsMaxTokens) {
+      settingsMaxTokens.value = String(settings.maxTokens || 4096);
+    }
+    if (settingsMaxResponseChars) {
+      settingsMaxResponseChars.value = String(
+        settings.maxResponseChars || 12000
+      );
+    }
+    renderSettingsModels();
+  }
+
+  function collectSettings() {
+    settingsModels = readModelsFromDom();
+    return {
+      models: settingsModels,
+      defaultModel: settingsDefaultModel
+        ? settingsDefaultModel.value
+        : settingsDefaultModelId,
+      defaultContextWindow: Number(settingsDefaultContext?.value || 128000),
+      baseUrl: settingsBaseUrl ? settingsBaseUrl.value.trim() : "",
+      apiKey: settingsApiKey ? settingsApiKey.value : "",
+      rejectUnauthorized: settingsRejectUnauthorized
+        ? settingsRejectUnauthorized.checked
+        : false,
+      caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
+      systemPrompt: settingsSystemPrompt ? settingsSystemPrompt.value : "",
+      maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
+      maxTokens: Number(settingsMaxTokens?.value || 4096),
+      maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
+    };
   }
 
   function renderArchiveList() {
@@ -368,10 +552,7 @@
     scmBtn.className = "review-scm";
     scmBtn.title = "Открыть Source Control";
     scmBtn.setAttribute("aria-label", "Открыть Source Control");
-    scmBtn.innerHTML =
-      '<svg class="review-scm-icon" viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">' +
-      '<path fill="currentColor" d="M21 8.25C21 6.1815 19.3185 4.5 17.25 4.5C15.1815 4.5 13.5 6.1815 13.5 8.25C13.5 10.023 14.739 11.5035 16.395 11.892C16.116 12.819 15.2655 13.5 14.25 13.5H9.75C8.9025 13.5 8.1285 13.7925 7.5 14.268V7.4235C9.21 7.0755 10.5 5.5605 10.5 3.75C10.5 1.6815 8.8185 0 6.75 0C4.6815 0 3 1.6815 3 3.75C3 5.562 4.29 7.0755 6 7.4235V16.575C4.29 16.923 3 18.438 3 20.2485C3 22.317 4.6815 23.9985 6.75 23.9985C8.8185 23.9985 10.5 22.317 10.5 20.2485C10.5 18.4755 9.261 16.995 7.605 16.6065C7.884 15.6795 8.7345 14.9985 9.75 14.9985H14.25C16.0845 14.9985 17.61 13.6725 17.931 11.9295C19.674 11.607 21 10.0845 21 8.25ZM4.5 3.75C4.5 2.5095 5.5095 1.5 6.75 1.5C7.9905 1.5 9 2.5095 9 3.75C9 4.9905 7.9905 6 6.75 6C5.5095 6 4.5 4.9905 4.5 3.75ZM9 20.25C9 21.4905 7.9905 22.5 6.75 22.5C5.5095 22.5 4.5 21.4905 4.5 20.25C4.5 19.0095 5.5095 18 6.75 18C7.9905 18 9 19.0095 9 20.25ZM17.25 10.5C16.0095 10.5 15 9.4905 15 8.25C15 7.0095 16.0095 6 17.25 6C18.4905 6 19.5 7.0095 19.5 8.25C19.5 9.4905 18.4905 10.5 17.25 10.5Z"/>' +
-      "</svg>";
+    scmBtn.innerHTML = SCM_ICON;
     scmBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "openScm" });
     });
@@ -669,8 +850,7 @@
       if (model.id === selectedModelId) {
         const check = document.createElement("span");
         check.className = "model-check";
-        check.innerHTML =
-          '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M3.5 8.5L6.5 11.5L12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        check.innerHTML = CHECK_ICON;
         btn.appendChild(check);
       }
 
@@ -832,9 +1012,72 @@
     });
   }
 
+  if (openSettingsBtn) {
+    openSettingsBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "showSettings" });
+    });
+  }
+
   if (backFromArchiveBtn) {
     backFromArchiveBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "showAgents" });
+    });
+  }
+
+  if (backFromSettingsBtn) {
+    backFromSettingsBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "showAgents" });
+    });
+  }
+
+  if (saveSettingsBtn) {
+    saveSettingsBtn.addEventListener("click", () => {
+      vscode.postMessage({
+        type: "saveSettings",
+        settings: collectSettings(),
+      });
+    });
+  }
+
+  if (addModelBtn) {
+    addModelBtn.addEventListener("click", () => {
+      settingsModels = readModelsFromDom();
+      settingsModels.push({ id: "", label: "" });
+      renderSettingsModels();
+    });
+  }
+
+  if (settingsModelsList) {
+    settingsModelsList.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest(".settings-model-remove");
+      if (!removeBtn) {
+        return;
+      }
+      const index = Number(removeBtn.dataset.index);
+      settingsModels = readModelsFromDom();
+      if (Number.isFinite(index) && index >= 0 && index < settingsModels.length) {
+        settingsModels.splice(index, 1);
+        if (!settingsModels.length) {
+          settingsModels.push({ id: "", label: "" });
+        }
+        renderSettingsModels();
+      }
+    });
+    settingsModelsList.addEventListener("input", (event) => {
+      const input = event.target.closest("[data-field]");
+      if (!input) {
+        return;
+      }
+      settingsModels = readModelsFromDom();
+      if (input.dataset.field === "id" || input.dataset.field === "label") {
+        syncDefaultModelSelect();
+      }
+    });
+  }
+
+  if (settingsDefaultModel) {
+    settingsDefaultModel.addEventListener("change", () => {
+      settingsDefaultModelId = settingsDefaultModel.value;
     });
   }
 
@@ -978,6 +1221,15 @@
         break;
       case "showArchive":
         showScreen("archive");
+        setBusy(false);
+        break;
+      case "showSettings":
+        showScreen("settings");
+        setBusy(false);
+        break;
+      case "settings":
+        fillSettings(msg.settings);
+        showScreen("settings");
         setBusy(false);
         break;
       case "showChat":

@@ -35,7 +35,7 @@ export interface AgentRecord {
   archivedAt?: number;
 }
 
-export type PanelScreen = "agents" | "chat" | "archive";
+export type PanelScreen = "agents" | "chat" | "archive" | "settings";
 
 export interface AgentsStoreV2 {
   version: 2;
@@ -274,7 +274,9 @@ export function migrateToStoreV2(
           ? "chat"
           : store.screen === "archive"
             ? "archive"
-            : "agents",
+            : store.screen === "settings"
+              ? "settings"
+              : "agents",
     };
   }
 
