@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.5.8",
+  "version": "0.6.1",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -119,6 +119,11 @@
               "label": {
                 "type": "string",
                 "description": "Отображаемое имя в селекторе"
+              },
+              "contextWindow": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "Размер контекстного окна модели в токенах (для индикатора)"
               }
             }
           }
@@ -127,6 +132,12 @@
           "type": "string",
           "default": "DeepSeek-V4-Flash",
           "description": "Модель по умолчанию (должна совпадать с id из agentPanel.models)"
+        },
+        "agentPanel.defaultContextWindow": {
+          "type": "number",
+          "default": 128000,
+          "minimum": 1024,
+          "description": "Контекстное окно по умолчанию (токены), если у модели не задан contextWindow"
         },
         "agentPanel.systemPrompt": {
           "type": "string",

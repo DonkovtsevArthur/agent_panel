@@ -2,6 +2,7 @@ import { getConfig } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import { buildEditorContextMessage } from "./editorContext";
 import {
+  ChatCompletionUsage,
   ChatMessage,
   OpenAICompatibleClient,
   ToolCall,
@@ -11,12 +12,20 @@ import { agentTools, runTool } from "./tools";
 
 export type AgentPhase = "thinking" | "editing" | "done";
 
+export interface ContextUsageInfo {
+  /** Занято токенов в окне (обычно prompt + completion последнего запроса). */
+  used: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export interface AgentRunCallbacks {
   onPhase: (phase: AgentPhase, detail?: string) => void;
   onTool: (text: string) => void;
   onFileEdit: (edit: FileEditStat) => void;
   onAssistant: (text: string) => void;
   onReview: (edits: FileEditStat[]) => void;
+  onUsage?: (usage: ContextUsageInfo) => void;
 }
 
 function toolSignature(call: ToolCall): string {
@@ -31,6 +40,41 @@ function formatEditingDetail(edits: FileEditStat[]): string {
   const filesLabel =
     files === 1 ? "1 файл" : files < 5 ? `${files} файла` : `${files} файлов`;
   return `Редактирует · ${filesLabel} · +${added} −${removed}`;
+}
+
+function estimateTokens(messages: ChatMessage[]): number {
+  let chars = 0;
+  for (const message of messages) {
+    if (message.content) {
+      chars += message.content.length;
+    }
+    if (message.tool_calls?.length) {
+      for (const call of message.tool_calls) {
+        chars += (call.function?.name || "").length;
+        chars += (call.function?.arguments || "").length;
+      }
+    }
+  }
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function resolveUsage(
+  usage: ChatCompletionUsage | undefined,
+  requestMessages: ChatMessage[]
+): ContextUsageInfo {
+  const promptTokens =
+    typeof usage?.prompt_tokens === "number" && usage.prompt_tokens > 0
+      ? usage.prompt_tokens
+      : estimateTokens(requestMessages);
+  const completionTokens =
+    typeof usage?.completion_tokens === "number" && usage.completion_tokens > 0
+      ? usage.completion_tokens
+      : 0;
+  const used =
+    typeof usage?.total_tokens === "number" && usage.total_tokens > 0
+      ? usage.total_tokens
+      : promptTokens + completionTokens;
+  return { used, promptTokens, completionTokens };
 }
 
 /** Для следующего хода оставляем только user + финальные ответы assistant. */
@@ -87,6 +131,13 @@ export async function runAgentTurn(options: {
   const seenToolCalls = new Set<string>();
   let answered = false;
 
+  const reportUsage = (
+    usage: ChatCompletionUsage | undefined,
+    requestMessages: ChatMessage[]
+  ) => {
+    options.callbacks.onUsage?.(resolveUsage(usage, requestMessages));
+  };
+
   const bumpEdit = (edit: FileEditStat) => {
     const prev = editsByPath.get(edit.path);
     if (!prev) {
@@ -116,7 +167,8 @@ export async function runAgentTurn(options: {
       editsByPath.size > 0 ? "Думает…" : "Думает…"
     );
 
-    const assistant = await client.chatCompletions(
+    const requestMessages = messages.slice();
+    const { message: assistant, usage } = await client.chatCompletions(
       {
         model: options.model,
         messages,
@@ -127,6 +179,7 @@ export async function runAgentTurn(options: {
       },
       options.signal
     );
+    reportUsage(usage, requestMessages);
 
     const toolCalls = (assistant.tool_calls ?? []).filter(
       (call) => call?.function?.name
@@ -217,22 +270,25 @@ export async function runAgentTurn(options: {
 
     options.callbacks.onPhase("thinking", "Думает…");
 
-    const finalMessage = await client.chatCompletions(
+    const finalRequest = [
+      ...messages,
       {
-        model: options.model,
-        messages: [
-          ...messages,
-          {
-            role: "user",
-            content:
-              "Инструменты больше недоступны. Кратко ответь пользователю по уже полученным данным. Не вызывай инструменты.",
-          },
-        ],
-        temperature: 0.2,
-        max_tokens: config.maxTokens,
+        role: "user" as const,
+        content:
+          "Инструменты больше недоступны. Кратко ответь пользователю по уже полученным данным. Не вызывай инструменты.",
       },
-      options.signal
-    );
+    ];
+    const { message: finalMessage, usage: finalUsage } =
+      await client.chatCompletions(
+        {
+          model: options.model,
+          messages: finalRequest,
+          temperature: 0.2,
+          max_tokens: config.maxTokens,
+        },
+        options.signal
+      );
+    reportUsage(finalUsage, finalRequest);
 
     let text = finalMessage.content?.trim() ?? "";
     if (!text && finalMessage.tool_calls?.length) {

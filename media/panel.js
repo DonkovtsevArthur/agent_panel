@@ -13,21 +13,40 @@
 
   const agentStatusEl = document.getElementById("agentStatus");
   const agentsScreen = document.getElementById("agentsScreen");
+  const archiveScreen = document.getElementById("archiveScreen");
   const chatScreen = document.getElementById("chatScreen");
   const agentsListEl = document.getElementById("agentsList");
+  const archiveListEl = document.getElementById("archiveList");
   const agentsSearch = document.getElementById("agentsSearch");
   const newAgentBtn = document.getElementById("newAgentBtn");
+  const openArchiveBtn = document.getElementById("openArchiveBtn");
+  const archiveCountBadge = document.getElementById("archiveCountBadge");
+  const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
+  const contextRingEl = document.getElementById("contextRing");
+  const contextRingValueEl = contextRingEl
+    ? contextRingEl.querySelector(".context-ring-value")
+    : null;
 
   let agentsData = [];
+  let archiveAgentsData = [];
+  let archiveOrphansData = [];
   let agentsFilter = "";
+  let contextUsed = 0;
+  let contextMax = 128000;
 
-  const DELETE_ICON =
+  const ARCHIVE_ICON =
     `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
-    `<path fill="currentColor" d="M6.2 1.75h3.6c.4 0 .7.3.7.7V3h2.75a.5.5 0 0 1 0 1H2.75a.5.5 0 0 1 0-1H5.5V2.45c0-.4.3-.7.7-.7z"/>` +
-    `<path fill="currentColor" fill-rule="evenodd" d="M3.85 5.25h8.3l-.58 7.55A1.85 1.85 0 0 1 9.73 14.5H6.27a1.85 1.85 0 0 1-1.84-1.7L3.85 5.25zm2.55 2.1a.55.55 0 0 1 .55.55v4.1a.55.55 0 0 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55zm3.2 0a.55.55 0 0 1 .55.55v4.1a.55.55 0 1 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55z"/>` +
+    `<path fill="currentColor" d="M2.5 2.25h11a1.25 1.25 0 0 1 1.25 1.25v1.1c0 .48-.39.9-.88.9H2.13a.9.9 0 0 1-.88-.9V3.5c0-.69.56-1.25 1.25-1.25z"/>` +
+    `<path fill="currentColor" d="M3.25 6.25h9.5v5.9c0 .97-.78 1.75-1.75 1.75h-6c-.97 0-1.75-.78-1.75-1.75v-5.9zm3.1 1.35a.55.55 0 0 0 0 1.1h3.3a.55.55 0 1 0 0-1.1h-3.3z"/>` +
+    `</svg>`;
+
+  const RESTORE_ICON =
+    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
+    `<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 9.5V3.5M5.5 5.75 8 3.25l2.5 2.5"/>` +
+    `<path fill="currentColor" d="M3 10.75h10v1.6c0 .9-.7 1.65-1.6 1.65H4.6c-.9 0-1.6-.75-1.6-1.65v-1.6z"/>` +
     `</svg>`;
 
   const DEFAULT_MODELS = [
@@ -60,6 +79,41 @@
     }
     agentStatusEl.hidden = false;
     agentStatusEl.textContent = text;
+  }
+
+  function formatTokenCount(n) {
+    const value = Math.max(0, Math.round(Number(n) || 0));
+    if (value >= 1_000_000) {
+      return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+    }
+    if (value >= 10_000) {
+      return `${Math.round(value / 1000)}k`;
+    }
+    if (value >= 1000) {
+      return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+    }
+    return String(value);
+  }
+
+  function setContextUsage(used, max) {
+    if (!contextRingEl || !contextRingValueEl) {
+      return;
+    }
+    contextUsed = Math.max(0, Number(used) || 0);
+    contextMax = Math.max(1, Number(max) || 128000);
+    const pct = Math.min(1, contextUsed / contextMax);
+    // pathLength=100 → проценты напрямую
+    const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
+    contextRingValueEl.setAttribute(
+      "stroke-dasharray",
+      `${filled} ${100 - filled}`
+    );
+    contextRingEl.classList.toggle("is-warn", pct >= 0.7 && pct < 0.9);
+    contextRingEl.classList.toggle("is-danger", pct >= 0.9);
+    const label = `${formatTokenCount(contextUsed)} / ${formatTokenCount(contextMax)} · ${Math.round(pct * 100)}%`;
+    contextRingEl.title = `Контекст: ${label}`;
+    contextRingEl.setAttribute("aria-label", `Использование контекста: ${label}`);
+    contextRingEl.hidden = false;
   }
 
   function formatToolLine(text) {
@@ -102,16 +156,154 @@
   }
 
   function showScreen(name) {
-    const isAgents = name === "agents";
+    const screen = name === "chat" || name === "archive" ? name : "agents";
     if (agentsScreen) {
-      agentsScreen.hidden = !isAgents;
+      agentsScreen.hidden = screen !== "agents";
+    }
+    if (archiveScreen) {
+      archiveScreen.hidden = screen !== "archive";
     }
     if (chatScreen) {
-      chatScreen.hidden = isAgents;
+      chatScreen.hidden = screen !== "chat";
     }
-    if (!isAgents) {
+    if (screen === "chat") {
+      setContextUsage(contextUsed, contextMax);
       focusPrompt();
     }
+  }
+
+  function setArchiveCount(count) {
+    if (!archiveCountBadge) {
+      return;
+    }
+    const n = Number(count) || 0;
+    if (n > 0) {
+      archiveCountBadge.hidden = false;
+      archiveCountBadge.textContent = n > 99 ? "99+" : String(n);
+    } else {
+      archiveCountBadge.hidden = true;
+      archiveCountBadge.textContent = "0";
+    }
+  }
+
+  function renderArchiveList() {
+    if (!archiveListEl) {
+      return;
+    }
+    const agents = archiveAgentsData || [];
+    const orphans = archiveOrphansData || [];
+    if (!agents.length && !orphans.length) {
+      archiveListEl.innerHTML =
+        '<div class="agents-empty">Архив пуст.</div>';
+      return;
+    }
+
+    const agentBlocks = agents
+      .map((a) => {
+        const chats = (a.chats || [])
+          .map(
+            () =>
+              `<div class="chat-row-wrap">` +
+              `<div class="chat-row archive-row">` +
+              `<span class="chat-row-main">` +
+              `<span class="chat-row-title"></span>` +
+              `<span class="chat-row-preview"></span>` +
+              `</span>` +
+              `<span class="chat-row-time"></span>` +
+              `</div>` +
+              `<button type="button" class="row-action row-restore is-visible" data-restore-chat="" data-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
+              RESTORE_ICON +
+              `</button>` +
+              `</div>`
+          )
+          .join("");
+        return (
+          `<div class="agent-block is-open archive-block" data-agent="${a.id}">` +
+          `<div class="agent-row-wrap">` +
+          `<div class="agent-row no-expand">` +
+          `<span class="agent-chevron is-hidden" aria-hidden="true"></span>` +
+          `<span class="agent-main">` +
+          `<div class="agent-name"></div>` +
+          `<div class="agent-meta"><span class="agent-preview">Агент</span></div>` +
+          `</span>` +
+          `<span class="agent-time"></span>` +
+          `</div>` +
+          `<button type="button" class="row-action row-restore is-visible" data-restore-agent="${a.id}" title="Восстановить агента" aria-label="Восстановить агента">` +
+          RESTORE_ICON +
+          `</button>` +
+          `</div>` +
+          (chats ? `<div class="agent-chats">${chats}</div>` : "") +
+          `</div>`
+        );
+      })
+      .join("");
+
+    const orphanBlocks = orphans
+      .map(
+        () =>
+          `<div class="chat-row-wrap orphan-wrap">` +
+          `<div class="chat-row archive-row">` +
+          `<span class="chat-row-main">` +
+          `<span class="chat-row-title"></span>` +
+          `<span class="chat-row-preview"></span>` +
+          `</span>` +
+          `<span class="chat-row-time"></span>` +
+          `</div>` +
+          `<button type="button" class="row-action row-restore is-visible" data-restore-chat="" data-agent="" title="Восстановить" aria-label="Восстановить">` +
+          RESTORE_ICON +
+          `</button>` +
+          `</div>`
+      )
+      .join("");
+
+    archiveListEl.innerHTML =
+      (orphans.length
+        ? `<div class="archive-section-title">Чаты</div>${orphanBlocks}`
+        : "") +
+      (agents.length
+        ? `<div class="archive-section-title">Агенты</div>${agentBlocks}`
+        : "");
+
+    if (orphans.length) {
+      const orphanRows = archiveListEl.querySelectorAll(".orphan-wrap");
+      orphans.forEach((o, i) => {
+        const wrap = orphanRows[i];
+        if (!wrap) {
+          return;
+        }
+        wrap.querySelector(".chat-row-title").textContent =
+          `${o.agentName || "Агент"} · ${o.chat.title || "Чат"}`;
+        wrap.querySelector(".chat-row-preview").textContent =
+          o.chat.preview || "";
+        wrap.querySelector(".chat-row-time").textContent = o.chat.time || "";
+        const btn = wrap.querySelector(".row-restore");
+        btn.dataset.restoreChat = o.chat.id;
+        btn.dataset.agent = o.agentId;
+      });
+    }
+
+    const blocks = archiveListEl.querySelectorAll(".archive-block");
+    agents.forEach((a, index) => {
+      const block = blocks[index];
+      if (!block) {
+        return;
+      }
+      block.querySelector(".agent-name").textContent = a.name || "Агент";
+      block.querySelector(".agent-time").textContent = a.time || "";
+      const chatRows = block.querySelectorAll(".chat-row-wrap");
+      (a.chats || []).forEach((c, ci) => {
+        const wrap = chatRows[ci];
+        if (!wrap) {
+          return;
+        }
+        wrap.querySelector(".chat-row-title").textContent = c.title || "Чат";
+        wrap.querySelector(".chat-row-preview").textContent = c.preview || "";
+        wrap.querySelector(".chat-row-time").textContent = c.time || "";
+        const btn = wrap.querySelector(".row-restore");
+        btn.dataset.restoreChat = c.id;
+        btn.dataset.agent = a.id;
+      });
+    });
   }
 
   function renderAgentsList() {
@@ -165,8 +357,8 @@
               `</span>` +
               `<span class="chat-row-time"></span>` +
               `</button>` +
-              `<button type="button" class="row-action row-delete" data-delete-chat="${c.id}" data-agent="${a.id}" title="Удалить чат" aria-label="Удалить чат">` +
-              DELETE_ICON +
+              `<button type="button" class="row-action row-archive" data-archive-chat="${c.id}" data-agent="${a.id}" title="В архив" aria-label="В архив">` +
+              ARCHIVE_ICON +
               `</button>` +
               `</div>`
           )
@@ -189,8 +381,8 @@
           `<path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>` +
           `</svg>` +
           `</button>` +
-          `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить агента" aria-label="Удалить агента">` +
-          DELETE_ICON +
+          `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
+          ARCHIVE_ICON +
           `</button>` +
           `</div>` +
           (hasChats ? `<div class="agent-chats">${chats}</div>` : "") +
@@ -766,6 +958,18 @@
     });
   }
 
+  if (openArchiveBtn) {
+    openArchiveBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "showArchive" });
+    });
+  }
+
+  if (backFromArchiveBtn) {
+    backFromArchiveBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "showAgents" });
+    });
+  }
+
   if (backToAgentsBtn) {
     backToAgentsBtn.addEventListener("click", () => {
       if (busy) {
@@ -779,6 +983,29 @@
     agentsSearch.addEventListener("input", () => {
       agentsFilter = agentsSearch.value || "";
       renderAgentsList();
+    });
+  }
+
+  if (archiveListEl) {
+    archiveListEl.addEventListener("click", (event) => {
+      const restoreBtn = event.target.closest(".row-restore");
+      if (!restoreBtn) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (restoreBtn.dataset.restoreAgent) {
+        vscode.postMessage({
+          type: "restoreAgent",
+          agentId: restoreBtn.dataset.restoreAgent,
+        });
+      } else if (restoreBtn.dataset.restoreChat) {
+        vscode.postMessage({
+          type: "restoreChat",
+          agentId: restoreBtn.dataset.agent,
+          chatId: restoreBtn.dataset.restoreChat,
+        });
+      }
     });
   }
 
@@ -796,20 +1023,20 @@
         }
         return;
       }
-      const deleteBtn = event.target.closest(".row-delete");
-      if (deleteBtn) {
+      const archiveBtn = event.target.closest(".row-archive");
+      if (archiveBtn) {
         event.preventDefault();
         event.stopPropagation();
-        if (deleteBtn.dataset.deleteAgent) {
+        if (archiveBtn.dataset.archiveAgent) {
           vscode.postMessage({
-            type: "deleteAgent",
-            agentId: deleteBtn.dataset.deleteAgent,
+            type: "archiveAgent",
+            agentId: archiveBtn.dataset.archiveAgent,
           });
-        } else if (deleteBtn.dataset.deleteChat) {
+        } else if (archiveBtn.dataset.archiveChat) {
           vscode.postMessage({
-            type: "deleteChat",
-            agentId: deleteBtn.dataset.agent,
-            chatId: deleteBtn.dataset.deleteChat,
+            type: "archiveChat",
+            agentId: archiveBtn.dataset.agent,
+            chatId: archiveBtn.dataset.archiveChat,
           });
         }
         return;
@@ -878,18 +1105,38 @@
         if (chatTitleEl && msg.chatTitle) {
           chatTitleEl.textContent = msg.chatTitle;
         }
-        showScreen(msg.screen === "chat" ? "chat" : "agents");
+        if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+        }
+        showScreen(msg.screen || "agents");
         setBusy(false);
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
         renderAgentsList();
-        if (msg.screen) {
-          showScreen(msg.screen === "chat" ? "chat" : "agents");
+        if (typeof msg.archiveCount === "number") {
+          setArchiveCount(msg.archiveCount);
         }
+        if (msg.screen === "agents" || msg.screen === "chat") {
+          showScreen(msg.screen);
+        }
+        break;
+      case "archiveList":
+        archiveAgentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        archiveOrphansData = Array.isArray(msg.orphanChats) ? msg.orphanChats : [];
+        renderArchiveList();
+        if (typeof msg.archiveCount === "number") {
+          setArchiveCount(msg.archiveCount);
+        }
+        showScreen("archive");
+        setBusy(false);
         break;
       case "showAgents":
         showScreen("agents");
+        setBusy(false);
+        break;
+      case "showArchive":
+        showScreen("archive");
         setBusy(false);
         break;
       case "showChat":
@@ -905,8 +1152,14 @@
         if (chatTitleEl && msg.chatTitle) {
           chatTitleEl.textContent = msg.chatTitle;
         }
+        if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+        }
         showScreen("chat");
         setBusy(false);
+        break;
+      case "contextUsage":
+        setContextUsage(msg.used || 0, msg.max || contextMax);
         break;
       case "modelsUpdated":
         fillModels(msg.models, getSelectedModel() || msg.selectedModel);
@@ -956,12 +1209,14 @@
         messagesEl.innerHTML = "";
         streamingEl = null;
         setAgentStatus("", true);
+        setContextUsage(0, contextMax);
         setBusy(false);
         break;
     }
   });
 
   vscode.postMessage({ type: "ready" });
+  setContextUsage(0, contextMax);
 
   // если init потерялся — перезапросим модели
   setTimeout(() => {
