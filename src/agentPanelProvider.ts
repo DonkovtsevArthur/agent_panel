@@ -41,6 +41,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private readonly disposables: vscode.Disposable[] = [];
   private scmRefreshTimer?: ReturnType<typeof setTimeout>;
   private gitApiBound = false;
+  private pendingScmReturnRefresh = false;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -70,9 +71,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }),
       webviewView.onDidChangeVisibility(() => {
         if (webviewView.visible) {
-          // не перерисовывать историю — иначе пропадает карточка изменённых файлов
           this.postModels();
           this.scheduleScmRefresh();
+          if (this.pendingScmReturnRefresh) {
+            this.pendingScmReturnRefresh = false;
+            // git index после discard обновляется с задержкой
+            setTimeout(() => this.scheduleScmRefresh(), 700);
+          }
         }
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -173,6 +178,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.openWorkspaceFile(message.path);
         break;
       case "openScm":
+        this.pendingScmReturnRefresh = true;
         await vscode.commands.executeCommand("workbench.view.scm");
         break;
       case "openExternal": {
