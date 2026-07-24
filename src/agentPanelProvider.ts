@@ -8,18 +8,16 @@ import {
   AgentsStoreV2,
   UiMessage,
   archiveAgentInStore,
-  archiveChatInStore,
   buildAgentsList,
   buildArchiveList,
   countArchived,
   createEmptyAgent,
-  createEmptyChat,
+  deleteAgentFromStore,
   ensureActiveVisible,
   formatListTime,
   getActiveChat,
   migrateToStoreV2,
   restoreAgentInStore,
-  restoreChatInStore,
   touchChat,
 } from "./sessionStore";
 
@@ -27,17 +25,15 @@ type WebviewToHost =
   | { type: "ready" }
   | { type: "send"; text: string; model: string }
   | { type: "stop" }
-  | { type: "newChat"; agentId?: string }
+  | { type: "newChat" }
   | { type: "newAgent" }
-  | { type: "openChat"; agentId: string; chatId: string }
-  | { type: "toggleAgent"; agentId: string }
+  | { type: "openAgent"; agentId: string }
   | { type: "showAgents" }
   | { type: "showArchive" }
   | { type: "renameAgent"; agentId: string; name: string }
   | { type: "archiveAgent"; agentId: string }
-  | { type: "archiveChat"; agentId: string; chatId: string }
   | { type: "restoreAgent"; agentId: string }
-  | { type: "restoreChat"; agentId: string; chatId: string }
+  | { type: "deleteAgent"; agentId: string }
   | { type: "modelChanged"; model: string }
   | { type: "openFile"; path: string }
   | { type: "openScm" }
@@ -93,7 +89,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }),
       webviewView.onDidChangeVisibility(() => {
         if (webviewView.visible) {
-          this.postModels();
+          // Принудительно обновляем HTML — иначе retainContextWhenHidden
+          // может держать старую разметку без индикатора контекста.
+          webviewView.webview.html = this.getHtml(webviewView.webview);
+          void this.postInit();
           this.scheduleScmRefresh();
           if (this.pendingScmReturnRefresh) {
             this.pendingScmReturnRefresh = false;
@@ -118,8 +117,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.postInit();
   }
 
-  /** Новый чат в указанном или текущем агенте (или новый агент, если агентов нет). */
-  newChat(agentId?: string): void {
+  /** Новый чат теперь всегда создаёт нового агента. */
+  newChat(): void {
     this.abort?.abort();
     this.abort = undefined;
 
@@ -127,28 +126,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const model =
       this.selectedModel || config.defaultModel || config.models[0]?.id || "";
 
-    let agent = agentId
-      ? this.store.agents.find((a) => a.id === agentId)
-      : this.store.agents.find((a) => a.id === this.store.activeAgentId);
-    if (!agent) {
-      const created = createEmptyAgent(model);
-      this.store.agents.unshift(created.agent);
-      this.store.chats[created.chat.id] = created.chat;
-      this.store.activeAgentId = created.agent.id;
-      this.store.activeChatId = created.chat.id;
-      this.store.expandedAgentIds = [created.agent.id];
-      agent = created.agent;
-    } else {
-      const chat = createEmptyChat(model);
-      this.store.chats[chat.id] = chat;
-      agent.chatIds.unshift(chat.id);
-      agent.updatedAt = chat.updatedAt;
-      this.store.activeAgentId = agent.id;
-      this.store.activeChatId = chat.id;
-      if (!this.store.expandedAgentIds.includes(agent.id)) {
-        this.store.expandedAgentIds.push(agent.id);
-      }
-    }
+    const created = createEmptyAgent(model);
+    this.persistActiveChat();
+    this.store.agents.unshift(created.agent);
+    this.store.chats[created.chat.id] = created.chat;
+    this.store.activeAgentId = created.agent.id;
+    this.store.activeChatId = created.chat.id;
 
     this.setScreen("chat");
     this.hydrateActiveChat();
@@ -271,15 +254,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
       time: formatListTime(a.updatedAt),
-      open: a.open,
       active: a.active,
-      chats: a.chats.map((c) => ({
-        id: c.id,
-        title: c.title,
-        preview: c.preview,
-        time: formatListTime(c.updatedAt),
-        active: c.active,
-      })),
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
@@ -293,26 +268,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const archive = buildArchiveList(this.store);
     this.view?.webview.postMessage({
       type: "archiveList",
-      agents: archive.agents.map((a) => ({
+      agents: archive.map((a) => ({
         id: a.id,
         name: a.name,
+        preview: a.preview,
         time: formatListTime(a.archivedAt),
-        chats: a.chats.map((c) => ({
-          id: c.id,
-          title: c.title,
-          preview: c.preview,
-          time: formatListTime(c.archivedAt),
-        })),
-      })),
-      orphanChats: archive.orphanChats.map((o) => ({
-        agentId: o.agentId,
-        agentName: o.agentName,
-        chat: {
-          id: o.chat.id,
-          title: o.chat.title,
-          preview: o.chat.preview,
-          time: formatListTime(o.chat.archivedAt),
-        },
       })),
       archiveCount: countArchived(this.store),
       screen: "archive",
@@ -335,7 +295,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
       agentName: agent?.name || "Агент",
-      chatTitle: getActiveChat(this.store)?.title || "Чат",
+      chatTitle: agent?.name || "Агент",
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
     });
@@ -353,7 +313,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postContextUsage();
         break;
       case "newChat":
-        this.newChat(message.agentId);
+        this.newChat();
         break;
       case "newAgent":
         await this.createAgent();
@@ -376,32 +336,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postArchiveList();
         this.view?.webview.postMessage({ type: "showArchive" });
         break;
-      case "toggleAgent": {
-        const id = message.agentId;
-        const agent = this.store.agents.find((a) => a.id === id);
-        const hasChats =
-          Boolean(agent) &&
-          !agent?.archivedAt &&
-          agent!.chatIds.some((chatId) => {
-            const chat = this.store.chats[chatId];
-            return Boolean(chat) && !chat.archivedAt;
-          });
-        if (!hasChats) {
-          break;
-        }
-        const set = new Set(this.store.expandedAgentIds);
-        if (set.has(id)) {
-          set.delete(id);
-        } else {
-          set.add(id);
-        }
-        this.store.expandedAgentIds = [...set];
-        this.saveStore();
-        this.postAgentsList();
-        break;
-      }
-      case "openChat":
-        this.openChat(message.agentId, message.chatId);
+      case "openAgent":
+        this.openAgent(message.agentId);
         break;
       case "renameAgent": {
         const agent = this.store.agents.find((a) => a.id === message.agentId);
@@ -416,14 +352,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "archiveAgent":
         await this.confirmArchiveAgent(message.agentId);
         break;
-      case "archiveChat":
-        await this.confirmArchiveChat(message.agentId, message.chatId);
-        break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
         break;
-      case "restoreChat":
-        this.restoreChat(message.agentId, message.chatId);
+      case "deleteAgent":
+        await this.confirmDeleteAgent(message.agentId);
         break;
       case "stop":
         this.abort?.abort();
@@ -454,29 +387,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private openChat(agentId: string, chatId: string): void {
+  private openAgent(agentId: string): void {
     this.abort?.abort();
     this.abort = undefined;
     this.persistActiveChat();
 
     const agent = this.store.agents.find((a) => a.id === agentId);
-    const chat = this.store.chats[chatId];
+    const chat = agent ? this.store.chats[agent.chatId] : undefined;
     if (
       !agent ||
       !chat ||
       agent.archivedAt ||
-      chat.archivedAt ||
-      !agent.chatIds.includes(chatId)
+      chat.archivedAt
     ) {
       return;
     }
 
     this.store.activeAgentId = agentId;
-    this.store.activeChatId = chatId;
+    this.store.activeChatId = agent.chatId;
     this.setScreen("chat");
-    if (!this.store.expandedAgentIds.includes(agentId)) {
-      this.store.expandedAgentIds.push(agentId);
-    }
     this.hydrateActiveChat();
     this.saveStore();
     this.postChatScreen();
@@ -503,10 +432,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
     this.store.activeChatId = created.chat.id;
-    this.store.expandedAgentIds = [
-      created.agent.id,
-      ...this.store.expandedAgentIds.filter((id) => id !== created.agent.id),
-    ];
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -518,17 +443,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!agent || agent.archivedAt) {
       return;
     }
-    const chatsCount = agent.chatIds.filter((id) => {
-      const chat = this.store.chats[id];
-      return Boolean(chat) && !chat.archivedAt;
-    }).length;
-    const detail =
-      chatsCount > 0
-        ? `В архив также попадут все чаты агента (${chatsCount}). Их можно будет восстановить позже.`
-        : "Агента можно будет восстановить из архива позже.";
     const answer = await vscode.window.showWarningMessage(
       `Архивировать агента «${agent.name}»?`,
-      { modal: true, detail },
+      {
+        modal: true,
+        detail: "Агента можно будет восстановить из архива позже.",
+      },
       "В архив"
     );
     if (answer !== "В архив") {
@@ -548,52 +468,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "showAgents" });
   }
 
-  private async confirmArchiveChat(
-    agentId: string,
-    chatId: string
-  ): Promise<void> {
-    const agent = this.store.agents.find((a) => a.id === agentId);
-    const chat = this.store.chats[chatId];
-    if (
-      !agent ||
-      !chat ||
-      agent.archivedAt ||
-      chat.archivedAt ||
-      !agent.chatIds.includes(chatId)
-    ) {
-      return;
-    }
-    const answer = await vscode.window.showWarningMessage(
-      `Архивировать чат «${chat.title || "Новый чат"}»?`,
-      {
-        modal: true,
-        detail: "Чат исчезнет из списка, но сохранится в архиве.",
-      },
-      "В архив"
-    );
-    if (answer !== "В архив") {
-      return;
-    }
-
-    const wasActive = this.store.activeChatId === chatId;
-    if (wasActive) {
-      this.abort?.abort();
-      this.abort = undefined;
-    } else {
-      this.persistActiveChat();
-    }
-
-    if (!archiveChatInStore(this.store, agentId, chatId)) {
-      return;
-    }
-
-    this.setScreen("agents");
-    this.hydrateActiveChat();
-    this.saveStore();
-    this.postAgentsList();
-    this.view?.webview.postMessage({ type: "showAgents" });
-  }
-
   private restoreAgent(agentId: string): void {
     this.persistActiveChat();
     if (!restoreAgentInStore(this.store, agentId)) {
@@ -605,15 +479,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.postAgentsList();
   }
 
-  private restoreChat(agentId: string, chatId: string): void {
-    this.persistActiveChat();
-    if (!restoreChatInStore(this.store, agentId, chatId)) {
+  private async confirmDeleteAgent(agentId: string): Promise<void> {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (!agent) {
       return;
     }
-    this.setScreen("archive");
+    const answer = await vscode.window.showWarningMessage(
+      `Удалить «${agent.name}» безвозвратно?`,
+      {
+        modal: true,
+        detail: "История сообщений будет удалена без возможности восстановления.",
+      },
+      "Удалить"
+    );
+    if (answer !== "Удалить") {
+      return;
+    }
+
+    this.abort?.abort();
+    this.abort = undefined;
+    this.persistActiveChat();
+    if (!deleteAgentFromStore(this.store, agentId)) {
+      return;
+    }
+    this.hydrateActiveChat();
     this.saveStore();
-    this.postArchiveList();
-    this.postAgentsList();
+    if (this.store.screen === "archive") {
+      this.postArchiveList();
+      this.postAgentsList();
+    } else {
+      this.setScreen("agents");
+      this.postAgentsList();
+      this.view?.webview.postMessage({ type: "showAgents" });
+    }
   }
 
   private async pickModel(): Promise<void> {
@@ -936,13 +834,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private getHtml(webview: vscode.Webview): string {
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
-        ?.version ?? String(Date.now());
+        ?.version ?? "0";
+    const bust = `${version}-${Date.now()}`;
     const cssUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.css"))
-      .with({ query: `v=${version}` });
+      .with({ query: `v=${bust}` });
     const jsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.js"))
-      .with({ query: `v=${version}` });
+      .with({ query: `v=${bust}` });
     const nonce = getNonce();
 
     return `<!DOCTYPE html>
@@ -999,7 +898,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </button>
       <div class="chat-top-text">
         <div id="chatAgentName" class="chat-agent-name">Агент</div>
-        <div id="chatTitle" class="chat-title">Чат</div>
+        <div id="chatTitle" class="chat-title" hidden></div>
       </div>
     </div>
     <div id="messages"></div>
@@ -1009,7 +908,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
-            <button class="icon-btn" id="newChatBtn" title="Новый чат" aria-label="Новый чат">
+            <button class="icon-btn" id="newChatBtn" title="Новый агент" aria-label="Новый агент">
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                 <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
               </svg>
@@ -1025,13 +924,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </div>
           </div>
           <div class="composer-footer-right">
-            <button type="button" class="context-ring" id="contextRing" title="Контекст: 0 / 128k" aria-label="Использование контекста">
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke-width="3"/>
-                <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke-width="3"
-                  stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
-              </svg>
-            </button>
             <button class="primary" id="sendBtn" title="Отправить" aria-label="Отправить" data-mode="send">
               <svg class="icon-send" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                 <path d="M8 12.5V3.5M8 3.5L4 7.5M8 3.5l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1042,6 +934,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </button>
           </div>
         </div>
+      </div>
+      <div class="composer-meta">
+        <button type="button" class="context-meter" id="contextRing" title="Контекст: 0 / 128k" aria-label="Использование контекста">
+          <svg class="context-ring" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3"/>
+            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3"
+              stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
+          </svg>
+          <span class="context-meter-label" id="contextRingLabel">0% контекст</span>
+        </button>
       </div>
     </div>
   </section>

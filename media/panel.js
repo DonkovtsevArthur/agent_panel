@@ -29,10 +29,10 @@
   const contextRingValueEl = contextRingEl
     ? contextRingEl.querySelector(".context-ring-value")
     : null;
+  const contextRingLabelEl = document.getElementById("contextRingLabel");
 
   let agentsData = [];
   let archiveAgentsData = [];
-  let archiveOrphansData = [];
   let agentsFilter = "";
   let contextUsed = 0;
   let contextMax = 128000;
@@ -47,6 +47,12 @@
     `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
     `<path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 9.5V3.5M5.5 5.75 8 3.25l2.5 2.5"/>` +
     `<path fill="currentColor" d="M3 10.75h10v1.6c0 .9-.7 1.65-1.6 1.65H4.6c-.9 0-1.6-.75-1.6-1.65v-1.6z"/>` +
+    `</svg>`;
+
+  const DELETE_ICON =
+    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
+    `<path fill="currentColor" d="M6.2 1.75h3.6c.4 0 .7.3.7.7V3h2.75a.5.5 0 0 1 0 1H2.75a.5.5 0 0 1 0-1H5.5V2.45c0-.4.3-.7.7-.7z"/>` +
+    `<path fill="currentColor" fill-rule="evenodd" d="M3.85 5.25h8.3l-.58 7.55A1.85 1.85 0 0 1 9.73 14.5H6.27a1.85 1.85 0 0 1-1.84-1.7L3.85 5.25zm2.55 2.1a.55.55 0 0 1 .55.55v4.1a.55.55 0 0 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55zm3.2 0a.55.55 0 0 1 .55.55v4.1a.55.55 0 1 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55z"/>` +
     `</svg>`;
 
   const DEFAULT_MODELS = [
@@ -95,22 +101,31 @@
     return String(value);
   }
 
+  function contextPct(used, max) {
+    const u = Math.max(0, Number(used) || 0);
+    const m = Math.max(1, Number(max) || 128000);
+    return Math.min(1, u / m);
+  }
+
   function setContextUsage(used, max) {
     if (!contextRingEl || !contextRingValueEl) {
       return;
     }
     contextUsed = Math.max(0, Number(used) || 0);
     contextMax = Math.max(1, Number(max) || 128000);
-    const pct = Math.min(1, contextUsed / contextMax);
-    // pathLength=100 → проценты напрямую
+    const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
+    const pctLabel = Math.round(pct * 100);
     contextRingValueEl.setAttribute(
       "stroke-dasharray",
       `${filled} ${100 - filled}`
     );
     contextRingEl.classList.toggle("is-warn", pct >= 0.7 && pct < 0.9);
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
-    const label = `${formatTokenCount(contextUsed)} / ${formatTokenCount(contextMax)} · ${Math.round(pct * 100)}%`;
+    if (contextRingLabelEl) {
+      contextRingLabelEl.textContent = `${pctLabel}% контекст`;
+    }
+    const label = `${formatTokenCount(contextUsed)} / ${formatTokenCount(contextMax)} · ${pctLabel}%`;
     contextRingEl.title = `Контекст: ${label}`;
     contextRingEl.setAttribute("aria-label", `Использование контекста: ${label}`);
     contextRingEl.hidden = false;
@@ -191,118 +206,40 @@
       return;
     }
     const agents = archiveAgentsData || [];
-    const orphans = archiveOrphansData || [];
-    if (!agents.length && !orphans.length) {
+    if (!agents.length) {
       archiveListEl.innerHTML =
         '<div class="agents-empty">Архив пуст.</div>';
       return;
     }
 
-    const agentBlocks = agents
-      .map((a) => {
-        const chats = (a.chats || [])
-          .map(
-            () =>
-              `<div class="chat-row-wrap">` +
-              `<div class="chat-row archive-row">` +
-              `<span class="chat-row-main">` +
-              `<span class="chat-row-title"></span>` +
-              `<span class="chat-row-preview"></span>` +
-              `</span>` +
-              `<span class="chat-row-time"></span>` +
-              `</div>` +
-              `<button type="button" class="row-action row-restore is-visible" data-restore-chat="" data-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
-              RESTORE_ICON +
-              `</button>` +
-              `</div>`
-          )
-          .join("");
-        return (
-          `<div class="agent-block is-open archive-block" data-agent="${a.id}">` +
+    archiveListEl.innerHTML = agents
+      .map(
+        (a) =>
+          `<div class="agent-block archive-block" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
-          `<div class="agent-row no-expand">` +
-          `<span class="agent-chevron is-hidden" aria-hidden="true"></span>` +
+          `<div class="agent-row flat">` +
           `<span class="agent-main">` +
           `<div class="agent-name"></div>` +
-          `<div class="agent-meta"><span class="agent-preview">Агент</span></div>` +
+          `<div class="agent-meta"><span class="agent-preview"></span></div>` +
           `</span>` +
           `<span class="agent-time"></span>` +
           `</div>` +
-          `<button type="button" class="row-action row-restore is-visible" data-restore-agent="${a.id}" title="Восстановить агента" aria-label="Восстановить агента">` +
+          `<button type="button" class="row-action row-restore is-visible" data-restore-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
           RESTORE_ICON +
           `</button>` +
           `</div>` +
-          (chats ? `<div class="agent-chats">${chats}</div>` : "") +
-          `</div>`
-        );
-      })
-      .join("");
-
-    const orphanBlocks = orphans
-      .map(
-        () =>
-          `<div class="chat-row-wrap orphan-wrap">` +
-          `<div class="chat-row archive-row">` +
-          `<span class="chat-row-main">` +
-          `<span class="chat-row-title"></span>` +
-          `<span class="chat-row-preview"></span>` +
-          `</span>` +
-          `<span class="chat-row-time"></span>` +
-          `</div>` +
-          `<button type="button" class="row-action row-restore is-visible" data-restore-chat="" data-agent="" title="Восстановить" aria-label="Восстановить">` +
-          RESTORE_ICON +
-          `</button>` +
           `</div>`
       )
       .join("");
 
-    archiveListEl.innerHTML =
-      (orphans.length
-        ? `<div class="archive-section-title">Чаты</div>${orphanBlocks}`
-        : "") +
-      (agents.length
-        ? `<div class="archive-section-title">Агенты</div>${agentBlocks}`
-        : "");
-
-    if (orphans.length) {
-      const orphanRows = archiveListEl.querySelectorAll(".orphan-wrap");
-      orphans.forEach((o, i) => {
-        const wrap = orphanRows[i];
-        if (!wrap) {
-          return;
-        }
-        wrap.querySelector(".chat-row-title").textContent =
-          `${o.agentName || "Агент"} · ${o.chat.title || "Чат"}`;
-        wrap.querySelector(".chat-row-preview").textContent =
-          o.chat.preview || "";
-        wrap.querySelector(".chat-row-time").textContent = o.chat.time || "";
-        const btn = wrap.querySelector(".row-restore");
-        btn.dataset.restoreChat = o.chat.id;
-        btn.dataset.agent = o.agentId;
-      });
-    }
-
-    const blocks = archiveListEl.querySelectorAll(".archive-block");
     agents.forEach((a, index) => {
-      const block = blocks[index];
+      const block = archiveListEl.children[index];
       if (!block) {
         return;
       }
       block.querySelector(".agent-name").textContent = a.name || "Агент";
+      block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
-      const chatRows = block.querySelectorAll(".chat-row-wrap");
-      (a.chats || []).forEach((c, ci) => {
-        const wrap = chatRows[ci];
-        if (!wrap) {
-          return;
-        }
-        wrap.querySelector(".chat-row-title").textContent = c.title || "Чат";
-        wrap.querySelector(".chat-row-preview").textContent = c.preview || "";
-        wrap.querySelector(".chat-row-time").textContent = c.time || "";
-        const btn = wrap.querySelector(".row-restore");
-        btn.dataset.restoreChat = c.id;
-        btn.dataset.agent = a.id;
-      });
     });
   }
 
@@ -313,27 +250,12 @@
     const q = agentsFilter.trim().toLowerCase();
     const list = !q
       ? agentsData
-      : agentsData
-          .map((a) => {
-            const chats = (a.chats || []).filter(
-              (c) =>
-                (c.title || "").toLowerCase().includes(q) ||
-                (c.preview || "").toLowerCase().includes(q)
-            );
-            const hitAgent =
-              (a.name || "").toLowerCase().includes(q) ||
-              (a.preview || "").toLowerCase().includes(q) ||
-              (a.model || "").toLowerCase().includes(q);
-            if (!hitAgent && !chats.length) {
-              return null;
-            }
-            return {
-              ...a,
-              open: hitAgent || a.open || chats.length > 0,
-              chats: hitAgent ? a.chats || [] : chats,
-            };
-          })
-          .filter(Boolean);
+      : agentsData.filter(
+          (a) =>
+            (a.name || "").toLowerCase().includes(q) ||
+            (a.preview || "").toLowerCase().includes(q) ||
+            (a.model || "").toLowerCase().includes(q)
+        );
 
     if (!list.length) {
       agentsListEl.innerHTML =
@@ -342,53 +264,23 @@
     }
 
     agentsListEl.innerHTML = list
-      .map((a) => {
-        const chatItems = a.chats || [];
-        const hasChats = chatItems.length > 0;
-        const isOpen = hasChats && a.open;
-        const chats = chatItems
-          .map(
-            (c) =>
-              `<div class="chat-row-wrap">` +
-              `<button type="button" class="chat-row${c.active ? " is-active" : ""}" data-agent="${a.id}" data-chat="${c.id}">` +
-              `<span class="chat-row-main">` +
-              `<span class="chat-row-title"></span>` +
-              `<span class="chat-row-preview"></span>` +
-              `</span>` +
-              `<span class="chat-row-time"></span>` +
-              `</button>` +
-              `<button type="button" class="row-action row-archive" data-archive-chat="${c.id}" data-agent="${a.id}" title="В архив" aria-label="В архив">` +
-              ARCHIVE_ICON +
-              `</button>` +
-              `</div>`
-          )
-          .join("");
-        return (
-          `<div class="agent-block${isOpen ? " is-open" : ""}${a.active ? " is-active" : ""}${hasChats ? "" : " no-chats"}" data-agent="${a.id}">` +
+      .map(
+        (a) =>
+          `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
-          `<button type="button" class="agent-row${hasChats ? "" : " no-expand"}" data-agent="${a.id}" data-has-chats="${hasChats ? "1" : "0"}"${hasChats ? "" : " aria-disabled=\"true\""}>` +
-          (hasChats
-            ? `<span class="agent-chevron">▸</span>`
-            : `<span class="agent-chevron is-hidden" aria-hidden="true"></span>`) +
+          `<button type="button" class="agent-row flat" data-agent="${a.id}">` +
           `<span class="agent-main">` +
           `<div class="agent-name"></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
           `<span class="agent-time"></span>` +
           `</button>` +
-          `<button type="button" class="row-action row-new-chat" data-new-chat="${a.id}" title="Новый чат" aria-label="Новый чат">` +
-          `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">` +
-          `<path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>` +
-          `</svg>` +
-          `</button>` +
           `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
           ARCHIVE_ICON +
           `</button>` +
           `</div>` +
-          (hasChats ? `<div class="agent-chats">${chats}</div>` : "") +
           `</div>`
-        );
-      })
+      )
       .join("");
 
     list.forEach((a, index) => {
@@ -400,19 +292,6 @@
       block.querySelector(".agent-chip").textContent = a.model || "—";
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
-      const chatRows = block.querySelectorAll(".chat-row");
-      (a.chats || []).forEach((c, ci) => {
-        const row = chatRows[ci];
-        if (!row) {
-          return;
-        }
-        row.querySelector(".chat-row-title").textContent = c.title || "Чат";
-        const previewEl = row.querySelector(".chat-row-preview");
-        if (previewEl) {
-          previewEl.textContent = c.preview || "";
-        }
-        row.querySelector(".chat-row-time").textContent = c.time || "";
-      });
     });
   }
 
@@ -999,30 +878,12 @@
           type: "restoreAgent",
           agentId: restoreBtn.dataset.restoreAgent,
         });
-      } else if (restoreBtn.dataset.restoreChat) {
-        vscode.postMessage({
-          type: "restoreChat",
-          agentId: restoreBtn.dataset.agent,
-          chatId: restoreBtn.dataset.restoreChat,
-        });
       }
     });
   }
 
   if (agentsListEl) {
     agentsListEl.addEventListener("click", (event) => {
-      const addChatBtn = event.target.closest(".row-new-chat");
-      if (addChatBtn) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (addChatBtn.dataset.newChat) {
-          vscode.postMessage({
-            type: "newChat",
-            agentId: addChatBtn.dataset.newChat,
-          });
-        }
-        return;
-      }
       const archiveBtn = event.target.closest(".row-archive");
       if (archiveBtn) {
         event.preventDefault();
@@ -1032,33 +893,14 @@
             type: "archiveAgent",
             agentId: archiveBtn.dataset.archiveAgent,
           });
-        } else if (archiveBtn.dataset.archiveChat) {
-          vscode.postMessage({
-            type: "archiveChat",
-            agentId: archiveBtn.dataset.agent,
-            chatId: archiveBtn.dataset.archiveChat,
-          });
         }
-        return;
-      }
-      const chatRow = event.target.closest(".chat-row");
-      if (chatRow) {
-        event.preventDefault();
-        vscode.postMessage({
-          type: "openChat",
-          agentId: chatRow.dataset.agent,
-          chatId: chatRow.dataset.chat,
-        });
         return;
       }
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
-        if (agentRow.dataset.hasChats !== "1") {
-          return;
-        }
         vscode.postMessage({
-          type: "toggleAgent",
+          type: "openAgent",
           agentId: agentRow.dataset.agent,
         });
       }
@@ -1123,7 +965,6 @@
         break;
       case "archiveList":
         archiveAgentsData = Array.isArray(msg.agents) ? msg.agents : [];
-        archiveOrphansData = Array.isArray(msg.orphanChats) ? msg.orphanChats : [];
         renderArchiveList();
         if (typeof msg.archiveCount === "number") {
           setArchiveCount(msg.archiveCount);
