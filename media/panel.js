@@ -29,7 +29,7 @@
   const contextRingValueEl = contextRingEl
     ? contextRingEl.querySelector(".context-ring-value")
     : null;
-  const contextRingLabelEl = document.getElementById("contextRingLabel");
+  const contextTipEl = document.getElementById("contextTip");
 
   let agentsData = [];
   let archiveAgentsData = [];
@@ -122,12 +122,13 @@
     );
     contextRingEl.classList.toggle("is-warn", pct >= 0.7 && pct < 0.9);
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
-    if (contextRingLabelEl) {
-      contextRingLabelEl.textContent = `${pctLabel}% контекст`;
+    const usedLabel = formatTokenCount(contextUsed);
+    const maxLabel = formatTokenCount(contextMax);
+    const tip = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    if (contextTipEl) {
+      contextTipEl.textContent = tip;
     }
-    const label = `${formatTokenCount(contextUsed)} / ${formatTokenCount(contextMax)} · ${pctLabel}%`;
-    contextRingEl.title = `Контекст: ${label}`;
-    contextRingEl.setAttribute("aria-label", `Использование контекста: ${label}`);
+    contextRingEl.setAttribute("aria-label", `Контекст: ${tip}`);
     contextRingEl.hidden = false;
   }
 
@@ -216,17 +217,22 @@
       .map(
         (a) =>
           `<div class="agent-block archive-block" data-agent="${a.id}">` +
-          `<div class="agent-row-wrap">` +
+          `<div class="agent-row-wrap archive-row-wrap">` +
           `<div class="agent-row flat">` +
           `<span class="agent-main">` +
           `<div class="agent-name"></div>` +
           `<div class="agent-meta"><span class="agent-preview"></span></div>` +
           `</span>` +
-          `<span class="agent-time"></span>` +
           `</div>` +
-          `<button type="button" class="row-action row-restore is-visible" data-restore-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
+          `<div class="row-actions">` +
+          `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
           RESTORE_ICON +
           `</button>` +
+          `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить" aria-label="Удалить">` +
+          DELETE_ICON +
+          `</button>` +
+          `</div>` +
+          `<span class="agent-time"></span>` +
           `</div>` +
           `</div>`
       )
@@ -273,11 +279,13 @@
           `<div class="agent-name"></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
-          `<span class="agent-time"></span>` +
           `</button>` +
+          `<div class="row-actions">` +
           `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
           ARCHIVE_ICON +
           `</button>` +
+          `</div>` +
+          `<span class="agent-time"></span>` +
           `</div>` +
           `</div>`
       )
@@ -867,6 +875,18 @@
 
   if (archiveListEl) {
     archiveListEl.addEventListener("click", (event) => {
+      const deleteBtn = event.target.closest(".row-delete");
+      if (deleteBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (deleteBtn.dataset.deleteAgent) {
+          vscode.postMessage({
+            type: "deleteAgent",
+            agentId: deleteBtn.dataset.deleteAgent,
+          });
+        }
+        return;
+      }
       const restoreBtn = event.target.closest(".row-restore");
       if (!restoreBtn) {
         return;

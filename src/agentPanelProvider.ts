@@ -936,13 +936,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </div>
       </div>
       <div class="composer-meta">
-        <button type="button" class="context-meter" id="contextRing" title="Контекст: 0 / 128k" aria-label="Использование контекста">
-          <svg class="context-ring" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3"/>
-            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3"
+        <button type="button" class="context-meter" id="contextRing" aria-label="Использование контекста">
+          <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
+            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
               stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
           </svg>
-          <span class="context-meter-label" id="contextRingLabel">0% контекст</span>
+          <span class="context-tip" id="contextTip" role="tooltip">0 / 128k</span>
         </button>
       </div>
     </div>
