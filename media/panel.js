@@ -182,14 +182,19 @@
 
   function applyScmButtons(reviews) {
     const list = Array.isArray(reviews) ? reviews : [];
-    const byKey = new Map(
-      list.map((r) => [(r.paths || []).join("\n"), Boolean(r.showScm)])
-    );
+    const entries = list.map((r) => ({
+      key: [...(r.paths || [])].map(String).sort().join("\n"),
+      show: Boolean(r.showScm),
+    }));
     for (const el of messagesEl.querySelectorAll(".review-actions")) {
-      const key = el.dataset.paths || "";
-      if (byKey.has(key)) {
-        el.hidden = !byKey.get(key);
-      }
+      const key = (el.dataset.paths || "")
+        .split("\n")
+        .filter(Boolean)
+        .sort()
+        .join("\n");
+      const hit = entries.find((e) => e.key === key);
+      // если не нашли соответствие — прячем (безопаснее, чем оставлять кнопку)
+      el.hidden = hit ? !hit.show : true;
     }
   }
 
