@@ -237,7 +237,7 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
         model: top?.selectedModel || "",
         preview: top ? previewFromMessages(top.uiMessages) : "Нет чатов",
         updatedAt: agent.updatedAt,
-        open: expanded.has(agent.id),
+        open: chats.length > 0 && expanded.has(agent.id),
         active: agent.id === store.activeAgentId,
         chats: chats.map((c) => ({
           id: c.id,
@@ -264,6 +264,10 @@ export function deleteChatFromStore(
   agent.chatIds = agent.chatIds.filter((id) => id !== chatId);
   delete store.chats[chatId];
   agent.updatedAt = Date.now();
+
+  if (!agent.chatIds.length) {
+    store.expandedAgentIds = store.expandedAgentIds.filter((id) => id !== agentId);
+  }
 
   if (store.activeChatId === chatId) {
     if (agent.chatIds.length) {

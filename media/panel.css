@@ -698,6 +698,10 @@ button.primary:disabled {
   flex: 1;
 }
 
+.agent-row.no-expand {
+  cursor: default;
+}
+
 .agent-row:hover {
   background: transparent;
 }
@@ -716,6 +720,10 @@ button.primary:disabled {
   font-size: 10px;
   line-height: 1;
   transition: transform 0.15s ease;
+}
+
+.agent-chevron.is-hidden {
+  visibility: hidden;
 }
 
 .agent-block.is-open .agent-chevron {
@@ -813,11 +821,16 @@ button.primary:disabled {
   display: none;
   flex-direction: column;
   gap: 2px;
-  padding: 0 8px 8px 28px;
+  padding: 0 8px 6px 28px;
 }
 
 .agent-block.is-open .agent-chats {
   display: flex;
+}
+
+.agent-block.is-open .agent-chats:empty {
+  display: none;
+  padding: 0;
 }
 
 .chat-row {
