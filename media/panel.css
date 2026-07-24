@@ -338,7 +338,7 @@ body {
 }
 
 .composer-wrap {
-  padding: 14px 10px 12px;
+  padding: 14px 10px 10px;
   position: relative;
   z-index: 30;
   overflow: visible;
@@ -354,6 +354,101 @@ body {
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
   overflow: visible;
   position: relative;
+}
+
+.composer-meta {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 8px;
+  padding-right: 0;
+  min-height: 24px;
+}
+
+.context-meter {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 5px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  color: var(--vscode-foreground);
+  cursor: default;
+  font: inherit;
+  opacity: 1;
+  visibility: visible;
+}
+
+.context-meter:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.context-meter-label {
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-foreground);
+  opacity: 0.75;
+}
+
+.context-meter.is-warn .context-meter-label,
+.context-meter.is-warn .context-ring-value {
+  color: var(--vscode-charts-orange, #e2a03f);
+}
+
+.context-meter.is-danger .context-meter-label,
+.context-meter.is-danger .context-ring-value {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.context-ring {
+  flex-shrink: 0;
+  display: block;
+}
+
+.context-ring-inline {
+  width: auto;
+  height: auto;
+  min-width: 14px;
+  margin-top: 2px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.context-meter[hidden] {
+  display: none !important;
+}
+
+.context-ring-track {
+  stroke: #8a8a8a;
+  stroke: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.context-ring-value {
+  stroke: #3794ff;
+  stroke: var(--vscode-charts-blue, #3794ff);
+  transition: stroke-dasharray 0.25s ease, stroke 0.2s ease;
+}
+
+.context-meter.is-warn .context-ring-value {
+  stroke: #e2a03f;
+  stroke: var(--vscode-charts-orange, #e2a03f);
+}
+
+.context-meter.is-danger .context-ring-value {
+  stroke: #f14c4c;
+  stroke: var(--vscode-errorForeground, #f14c4c);
+}
+
+.context-ring-inline.is-warn .context-ring-value {
+  stroke: #e2a03f;
+  stroke: var(--vscode-charts-orange, #e2a03f);
+}
+
+.context-ring-inline.is-danger .context-ring-value {
+  stroke: #f14c4c;
+  stroke: var(--vscode-errorForeground, #f14c4c);
 }
 
 #prompt {
@@ -395,46 +490,6 @@ body {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.context-ring {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-  color: var(--vscode-descriptionForeground, #888);
-  cursor: default;
-}
-
-.context-ring[hidden] {
-  display: none !important;
-}
-
-.context-ring svg {
-  display: block;
-}
-
-.context-ring-track {
-  stroke: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
-}
-
-.context-ring-value {
-  stroke: var(--vscode-charts-blue, #3794ff);
-  transition: stroke-dasharray 0.25s ease, stroke 0.2s ease;
-}
-
-.context-ring.is-warn .context-ring-value {
-  stroke: var(--vscode-charts-orange, #e2a03f);
-}
-
-.context-ring.is-danger .context-ring-value {
-  stroke: var(--vscode-errorForeground, #f14c4c);
 }
 
 .icon-btn {
@@ -782,7 +837,7 @@ button.primary:disabled {
 .agent-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 14px 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   align-items: start;
   padding: 8px;
@@ -795,6 +850,10 @@ button.primary:disabled {
   cursor: pointer;
   min-width: 0;
   flex: 1;
+}
+
+.agent-row.flat {
+  grid-template-columns: 1fr auto;
 }
 
 .agent-row.no-expand {
@@ -1038,8 +1097,9 @@ button.primary:disabled {
 }
 
 .chat-agent-name {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground, #888);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

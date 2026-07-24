@@ -29,7 +29,7 @@ export interface ChatSession {
 export interface AgentRecord {
   id: string;
   name: string;
-  chatIds: string[];
+  chatId: string;
   updatedAt: number;
   /** Если задано — агент в архиве и скрыт из основного списка */
   archivedAt?: number;
@@ -44,8 +44,6 @@ export interface AgentsStoreV2 {
   activeAgentId: string;
   activeChatId: string;
   screen: PanelScreen;
-  /** UI: какие агенты раскрыты в списке */
-  expandedAgentIds: string[];
 }
 
 /** Старый формат одной сессии. */
@@ -56,23 +54,16 @@ export interface PersistedSessionV1 {
   updatedAt: number;
 }
 
-export interface AgentListChatItem {
-  id: string;
-  title: string;
-  preview: string;
-  updatedAt: number;
-  active: boolean;
-}
-
 export interface AgentListItem {
   id: string;
+  chatId: string;
   name: string;
   model: string;
   preview: string;
   updatedAt: number;
-  open: boolean;
   active: boolean;
-  chats: AgentListChatItem[];
+  contextUsed: number;
+  selectedModel: string;
 }
 
 function uid(prefix: string): string {
@@ -94,20 +85,29 @@ function previewFromMessages(uiMessages: UiMessage[]): string {
   return "Пустой чат";
 }
 
+function isDefaultTitle(value: string | undefined): boolean {
+  const title = String(value || "").trim();
+  return !title || title === "Новый агент" || title === "Новый чат";
+}
+
+function isMeaningfulTitle(value: string | undefined): boolean {
+  return !isDefaultTitle(value) && String(value || "").trim() !== "Чат";
+}
+
 function titleFromMessages(uiMessages: UiMessage[]): string {
   const firstUser = uiMessages.find((m) => m.role === "user" && m.text.trim());
   if (!firstUser) {
-    return "Новый чат";
+    return "Новый агент";
   }
   const text = firstUser.text.replace(/\s+/g, " ").trim();
   return text.length > 48 ? `${text.slice(0, 48)}…` : text;
 }
 
-export function createEmptyChat(selectedModel = ""): ChatSession {
+function createEmptyChat(selectedModel = ""): ChatSession {
   const now = Date.now();
   return {
     id: uid("chat"),
-    title: "Новый чат",
+    title: "Новый агент",
     selectedModel,
     history: [],
     uiMessages: [],
@@ -125,11 +125,108 @@ export function createEmptyAgent(selectedModel = ""): {
     agent: {
       id: uid("agent"),
       name: "Новый агент",
-      chatIds: [chat.id],
+      chatId: chat.id,
       updatedAt: now,
     },
     chat,
   };
+}
+
+type LegacyAgentRecord = Partial<AgentRecord> & {
+  chatIds?: string[];
+  chatId?: string;
+};
+
+function uniqueAgentId(id: string, used: Set<string>): string {
+  let next = id || uid("agent");
+  while (used.has(next)) {
+    next = uid("agent");
+  }
+  used.add(next);
+  return next;
+}
+
+function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
+  return {
+    ...chat,
+    title: chat.title || titleFromMessages(chat.uiMessages || []),
+    selectedModel: chat.selectedModel || fallbackModel,
+    history: Array.isArray(chat.history) ? chat.history : [],
+    uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
+    updatedAt: chat.updatedAt || Date.now(),
+  };
+}
+
+function flattenAgents(
+  rawAgents: LegacyAgentRecord[],
+  chats: Record<string, ChatSession>,
+  activeAgentId: string,
+  activeChatId: string
+): { agents: AgentRecord[]; activeAgentId: string } {
+  const agents: AgentRecord[] = [];
+  const used = new Set<string>();
+  const referencedChatIds = new Set<string>();
+  let nextActiveAgentId = activeAgentId;
+
+  for (const rawAgent of rawAgents) {
+    const chatIds = Array.isArray(rawAgent.chatIds)
+      ? rawAgent.chatIds
+      : rawAgent.chatId
+        ? [rawAgent.chatId]
+        : [];
+    const existingChatIds = chatIds.filter((chatId) => {
+      if (!chats[chatId]) {
+        return false;
+      }
+      referencedChatIds.add(chatId);
+      return true;
+    });
+
+    existingChatIds.forEach((chatId, index) => {
+      const chat = chats[chatId];
+      const single = existingChatIds.length === 1;
+      const baseName = rawAgent.name || "Новый агент";
+      const name =
+        single || index === 0
+          ? baseName
+          : isMeaningfulTitle(chat.title)
+            ? chat.title
+            : baseName;
+      const id =
+        single || index === 0
+          ? uniqueAgentId(rawAgent.id || "", used)
+          : uniqueAgentId(`${rawAgent.id || "agent"}_${chatId}`, used);
+      if (rawAgent.id === activeAgentId && chatId === activeChatId) {
+        nextActiveAgentId = id;
+      }
+      agents.push({
+        id,
+        name: name || "Новый агент",
+        chatId,
+        updatedAt: Math.max(rawAgent.updatedAt || 0, chat.updatedAt || 0),
+        archivedAt: rawAgent.archivedAt || chat.archivedAt,
+      });
+    });
+  }
+
+  for (const [chatId, chat] of Object.entries(chats)) {
+    if (referencedChatIds.has(chatId)) {
+      continue;
+    }
+    const id = uniqueAgentId(`agent_${chatId}`, used);
+    if (chatId === activeChatId) {
+      nextActiveAgentId = id;
+    }
+    agents.push({
+      id,
+      name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
+      chatId,
+      updatedAt: chat.updatedAt || Date.now(),
+      archivedAt: chat.archivedAt,
+    });
+  }
+
+  return { agents, activeAgentId: nextActiveAgentId };
 }
 
 export function migrateToStoreV2(
@@ -137,15 +234,27 @@ export function migrateToStoreV2(
   fallbackModel = ""
 ): AgentsStoreV2 {
   if (raw && typeof raw === "object" && (raw as AgentsStoreV2).version === 2) {
-    const store = raw as AgentsStoreV2;
-    if (!Array.isArray(store.agents) || typeof store.chats !== "object") {
+    const store = raw as AgentsStoreV2 & { expandedAgentIds?: string[] };
+    if (!Array.isArray(store.agents) || !store.chats || typeof store.chats !== "object") {
       return createDefaultStore(fallbackModel);
     }
+    const chats = Object.fromEntries(
+      Object.entries(store.chats || {}).map(([id, chat]) => [
+        id,
+        normalizeChat(chat as ChatSession, fallbackModel),
+      ])
+    );
+    const flattened = flattenAgents(
+      store.agents as LegacyAgentRecord[],
+      chats,
+      store.activeAgentId || "",
+      store.activeChatId || ""
+    );
     return {
       version: 2,
-      agents: store.agents,
-      chats: store.chats || {},
-      activeAgentId: store.activeAgentId || store.agents[0]?.id || "",
+      agents: flattened.agents,
+      chats,
+      activeAgentId: flattened.activeAgentId || flattened.agents[0]?.id || "",
       activeChatId: store.activeChatId || "",
       screen:
         store.screen === "chat"
@@ -153,9 +262,6 @@ export function migrateToStoreV2(
           : store.screen === "archive"
             ? "archive"
             : "agents",
-      expandedAgentIds: Array.isArray(store.expandedAgentIds)
-        ? store.expandedAgentIds
-        : [],
     };
   }
 
@@ -171,8 +277,8 @@ export function migrateToStoreV2(
     };
     const agent: AgentRecord = {
       id: uid("agent"),
-      name: "Основной агент",
-      chatIds: [chat.id],
+      name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
+      chatId: chat.id,
       updatedAt: chat.updatedAt,
     };
     return {
@@ -182,7 +288,6 @@ export function migrateToStoreV2(
       activeAgentId: agent.id,
       activeChatId: chat.id,
       screen: "agents",
-      expandedAgentIds: [agent.id],
     };
   }
 
@@ -198,7 +303,6 @@ export function createDefaultStore(fallbackModel = ""): AgentsStoreV2 {
     activeAgentId: agent.id,
     activeChatId: chat.id,
     screen: "agents",
-    expandedAgentIds: [agent.id],
   };
 }
 
@@ -225,57 +329,48 @@ export function touchChat(
   }
   store.chats[chatId] = next;
 
-  const agent = store.agents.find((a) => a.chatIds.includes(chatId));
+  const agent = store.agents.find((a) => a.chatId === chatId);
   if (agent) {
     agent.updatedAt = next.updatedAt;
+    if (isDefaultTitle(agent.name) && isMeaningfulTitle(next.title)) {
+      agent.name = next.title;
+    }
   }
 }
 
 export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
-  const expanded = new Set(store.expandedAgentIds);
   return [...store.agents]
-    .filter((agent) => !agent.archivedAt)
+    .filter((agent) => {
+      const chat = store.chats[agent.chatId];
+      return Boolean(chat) && !agent.archivedAt && !chat.archivedAt;
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((agent) => {
-      const chats = agent.chatIds
-        .map((id) => store.chats[id])
-        .filter((c): c is ChatSession => Boolean(c) && !c.archivedAt)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
-
-      const top = chats[0];
+      const chat = store.chats[agent.chatId];
       return {
         id: agent.id,
+        chatId: agent.chatId,
         name: agent.name,
-        model: top?.selectedModel || "",
-        preview: top ? previewFromMessages(top.uiMessages) : "Нет чатов",
+        model: chat?.selectedModel || "",
+        preview: chat ? previewFromMessages(chat.uiMessages) : "Пустой чат",
         updatedAt: agent.updatedAt,
-        open: chats.length > 0 && expanded.has(agent.id),
         active: agent.id === store.activeAgentId,
-        chats: chats.map((c) => ({
-          id: c.id,
-          title: c.title || "Новый чат",
-          preview: previewFromMessages(c.uiMessages),
-          updatedAt: c.updatedAt,
-          active: c.id === store.activeChatId,
-        })),
+        contextUsed:
+          typeof chat?.contextTokens === "number" && chat.contextTokens > 0
+            ? chat.contextTokens
+            : 0,
+        selectedModel: chat?.selectedModel || "",
       };
     });
-}
-
-function activeChatsOf(store: AgentsStoreV2, agent: AgentRecord): string[] {
-  return agent.chatIds.filter((id) => {
-    const chat = store.chats[id];
-    return Boolean(chat) && !chat.archivedAt;
-  });
 }
 
 function pickFallbackActive(store: AgentsStoreV2): void {
   const visible = store.agents.filter((a) => !a.archivedAt);
   for (const agent of visible) {
-    const chats = activeChatsOf(store, agent);
-    if (chats.length) {
+    const chat = store.chats[agent.chatId];
+    if (chat && !chat.archivedAt) {
       store.activeAgentId = agent.id;
-      store.activeChatId = chats[0];
+      store.activeChatId = agent.chatId;
       return;
     }
   }
@@ -292,46 +387,13 @@ export function ensureActiveVisible(store: AgentsStoreV2): void {
     agent.archivedAt ||
     !chat ||
     chat.archivedAt ||
-    !agent.chatIds.includes(chat.id)
+    agent.chatId !== chat.id
   ) {
     pickFallbackActive(store);
   }
 }
 
-/** Архивирует чат. Если это был активный — переключает на другой. */
-export function archiveChatInStore(
-  store: AgentsStoreV2,
-  agentId: string,
-  chatId: string
-): boolean {
-  const agent = store.agents.find((a) => a.id === agentId);
-  const chat = store.chats[chatId];
-  if (!agent || !chat || !agent.chatIds.includes(chatId) || chat.archivedAt) {
-    return false;
-  }
-
-  chat.archivedAt = Date.now();
-  chat.updatedAt = chat.archivedAt;
-  agent.updatedAt = chat.archivedAt;
-
-  const remaining = activeChatsOf(store, agent);
-  if (!remaining.length) {
-    store.expandedAgentIds = store.expandedAgentIds.filter((id) => id !== agentId);
-  }
-
-  if (store.activeChatId === chatId) {
-    if (remaining.length) {
-      store.activeChatId = remaining[0];
-      store.activeAgentId = agent.id;
-    } else {
-      pickFallbackActive(store);
-    }
-  }
-
-  return true;
-}
-
-/** Архивирует агента (и все его чаты). */
+/** Архивирует агента и его единственный чат. */
 export function archiveAgentInStore(
   store: AgentsStoreV2,
   agentId: string
@@ -344,14 +406,11 @@ export function archiveAgentInStore(
   const now = Date.now();
   agent.archivedAt = now;
   agent.updatedAt = now;
-  for (const id of agent.chatIds) {
-    const chat = store.chats[id];
-    if (chat && !chat.archivedAt) {
-      chat.archivedAt = now;
-      chat.updatedAt = now;
-    }
+  const chat = store.chats[agent.chatId];
+  if (chat && !chat.archivedAt) {
+    chat.archivedAt = now;
+    chat.updatedAt = now;
   }
-  store.expandedAgentIds = store.expandedAgentIds.filter((id) => id !== agentId);
 
   if (store.activeAgentId === agentId) {
     pickFallbackActive(store);
@@ -360,127 +419,67 @@ export function archiveAgentInStore(
   return true;
 }
 
-export interface ArchiveChatItem {
+export interface ArchiveAgentItem {
   id: string;
-  title: string;
+  name: string;
   preview: string;
   archivedAt: number;
 }
 
-export interface ArchiveAgentItem {
-  id: string;
-  name: string;
-  archivedAt: number;
-  chats: ArchiveChatItem[];
-}
-
-export interface ArchiveOrphanChatItem {
-  agentId: string;
-  agentName: string;
-  chat: ArchiveChatItem;
-}
-
-export interface ArchiveList {
-  agents: ArchiveAgentItem[];
-  orphanChats: ArchiveOrphanChatItem[];
-}
-
-export function buildArchiveList(store: AgentsStoreV2): ArchiveList {
-  const agents: ArchiveAgentItem[] = store.agents
-    .filter((a) => Boolean(a.archivedAt))
+export function buildArchiveList(store: AgentsStoreV2): ArchiveAgentItem[] {
+  return store.agents
+    .filter((agent) => {
+      const chat = store.chats[agent.chatId];
+      return Boolean(chat) && (Boolean(agent.archivedAt) || Boolean(chat?.archivedAt));
+    })
     .sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0))
     .map((agent) => {
-      const chats = agent.chatIds
-        .map((id) => store.chats[id])
-        .filter((c): c is ChatSession => Boolean(c) && Boolean(c.archivedAt))
-        .sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0))
-        .map((c) => ({
-          id: c.id,
-          title: c.title || "Новый чат",
-          preview: previewFromMessages(c.uiMessages),
-          archivedAt: c.archivedAt || c.updatedAt,
-        }));
+      const chat = store.chats[agent.chatId];
       return {
         id: agent.id,
         name: agent.name,
-        archivedAt: agent.archivedAt || agent.updatedAt,
-        chats,
+        preview: chat ? previewFromMessages(chat.uiMessages) : "",
+        archivedAt: agent.archivedAt || chat?.archivedAt || agent.updatedAt,
       };
     });
-
-  const orphanChats: ArchiveOrphanChatItem[] = [];
-  for (const agent of store.agents.filter((a) => !a.archivedAt)) {
-    for (const id of agent.chatIds) {
-      const chat = store.chats[id];
-      if (!chat?.archivedAt) {
-        continue;
-      }
-      orphanChats.push({
-        agentId: agent.id,
-        agentName: agent.name,
-        chat: {
-          id: chat.id,
-          title: chat.title || "Новый чат",
-          preview: previewFromMessages(chat.uiMessages),
-          archivedAt: chat.archivedAt,
-        },
-      });
-    }
-  }
-  orphanChats.sort((a, b) => b.chat.archivedAt - a.chat.archivedAt);
-
-  return { agents, orphanChats };
 }
 
 export function countArchived(store: AgentsStoreV2): number {
-  const list = buildArchiveList(store);
-  return (
-    list.agents.length +
-    list.agents.reduce((s, a) => s + a.chats.length, 0) +
-    list.orphanChats.length
-  );
+  return buildArchiveList(store).length;
 }
 
-/** Восстанавливает агента и все его чаты из архива. */
+/** Восстанавливает агента и его единственный чат из архива. */
 export function restoreAgentInStore(
   store: AgentsStoreV2,
   agentId: string
 ): boolean {
   const agent = store.agents.find((a) => a.id === agentId);
-  if (!agent || !agent.archivedAt) {
+  const chat = agent ? store.chats[agent.chatId] : undefined;
+  if (!agent || !chat || (!agent.archivedAt && !chat.archivedAt)) {
     return false;
   }
   const now = Date.now();
   agent.archivedAt = undefined;
   agent.updatedAt = now;
-  for (const id of agent.chatIds) {
-    const chat = store.chats[id];
-    if (chat) {
-      chat.archivedAt = undefined;
-      chat.updatedAt = now;
-    }
-  }
+  chat.archivedAt = undefined;
+  chat.updatedAt = now;
   return true;
 }
 
-/** Восстанавливает чат из архива (и агента, если он тоже был в архиве). */
-export function restoreChatInStore(
+/** Безвозвратно удаляет агента и его чат. */
+export function deleteAgentFromStore(
   store: AgentsStoreV2,
-  agentId: string,
-  chatId: string
+  agentId: string
 ): boolean {
   const agent = store.agents.find((a) => a.id === agentId);
-  const chat = store.chats[chatId];
-  if (!agent || !chat || !agent.chatIds.includes(chatId) || !chat.archivedAt) {
+  if (!agent) {
     return false;
   }
-  const now = Date.now();
-  chat.archivedAt = undefined;
-  chat.updatedAt = now;
-  if (agent.archivedAt) {
-    agent.archivedAt = undefined;
+  delete store.chats[agent.chatId];
+  store.agents = store.agents.filter((a) => a.id !== agentId);
+  if (store.activeAgentId === agentId) {
+    pickFallbackActive(store);
   }
-  agent.updatedAt = now;
   return true;
 }
 
