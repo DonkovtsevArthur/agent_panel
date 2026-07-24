@@ -260,8 +260,15 @@
     }
 
     agentsListEl.innerHTML = list
-      .map(
-        (a) =>
+      .map((a) => {
+        const action = a.empty
+          ? `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить" aria-label="Удалить">` +
+            DELETE_ICON +
+            `</button>`
+          : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
+            ARCHIVE_ICON +
+            `</button>`;
+        return (
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
           `<button type="button" class="agent-row flat" data-agent="${a.id}">` +
@@ -271,14 +278,13 @@
           `</span>` +
           `</button>` +
           `<div class="row-actions">` +
-          `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
-          ARCHIVE_ICON +
-          `</button>` +
+          action +
           `</div>` +
           `<span class="agent-time"></span>` +
           `</div>` +
           `</div>`
-      )
+        );
+      })
       .join("");
 
     list.forEach((a, index) => {
@@ -887,6 +893,18 @@
 
   if (agentsListEl) {
     agentsListEl.addEventListener("click", (event) => {
+      const deleteBtn = event.target.closest(".row-delete");
+      if (deleteBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (deleteBtn.dataset.deleteAgent) {
+          vscode.postMessage({
+            type: "deleteAgent",
+            agentId: deleteBtn.dataset.deleteAgent,
+          });
+        }
+        return;
+      }
       const archiveBtn = event.target.closest(".row-archive");
       if (archiveBtn) {
         event.preventDefault();

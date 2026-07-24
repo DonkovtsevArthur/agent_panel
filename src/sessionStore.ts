@@ -64,12 +64,25 @@ export interface AgentListItem {
   active: boolean;
   contextUsed: number;
   selectedModel: string;
+  /** Нет пользовательских/assistant сообщений — можно удалить без архива. */
+  empty: boolean;
 }
 
 function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+}
+
+export function chatHasMessages(uiMessages: UiMessage[] | undefined): boolean {
+  if (!Array.isArray(uiMessages) || !uiMessages.length) {
+    return false;
+  }
+  return uiMessages.some(
+    (m) =>
+      (m.role === "user" || m.role === "assistant") &&
+      String(m.text || "").trim().length > 0
+  );
 }
 
 function previewFromMessages(uiMessages: UiMessage[]): string {
@@ -287,7 +300,7 @@ export function migrateToStoreV2(
       chats: { [chat.id]: chat },
       activeAgentId: agent.id,
       activeChatId: chat.id,
-      screen: "agents",
+      screen: "chat",
     };
   }
 
@@ -302,7 +315,7 @@ export function createDefaultStore(fallbackModel = ""): AgentsStoreV2 {
     chats: { [chat.id]: chat },
     activeAgentId: agent.id,
     activeChatId: chat.id,
-    screen: "agents",
+    screen: "chat",
   };
 }
 
@@ -360,6 +373,7 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
             ? chat.contextTokens
             : 0,
         selectedModel: chat?.selectedModel || "",
+        empty: !chatHasMessages(chat?.uiMessages),
       };
     });
 }

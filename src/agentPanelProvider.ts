@@ -10,6 +10,7 @@ import {
   archiveAgentInStore,
   buildAgentsList,
   buildArchiveList,
+  chatHasMessages,
   countArchived,
   createEmptyAgent,
   deleteAgentFromStore,
@@ -105,6 +106,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           this.postModels();
         }
       }),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.reloadStoreForWorkspace();
+      }),
       vscode.window.onDidChangeWindowState((state) => {
         if (state.focused && this.view?.visible) {
           this.scheduleScmRefresh();
@@ -158,23 +162,68 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private loadStore(): void {
     const config = getConfig();
     const fallbackModel = config.defaultModel || config.models[0]?.id || "";
-    const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
     const workspaceV2 = this.context.workspaceState.get(STORAGE_KEY_V2);
     const workspaceV1 = this.context.workspaceState.get(STORAGE_KEY_V1);
-    const raw = globalV2 ?? workspaceV2 ?? workspaceV1;
+    const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
+
+    let raw: unknown = workspaceV2 ?? workspaceV1;
+    let seededFromGlobal = false;
+
+    // Workspace пуст — один раз переносим глобальный список сюда.
+    if (!raw && globalV2) {
+      raw = globalV2;
+      seededFromGlobal = true;
+    }
+
     this.store = migrateToStoreV2(raw, fallbackModel);
     if (!this.store.agents.length) {
       this.store = migrateToStoreV2(undefined, fallbackModel);
     }
-    ensureActiveVisible(this.store);
+    this.ensureChatReady(fallbackModel);
     this.hydrateActiveChat();
 
-    // Перенос со старого workspaceState в глобальное хранилище (переживает перезагрузку ПК).
-    if (!globalV2 && (workspaceV2 || workspaceV1)) {
-      void this.context.globalState.update(STORAGE_KEY_V2, this.store);
-      void this.context.workspaceState.update(STORAGE_KEY_V2, undefined);
-      void this.context.workspaceState.update(STORAGE_KEY_V1, undefined);
+    if (seededFromGlobal && this.hasWorkspaceFolder()) {
+      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+      void this.context.globalState.update(STORAGE_KEY_V2, undefined);
+    } else if (this.hasWorkspaceFolder()) {
+      // Сохраняем screen=chat и автосозданного агента.
+      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
     }
+  }
+
+  /** Гарантирует видимого агента/чат и открывает экран чата. */
+  private ensureChatReady(fallbackModel?: string): void {
+    ensureActiveVisible(this.store);
+    const agent = this.store.agents.find(
+      (a) => a.id === this.store.activeAgentId && !a.archivedAt
+    );
+    const chat = getActiveChat(this.store);
+    const chatOk =
+      Boolean(agent) &&
+      Boolean(chat) &&
+      !chat!.archivedAt &&
+      agent!.chatId === chat!.id;
+
+    if (!chatOk) {
+      const config = getConfig();
+      const model =
+        fallbackModel ||
+        this.selectedModel ||
+        config.defaultModel ||
+        config.models[0]?.id ||
+        "";
+      const created = createEmptyAgent(model);
+      this.store.agents.unshift(created.agent);
+      this.store.chats[created.chat.id] = created.chat;
+      this.store.activeAgentId = created.agent.id;
+      this.store.activeChatId = created.chat.id;
+    }
+
+    this.setScreen("chat");
+  }
+
+  private hasWorkspaceFolder(): boolean {
+    return Boolean(vscode.workspace.workspaceFolders?.length);
   }
 
   private hydrateActiveChat(): void {
@@ -219,7 +268,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private saveStore(): void {
     this.persistActiveChat();
-    void this.context.globalState.update(STORAGE_KEY_V2, this.store);
+    if (!this.hasWorkspaceFolder()) {
+      return;
+    }
+    void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+  }
+
+  private reloadStoreForWorkspace(): void {
+    this.abort?.abort();
+    this.abort = undefined;
+    this.saveStore();
+    this.loadStore();
+    void this.postInit();
   }
 
   private saveSession(): void {
@@ -255,6 +315,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       preview: a.preview,
       time: formatListTime(a.updatedAt),
       active: a.active,
+      empty: a.empty,
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
@@ -484,11 +545,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!agent) {
       return;
     }
+    const chat = this.store.chats[agent.chatId];
+    const empty = !chatHasMessages(chat?.uiMessages);
     const answer = await vscode.window.showWarningMessage(
-      `Удалить «${agent.name}» безвозвратно?`,
+      empty
+        ? `Удалить пустого агента «${agent.name}»?`
+        : `Удалить «${agent.name}» безвозвратно?`,
       {
         modal: true,
-        detail: "История сообщений будет удалена без возможности восстановления.",
+        detail: empty
+          ? "Сообщений нет — агент будет удалён без архива."
+          : "История сообщений будет удалена без возможности восстановления.",
       },
       "Удалить"
     );
@@ -820,9 +887,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postAgentsList();
     if (this.store.screen === "chat") {
-      this.view?.webview.postMessage({ type: "showChat" });
-      this.postContextUsage();
-      this.scheduleScmRefresh();
+      this.postChatScreen();
     } else if (this.store.screen === "archive") {
       this.postArchiveList();
       this.view?.webview.postMessage({ type: "showArchive" });
