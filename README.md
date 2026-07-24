@@ -1,33 +1,41 @@
 # Agent Panel
 
-VS Code extension: агентская панель под **Severstal AI Platform** (OpenAI-compatible).
+Расширение для VS Code / Cursor: агентская панель с чатом, подключением к любой OpenAI-compatible API и работой с файлами проекта.
 
-Полная корпоративная инструкция: `~/Documents/Cline/SEVERSTAL-AI-SETUP.md`.
+## Возможности
+
+- Список агентов (каждый агент — отдельный чат)
+- Архив и восстановление, безвозвратное удаление из архива
+- Выбор модели из настроек
+- Tool-calling: `list_files`, `read_file`, `write_file`, `run_command`
+- Контекст редактора и индикатор использования контекстного окна
+- Карточка ревью изменённых файлов и переход в Source Control
+- Сохранение сессий (по workspace)
 
 ## Быстрый старт
 
-1. VPN Severstal
-2. Установить extension (`.vsix`) в **Visual Studio Code**
-3. В Settings → **Agent Panel** указать API Key из **Давинчи** (`sk-...`)
-4. Открыть панель: `Cmd+Shift+P` → **Agent Panel: Open**
-5. При TLS-проблемах запускайте VS Code через `~/Documents/Cline/code-severstal`
+1. Установите расширение из `.vsix` в VS Code или Cursor
+2. В Settings → **Agent Panel** укажите `baseUrl`, `apiKey` и список моделей
+3. Откройте панель: `Cmd+Shift+P` → **Agent Panel: Open**
 
-## Настройки (уже под Severstal)
+## Настройки
 
 ```json
 {
-  "agentPanel.baseUrl": "https://ai-platform.kube.severstal.severstalgroup.com/openai",
+  "agentPanel.baseUrl": "https://api.openai.com/v1",
   "agentPanel.apiKey": "sk-...",
-  "agentPanel.defaultModel": "DeepSeek-V4-Flash",
-  "agentPanel.rejectUnauthorized": false,
-  "agentPanel.caBundlePath": "~/Documents/Cline/severstal-ca-bundle.pem",
+  "agentPanel.defaultModel": "gpt-4o-mini",
   "agentPanel.models": [
-    { "id": "DeepSeek-V4-Flash", "label": "DeepSeek V4 Flash" },
-    { "id": "Qwen3-Coder-Next", "label": "Qwen3 Coder Next" },
-    { "id": "Gemma-4-31b", "label": "Gemma 4 31B" }
+    { "id": "gpt-4o-mini", "label": "GPT-4o mini" },
+    { "id": "gpt-4o", "label": "GPT-4o" }
   ]
 }
 ```
+
+Опционально для корпоративных TLS:
+
+- `agentPanel.rejectUnauthorized` — проверка сертификата
+- `agentPanel.caBundlePath` — путь к CA bundle
 
 ## Сборка / установка
 
@@ -35,12 +43,9 @@ VS Code extension: агентская панель под **Severstal AI Platfor
 npm install
 npm run compile
 npx @vscode/vsce package --allow-missing-repository --skip-license
-"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
-  --install-extension ./vscode-agent-panel-0.1.2.vsix --force
+code --install-extension ./vscode-agent-panel-*.vsix --force
+# или
+cursor --install-extension ./vscode-agent-panel-*.vsix --force
 ```
 
-## Возможности
-
-- Чат в сайдбаре + выбор модели
-- Tool-calling: `list_files`, `read_file`, `write_file`
-- TLS через CA bundle / `rejectUnauthorized: false`
+После установки: **Developer: Reload Window**.

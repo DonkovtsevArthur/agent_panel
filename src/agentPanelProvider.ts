@@ -8,36 +8,48 @@ import {
   AgentsStoreV2,
   UiMessage,
   archiveAgentInStore,
-  archiveChatInStore,
   buildAgentsList,
   buildArchiveList,
-  countArchived,
+  chatHasMessages,
   createEmptyAgent,
-  createEmptyChat,
+  deleteAgentFromStore,
   ensureActiveVisible,
   formatListTime,
   getActiveChat,
   migrateToStoreV2,
   restoreAgentInStore,
-  restoreChatInStore,
   touchChat,
 } from "./sessionStore";
+
+type SettingsPayload = {
+  models: Array<{ id: string; label?: string; contextWindow?: number }>;
+  defaultModel: string;
+  defaultContextWindow: number;
+  baseUrl: string;
+  apiKey: string;
+  rejectUnauthorized: boolean;
+  caBundlePath: string;
+  systemPrompt: string;
+  maxToolRounds: number;
+  maxTokens: number;
+  maxResponseChars: number;
+};
 
 type WebviewToHost =
   | { type: "ready" }
   | { type: "send"; text: string; model: string }
   | { type: "stop" }
-  | { type: "newChat"; agentId?: string }
+  | { type: "newChat" }
   | { type: "newAgent" }
-  | { type: "openChat"; agentId: string; chatId: string }
-  | { type: "toggleAgent"; agentId: string }
+  | { type: "openAgent"; agentId: string }
   | { type: "showAgents" }
   | { type: "showArchive" }
+  | { type: "showSettings" }
+  | { type: "saveSettings"; settings: SettingsPayload }
   | { type: "renameAgent"; agentId: string; name: string }
   | { type: "archiveAgent"; agentId: string }
-  | { type: "archiveChat"; agentId: string; chatId: string }
   | { type: "restoreAgent"; agentId: string }
-  | { type: "restoreChat"; agentId: string; chatId: string }
+  | { type: "deleteAgent"; agentId: string }
   | { type: "modelChanged"; model: string }
   | { type: "openFile"; path: string }
   | { type: "openScm" }
@@ -93,7 +105,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }),
       webviewView.onDidChangeVisibility(() => {
         if (webviewView.visible) {
-          this.postModels();
+          // Принудительно обновляем HTML — иначе retainContextWhenHidden
+          // может держать старую разметку без индикатора контекста.
+          webviewView.webview.html = this.getHtml(webviewView.webview);
+          void this.postInit();
           this.scheduleScmRefresh();
           if (this.pendingScmReturnRefresh) {
             this.pendingScmReturnRefresh = false;
@@ -104,7 +119,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("agentPanel")) {
           this.postModels();
+          if (this.store.screen === "settings") {
+            this.postSettings();
+          }
         }
+      }),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.reloadStoreForWorkspace();
       }),
       vscode.window.onDidChangeWindowState((state) => {
         if (state.focused && this.view?.visible) {
@@ -118,8 +139,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.postInit();
   }
 
-  /** Новый чат в указанном или текущем агенте (или новый агент, если агентов нет). */
-  newChat(agentId?: string): void {
+  /** Новый чат теперь всегда создаёт нового агента. */
+  newChat(): void {
     this.abort?.abort();
     this.abort = undefined;
 
@@ -127,28 +148,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const model =
       this.selectedModel || config.defaultModel || config.models[0]?.id || "";
 
-    let agent = agentId
-      ? this.store.agents.find((a) => a.id === agentId)
-      : this.store.agents.find((a) => a.id === this.store.activeAgentId);
-    if (!agent) {
-      const created = createEmptyAgent(model);
-      this.store.agents.unshift(created.agent);
-      this.store.chats[created.chat.id] = created.chat;
-      this.store.activeAgentId = created.agent.id;
-      this.store.activeChatId = created.chat.id;
-      this.store.expandedAgentIds = [created.agent.id];
-      agent = created.agent;
-    } else {
-      const chat = createEmptyChat(model);
-      this.store.chats[chat.id] = chat;
-      agent.chatIds.unshift(chat.id);
-      agent.updatedAt = chat.updatedAt;
-      this.store.activeAgentId = agent.id;
-      this.store.activeChatId = chat.id;
-      if (!this.store.expandedAgentIds.includes(agent.id)) {
-        this.store.expandedAgentIds.push(agent.id);
-      }
-    }
+    const created = createEmptyAgent(model);
+    this.persistActiveChat();
+    this.store.agents.unshift(created.agent);
+    this.store.chats[created.chat.id] = created.chat;
+    this.store.activeAgentId = created.agent.id;
+    this.store.activeChatId = created.chat.id;
 
     this.setScreen("chat");
     this.hydrateActiveChat();
@@ -175,23 +180,68 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private loadStore(): void {
     const config = getConfig();
     const fallbackModel = config.defaultModel || config.models[0]?.id || "";
-    const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
     const workspaceV2 = this.context.workspaceState.get(STORAGE_KEY_V2);
     const workspaceV1 = this.context.workspaceState.get(STORAGE_KEY_V1);
-    const raw = globalV2 ?? workspaceV2 ?? workspaceV1;
+    const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
+
+    let raw: unknown = workspaceV2 ?? workspaceV1;
+    let seededFromGlobal = false;
+
+    // Workspace пуст — один раз переносим глобальный список сюда.
+    if (!raw && globalV2) {
+      raw = globalV2;
+      seededFromGlobal = true;
+    }
+
     this.store = migrateToStoreV2(raw, fallbackModel);
     if (!this.store.agents.length) {
       this.store = migrateToStoreV2(undefined, fallbackModel);
     }
-    ensureActiveVisible(this.store);
+    this.ensureChatReady(fallbackModel);
     this.hydrateActiveChat();
 
-    // Перенос со старого workspaceState в глобальное хранилище (переживает перезагрузку ПК).
-    if (!globalV2 && (workspaceV2 || workspaceV1)) {
-      void this.context.globalState.update(STORAGE_KEY_V2, this.store);
-      void this.context.workspaceState.update(STORAGE_KEY_V2, undefined);
-      void this.context.workspaceState.update(STORAGE_KEY_V1, undefined);
+    if (seededFromGlobal && this.hasWorkspaceFolder()) {
+      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+      void this.context.globalState.update(STORAGE_KEY_V2, undefined);
+    } else if (this.hasWorkspaceFolder()) {
+      // Сохраняем screen=chat и автосозданного агента.
+      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
     }
+  }
+
+  /** Гарантирует видимого агента/чат и открывает экран чата. */
+  private ensureChatReady(fallbackModel?: string): void {
+    ensureActiveVisible(this.store);
+    const agent = this.store.agents.find(
+      (a) => a.id === this.store.activeAgentId && !a.archivedAt
+    );
+    const chat = getActiveChat(this.store);
+    const chatOk =
+      Boolean(agent) &&
+      Boolean(chat) &&
+      !chat!.archivedAt &&
+      agent!.chatId === chat!.id;
+
+    if (!chatOk) {
+      const config = getConfig();
+      const model =
+        fallbackModel ||
+        this.selectedModel ||
+        config.defaultModel ||
+        config.models[0]?.id ||
+        "";
+      const created = createEmptyAgent(model);
+      this.store.agents.unshift(created.agent);
+      this.store.chats[created.chat.id] = created.chat;
+      this.store.activeAgentId = created.agent.id;
+      this.store.activeChatId = created.chat.id;
+    }
+
+    this.setScreen("chat");
+  }
+
+  private hasWorkspaceFolder(): boolean {
+    return Boolean(vscode.workspace.workspaceFolders?.length);
   }
 
   private hydrateActiveChat(): void {
@@ -236,7 +286,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private saveStore(): void {
     this.persistActiveChat();
-    void this.context.globalState.update(STORAGE_KEY_V2, this.store);
+    if (!this.hasWorkspaceFolder()) {
+      return;
+    }
+    void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+  }
+
+  private reloadStoreForWorkspace(): void {
+    this.abort?.abort();
+    this.abort = undefined;
+    this.saveStore();
+    this.loadStore();
+    void this.postInit();
   }
 
   private saveSession(): void {
@@ -271,20 +332,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
       time: formatListTime(a.updatedAt),
-      open: a.open,
       active: a.active,
-      chats: a.chats.map((c) => ({
-        id: c.id,
-        title: c.title,
-        preview: c.preview,
-        time: formatListTime(c.updatedAt),
-        active: c.active,
-      })),
+      empty: a.empty,
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
       agents: list,
-      archiveCount: countArchived(this.store),
       screen: this.store.screen,
     });
   }
@@ -293,28 +346,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const archive = buildArchiveList(this.store);
     this.view?.webview.postMessage({
       type: "archiveList",
-      agents: archive.agents.map((a) => ({
+      agents: archive.map((a) => ({
         id: a.id,
         name: a.name,
+        preview: a.preview,
         time: formatListTime(a.archivedAt),
-        chats: a.chats.map((c) => ({
-          id: c.id,
-          title: c.title,
-          preview: c.preview,
-          time: formatListTime(c.archivedAt),
-        })),
       })),
-      orphanChats: archive.orphanChats.map((o) => ({
-        agentId: o.agentId,
-        agentName: o.agentName,
-        chat: {
-          id: o.chat.id,
-          title: o.chat.title,
-          preview: o.chat.preview,
-          time: formatListTime(o.chat.archivedAt),
-        },
-      })),
-      archiveCount: countArchived(this.store),
       screen: "archive",
     });
   }
@@ -335,7 +372,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
       agentName: agent?.name || "Агент",
-      chatTitle: getActiveChat(this.store)?.title || "Чат",
+      chatTitle: agent?.name || "Агент",
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
     });
@@ -353,7 +390,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postContextUsage();
         break;
       case "newChat":
-        this.newChat(message.agentId);
+        this.newChat();
         break;
       case "newAgent":
         await this.createAgent();
@@ -376,32 +413,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postArchiveList();
         this.view?.webview.postMessage({ type: "showArchive" });
         break;
-      case "toggleAgent": {
-        const id = message.agentId;
-        const agent = this.store.agents.find((a) => a.id === id);
-        const hasChats =
-          Boolean(agent) &&
-          !agent?.archivedAt &&
-          agent!.chatIds.some((chatId) => {
-            const chat = this.store.chats[chatId];
-            return Boolean(chat) && !chat.archivedAt;
-          });
-        if (!hasChats) {
-          break;
-        }
-        const set = new Set(this.store.expandedAgentIds);
-        if (set.has(id)) {
-          set.delete(id);
-        } else {
-          set.add(id);
-        }
-        this.store.expandedAgentIds = [...set];
+      case "showSettings":
+        this.abort?.abort();
+        this.abort = undefined;
+        this.persistActiveChat();
+        this.setScreen("settings");
         this.saveStore();
-        this.postAgentsList();
+        this.postSettings();
+        this.view?.webview.postMessage({ type: "showSettings" });
         break;
-      }
-      case "openChat":
-        this.openChat(message.agentId, message.chatId);
+      case "saveSettings":
+        await this.saveSettings(message.settings);
+        break;
+      case "openAgent":
+        this.openAgent(message.agentId);
         break;
       case "renameAgent": {
         const agent = this.store.agents.find((a) => a.id === message.agentId);
@@ -416,14 +441,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "archiveAgent":
         await this.confirmArchiveAgent(message.agentId);
         break;
-      case "archiveChat":
-        await this.confirmArchiveChat(message.agentId, message.chatId);
-        break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
         break;
-      case "restoreChat":
-        this.restoreChat(message.agentId, message.chatId);
+      case "deleteAgent":
+        await this.confirmDeleteAgent(message.agentId);
         break;
       case "stop":
         this.abort?.abort();
@@ -454,29 +476,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private openChat(agentId: string, chatId: string): void {
+  private openAgent(agentId: string): void {
     this.abort?.abort();
     this.abort = undefined;
     this.persistActiveChat();
 
     const agent = this.store.agents.find((a) => a.id === agentId);
-    const chat = this.store.chats[chatId];
+    const chat = agent ? this.store.chats[agent.chatId] : undefined;
     if (
       !agent ||
       !chat ||
       agent.archivedAt ||
-      chat.archivedAt ||
-      !agent.chatIds.includes(chatId)
+      chat.archivedAt
     ) {
       return;
     }
 
     this.store.activeAgentId = agentId;
-    this.store.activeChatId = chatId;
+    this.store.activeChatId = agent.chatId;
     this.setScreen("chat");
-    if (!this.store.expandedAgentIds.includes(agentId)) {
-      this.store.expandedAgentIds.push(agentId);
-    }
     this.hydrateActiveChat();
     this.saveStore();
     this.postChatScreen();
@@ -503,10 +521,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
     this.store.activeChatId = created.chat.id;
-    this.store.expandedAgentIds = [
-      created.agent.id,
-      ...this.store.expandedAgentIds.filter((id) => id !== created.agent.id),
-    ];
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -518,17 +532,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!agent || agent.archivedAt) {
       return;
     }
-    const chatsCount = agent.chatIds.filter((id) => {
-      const chat = this.store.chats[id];
-      return Boolean(chat) && !chat.archivedAt;
-    }).length;
-    const detail =
-      chatsCount > 0
-        ? `В архив также попадут все чаты агента (${chatsCount}). Их можно будет восстановить позже.`
-        : "Агента можно будет восстановить из архива позже.";
     const answer = await vscode.window.showWarningMessage(
       `Архивировать агента «${agent.name}»?`,
-      { modal: true, detail },
+      {
+        modal: true,
+        detail: "Агента можно будет восстановить из архива позже.",
+      },
       "В архив"
     );
     if (answer !== "В архив") {
@@ -548,52 +557,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "showAgents" });
   }
 
-  private async confirmArchiveChat(
-    agentId: string,
-    chatId: string
-  ): Promise<void> {
-    const agent = this.store.agents.find((a) => a.id === agentId);
-    const chat = this.store.chats[chatId];
-    if (
-      !agent ||
-      !chat ||
-      agent.archivedAt ||
-      chat.archivedAt ||
-      !agent.chatIds.includes(chatId)
-    ) {
-      return;
-    }
-    const answer = await vscode.window.showWarningMessage(
-      `Архивировать чат «${chat.title || "Новый чат"}»?`,
-      {
-        modal: true,
-        detail: "Чат исчезнет из списка, но сохранится в архиве.",
-      },
-      "В архив"
-    );
-    if (answer !== "В архив") {
-      return;
-    }
-
-    const wasActive = this.store.activeChatId === chatId;
-    if (wasActive) {
-      this.abort?.abort();
-      this.abort = undefined;
-    } else {
-      this.persistActiveChat();
-    }
-
-    if (!archiveChatInStore(this.store, agentId, chatId)) {
-      return;
-    }
-
-    this.setScreen("agents");
-    this.hydrateActiveChat();
-    this.saveStore();
-    this.postAgentsList();
-    this.view?.webview.postMessage({ type: "showAgents" });
-  }
-
   private restoreAgent(agentId: string): void {
     this.persistActiveChat();
     if (!restoreAgentInStore(this.store, agentId)) {
@@ -605,15 +568,45 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.postAgentsList();
   }
 
-  private restoreChat(agentId: string, chatId: string): void {
-    this.persistActiveChat();
-    if (!restoreChatInStore(this.store, agentId, chatId)) {
+  private async confirmDeleteAgent(agentId: string): Promise<void> {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (!agent) {
       return;
     }
-    this.setScreen("archive");
+    const chat = this.store.chats[agent.chatId];
+    const empty = !chatHasMessages(chat?.uiMessages);
+    const answer = await vscode.window.showWarningMessage(
+      empty
+        ? `Удалить пустого агента «${agent.name}»?`
+        : `Удалить «${agent.name}» безвозвратно?`,
+      {
+        modal: true,
+        detail: empty
+          ? "Сообщений нет — агент будет удалён без архива."
+          : "История сообщений будет удалена без возможности восстановления.",
+      },
+      "Удалить"
+    );
+    if (answer !== "Удалить") {
+      return;
+    }
+
+    this.abort?.abort();
+    this.abort = undefined;
+    this.persistActiveChat();
+    if (!deleteAgentFromStore(this.store, agentId)) {
+      return;
+    }
+    this.hydrateActiveChat();
     this.saveStore();
-    this.postArchiveList();
-    this.postAgentsList();
+    if (this.store.screen === "archive") {
+      this.postArchiveList();
+      this.postAgentsList();
+    } else {
+      this.setScreen("agents");
+      this.postAgentsList();
+      this.view?.webview.postMessage({ type: "showAgents" });
+    }
   }
 
   private async pickModel(): Promise<void> {
@@ -896,6 +889,119 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private postSettings(): void {
+    const config = getConfig();
+    this.view?.webview.postMessage({
+      type: "settings",
+      settings: {
+        models: config.models.map((m) => ({
+          id: m.id,
+          label: m.label || "",
+          contextWindow: m.contextWindow || undefined,
+        })),
+        defaultModel: config.defaultModel,
+        defaultContextWindow: config.defaultContextWindow,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        rejectUnauthorized: config.rejectUnauthorized,
+        caBundlePath: config.caBundlePath,
+        systemPrompt: config.systemPrompt,
+        maxToolRounds: config.maxToolRounds,
+        maxTokens: config.maxTokens,
+        maxResponseChars: config.maxResponseChars,
+      },
+    });
+  }
+
+  private async saveSettings(raw: SettingsPayload): Promise<void> {
+    const models = (Array.isArray(raw.models) ? raw.models : [])
+      .map((m) => {
+        const id = String(m?.id || "").trim();
+        if (!id) {
+          return null;
+        }
+        const label = String(m?.label || "").trim();
+        const contextWindow =
+          typeof m?.contextWindow === "number" &&
+          Number.isFinite(m.contextWindow) &&
+          m.contextWindow >= 1024
+            ? Math.floor(m.contextWindow)
+            : undefined;
+        const row: { id: string; label?: string; contextWindow?: number } = {
+          id,
+        };
+        if (label) {
+          row.label = label;
+        }
+        if (contextWindow) {
+          row.contextWindow = contextWindow;
+        }
+        return row;
+      })
+      .filter((m): m is { id: string; label?: string; contextWindow?: number } =>
+        Boolean(m)
+      );
+
+    if (!models.length) {
+      void vscode.window.showWarningMessage(
+        "Нужна хотя бы одна модель с непустым id."
+      );
+      return;
+    }
+
+    const defaultModel = String(raw.defaultModel || "").trim();
+    const resolvedDefault = models.some((m) => m.id === defaultModel)
+      ? defaultModel
+      : models[0].id;
+
+    const clamp = (value: unknown, min: number, max: number, fallback: number) => {
+      const n = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(n)) {
+        return fallback;
+      }
+      return Math.min(max, Math.max(min, Math.floor(n)));
+    };
+
+    const cfg = vscode.workspace.getConfiguration("agentPanel");
+    const target = vscode.ConfigurationTarget.Global;
+    await cfg.update("models", models, target);
+    await cfg.update("defaultModel", resolvedDefault, target);
+    await cfg.update(
+      "defaultContextWindow",
+      clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
+      target
+    );
+    await cfg.update("baseUrl", String(raw.baseUrl || "").trim().replace(/\/$/, ""), target);
+    await cfg.update("apiKey", String(raw.apiKey || ""), target);
+    await cfg.update(
+      "rejectUnauthorized",
+      Boolean(raw.rejectUnauthorized),
+      target
+    );
+    await cfg.update("caBundlePath", String(raw.caBundlePath || "").trim(), target);
+    await cfg.update("systemPrompt", String(raw.systemPrompt || ""), target);
+    await cfg.update(
+      "maxToolRounds",
+      clamp(raw.maxToolRounds, 1, 50, 20),
+      target
+    );
+    await cfg.update("maxTokens", clamp(raw.maxTokens, 64, 128_000, 4096), target);
+    await cfg.update(
+      "maxResponseChars",
+      clamp(raw.maxResponseChars, 1000, 200_000, 12_000),
+      target
+    );
+
+    if (!models.some((m) => m.id === this.selectedModel)) {
+      this.selectedModel = resolvedDefault;
+      this.saveSession();
+    }
+
+    this.postModels();
+    this.postSettings();
+    void vscode.window.showInformationMessage("Настройки Agent Panel сохранены.");
+  }
+
   private async postInit(): Promise<void> {
     const config = getConfig();
     const models = config.models;
@@ -922,12 +1028,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postAgentsList();
     if (this.store.screen === "chat") {
-      this.view?.webview.postMessage({ type: "showChat" });
-      this.postContextUsage();
-      this.scheduleScmRefresh();
+      this.postChatScreen();
     } else if (this.store.screen === "archive") {
       this.postArchiveList();
       this.view?.webview.postMessage({ type: "showArchive" });
+    } else if (this.store.screen === "settings") {
+      this.postSettings();
+      this.view?.webview.postMessage({ type: "showSettings" });
     } else {
       this.view?.webview.postMessage({ type: "showAgents" });
     }
@@ -936,13 +1043,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private getHtml(webview: vscode.Webview): string {
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
-        ?.version ?? String(Date.now());
+        ?.version ?? "0";
+    const bust = `${version}-${Date.now()}`;
     const cssUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.css"))
-      .with({ query: `v=${version}` });
+      .with({ query: `v=${bust}` });
     const jsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.js"))
-      .with({ query: `v=${version}` });
+      .with({ query: `v=${bust}` });
+    const materialIconsUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(
+        this.extensionUri,
+        "media",
+        "fonts",
+        "MaterialSymbolsOutlined-24-400.ttf"
+      )
+    );
     const nonce = getNonce();
 
     return `<!DOCTYPE html>
@@ -951,55 +1067,121 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${cssUri}" />
+  <style nonce="${nonce}">
+    @font-face {
+      font-family: "Material Symbols Outlined";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url("${materialIconsUri}") format("truetype");
+    }
+  </style>
   <title>Agent Panel</title>
 </head>
 <body>
   <section id="agentsScreen" class="screen" hidden>
     <div class="agents-top">
       <div class="agents-title">Агенты</div>
+      <button type="button" class="icon-btn" id="openSettingsBtn" title="Настройки" aria-label="Настройки">
+        <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+      </button>
       <button type="button" class="icon-btn" id="openArchiveBtn" title="Архив" aria-label="Архив">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path fill="currentColor" d="M2.5 2.25h11a1.25 1.25 0 0 1 1.25 1.25v1.1c0 .48-.39.9-.88.9H2.13a.9.9 0 0 1-.88-.9V3.5c0-.69.56-1.25 1.25-1.25z"/>
-          <path fill="currentColor" d="M3.25 6.25h9.5v5.9c0 .97-.78 1.75-1.75 1.75h-6c-.97 0-1.75-.78-1.75-1.75v-5.9zm3.1 1.35a.55.55 0 0 0 0 1.1h3.3a.55.55 0 1 0 0-1.1h-3.3z"/>
-        </svg>
-        <span id="archiveCountBadge" class="count-badge" hidden>0</span>
+        <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
       </button>
       <button type="button" class="icon-btn" id="newAgentBtn" title="Новый агент" aria-label="Новый агент">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
+        <span class="material-symbols-outlined" aria-hidden="true">add</span>
       </button>
     </div>
-    <input id="agentsSearch" class="agents-search" type="search" placeholder="Поиск агентов и чатов…" />
     <div id="agentsList" class="agents-list"></div>
   </section>
 
   <section id="archiveScreen" class="screen" hidden>
     <div class="agents-top">
       <button type="button" class="icon-btn" id="backFromArchiveBtn" title="К списку агентов" aria-label="К списку агентов">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
       <div class="agents-title">Архив</div>
     </div>
     <div id="archiveList" class="agents-list"></div>
   </section>
 
+  <section id="settingsScreen" class="screen" hidden>
+    <div class="agents-top">
+      <button type="button" class="icon-btn" id="backFromSettingsBtn" title="К списку агентов" aria-label="К списку агентов">
+        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+      </button>
+      <div class="agents-title">Настройки</div>
+      <button type="button" class="text-btn" id="saveSettingsBtn">Сохранить</button>
+    </div>
+    <div class="settings-body" id="settingsBody">
+      <section class="settings-section">
+        <h3 class="settings-section-title">Модели</h3>
+        <label class="settings-field">
+          <span class="settings-label">Модель по умолчанию</span>
+          <select id="settingsDefaultModel" class="settings-input"></select>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Контекст по умолчанию (токены)</span>
+          <input id="settingsDefaultContext" class="settings-input" type="number" min="1024" step="1024" />
+        </label>
+        <div id="settingsModelsList" class="settings-models"></div>
+        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить модель</button>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Подключение</h3>
+        <label class="settings-field">
+          <span class="settings-label">Base URL</span>
+          <input id="settingsBaseUrl" class="settings-input" type="text" autocomplete="off" />
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">API Key</span>
+          <input id="settingsApiKey" class="settings-input" type="password" autocomplete="off" />
+        </label>
+        <label class="settings-field settings-check">
+          <input id="settingsRejectUnauthorized" type="checkbox" />
+          <span class="settings-label">Проверять TLS-сертификат</span>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">CA bundle path</span>
+          <input id="settingsCaBundle" class="settings-input" type="text" autocomplete="off" />
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Поведение агента</h3>
+        <label class="settings-field">
+          <span class="settings-label">Системный промпт</span>
+          <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Макс. раундов tools</span>
+          <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">max_tokens</span>
+          <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Макс. длина ответа (символы)</span>
+          <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
+        </label>
+      </section>
+    </div>
+  </section>
+
   <section id="chatScreen" class="screen chat-screen" hidden>
     <div class="chat-top">
       <button type="button" class="icon-btn" id="backToAgentsBtn" title="К списку агентов" aria-label="К списку агентов">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
       <div class="chat-top-text">
         <div id="chatAgentName" class="chat-agent-name">Агент</div>
-        <div id="chatTitle" class="chat-title">Чат</div>
+        <div id="chatTitle" class="chat-title" hidden></div>
       </div>
     </div>
     <div id="messages"></div>
@@ -1009,39 +1191,34 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
-            <button class="icon-btn" id="newChatBtn" title="Новый чат" aria-label="Новый чат">
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              </svg>
+            <button class="icon-btn" id="newChatBtn" title="Новый агент" aria-label="Новый агент">
+              <span class="material-symbols-outlined" aria-hidden="true">add</span>
             </button>
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">
                 <span class="model-label" id="modelLabel">Модель</span>
-                <svg class="model-chevron" viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
-                  <path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
             </div>
           </div>
           <div class="composer-footer-right">
-            <button type="button" class="context-ring" id="contextRing" title="Контекст: 0 / 128k" aria-label="Использование контекста">
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-                <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke-width="3"/>
-                <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke-width="3"
-                  stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
-              </svg>
-            </button>
             <button class="primary" id="sendBtn" title="Отправить" aria-label="Отправить" data-mode="send">
-              <svg class="icon-send" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path d="M8 12.5V3.5M8 3.5L4 7.5M8 3.5l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <svg class="icon-stop" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-                <rect x="4.5" y="4.5" width="7" height="7" rx="1.2" fill="currentColor"/>
-              </svg>
+              <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
+              <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
             </button>
           </div>
         </div>
+      </div>
+      <div class="composer-meta">
+        <button type="button" class="context-meter" id="contextRing" aria-label="Использование контекста">
+          <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
+            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
+              stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
+          </svg>
+          <span class="context-tip" id="contextTip" role="tooltip">0 / 128k</span>
+        </button>
       </div>
     </div>
   </section>
