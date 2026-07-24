@@ -772,22 +772,6 @@ button.primary:disabled {
   font-weight: 600;
 }
 
-.agents-search {
-  margin: 0 12px 8px;
-  padding: 7px 10px;
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
-  border-radius: 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  font: inherit;
-  font-size: 12px;
-  outline: none;
-}
-
-.agents-search:focus {
-  border-color: var(--vscode-focusBorder, #007fd4);
-}
-
 .agents-list {
   flex: 1;
   overflow-y: auto;

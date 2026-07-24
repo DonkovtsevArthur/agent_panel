@@ -17,7 +17,6 @@
   const chatScreen = document.getElementById("chatScreen");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
-  const agentsSearch = document.getElementById("agentsSearch");
   const newAgentBtn = document.getElementById("newAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
   const archiveCountBadge = document.getElementById("archiveCountBadge");
@@ -33,7 +32,6 @@
 
   let agentsData = [];
   let archiveAgentsData = [];
-  let agentsFilter = "";
   let contextUsed = 0;
   let contextMax = 128000;
 
@@ -253,15 +251,7 @@
     if (!agentsListEl) {
       return;
     }
-    const q = agentsFilter.trim().toLowerCase();
-    const list = !q
-      ? agentsData
-      : agentsData.filter(
-          (a) =>
-            (a.name || "").toLowerCase().includes(q) ||
-            (a.preview || "").toLowerCase().includes(q) ||
-            (a.model || "").toLowerCase().includes(q)
-        );
+    const list = agentsData;
 
     if (!list.length) {
       agentsListEl.innerHTML =
@@ -863,13 +853,6 @@
         return;
       }
       vscode.postMessage({ type: "showAgents" });
-    });
-  }
-
-  if (agentsSearch) {
-    agentsSearch.addEventListener("input", () => {
-      agentsFilter = agentsSearch.value || "";
-      renderAgentsList();
     });
   }
 

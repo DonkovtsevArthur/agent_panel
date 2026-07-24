@@ -873,7 +873,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </svg>
       </button>
     </div>
-    <input id="agentsSearch" class="agents-search" type="search" placeholder="Поиск агентов и чатов…" />
     <div id="agentsList" class="agents-list"></div>
   </section>
 
