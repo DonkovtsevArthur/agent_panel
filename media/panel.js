@@ -24,6 +24,12 @@
   let agentsData = [];
   let agentsFilter = "";
 
+  const DELETE_ICON =
+    `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">` +
+    `<path fill="currentColor" d="M6.2 1.75h3.6c.4 0 .7.3.7.7V3h2.75a.5.5 0 0 1 0 1H2.75a.5.5 0 0 1 0-1H5.5V2.45c0-.4.3-.7.7-.7z"/>` +
+    `<path fill="currentColor" fill-rule="evenodd" d="M3.85 5.25h8.3l-.58 7.55A1.85 1.85 0 0 1 9.73 14.5H6.27a1.85 1.85 0 0 1-1.84-1.7L3.85 5.25zm2.55 2.1a.55.55 0 0 1 .55.55v4.1a.55.55 0 0 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55zm3.2 0a.55.55 0 0 1 .55.55v4.1a.55.55 0 1 1-1.1 0v-4.1a.55.55 0 0 1 .55-.55z"/>` +
+    `</svg>`;
+
   const DEFAULT_MODELS = [
     { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
     { id: "Qwen3-Coder-Next", label: "Qwen3 Coder Next" },
@@ -159,10 +165,8 @@
               `</span>` +
               `<span class="chat-row-time"></span>` +
               `</button>` +
-              `<button type="button" class="row-delete" data-delete-chat="${c.id}" data-agent="${a.id}" title="Удалить чат" aria-label="Удалить чат">` +
-              `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">` +
-              `<path d="M6 3h4M3.5 5h9M6.5 5v7.5M9.5 5v7.5M5 5l.5 8.5h5L11 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
-              `</svg>` +
+              `<button type="button" class="row-action row-delete" data-delete-chat="${c.id}" data-agent="${a.id}" title="Удалить чат" aria-label="Удалить чат">` +
+              DELETE_ICON +
               `</button>` +
               `</div>`
           )
@@ -180,10 +184,13 @@
           `</span>` +
           `<span class="agent-time"></span>` +
           `</button>` +
-          `<button type="button" class="row-delete" data-delete-agent="${a.id}" title="Удалить агента" aria-label="Удалить агента">` +
+          `<button type="button" class="row-action row-new-chat" data-new-chat="${a.id}" title="Новый чат" aria-label="Новый чат">` +
           `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">` +
-          `<path d="M6 3h4M3.5 5h9M6.5 5v7.5M9.5 5v7.5M5 5l.5 8.5h5L11 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>` +
+          `<path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>` +
           `</svg>` +
+          `</button>` +
+          `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить агента" aria-label="Удалить агента">` +
+          DELETE_ICON +
           `</button>` +
           `</div>` +
           (hasChats ? `<div class="agent-chats">${chats}</div>` : "") +
@@ -777,6 +784,18 @@
 
   if (agentsListEl) {
     agentsListEl.addEventListener("click", (event) => {
+      const addChatBtn = event.target.closest(".row-new-chat");
+      if (addChatBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (addChatBtn.dataset.newChat) {
+          vscode.postMessage({
+            type: "newChat",
+            agentId: addChatBtn.dataset.newChat,
+          });
+        }
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn) {
         event.preventDefault();

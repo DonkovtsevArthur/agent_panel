@@ -780,10 +780,9 @@ button.primary:disabled {
   visibility: hidden;
 }
 
-.row-delete {
+.row-action {
   position: absolute;
   top: 50%;
-  right: 6px;
   transform: translateY(-50%);
   width: 22px;
   height: 22px;
@@ -798,22 +797,52 @@ button.primary:disabled {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
-.agent-row-wrap:hover .row-delete,
-.chat-row-wrap:hover .row-delete,
-.row-delete:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
+.row-new-chat {
+  right: 34px;
+}
+
+.row-delete {
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
 }
 
 .row-delete:hover {
   color: var(--vscode-errorForeground, #f14c4c);
-  background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 12%, transparent);
+  background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 16%, transparent);
+  box-shadow:
+    0 2px 4px color-mix(in srgb, #000 22%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
 }
 
-.row-delete svg {
+.row-delete:active {
+  box-shadow:
+    0 0 0 transparent,
+    inset 0 1px 2px color-mix(in srgb, #000 18%, transparent);
+}
+
+.agent-row-wrap:hover .row-action,
+.chat-row-wrap:hover .row-action,
+.row-action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row-new-chat:hover {
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.row-action svg {
   display: block;
 }
 
