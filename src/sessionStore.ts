@@ -458,10 +458,6 @@ export function buildArchiveList(store: AgentsStoreV2): ArchiveAgentItem[] {
     });
 }
 
-export function countArchived(store: AgentsStoreV2): number {
-  return buildArchiveList(store).length;
-}
-
 /** Восстанавливает агента и его единственный чат из архива. */
 export function restoreAgentInStore(
   store: AgentsStoreV2,

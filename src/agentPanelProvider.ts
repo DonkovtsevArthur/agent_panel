@@ -11,7 +11,6 @@ import {
   buildAgentsList,
   buildArchiveList,
   chatHasMessages,
-  countArchived,
   createEmptyAgent,
   deleteAgentFromStore,
   ensureActiveVisible,
@@ -320,7 +319,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({
       type: "agentsList",
       agents: list,
-      archiveCount: countArchived(this.store),
       screen: this.store.screen,
     });
   }
@@ -335,7 +333,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         preview: a.preview,
         time: formatListTime(a.archivedAt),
       })),
-      archiveCount: countArchived(this.store),
       screen: "archive",
     });
   }
@@ -930,7 +927,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <path fill="currentColor" d="M2.5 2.25h11a1.25 1.25 0 0 1 1.25 1.25v1.1c0 .48-.39.9-.88.9H2.13a.9.9 0 0 1-.88-.9V3.5c0-.69.56-1.25 1.25-1.25z"/>
           <path fill="currentColor" d="M3.25 6.25h9.5v5.9c0 .97-.78 1.75-1.75 1.75h-6c-.97 0-1.75-.78-1.75-1.75v-5.9zm3.1 1.35a.55.55 0 0 0 0 1.1h3.3a.55.55 0 1 0 0-1.1h-3.3z"/>
         </svg>
-        <span id="archiveCountBadge" class="count-badge" hidden>0</span>
       </button>
       <button type="button" class="icon-btn" id="newAgentBtn" title="Новый агент" aria-label="Новый агент">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
