@@ -89,6 +89,10 @@
   let settingsHydrating = false;
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
+  let settingsModelTipEl = null;
+  let settingsModelTipRows = null;
+  let settingsModelTipIndex = null;
+  let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
 
@@ -109,6 +113,9 @@
 
   const SETTINGS_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
+
+  const INFO_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">info</span>';
 
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
@@ -1003,10 +1010,125 @@
     schedulePersistSettings(0);
   }
 
+  function formatModelTokens(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) {
+      return "—";
+    }
+    return Math.floor(n).toLocaleString("ru-RU");
+  }
+
+  function ensureSettingsModelTip() {
+    if (settingsModelTipEl) {
+      return settingsModelTipEl;
+    }
+    settingsModelTipEl = document.createElement("div");
+    settingsModelTipEl.className = "settings-model-tip";
+    settingsModelTipEl.hidden = true;
+    settingsModelTipEl.setAttribute("role", "tooltip");
+    const labels = [
+      "ID",
+      "Название",
+      "Провайдер",
+      "Контекст (вход)",
+      "Ответ (выход)",
+      "Статус",
+    ];
+    settingsModelTipRows = labels.map((label) => {
+      const line = document.createElement("div");
+      line.className = "settings-model-tip-row";
+      const key = document.createElement("span");
+      key.className = "settings-model-tip-key";
+      key.textContent = label;
+      const val = document.createElement("span");
+      val.className = "settings-model-tip-val";
+      line.appendChild(key);
+      line.appendChild(val);
+      settingsModelTipEl.appendChild(line);
+      return val;
+    });
+    document.body.appendChild(settingsModelTipEl);
+    return settingsModelTipEl;
+  }
+
+  function hideSettingsModelTip() {
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+      settingsModelTipHideTimer = null;
+    }
+    settingsModelTipIndex = null;
+    if (settingsModelTipEl) {
+      settingsModelTipEl.hidden = true;
+    }
+  }
+
+  function fillSettingsModelTip(model) {
+    const vals = [
+      model.id || "—",
+      model.label || model.id || "—",
+      providerLabel(model.providerId),
+      formatModelTokens(model.contextWindow),
+      formatModelTokens(model.maxOutputTokens),
+      model.enabled !== false ? "Включена" : "Выключена",
+    ];
+    ensureSettingsModelTip();
+    for (let i = 0; i < settingsModelTipRows.length; i += 1) {
+      settingsModelTipRows[i].textContent = vals[i];
+    }
+  }
+
+  function positionSettingsModelTip(anchor) {
+    const tip = ensureSettingsModelTip();
+    if (!anchor || tip.hidden) {
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const margin = 8;
+    const tipWidth = tip.offsetWidth || 220;
+    const tipHeight = tip.offsetHeight || 120;
+    let left = rect.left;
+    if (left + tipWidth > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - tipWidth - margin);
+    }
+    let top = rect.bottom + 6;
+    if (top + tipHeight > window.innerHeight - margin) {
+      top = Math.max(margin, rect.top - tipHeight - 6);
+    }
+    tip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  }
+
+  function showSettingsModelTip(anchor, model, index) {
+    if (!anchor || !model) {
+      return;
+    }
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+      settingsModelTipHideTimer = null;
+    }
+    const tip = ensureSettingsModelTip();
+    if (settingsModelTipIndex !== index) {
+      fillSettingsModelTip(model);
+      settingsModelTipIndex = index;
+    }
+    tip.hidden = false;
+    positionSettingsModelTip(anchor);
+  }
+
+  function scheduleHideSettingsModelTip() {
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+    }
+    settingsModelTipHideTimer = setTimeout(() => {
+      settingsModelTipHideTimer = null;
+      hideSettingsModelTip();
+    }, 40);
+  }
+
   function renderSettingsModels() {
     if (!settingsModelsList) {
       return;
     }
+    hideSettingsModelTip();
     sortSettingsModels();
     settingsModelsList.innerHTML = "";
     if (!settingsModels.length) {
@@ -1036,7 +1158,12 @@
         `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
         `</label>` +
         `<div class="settings-model-info">` +
+        `<div class="settings-model-title">` +
         `<div class="settings-model-name"></div>` +
+        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="Параметры модели" aria-label="Параметры модели">` +
+        INFO_ICON +
+        `</button>` +
+        `</div>` +
         `<div class="settings-model-id"></div>` +
         `</div>` +
         `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
@@ -1889,6 +2016,7 @@
 
   const settingsBody = document.getElementById("settingsBody");
   if (settingsBody) {
+    settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
     settingsBody.addEventListener("input", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) {
@@ -1993,9 +2121,55 @@
   }
 
   if (settingsModelsList) {
+    settingsModelsList.addEventListener("pointerover", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related instanceof Node && btn.contains(related)) {
+        return;
+      }
+      const index = Number(btn.dataset.index);
+      if (!Number.isFinite(index) || !settingsModels[index]) {
+        return;
+      }
+      showSettingsModelTip(btn, settingsModels[index], index);
+    });
+    settingsModelsList.addEventListener("pointerout", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related instanceof Node && btn.contains(related)) {
+        return;
+      }
+      scheduleHideSettingsModelTip();
+    });
+    settingsModelsList.addEventListener("focusin", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const index = Number(btn.dataset.index);
+      if (!Number.isFinite(index) || !settingsModels[index]) {
+        return;
+      }
+      showSettingsModelTip(btn, settingsModels[index], index);
+    });
+    settingsModelsList.addEventListener("focusout", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      scheduleHideSettingsModelTip();
+    });
+    settingsModelsList.addEventListener("scroll", hideSettingsModelTip, true);
     settingsModelsList.addEventListener("click", (event) => {
       const editBtn = event.target.closest(".settings-model-edit");
       if (editBtn) {
+        hideSettingsModelTip();
         const index = Number(editBtn.dataset.index);
         if (Number.isFinite(index)) {
           openModelEditModal(index);
@@ -2026,6 +2200,8 @@
       }
     });
   }
+
+  window.addEventListener("resize", hideSettingsModelTip);
 
   function bindModelModalDismiss(el) {
     if (!el) {
