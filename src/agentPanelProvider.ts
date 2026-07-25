@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getConfig, getContextWindow } from "./config";
+import { getConfig, getContextWindow, getEnabledModels, resolveModelEndpoint } from "./config";
 import { runAgentTurn } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
 import { hasUncommittedChanges } from "./gitStatus";
@@ -22,7 +22,21 @@ import {
 } from "./sessionStore";
 
 type SettingsPayload = {
-  models: Array<{ id: string; label?: string; contextWindow?: number }>;
+  providers: Array<{
+    id: string;
+    name?: string;
+    baseUrl: string;
+    apiKey?: string;
+  }>;
+  models: Array<{
+    id: string;
+    label?: string;
+    providerId?: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    enabled?: boolean;
+    favorite?: boolean;
+  }>;
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -119,9 +133,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("agentPanel")) {
           this.postModels();
-          if (this.store.screen === "settings") {
-            this.postSettings();
-          }
+          // Не перезатираем форму настроек: webview сам автосохраняет.
         }
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -145,8 +157,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.abort = undefined;
 
     const config = getConfig();
+    const enabled = getEnabledModels();
     const model =
-      this.selectedModel || config.defaultModel || config.models[0]?.id || "";
+      this.selectedModel ||
+      (enabled.some((m) => m.id === config.defaultModel)
+        ? config.defaultModel
+        : "") ||
+      enabled[0]?.id ||
+      "";
 
     const created = createEmptyAgent(model);
     this.persistActiveChat();
@@ -179,7 +197,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private loadStore(): void {
     const config = getConfig();
-    const fallbackModel = config.defaultModel || config.models[0]?.id || "";
+    const enabled = getEnabledModels();
+    const fallbackModel =
+      (enabled.some((m) => m.id === config.defaultModel)
+        ? config.defaultModel
+        : "") ||
+      enabled[0]?.id ||
+      "";
     const workspaceV2 = this.context.workspaceState.get(STORAGE_KEY_V2);
     const workspaceV1 = this.context.workspaceState.get(STORAGE_KEY_V1);
     const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
@@ -224,11 +248,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     if (!chatOk) {
       const config = getConfig();
+      const enabled = getEnabledModels();
       const model =
         fallbackModel ||
         this.selectedModel ||
-        config.defaultModel ||
-        config.models[0]?.id ||
+        (enabled.some((m) => m.id === config.defaultModel)
+          ? config.defaultModel
+          : "") ||
+        enabled[0]?.id ||
         "";
       const created = createEmptyAgent(model);
       this.store.agents.unshift(created.agent);
@@ -358,7 +385,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postChatScreen(): void {
     const config = getConfig();
-    const models = config.models;
+    const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
       this.selectedModel =
         models.find((m) => m.id === config.defaultModel)?.id ??
@@ -512,8 +539,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const config = getConfig();
+    const enabled = getEnabledModels();
     const model =
-      this.selectedModel || config.defaultModel || config.models[0]?.id || "";
+      this.selectedModel ||
+      (enabled.some((m) => m.id === config.defaultModel)
+        ? config.defaultModel
+        : "") ||
+      enabled[0]?.id ||
+      "";
     const created = createEmptyAgent(model);
     created.agent.name = name.trim() || "Новый агент";
     this.persistActiveChat();
@@ -610,16 +643,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async pickModel(): Promise<void> {
-    const config = getConfig();
-    if (!config.models.length) {
+    const models = getEnabledModels();
+    if (!models.length) {
       void vscode.window.showWarningMessage(
-        "Список моделей пуст. Добавьте agentPanel.models в Settings."
+        "Нет включённых моделей. Включите модели в настройках Agent Panel."
       );
       return;
     }
 
-    const items = config.models.map((m) => ({
-      label: m.label || m.id,
+    const items = models.map((m) => ({
+      label: `${m.favorite === true ? "$(heart-filled) " : ""}${m.label || m.id}`,
       description: m.id === this.selectedModel ? "текущая" : m.id,
       id: m.id,
     }));
@@ -638,7 +671,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.saveSession();
     this.view?.webview.postMessage({
       type: "modelsUpdated",
-      models: config.models,
+      models,
       selectedModel: this.selectedModel,
     });
   }
@@ -666,22 +699,36 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private async handleSend(text: string, model: string): Promise<void> {
     const config = getConfig();
-    if (!config.models.length) {
-      this.pushUi("error", "Добавьте модели в settings: agentPanel.models");
+    const enabledModels = getEnabledModels();
+    if (!enabledModels.length) {
+      this.pushUi(
+        "error",
+        "Нет включённых моделей. Включите модели в настройках Agent Panel."
+      );
       this.view?.webview.postMessage({ type: "idle" });
       return;
     }
 
     const chosen =
-      model ||
-      this.selectedModel ||
-      config.defaultModel ||
-      config.models[0].id;
+      (model && enabledModels.some((m) => m.id === model) ? model : "") ||
+      (this.selectedModel &&
+      enabledModels.some((m) => m.id === this.selectedModel)
+        ? this.selectedModel
+        : "") ||
+      (config.defaultModel &&
+      enabledModels.some((m) => m.id === config.defaultModel)
+        ? config.defaultModel
+        : "") ||
+      enabledModels[0].id;
     this.selectedModel = chosen;
     this.saveSession();
 
-    if (!config.baseUrl) {
-      this.pushUi("error", "Укажите agentPanel.baseUrl");
+    const endpoint = resolveModelEndpoint(chosen);
+    if (!endpoint.baseUrl) {
+      this.pushUi(
+        "error",
+        `Не задан base URL для «${endpoint.providerName}». Добавьте провайдера в настройках.`
+      );
       this.view?.webview.postMessage({ type: "idle" });
       return;
     }
@@ -875,7 +922,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postModels(): void {
     const config = getConfig();
-    const models = config.models;
+    const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
       this.selectedModel =
         models.find((m) => m.id === config.defaultModel)?.id ??
@@ -894,10 +941,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({
       type: "settings",
       settings: {
+        providers: config.providers.map((p) => ({
+          id: p.id,
+          name: p.name || "",
+          baseUrl: p.baseUrl,
+          apiKey: p.apiKey || "",
+        })),
         models: config.models.map((m) => ({
           id: m.id,
           label: m.label || "",
+          providerId: m.providerId || "",
           contextWindow: m.contextWindow || undefined,
+          maxOutputTokens: m.maxOutputTokens || undefined,
+          enabled: m.enabled !== false,
+          favorite: m.favorite === true,
         })),
         defaultModel: config.defaultModel,
         defaultContextWindow: config.defaultContextWindow,
@@ -914,6 +971,51 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async saveSettings(raw: SettingsPayload): Promise<void> {
+    const providers = (Array.isArray(raw.providers) ? raw.providers : [])
+      .map((p) => {
+        const id = String(p?.id || "").trim();
+        const baseUrl = String(p?.baseUrl || "").trim().replace(/\/$/, "");
+        if (!id || !baseUrl) {
+          return null;
+        }
+        const name = String(p?.name || "").trim();
+        const apiKey = String(p?.apiKey || "");
+        const row: {
+          id: string;
+          name?: string;
+          baseUrl: string;
+          apiKey?: string;
+        } = { id, baseUrl };
+        if (name) {
+          row.name = name;
+        }
+        if (apiKey) {
+          row.apiKey = apiKey;
+        }
+        return row;
+      })
+      .filter(
+        (
+          p
+        ): p is {
+          id: string;
+          name?: string;
+          baseUrl: string;
+          apiKey?: string;
+        } => Boolean(p)
+      );
+
+    if (!providers.length) {
+      void vscode.window.showWarningMessage(
+        "Нужен хотя бы один провайдер с id и base URL."
+      );
+      return;
+    }
+
+    const providerIds = new Set(providers.map((p) => p.id));
+    const primaryId =
+      providers.find((p) => p.id === "default")?.id || providers[0].id;
+
     const models = (Array.isArray(raw.models) ? raw.models : [])
       .map((m) => {
         const id = String(m?.id || "").trim();
@@ -921,14 +1023,33 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           return null;
         }
         const label = String(m?.label || "").trim();
+        let providerId = String(m?.providerId || "").trim();
+        if (!providerId || !providerIds.has(providerId)) {
+          providerId = primaryId;
+        }
         const contextWindow =
           typeof m?.contextWindow === "number" &&
           Number.isFinite(m.contextWindow) &&
           m.contextWindow >= 1024
             ? Math.floor(m.contextWindow)
             : undefined;
-        const row: { id: string; label?: string; contextWindow?: number } = {
+        const maxOutputTokens =
+          typeof m?.maxOutputTokens === "number" &&
+          Number.isFinite(m.maxOutputTokens) &&
+          m.maxOutputTokens > 0
+            ? Math.floor(m.maxOutputTokens)
+            : undefined;
+        const row: {
+          id: string;
+          label?: string;
+          providerId?: string;
+          contextWindow?: number;
+          maxOutputTokens?: number;
+          enabled?: boolean;
+          favorite?: boolean;
+        } = {
           id,
+          providerId,
         };
         if (label) {
           row.label = label;
@@ -936,10 +1057,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (contextWindow) {
           row.contextWindow = contextWindow;
         }
+        if (maxOutputTokens) {
+          row.maxOutputTokens = maxOutputTokens;
+        }
+        if (m?.enabled === false) {
+          row.enabled = false;
+        }
+        if (m?.favorite === true) {
+          row.favorite = true;
+        }
         return row;
       })
-      .filter((m): m is { id: string; label?: string; contextWindow?: number } =>
-        Boolean(m)
+      .filter(
+        (
+          m
+        ): m is {
+          id: string;
+          label?: string;
+          providerId?: string;
+          contextWindow?: number;
+          maxOutputTokens?: number;
+          enabled?: boolean;
+          favorite?: boolean;
+        } => Boolean(m)
       );
 
     if (!models.length) {
@@ -949,10 +1089,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const enabledModels = models.filter((m) => m.enabled !== false);
     const defaultModel = String(raw.defaultModel || "").trim();
-    const resolvedDefault = models.some((m) => m.id === defaultModel)
+    const resolvedDefault = enabledModels.some((m) => m.id === defaultModel)
       ? defaultModel
-      : models[0].id;
+      : enabledModels[0]?.id || models[0].id;
 
     const clamp = (value: unknown, min: number, max: number, fallback: number) => {
       const n = typeof value === "number" ? value : Number(value);
@@ -962,8 +1103,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return Math.min(max, Math.max(min, Math.floor(n)));
     };
 
+    const primary =
+      providers.find((p) => p.id === primaryId) || providers[0];
+
     const cfg = vscode.workspace.getConfiguration("agentPanel");
     const target = vscode.ConfigurationTarget.Global;
+    await cfg.update("providers", providers, target);
     await cfg.update("models", models, target);
     await cfg.update("defaultModel", resolvedDefault, target);
     await cfg.update(
@@ -971,8 +1116,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
       target
     );
-    await cfg.update("baseUrl", String(raw.baseUrl || "").trim().replace(/\/$/, ""), target);
-    await cfg.update("apiKey", String(raw.apiKey || ""), target);
+    // Legacy mirrors — чтобы старые настройки/скрипты не ломались
+    await cfg.update("baseUrl", primary.baseUrl, target);
+    await cfg.update("apiKey", primary.apiKey || "", target);
     await cfg.update(
       "rejectUnauthorized",
       Boolean(raw.rejectUnauthorized),
@@ -992,19 +1138,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
 
-    if (!models.some((m) => m.id === this.selectedModel)) {
+    if (
+      !enabledModels.some((m) => m.id === this.selectedModel)
+    ) {
       this.selectedModel = resolvedDefault;
       this.saveSession();
     }
 
     this.postModels();
-    this.postSettings();
-    void vscode.window.showInformationMessage("Настройки Agent Panel сохранены.");
   }
 
   private async postInit(): Promise<void> {
     const config = getConfig();
-    const models = config.models;
+    const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
       this.selectedModel =
         models.find((m) => m.id === config.defaultModel)?.id ??
@@ -1115,33 +1261,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
       <div class="agents-title">Настройки</div>
-      <button type="button" class="text-btn" id="saveSettingsBtn">Сохранить</button>
+      <div id="settingsSaveStatus" class="settings-save-status" hidden>Сохранено</div>
     </div>
     <div class="settings-body" id="settingsBody">
+      <section class="settings-section">
+        <h3 class="settings-section-title">Провайдеры</h3>
+        <p class="settings-section-note">Base URL и API key для каждого OpenAI-compatible API. Модель выбирает провайдера в карточке.</p>
+        <div id="settingsProvidersList" class="settings-models"></div>
+        <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Провайдер</button>
+        <div id="settingsProvidersHint" class="settings-hint" hidden></div>
+      </section>
+
       <section class="settings-section">
         <h3 class="settings-section-title">Модели</h3>
         <label class="settings-field">
           <span class="settings-label">Модель по умолчанию</span>
           <select id="settingsDefaultModel" class="settings-input"></select>
         </label>
-        <label class="settings-field">
-          <span class="settings-label">Контекст по умолчанию (токены)</span>
-          <input id="settingsDefaultContext" class="settings-input" type="number" min="1024" step="1024" />
-        </label>
+
         <div id="settingsModelsList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить модель</button>
+        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить</button>
+        <div id="settingsModelsHint" class="settings-hint" hidden></div>
       </section>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Подключение</h3>
-        <label class="settings-field">
-          <span class="settings-label">Base URL</span>
-          <input id="settingsBaseUrl" class="settings-input" type="text" autocomplete="off" />
-        </label>
-        <label class="settings-field">
-          <span class="settings-label">API Key</span>
-          <input id="settingsApiKey" class="settings-input" type="password" autocomplete="off" />
-        </label>
+        <h3 class="settings-section-title">TLS</h3>
         <label class="settings-field settings-check">
           <input id="settingsRejectUnauthorized" type="checkbox" />
           <span class="settings-label">Проверять TLS-сертификат</span>
@@ -1171,6 +1315,92 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
         </label>
       </section>
+    </div>
+    <div id="modelEditModal" class="settings-modal" hidden>
+      <div class="settings-modal-backdrop" data-modal-dismiss="1"></div>
+      <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="modelEditTitle">
+        <div class="settings-modal-head">
+          <h3 id="modelEditTitle" class="settings-modal-title">Модель</h3>
+          <button type="button" class="icon-btn" id="modelEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <div class="settings-modal-tabs" id="modelEditTabs" hidden>
+          <button type="button" class="settings-modal-tab is-active" data-model-mode="manual">Вручную</button>
+          <button type="button" class="settings-modal-tab" data-model-mode="json">JSON</button>
+        </div>
+        <div class="settings-modal-body" id="modelEditManualPane">
+          <label class="settings-field">
+            <span class="settings-label">ID</span>
+            <input id="modelEditId" class="settings-input" type="text" placeholder="как в API, напр. gpt-4.1" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Название</span>
+            <input id="modelEditLabel" class="settings-input" type="text" placeholder="как видно в списке" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Провайдер</span>
+            <select id="modelEditProvider" class="settings-input"></select>
+          </label>
+          <div class="settings-model-limits">
+            <label class="settings-field">
+              <span class="settings-label">Контекст (вход)</span>
+              <input id="modelEditContext" class="settings-input" type="number" min="1024" step="1024" placeholder="max_input" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">Ответ (выход)</span>
+              <input id="modelEditOutput" class="settings-input" type="number" min="1" step="1024" placeholder="max_output" />
+            </label>
+          </div>
+        </div>
+        <div class="settings-modal-body" id="modelEditJsonPane" hidden>
+          <label class="settings-field">
+            <span class="settings-label">JSON список моделей</span>
+            <textarea id="settingsModelsJson" class="settings-input settings-textarea settings-json-textarea" rows="8" placeholder='["gpt-4.1", {"model":"claude-sonnet-4-5","name":"Claude","context_window":200000}]'></textarea>
+          </label>
+          <div class="settings-json-actions">
+            <button type="button" class="text-btn" id="exportModelsJsonBtn">Скопировать текущий список</button>
+          </div>
+          <div id="settingsJsonHint" class="settings-hint" hidden></div>
+        </div>
+        <div class="settings-modal-foot">
+          <button type="button" class="text-btn" id="modelEditCancelBtn">Отмена</button>
+          <button type="button" class="text-btn settings-modal-done" id="modelEditDoneBtn">Готово</button>
+        </div>
+      </div>
+    </div>
+    <div id="providerEditModal" class="settings-modal" hidden>
+      <div class="settings-modal-backdrop" data-provider-dismiss="1"></div>
+      <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="providerEditTitle">
+        <div class="settings-modal-head">
+          <h3 id="providerEditTitle" class="settings-modal-title">Провайдер</h3>
+          <button type="button" class="icon-btn" id="providerEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <div class="settings-modal-body">
+          <label class="settings-field">
+            <span class="settings-label">ID</span>
+            <input id="providerEditId" class="settings-input" type="text" placeholder="zai, kimi, openai…" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Название</span>
+            <input id="providerEditName" class="settings-input" type="text" placeholder="Z.AI" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Base URL</span>
+            <input id="providerEditBaseUrl" class="settings-input" type="text" placeholder="https://api.z.ai/api/paas/v4" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">API Key</span>
+            <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
+          </label>
+        </div>
+        <div class="settings-modal-foot">
+          <button type="button" class="text-btn" id="providerEditCancelBtn">Отмена</button>
+          <button type="button" class="text-btn settings-modal-done" id="providerEditDoneBtn">Готово</button>
+        </div>
+      </div>
     </div>
   </section>
 

@@ -24,8 +24,38 @@
   const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
   const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
-  const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+  const settingsSaveStatus = document.getElementById("settingsSaveStatus");
   const addModelBtn = document.getElementById("addModelBtn");
+  const settingsModelsHint = document.getElementById("settingsModelsHint");
+  const settingsModelsJson = document.getElementById("settingsModelsJson");
+  const importModelsJsonBtn = document.getElementById("importModelsJsonBtn");
+  const exportModelsJsonBtn = document.getElementById("exportModelsJsonBtn");
+  const settingsJsonHint = document.getElementById("settingsJsonHint");
+  const modelEditModal = document.getElementById("modelEditModal");
+  const modelEditTitle = document.getElementById("modelEditTitle");
+  const modelEditTabs = document.getElementById("modelEditTabs");
+  const modelEditManualPane = document.getElementById("modelEditManualPane");
+  const modelEditJsonPane = document.getElementById("modelEditJsonPane");
+  const modelEditId = document.getElementById("modelEditId");
+  const modelEditLabel = document.getElementById("modelEditLabel");
+  const modelEditContext = document.getElementById("modelEditContext");
+  const modelEditOutput = document.getElementById("modelEditOutput");
+  const modelEditProvider = document.getElementById("modelEditProvider");
+  const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
+  const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
+  const modelEditDoneBtn = document.getElementById("modelEditDoneBtn");
+  const settingsProvidersList = document.getElementById("settingsProvidersList");
+  const settingsProvidersHint = document.getElementById("settingsProvidersHint");
+  const addProviderBtn = document.getElementById("addProviderBtn");
+  const providerEditModal = document.getElementById("providerEditModal");
+  const providerEditTitle = document.getElementById("providerEditTitle");
+  const providerEditId = document.getElementById("providerEditId");
+  const providerEditName = document.getElementById("providerEditName");
+  const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
+  const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
+  const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
+  const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
@@ -36,9 +66,6 @@
   const contextTipEl = document.getElementById("contextTip");
 
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
-  const settingsDefaultContext = document.getElementById("settingsDefaultContext");
-  const settingsBaseUrl = document.getElementById("settingsBaseUrl");
-  const settingsApiKey = document.getElementById("settingsApiKey");
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
@@ -53,7 +80,19 @@
   let agentsData = [];
   let archiveAgentsData = [];
   let settingsModels = [];
+  let settingsProviders = [];
   let settingsDefaultModelId = "";
+  let settingsDefaultContextWindow = 128000;
+  let modelEditIndex = null;
+  let modelEditMode = "manual";
+  let providerEditIndex = null;
+  let settingsHydrating = false;
+  let settingsSaveTimer = null;
+  let settingsSaveStatusTimer = null;
+  let settingsModelTipEl = null;
+  let settingsModelTipRows = null;
+  let settingsModelTipIndex = null;
+  let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
 
@@ -71,6 +110,15 @@
 
   const CHECK_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">check</span>';
+
+  const SETTINGS_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
+
+  const INFO_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">info</span>';
+
+  const HEART_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
 
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
@@ -214,6 +262,575 @@
     }
   }
 
+  function setModelsHint(text, isError) {
+    if (!settingsModelsHint) {
+      return;
+    }
+    if (!text) {
+      settingsModelsHint.hidden = true;
+      settingsModelsHint.textContent = "";
+      settingsModelsHint.classList.remove("is-error");
+      return;
+    }
+    settingsModelsHint.hidden = false;
+    settingsModelsHint.textContent = text;
+    settingsModelsHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function setProvidersHint(text, isError) {
+    if (!settingsProvidersHint) {
+      return;
+    }
+    if (!text) {
+      settingsProvidersHint.hidden = true;
+      settingsProvidersHint.textContent = "";
+      settingsProvidersHint.classList.remove("is-error");
+      return;
+    }
+    settingsProvidersHint.hidden = false;
+    settingsProvidersHint.textContent = text;
+    settingsProvidersHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function providerLabel(providerId) {
+    const provider = settingsProviders.find((p) => p.id === providerId);
+    return provider ? provider.name || provider.id : providerId || "—";
+  }
+
+  function primaryProviderId() {
+    const def = settingsProviders.find((p) => p.id === "default");
+    return def?.id || settingsProviders[0]?.id || "";
+  }
+
+  function cloneProvider(provider) {
+    return {
+      id: provider.id || "",
+      name: provider.name || "",
+      baseUrl: provider.baseUrl || "",
+      apiKey: provider.apiKey || "",
+    };
+  }
+
+  function fillModelProviderSelect(selectedId) {
+    if (!modelEditProvider) {
+      return;
+    }
+    const fallback = primaryProviderId();
+    const current = selectedId || fallback;
+    modelEditProvider.innerHTML = "";
+    if (!settingsProviders.length) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "Сначала добавьте провайдера";
+      modelEditProvider.appendChild(empty);
+      return;
+    }
+    for (const provider of settingsProviders) {
+      const id = String(provider.id || "").trim();
+      if (!id) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = provider.name ? `${provider.name} (${id})` : id;
+      modelEditProvider.appendChild(option);
+    }
+    if (
+      current &&
+      Array.from(modelEditProvider.options).some((o) => o.value === current)
+    ) {
+      modelEditProvider.value = current;
+    } else if (modelEditProvider.options.length) {
+      modelEditProvider.selectedIndex = 0;
+    }
+  }
+
+  function openProviderEditModal(index, preset) {
+    if (!providerEditModal) {
+      return;
+    }
+    providerEditIndex = index;
+    const isNew = index === -1;
+    const provider = isNew
+      ? preset || { id: "", name: "", baseUrl: "", apiKey: "" }
+      : settingsProviders[index] || {
+          id: "",
+          name: "",
+          baseUrl: "",
+          apiKey: "",
+        };
+    if (providerEditTitle) {
+      providerEditTitle.textContent = isNew ? "Новый провайдер" : "Провайдер";
+    }
+    if (providerEditId) {
+      providerEditId.value = provider.id || "";
+      providerEditId.readOnly = !isNew;
+    }
+    if (providerEditName) {
+      providerEditName.value = provider.name || "";
+    }
+    if (providerEditBaseUrl) {
+      providerEditBaseUrl.value = provider.baseUrl || "";
+    }
+    if (providerEditApiKey) {
+      providerEditApiKey.value = provider.apiKey || "";
+    }
+    providerEditModal.hidden = false;
+    (isNew ? providerEditId : providerEditName)?.focus();
+  }
+
+  function closeProviderEditModal() {
+    if (!providerEditModal) {
+      return;
+    }
+    providerEditModal.hidden = true;
+    providerEditIndex = null;
+  }
+
+  function applyProviderEditModal() {
+    const id = providerEditId ? providerEditId.value.trim() : "";
+    const baseUrl = providerEditBaseUrl
+      ? providerEditBaseUrl.value.trim().replace(/\/$/, "")
+      : "";
+    if (!id) {
+      setProvidersHint("Укажите id провайдера.", true);
+      providerEditId?.focus();
+      return;
+    }
+    if (!baseUrl) {
+      setProvidersHint("Укажите base URL.", true);
+      providerEditBaseUrl?.focus();
+      return;
+    }
+    const name = providerEditName ? providerEditName.value.trim() : "";
+    const apiKey = providerEditApiKey ? providerEditApiKey.value : "";
+    const next = { id, name: name || id, baseUrl, apiKey };
+
+    if (providerEditIndex === -1) {
+      if (settingsProviders.some((p) => p.id === id)) {
+        setProvidersHint(`Провайдер «${id}» уже есть.`, true);
+        return;
+      }
+      settingsProviders.push(next);
+    } else if (
+      Number.isFinite(providerEditIndex) &&
+      providerEditIndex >= 0 &&
+      providerEditIndex < settingsProviders.length
+    ) {
+      settingsProviders[providerEditIndex] = next;
+    }
+    closeProviderEditModal();
+    setProvidersHint("");
+    renderSettingsProviders();
+    renderSettingsModels();
+    fillModelProviderSelect(modelEditProvider?.value || "");
+    schedulePersistSettings(0);
+  }
+
+  function renderSettingsProviders() {
+    if (!settingsProvidersList) {
+      return;
+    }
+    settingsProvidersList.innerHTML = "";
+    if (!settingsProviders.length) {
+      settingsProvidersList.innerHTML =
+        '<div class="settings-models-empty">Нет провайдеров — добавьте хотя бы один.</div>';
+      return;
+    }
+    settingsProviders.forEach((provider, index) => {
+      const row = document.createElement("div");
+      row.className = "settings-model-row";
+      row.dataset.index = String(index);
+      const title = provider.name || provider.id || "Провайдер";
+      row.innerHTML =
+        `<div class="settings-model-info">` +
+        `<div class="settings-model-name"></div>` +
+        `<div class="settings-model-id"></div>` +
+        `</div>` +
+        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        SETTINGS_ICON +
+        `</button>` +
+        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        DELETE_ICON +
+        `</button>`;
+      row.querySelector(".settings-model-name").textContent = title;
+      row.querySelector(".settings-model-id").textContent =
+        provider.baseUrl || provider.id || "";
+      settingsProvidersList.appendChild(row);
+    });
+  }
+
+  function setJsonHint(text, isError) {
+    if (!settingsJsonHint) {
+      return;
+    }
+    if (!text) {
+      settingsJsonHint.hidden = true;
+      settingsJsonHint.textContent = "";
+      settingsJsonHint.classList.remove("is-error");
+      return;
+    }
+    settingsJsonHint.hidden = false;
+    settingsJsonHint.textContent = text;
+    settingsJsonHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function pickField(raw, keys) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
+    }
+    const entries = Object.entries(raw);
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(raw, key) && raw[key] != null) {
+        return raw[key];
+      }
+    }
+    const lowerMap = new Map(
+      entries.map(([k, v]) => [String(k).toLowerCase(), v])
+    );
+    for (const key of keys) {
+      const value = lowerMap.get(String(key).toLowerCase());
+      if (value != null) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  function pickNestedField(raw, keys) {
+    const direct = pickField(raw, keys);
+    if (direct != null) {
+      return direct;
+    }
+    const nestKeys = [
+      "model_info",
+      "modelInfo",
+      "limits",
+      "limit",
+      "metadata",
+      "meta",
+      "config",
+      "parameters",
+      "params",
+      "info",
+      "capabilities",
+    ];
+    for (const nestKey of nestKeys) {
+      const nested = pickField(raw, [nestKey]);
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+        const value = pickField(nested, keys);
+        if (value != null) {
+          return value;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function normalizeModelEntry(raw) {
+    if (typeof raw === "string") {
+      const id = raw.trim();
+      return id ? { id, label: id } : null;
+    }
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+
+    const id = String(
+      pickField(raw, [
+        "id",
+        "model",
+        "model_id",
+        "modelId",
+        "modelID",
+        "slug",
+        "value",
+        "key",
+      ]) || ""
+    ).trim();
+    if (!id) {
+      return null;
+    }
+
+    const label = String(
+      pickField(raw, [
+        "label",
+        "title",
+        "name",
+        "displayName",
+        "display_name",
+        "display",
+        "text",
+        "description",
+      ]) || ""
+    ).trim() || id;
+
+    const contextRaw = pickNestedField(raw, [
+      "contextWindow",
+      "context_window",
+      "contextLength",
+      "context_length",
+      "maxContext",
+      "max_context",
+      "maxContextTokens",
+      "max_context_tokens",
+      "max_input_tokens",
+      "maxInputTokens",
+      "max_input",
+      "maxInput",
+      "input_tokens",
+      "inputTokens",
+      "context",
+      "tokens",
+      "max_tokens",
+      "maxTokens",
+    ]);
+    const outputRaw = pickNestedField(raw, [
+      "maxOutputTokens",
+      "max_output_tokens",
+      "max_output",
+      "maxOutput",
+      "output_tokens",
+      "outputTokens",
+      "max_completion_tokens",
+      "maxCompletionTokens",
+      "completion_tokens",
+      "completionTokens",
+    ]);
+    const contextWindow = Number(contextRaw);
+    const maxOutputTokens = Number(outputRaw);
+    const model = { id, label, enabled: true };
+    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
+      model.contextWindow = Math.floor(contextWindow);
+    }
+    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+      model.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+    return model;
+  }
+
+  function cloneModel(model) {
+    return {
+      id: model.id || "",
+      label: model.label || "",
+      providerId: model.providerId || "",
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      enabled: model.enabled !== false,
+      favorite: model.favorite === true,
+    };
+  }
+
+  function sortSettingsModels() {
+    settingsModels.sort((a, b) => {
+      const favA = a.favorite === true ? 0 : 1;
+      const favB = b.favorite === true ? 0 : 1;
+      if (favA !== favB) {
+        return favA - favB;
+      }
+      const labelA = String(a.label || a.id || "").trim();
+      const labelB = String(b.label || b.id || "").trim();
+      const byLabel = labelA.localeCompare(labelB, "ru", {
+        sensitivity: "base",
+        numeric: true,
+      });
+      if (byLabel !== 0) {
+        return byLabel;
+      }
+      return String(a.id || "").localeCompare(String(b.id || ""), "ru", {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+  }
+
+  function upsertModels(incoming) {
+    const byId = new Map();
+    for (const model of settingsModels) {
+      const id = String(model.id || "").trim();
+      if (id) {
+        byId.set(id, cloneModel(model));
+      }
+    }
+    let added = 0;
+    let updated = 0;
+    for (const item of incoming) {
+      const model = normalizeModelEntry(item);
+      if (!model) {
+        continue;
+      }
+      if (byId.has(model.id)) {
+        const prev = byId.get(model.id);
+        byId.set(model.id, {
+          id: model.id,
+          label: model.label || prev.label || model.id,
+          providerId: prev.providerId || "",
+          contextWindow:
+            model.contextWindow || prev.contextWindow || undefined,
+          maxOutputTokens:
+            model.maxOutputTokens || prev.maxOutputTokens || undefined,
+          enabled: prev.enabled !== false,
+          favorite: prev.favorite === true,
+        });
+        updated += 1;
+      } else {
+        byId.set(model.id, cloneModel(model));
+        added += 1;
+      }
+    }
+    settingsModels = Array.from(byId.values());
+    sortSettingsModels();
+    renderSettingsModels();
+    return { added, updated, total: settingsModels.filter((m) => m.id).length };
+  }
+
+  function looksLikeModelEntry(item) {
+    if (typeof item === "string") {
+      return Boolean(item.trim());
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return false;
+    }
+    return Boolean(
+      pickField(item, [
+        "id",
+        "model",
+        "model_id",
+        "modelId",
+        "modelID",
+        "slug",
+        "value",
+        "key",
+        "name",
+      ])
+    );
+  }
+
+  function extractModelsList(parsed) {
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    if (looksLikeModelEntry(parsed)) {
+      return [parsed];
+    }
+
+    const wrapperKeys = [
+      "models",
+      "data",
+      "items",
+      "results",
+      "list",
+      "model_list",
+      "modelList",
+      "available_models",
+      "availableModels",
+      "choices",
+      "entries",
+      "values",
+      "records",
+      "payload",
+      "response",
+      "body",
+      "result",
+    ];
+
+    for (const key of wrapperKeys) {
+      const value = pickField(parsed, [key]);
+      if (Array.isArray(value)) {
+        return value;
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const nested = extractModelsList(value);
+        if (nested) {
+          return nested;
+        }
+      }
+    }
+
+    for (const value of Object.values(parsed)) {
+      if (!Array.isArray(value) || !value.length) {
+        continue;
+      }
+      if (value.some(looksLikeModelEntry)) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  function parseModelsJson(raw) {
+    const text = String(raw || "").trim();
+    if (!text) {
+      throw new Error("Вставьте JSON со списком моделей.");
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("Некорректный JSON.");
+    }
+    const items = extractModelsList(parsed);
+    if (!items) {
+      throw new Error("В JSON не найден список моделей.");
+    }
+    return items;
+  }
+
+  function importModelsFromJson() {
+    try {
+      const items = parseModelsJson(settingsModelsJson?.value || "");
+      const normalized = items
+        .map((item) => normalizeModelEntry(item))
+        .filter(Boolean);
+      if (!normalized.length) {
+        throw new Error("В JSON нет ни одной модели с id.");
+      }
+      const result = upsertModels(normalized);
+      setJsonHint(
+        `Готово: +${result.added}, обновлено ${result.updated}, всего ${result.total}.`
+      );
+      return true;
+    } catch (error) {
+      setJsonHint(error.message || "Не удалось импортировать.", true);
+      return false;
+    }
+  }
+
+  function exportModelsToJson() {
+    const payload = settingsModels
+      .filter((m) => String(m.id || "").trim())
+      .map((m) => {
+        const row = {
+          id: m.id,
+          label: m.label || m.id,
+        };
+        if (m.contextWindow) {
+          row.contextWindow = m.contextWindow;
+        }
+        if (m.maxOutputTokens) {
+          row.maxOutputTokens = m.maxOutputTokens;
+        }
+        return row;
+      });
+    const text = JSON.stringify(payload, null, 2);
+    if (settingsModelsJson) {
+      settingsModelsJson.value = text;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => setJsonHint("Список скопирован в буфер."),
+        () => setJsonHint("JSON заполнен в поле ниже.")
+      );
+    } else {
+      setJsonHint("JSON заполнен в поле ниже.");
+    }
+  }
+
   function syncDefaultModelSelect() {
     if (!settingsDefaultModel) {
       return;
@@ -222,7 +839,7 @@
     settingsDefaultModel.innerHTML = "";
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
-      if (!id) {
+      if (!id || model.enabled === false) {
         continue;
       }
       const option = document.createElement("option");
@@ -238,93 +855,440 @@
     } else if (settingsDefaultModel.options.length) {
       settingsDefaultModel.selectedIndex = 0;
       settingsDefaultModelId = settingsDefaultModel.value;
+    } else {
+      settingsDefaultModelId = "";
     }
+  }
+
+  function setModelEditMode(mode) {
+    modelEditMode = mode === "json" ? "json" : "manual";
+    if (modelEditTabs) {
+      modelEditTabs.querySelectorAll("[data-model-mode]").forEach((btn) => {
+        btn.classList.toggle(
+          "is-active",
+          btn.getAttribute("data-model-mode") === modelEditMode
+        );
+      });
+    }
+    if (modelEditManualPane) {
+      modelEditManualPane.hidden = modelEditMode !== "manual";
+    }
+    if (modelEditJsonPane) {
+      modelEditJsonPane.hidden = modelEditMode !== "json";
+    }
+    if (modelEditDoneBtn) {
+      modelEditDoneBtn.textContent =
+        modelEditMode === "json" ? "Применить" : "Готово";
+    }
+  }
+
+  function openModelEditModal(index) {
+    if (!modelEditModal) {
+      return;
+    }
+    modelEditIndex = index;
+    const isNew = index === -1;
+    const model = isNew
+      ? {
+          id: "",
+          label: "",
+          providerId: "",
+          contextWindow: undefined,
+          maxOutputTokens: undefined,
+        }
+      : settingsModels[index] || { id: "", label: "", providerId: "" };
+    if (modelEditTitle) {
+      modelEditTitle.textContent = isNew ? "Добавить модели" : "Настройки модели";
+    }
+    if (modelEditTabs) {
+      modelEditTabs.hidden = !isNew;
+    }
+    setModelEditMode("manual");
+    setJsonHint("");
+    if (modelEditId) {
+      modelEditId.value = model.id || "";
+    }
+    if (modelEditLabel) {
+      modelEditLabel.value = model.label || "";
+    }
+    fillModelProviderSelect(model.providerId || primaryProviderId());
+    if (modelEditContext) {
+      modelEditContext.value =
+        model.contextWindow && Number(model.contextWindow) > 0
+          ? String(model.contextWindow)
+          : "";
+    }
+    if (modelEditOutput) {
+      modelEditOutput.value =
+        model.maxOutputTokens && Number(model.maxOutputTokens) > 0
+          ? String(model.maxOutputTokens)
+          : "";
+    }
+    if (isNew && settingsModelsJson && !settingsModelsJson.value.trim()) {
+      settingsModelsJson.value = "";
+    }
+    modelEditModal.hidden = false;
+    if (isNew) {
+      modelEditId?.focus();
+    } else {
+      modelEditId?.focus();
+    }
+  }
+
+  function closeModelEditModal() {
+    if (!modelEditModal) {
+      return;
+    }
+    modelEditModal.hidden = true;
+    modelEditIndex = null;
+    setModelEditMode("manual");
+    setJsonHint("");
+  }
+
+  function applyModelEditModal() {
+    if (modelEditIndex === -1 && modelEditMode === "json") {
+      if (importModelsFromJson()) {
+        closeModelEditModal();
+        setModelsHint("Модели из JSON добавлены.");
+        schedulePersistSettings(0);
+      }
+      return;
+    }
+
+    const id = modelEditId ? modelEditId.value.trim() : "";
+    if (!id) {
+      setModelsHint("Укажите id модели.", true);
+      setModelEditMode("manual");
+      modelEditId?.focus();
+      return;
+    }
+    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
+    const providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    if (!providerId) {
+      setModelsHint("Выберите провайдера (или сначала добавьте его).", true);
+      setModelEditMode("manual");
+      modelEditProvider?.focus();
+      return;
+    }
+    const contextWindow = Number(modelEditContext?.value);
+    const maxOutputTokens = Number(modelEditOutput?.value);
+    const next = {
+      id,
+      label: label || id,
+      providerId,
+      enabled: true,
+    };
+    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
+      next.contextWindow = Math.floor(contextWindow);
+    }
+    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+      next.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+
+    if (modelEditIndex === -1) {
+      const existing = settingsModels.findIndex((m) => m.id === id);
+      if (existing >= 0) {
+        const prev = settingsModels[existing];
+        settingsModels[existing] = {
+          ...next,
+          enabled: prev.enabled !== false,
+          favorite: prev.favorite === true,
+        };
+      } else {
+        settingsModels.push(next);
+      }
+    } else if (
+      Number.isFinite(modelEditIndex) &&
+      modelEditIndex >= 0 &&
+      modelEditIndex < settingsModels.length
+    ) {
+      const prev = settingsModels[modelEditIndex];
+      const duplicate = settingsModels.findIndex(
+        (m, i) => i !== modelEditIndex && m.id === id
+      );
+      if (duplicate >= 0) {
+        setModelsHint(`Модель с id «${id}» уже есть.`, true);
+        return;
+      }
+      settingsModels[modelEditIndex] = {
+        ...next,
+        enabled: prev.enabled !== false,
+        favorite: prev.favorite === true,
+      };
+    }
+    closeModelEditModal();
+    setModelsHint("");
+    sortSettingsModels();
+    renderSettingsModels();
+    schedulePersistSettings(0);
+  }
+
+  function formatModelTokens(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) {
+      return "—";
+    }
+    return Math.floor(n).toLocaleString("ru-RU");
+  }
+
+  function ensureSettingsModelTip() {
+    if (settingsModelTipEl) {
+      return settingsModelTipEl;
+    }
+    settingsModelTipEl = document.createElement("div");
+    settingsModelTipEl.className = "settings-model-tip";
+    settingsModelTipEl.hidden = true;
+    settingsModelTipEl.setAttribute("role", "tooltip");
+    const labels = [
+      "ID",
+      "Название",
+      "Провайдер",
+      "Контекст (вход)",
+      "Ответ (выход)",
+      "Статус",
+      "Избранное",
+    ];
+    settingsModelTipRows = labels.map((label) => {
+      const line = document.createElement("div");
+      line.className = "settings-model-tip-row";
+      const key = document.createElement("span");
+      key.className = "settings-model-tip-key";
+      key.textContent = label;
+      const val = document.createElement("span");
+      val.className = "settings-model-tip-val";
+      line.appendChild(key);
+      line.appendChild(val);
+      settingsModelTipEl.appendChild(line);
+      return val;
+    });
+    document.body.appendChild(settingsModelTipEl);
+    return settingsModelTipEl;
+  }
+
+  function hideSettingsModelTip() {
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+      settingsModelTipHideTimer = null;
+    }
+    settingsModelTipIndex = null;
+    if (settingsModelTipEl) {
+      settingsModelTipEl.hidden = true;
+    }
+  }
+
+  function fillSettingsModelTip(model) {
+    const vals = [
+      model.id || "—",
+      model.label || model.id || "—",
+      providerLabel(model.providerId),
+      formatModelTokens(model.contextWindow),
+      formatModelTokens(model.maxOutputTokens),
+      model.enabled !== false ? "Включена" : "Выключена",
+      model.favorite === true ? "Да" : "Нет",
+    ];
+    ensureSettingsModelTip();
+    for (let i = 0; i < settingsModelTipRows.length; i += 1) {
+      settingsModelTipRows[i].textContent = vals[i];
+    }
+  }
+
+  function positionSettingsModelTip(anchor) {
+    const tip = ensureSettingsModelTip();
+    if (!anchor || tip.hidden) {
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const margin = 8;
+    const tipWidth = tip.offsetWidth || 220;
+    const tipHeight = tip.offsetHeight || 120;
+    let left = rect.left;
+    if (left + tipWidth > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - tipWidth - margin);
+    }
+    let top = rect.bottom + 6;
+    if (top + tipHeight > window.innerHeight - margin) {
+      top = Math.max(margin, rect.top - tipHeight - 6);
+    }
+    tip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  }
+
+  function showSettingsModelTip(anchor, model, index) {
+    if (!anchor || !model) {
+      return;
+    }
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+      settingsModelTipHideTimer = null;
+    }
+    const tip = ensureSettingsModelTip();
+    if (settingsModelTipIndex !== index) {
+      fillSettingsModelTip(model);
+      settingsModelTipIndex = index;
+    }
+    tip.hidden = false;
+    positionSettingsModelTip(anchor);
+  }
+
+  function scheduleHideSettingsModelTip() {
+    if (settingsModelTipHideTimer) {
+      clearTimeout(settingsModelTipHideTimer);
+    }
+    settingsModelTipHideTimer = setTimeout(() => {
+      settingsModelTipHideTimer = null;
+      hideSettingsModelTip();
+    }, 40);
   }
 
   function renderSettingsModels() {
     if (!settingsModelsList) {
       return;
     }
+    hideSettingsModelTip();
+    sortSettingsModels();
     settingsModelsList.innerHTML = "";
+    if (!settingsModels.length) {
+      settingsModelsList.innerHTML =
+        '<div class="settings-models-empty">Список пуст — добавьте модель.</div>';
+      syncDefaultModelSelect();
+      return;
+    }
     settingsModels.forEach((model, index) => {
       const row = document.createElement("div");
-      row.className = "settings-model-row";
+      const enabled = model.enabled !== false;
+      const favorite = model.favorite === true;
+      row.className =
+        "settings-model-row" + (enabled ? "" : " is-disabled");
+      row.dataset.index = String(index);
+      const title = model.label || model.id || "Без id";
+      const parts = [];
+      if (model.label && model.id && model.label !== model.id) {
+        parts.push(model.id);
+      }
+      parts.push(providerLabel(model.providerId));
+      const subtitle = parts.join(" · ");
       row.innerHTML =
-        `<div class="settings-model-head">` +
-        `<span class="settings-model-title">Модель ${index + 1}</span>` +
-        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
-        CLOSE_ICON +
+        `<label class="settings-model-switch" title="${enabled ? "Выключить" : "Включить"}">` +
+        `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
+          enabled ? "checked" : ""
+        } />` +
+        `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+        `</label>` +
+        `<div class="settings-model-info">` +
+        `<div class="settings-model-title">` +
+        `<div class="settings-model-name"></div>` +
+        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="Параметры модели" aria-label="Параметры модели">` +
+        INFO_ICON +
         `</button>` +
         `</div>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">ID</span>` +
-        `<input class="settings-input" data-field="id" data-index="${index}" type="text" placeholder="как в API, напр. gpt-4.1" />` +
-        `</label>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">Название</span>` +
-        `<input class="settings-input" data-field="label" data-index="${index}" type="text" placeholder="как видно в списке" />` +
-        `</label>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">Контекст (токены)</span>` +
-        `<input class="settings-input" data-field="contextWindow" data-index="${index}" type="number" min="1024" step="1024" placeholder="необязательно" />` +
-        `</label>`;
-      const idInput = row.querySelector('[data-field="id"]');
-      const labelInput = row.querySelector('[data-field="label"]');
-      const ctxInput = row.querySelector('[data-field="contextWindow"]');
-      idInput.value = model.id || "";
-      labelInput.value = model.label || "";
-      ctxInput.value =
-        model.contextWindow && Number(model.contextWindow) > 0
-          ? String(model.contextWindow)
-          : "";
+        `<div class="settings-model-id"></div>` +
+        `</div>` +
+        `<button type="button" class="icon-btn settings-model-fav${
+          favorite ? " is-on" : ""
+        }" data-index="${index}" title="${
+          favorite ? "Убрать из избранного" : "В избранное"
+        }" aria-label="${
+          favorite ? "Убрать из избранного" : "В избранное"
+        }" aria-pressed="${favorite ? "true" : "false"}">` +
+        HEART_ICON +
+        `</button>` +
+        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        SETTINGS_ICON +
+        `</button>` +
+        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        DELETE_ICON +
+        `</button>`;
+      row.querySelector(".settings-model-name").textContent = title;
+      row.querySelector(".settings-model-id").textContent = subtitle;
       settingsModelsList.appendChild(row);
     });
     syncDefaultModelSelect();
   }
 
   function readModelsFromDom() {
-    if (!settingsModelsList) {
-      return settingsModels.slice();
+    return settingsModels
+      .map((m) => cloneModel(m))
+      .filter((m) => String(m.id || "").trim());
+  }
+
+  function showSettingsSaved() {
+    if (!settingsSaveStatus) {
+      return;
     }
-    const rows = Array.from(
-      settingsModelsList.querySelectorAll(".settings-model-row")
-    );
-    return rows.map((row) => {
-      const id = row.querySelector('[data-field="id"]').value.trim();
-      const label = row.querySelector('[data-field="label"]').value.trim();
-      const ctxRaw = row.querySelector('[data-field="contextWindow"]').value;
-      const contextWindow = Number(ctxRaw);
-      const model = { id, label };
-      if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
-        model.contextWindow = Math.floor(contextWindow);
-      }
-      return model;
+    settingsSaveStatus.hidden = false;
+    if (settingsSaveStatusTimer) {
+      clearTimeout(settingsSaveStatusTimer);
+    }
+    settingsSaveStatusTimer = setTimeout(() => {
+      settingsSaveStatus.hidden = true;
+    }, 1200);
+  }
+
+  function persistSettingsNow() {
+    if (settingsHydrating) {
+      return;
+    }
+    vscode.postMessage({
+      type: "saveSettings",
+      settings: collectSettings(),
     });
+    showSettingsSaved();
+  }
+
+  function schedulePersistSettings(delayMs) {
+    if (settingsHydrating) {
+      return;
+    }
+    if (settingsSaveTimer) {
+      clearTimeout(settingsSaveTimer);
+    }
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      persistSettingsNow();
+    }, typeof delayMs === "number" ? delayMs : 450);
   }
 
   function fillSettings(settings) {
     if (!settings || typeof settings !== "object") {
       return;
     }
+    settingsHydrating = true;
+    try {
+    settingsProviders = Array.isArray(settings.providers)
+      ? settings.providers.map((p) => ({
+          id: p.id || "",
+          name: p.name || "",
+          baseUrl: p.baseUrl || "",
+          apiKey: p.apiKey || "",
+        }))
+      : [];
+    if (
+      !settingsProviders.length &&
+      (settings.baseUrl || settings.apiKey)
+    ) {
+      settingsProviders.push({
+        id: "default",
+        name: "Основной",
+        baseUrl: String(settings.baseUrl || "").replace(/\/$/, ""),
+        apiKey: settings.apiKey || "",
+      });
+    }
+    const primaryId = primaryProviderId();
     settingsModels = Array.isArray(settings.models)
       ? settings.models.map((m) => ({
           id: m.id || "",
           label: m.label || "",
+          providerId: m.providerId || primaryId,
           contextWindow: m.contextWindow,
+          maxOutputTokens: m.maxOutputTokens,
+          enabled: m.enabled !== false,
+          favorite: m.favorite === true,
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
-    if (settingsDefaultContext) {
-      settingsDefaultContext.value = String(
-        settings.defaultContextWindow || 128000
-      );
-    }
-    if (settingsBaseUrl) {
-      settingsBaseUrl.value = settings.baseUrl || "";
-    }
-    if (settingsApiKey) {
-      settingsApiKey.value = settings.apiKey || "";
-    }
+    settingsDefaultContextWindow =
+      Number(settings.defaultContextWindow) > 0
+        ? Number(settings.defaultContextWindow)
+        : 128000;
     if (settingsRejectUnauthorized) {
       settingsRejectUnauthorized.checked = Boolean(settings.rejectUnauthorized);
     }
@@ -345,19 +1309,68 @@
         settings.maxResponseChars || 12000
       );
     }
+    closeModelEditModal();
+    closeProviderEditModal();
+    renderSettingsProviders();
     renderSettingsModels();
+    } finally {
+      settingsHydrating = false;
+    }
   }
 
   function collectSettings() {
-    settingsModels = readModelsFromDom();
+    const providers = settingsProviders
+      .map((p) => cloneProvider(p))
+      .filter((p) => String(p.id || "").trim() && String(p.baseUrl || "").trim())
+      .map((p) => {
+        const row = {
+          id: p.id,
+          baseUrl: String(p.baseUrl || "").replace(/\/$/, ""),
+        };
+        if (p.name) {
+          row.name = p.name;
+        }
+        if (p.apiKey) {
+          row.apiKey = p.apiKey;
+        }
+        return row;
+      });
+
+    const models = readModelsFromDom().map((m) => {
+      const row = {
+        id: m.id,
+        label: m.label || m.id,
+        providerId: m.providerId || primaryProviderId(),
+        enabled: m.enabled !== false,
+      };
+      if (m.contextWindow) {
+        row.contextWindow = m.contextWindow;
+      }
+      if (m.maxOutputTokens) {
+        row.maxOutputTokens = m.maxOutputTokens;
+      }
+      if (row.enabled) {
+        delete row.enabled;
+      } else {
+        row.enabled = false;
+      }
+      if (m.favorite === true) {
+        row.favorite = true;
+      }
+      return row;
+    });
+    const primary =
+      settingsProviders.find((p) => p.id === "default") ||
+      settingsProviders[0];
     return {
-      models: settingsModels,
+      providers,
+      models,
       defaultModel: settingsDefaultModel
         ? settingsDefaultModel.value
         : settingsDefaultModelId,
-      defaultContextWindow: Number(settingsDefaultContext?.value || 128000),
-      baseUrl: settingsBaseUrl ? settingsBaseUrl.value.trim() : "",
-      apiKey: settingsApiKey ? settingsApiKey.value : "",
+      defaultContextWindow: settingsDefaultContextWindow,
+      baseUrl: primary ? String(primary.baseUrl || "").replace(/\/$/, "") : "",
+      apiKey: primary ? primary.apiKey || "" : "",
       rejectUnauthorized: settingsRejectUnauthorized
         ? settingsRejectUnauthorized.checked
         : false,
@@ -854,6 +1867,14 @@
         btn.appendChild(check);
       }
 
+      if (model.favorite === true) {
+        const heart = document.createElement("span");
+        heart.className = "model-option-fav";
+        heart.innerHTML = HEART_ICON;
+        heart.setAttribute("aria-hidden", "true");
+        btn.appendChild(heart);
+      }
+
       modelMenu.appendChild(btn);
     }
   }
@@ -1030,47 +2051,263 @@
     });
   }
 
-  if (saveSettingsBtn) {
-    saveSettingsBtn.addEventListener("click", () => {
-      vscode.postMessage({
-        type: "saveSettings",
-        settings: collectSettings(),
-      });
+  const settingsBody = document.getElementById("settingsBody");
+  if (settingsBody) {
+    settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
+    settingsBody.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (
+        target.closest(
+          "#settingsCaBundle, #settingsSystemPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
+        )
+      ) {
+        schedulePersistSettings();
+      }
+    });
+    settingsBody.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (target.closest("#settingsRejectUnauthorized")) {
+        persistSettingsNow();
+      }
     });
   }
 
   if (addModelBtn) {
     addModelBtn.addEventListener("click", () => {
-      settingsModels = readModelsFromDom();
-      settingsModels.push({ id: "", label: "" });
-      renderSettingsModels();
+      setModelsHint("");
+      openModelEditModal(-1);
+    });
+  }
+
+  if (addProviderBtn) {
+    addProviderBtn.addEventListener("click", () => {
+      setProvidersHint("");
+      openProviderEditModal(-1);
+    });
+  }
+
+  if (settingsProvidersList) {
+    settingsProvidersList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".settings-provider-edit");
+      if (editBtn) {
+        const index = Number(editBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openProviderEditModal(index);
+        }
+        return;
+      }
+      const removeBtn = event.target.closest(".settings-provider-remove");
+      if (!removeBtn) {
+        return;
+      }
+      const index = Number(removeBtn.dataset.index);
+      if (
+        Number.isFinite(index) &&
+        index >= 0 &&
+        index < settingsProviders.length
+      ) {
+        const removedId = settingsProviders[index].id;
+        settingsProviders.splice(index, 1);
+        const fallback = primaryProviderId();
+        for (const model of settingsModels) {
+          if (model.providerId === removedId) {
+            model.providerId = fallback;
+          }
+        }
+        renderSettingsProviders();
+        renderSettingsModels();
+        fillModelProviderSelect(modelEditProvider?.value || fallback);
+        schedulePersistSettings(0);
+      }
+    });
+  }
+
+  if (importModelsJsonBtn) {
+    importModelsJsonBtn.addEventListener("click", () => {
+      if (importModelsFromJson()) {
+        schedulePersistSettings(0);
+      }
+    });
+  }
+
+  if (exportModelsJsonBtn) {
+    exportModelsJsonBtn.addEventListener("click", () => {
+      exportModelsToJson();
+    });
+  }
+
+  if (modelEditTabs) {
+    modelEditTabs.addEventListener("click", (event) => {
+      const tab = event.target.closest("[data-model-mode]");
+      if (!tab) {
+        return;
+      }
+      setModelEditMode(tab.getAttribute("data-model-mode"));
+      if (modelEditMode === "json") {
+        settingsModelsJson?.focus();
+      } else {
+        modelEditId?.focus();
+      }
     });
   }
 
   if (settingsModelsList) {
+    settingsModelsList.addEventListener("pointerover", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related instanceof Node && btn.contains(related)) {
+        return;
+      }
+      const index = Number(btn.dataset.index);
+      if (!Number.isFinite(index) || !settingsModels[index]) {
+        return;
+      }
+      showSettingsModelTip(btn, settingsModels[index], index);
+    });
+    settingsModelsList.addEventListener("pointerout", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related instanceof Node && btn.contains(related)) {
+        return;
+      }
+      scheduleHideSettingsModelTip();
+    });
+    settingsModelsList.addEventListener("focusin", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      const index = Number(btn.dataset.index);
+      if (!Number.isFinite(index) || !settingsModels[index]) {
+        return;
+      }
+      showSettingsModelTip(btn, settingsModels[index], index);
+    });
+    settingsModelsList.addEventListener("focusout", (event) => {
+      const btn = event.target.closest(".settings-model-info-btn");
+      if (!btn || !settingsModelsList.contains(btn)) {
+        return;
+      }
+      scheduleHideSettingsModelTip();
+    });
+    settingsModelsList.addEventListener("scroll", hideSettingsModelTip, true);
     settingsModelsList.addEventListener("click", (event) => {
+      const favBtn = event.target.closest(".settings-model-fav");
+      if (favBtn) {
+        const index = Number(favBtn.dataset.index);
+        if (Number.isFinite(index) && settingsModels[index]) {
+          settingsModels[index].favorite = settingsModels[index].favorite !== true;
+          renderSettingsModels();
+          schedulePersistSettings(0);
+        }
+        return;
+      }
+      const editBtn = event.target.closest(".settings-model-edit");
+      if (editBtn) {
+        hideSettingsModelTip();
+        const index = Number(editBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openModelEditModal(index);
+        }
+        return;
+      }
       const removeBtn = event.target.closest(".settings-model-remove");
       if (!removeBtn) {
         return;
       }
       const index = Number(removeBtn.dataset.index);
-      settingsModels = readModelsFromDom();
       if (Number.isFinite(index) && index >= 0 && index < settingsModels.length) {
         settingsModels.splice(index, 1);
-        if (!settingsModels.length) {
-          settingsModels.push({ id: "", label: "" });
-        }
         renderSettingsModels();
+        schedulePersistSettings(0);
       }
     });
-    settingsModelsList.addEventListener("input", (event) => {
-      const input = event.target.closest("[data-field]");
-      if (!input) {
+    settingsModelsList.addEventListener("change", (event) => {
+      const toggle = event.target.closest(".settings-model-toggle");
+      if (!toggle) {
         return;
       }
-      settingsModels = readModelsFromDom();
-      if (input.dataset.field === "id" || input.dataset.field === "label") {
-        syncDefaultModelSelect();
+      const index = Number(toggle.dataset.index);
+      if (Number.isFinite(index) && settingsModels[index]) {
+        settingsModels[index].enabled = Boolean(toggle.checked);
+        renderSettingsModels();
+        schedulePersistSettings(0);
+      }
+    });
+  }
+
+  window.addEventListener("resize", hideSettingsModelTip);
+
+  function bindModelModalDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeModelEditModal();
+    });
+  }
+
+  bindModelModalDismiss(modelEditCloseBtn);
+  bindModelModalDismiss(modelEditCancelBtn);
+
+  if (modelEditDoneBtn) {
+    modelEditDoneBtn.addEventListener("click", () => {
+      applyModelEditModal();
+    });
+  }
+
+  if (modelEditModal) {
+    modelEditModal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-modal-dismiss]")) {
+        closeModelEditModal();
+      }
+    });
+    modelEditModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeModelEditModal();
+      }
+    });
+  }
+
+  function bindProviderModalDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeProviderEditModal();
+    });
+  }
+
+  bindProviderModalDismiss(providerEditCloseBtn);
+  bindProviderModalDismiss(providerEditCancelBtn);
+
+  if (providerEditDoneBtn) {
+    providerEditDoneBtn.addEventListener("click", () => {
+      applyProviderEditModal();
+    });
+  }
+
+  if (providerEditModal) {
+    providerEditModal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-provider-dismiss]")) {
+        closeProviderEditModal();
+      }
+    });
+    providerEditModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeProviderEditModal();
       }
     });
   }
@@ -1078,6 +2315,7 @@
   if (settingsDefaultModel) {
     settingsDefaultModel.addEventListener("change", () => {
       settingsDefaultModelId = settingsDefaultModel.value;
+      schedulePersistSettings(0);
     });
   }
 

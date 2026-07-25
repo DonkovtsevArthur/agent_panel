@@ -1,13 +1,36 @@
 import * as vscode from "vscode";
 
+export interface AgentProvider {
+  id: string;
+  name?: string;
+  baseUrl: string;
+  apiKey?: string;
+}
+
 export interface AgentModel {
   id: string;
   label?: string;
-  /** Размер контекстного окна модели в токенах */
+  /** id провайдера из agentPanel.providers */
+  providerId?: string;
+  /** Размер контекстного окна модели в токенах (max input) */
   contextWindow?: number;
+  /** Лимит выходных токенов модели */
+  maxOutputTokens?: number;
+  /** false — скрыта из селектора чата; отсутствие = включена */
+  enabled?: boolean;
+  /** true — избранная: выше в селекторе чата */
+  favorite?: boolean;
+}
+
+export interface ModelEndpoint {
+  baseUrl: string;
+  apiKey: string;
+  providerId: string;
+  providerName: string;
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
+export const DEFAULT_PROVIDER_ID = "default";
 
 /** Известные лимиты контекста по id модели (если не заданы в settings). */
 const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
@@ -29,8 +52,11 @@ const DEFAULT_MODELS: AgentModel[] = [
 ];
 
 export interface AgentPanelConfig {
+  /** @deprecated legacy mirror of primary provider.baseUrl */
   baseUrl: string;
+  /** @deprecated legacy mirror of primary provider.apiKey */
   apiKey: string;
+  providers: AgentProvider[];
   models: AgentModel[];
   defaultModel: string;
   defaultContextWindow: number;
@@ -40,6 +66,95 @@ export interface AgentPanelConfig {
   maxResponseChars: number;
   rejectUnauthorized: boolean;
   caBundlePath: string;
+}
+
+function normalizeBaseUrl(raw: string): string {
+  return String(raw || "").trim().replace(/\/$/, "");
+}
+
+function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
+  const raw = cfg.get<unknown>("providers");
+  const list = Array.isArray(raw) ? raw : [];
+  const providers: AgentProvider[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const row = item as {
+      id?: unknown;
+      name?: unknown;
+      baseUrl?: unknown;
+      apiKey?: unknown;
+    };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    const baseUrl = normalizeBaseUrl(
+      typeof row.baseUrl === "string" ? row.baseUrl : ""
+    );
+    if (!id || !baseUrl || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const provider: AgentProvider = { id, baseUrl };
+    if (typeof row.name === "string" && row.name.trim()) {
+      provider.name = row.name.trim();
+    }
+    if (typeof row.apiKey === "string" && row.apiKey) {
+      provider.apiKey = row.apiKey;
+    }
+    providers.push(provider);
+  }
+  return providers;
+}
+
+/** Если providers пуст — поднять legacy baseUrl/apiKey как провайдер «Основной». */
+export function ensureProviders(
+  providers: AgentProvider[],
+  legacyBaseUrl: string,
+  legacyApiKey: string
+): AgentProvider[] {
+  if (providers.length > 0) {
+    return providers;
+  }
+  const baseUrl = normalizeBaseUrl(legacyBaseUrl);
+  if (!baseUrl) {
+    return [];
+  }
+  const provider: AgentProvider = {
+    id: DEFAULT_PROVIDER_ID,
+    name: "Основной",
+    baseUrl,
+  };
+  if (legacyApiKey) {
+    provider.apiKey = legacyApiKey;
+  }
+  return [provider];
+}
+
+export function primaryProvider(
+  providers: AgentProvider[]
+): AgentProvider | undefined {
+  return (
+    providers.find((p) => p.id === DEFAULT_PROVIDER_ID) || providers[0]
+  );
+}
+
+/** Моделям без валидного providerId назначить primary. */
+export function assignMissingProviderIds(
+  models: AgentModel[],
+  providers: AgentProvider[]
+): AgentModel[] {
+  const primaryId = primaryProvider(providers)?.id;
+  if (!primaryId) {
+    return models;
+  }
+  const valid = new Set(providers.map((p) => p.id));
+  return models.map((model) => {
+    if (model.providerId && valid.has(model.providerId)) {
+      return model;
+    }
+    return { ...model, providerId: primaryId };
+  });
 }
 
 function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
@@ -53,7 +168,11 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     const row = item as {
       id?: unknown;
       label?: unknown;
+      providerId?: unknown;
       contextWindow?: unknown;
+      maxOutputTokens?: unknown;
+      enabled?: unknown;
+      favorite?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -63,18 +182,40 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       typeof row.label === "string" && row.label.trim()
         ? row.label.trim()
         : undefined;
+    const providerId =
+      typeof row.providerId === "string" && row.providerId.trim()
+        ? row.providerId.trim()
+        : undefined;
     const contextWindow =
       typeof row.contextWindow === "number" &&
       Number.isFinite(row.contextWindow) &&
       row.contextWindow > 0
         ? Math.floor(row.contextWindow)
         : undefined;
+    const maxOutputTokens =
+      typeof row.maxOutputTokens === "number" &&
+      Number.isFinite(row.maxOutputTokens) &&
+      row.maxOutputTokens > 0
+        ? Math.floor(row.maxOutputTokens)
+        : undefined;
     const model: AgentModel = { id };
     if (label) {
       model.label = label;
     }
+    if (providerId) {
+      model.providerId = providerId;
+    }
     if (contextWindow) {
       model.contextWindow = contextWindow;
+    }
+    if (maxOutputTokens) {
+      model.maxOutputTokens = maxOutputTokens;
+    }
+    if (row.enabled === false) {
+      model.enabled = false;
+    }
+    if (row.favorite === true) {
+      model.favorite = true;
     }
     models.push(model);
   }
@@ -82,9 +223,41 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
   return models.length > 0 ? models : DEFAULT_MODELS;
 }
 
+function compareModelsByFavoriteThenLabel(a: AgentModel, b: AgentModel): number {
+  const favA = a.favorite === true ? 0 : 1;
+  const favB = b.favorite === true ? 0 : 1;
+  if (favA !== favB) {
+    return favA - favB;
+  }
+  const labelA = String(a.label || a.id || "").trim();
+  const labelB = String(b.label || b.id || "").trim();
+  const byLabel = labelA.localeCompare(labelB, "ru", {
+    sensitivity: "base",
+    numeric: true,
+  });
+  if (byLabel !== 0) {
+    return byLabel;
+  }
+  return String(a.id || "").localeCompare(String(b.id || ""), "ru", {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
 export function getConfig(): AgentPanelConfig {
   const cfg = vscode.workspace.getConfiguration("agentPanel");
-  const models = readModels(cfg);
+  const legacyBaseUrl = normalizeBaseUrl(
+    cfg.get<string>("baseUrl") ??
+      "https://ai-platform.kube.severstal.severstalgroup.com/openai"
+  );
+  const legacyApiKey = cfg.get<string>("apiKey") ?? "";
+  const providers = ensureProviders(
+    readProviders(cfg),
+    legacyBaseUrl,
+    legacyApiKey
+  );
+  const models = assignMissingProviderIds(readModels(cfg), providers);
+  const primary = primaryProvider(providers);
   const defaultContextWindowRaw = cfg.get<number>("defaultContextWindow");
   const defaultContextWindow =
     typeof defaultContextWindowRaw === "number" &&
@@ -94,11 +267,9 @@ export function getConfig(): AgentPanelConfig {
       : DEFAULT_CONTEXT_WINDOW;
 
   return {
-    baseUrl: (
-      cfg.get<string>("baseUrl") ??
-      "https://ai-platform.kube.severstal.severstalgroup.com/openai"
-    ).replace(/\/$/, ""),
-    apiKey: cfg.get<string>("apiKey") ?? "",
+    baseUrl: primary?.baseUrl || legacyBaseUrl,
+    apiKey: primary?.apiKey || legacyApiKey,
+    providers,
     models,
     defaultModel: cfg.get<string>("defaultModel") ?? models[0]?.id ?? "",
     defaultContextWindow,
@@ -127,4 +298,39 @@ export function getContextWindow(modelId: string): number {
     return known;
   }
   return config.defaultContextWindow;
+}
+
+/** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
+export function getEnabledModels(): AgentModel[] {
+  return getConfig()
+    .models.filter((m) => m.enabled !== false)
+    .slice()
+    .sort(compareModelsByFavoriteThenLabel);
+}
+
+/** Endpoint для модели через её провайдера (или primary). */
+export function resolveModelEndpoint(modelId: string): ModelEndpoint {
+  const config = getConfig();
+  const model = config.models.find((m) => m.id === modelId);
+  const wantedId = model?.providerId?.trim() || "";
+  const provider =
+    (wantedId
+      ? config.providers.find((p) => p.id === wantedId)
+      : undefined) || primaryProvider(config.providers);
+
+  if (!provider) {
+    return {
+      baseUrl: "",
+      apiKey: "",
+      providerId: "",
+      providerName: "нет провайдера",
+    };
+  }
+
+  return {
+    baseUrl: normalizeBaseUrl(provider.baseUrl),
+    apiKey: provider.apiKey || "",
+    providerId: provider.id,
+    providerName: provider.name || provider.id,
+  };
 }

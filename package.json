@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.6.21",
+  "version": "0.6.44",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -70,12 +70,39 @@
         "agentPanel.baseUrl": {
           "type": "string",
           "default": "https://ai-platform.kube.severstal.severstalgroup.com/openai",
-          "description": "Base URL OpenAI-compatible API (Severstal: .../openai)"
+          "description": "Legacy: зеркало baseUrl основного провайдера (лучше задавать в agentPanel.providers)"
         },
         "agentPanel.apiKey": {
           "type": "string",
           "default": "",
-          "description": "API Key из Давинчи (sk-...). Не коммитьте ключ в git."
+          "description": "Legacy: зеркало apiKey основного провайдера (лучше задавать в agentPanel.providers). Не коммитьте ключ в git."
+        },
+        "agentPanel.providers": {
+          "type": "array",
+          "default": [],
+          "description": "OpenAI-compatible провайдеры (base URL + API key). Если пусто — создаётся из legacy baseUrl/apiKey.",
+          "items": {
+            "type": "object",
+            "required": ["id", "baseUrl"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Стабильный id провайдера (например default, zai, kimi)"
+              },
+              "name": {
+                "type": "string",
+                "description": "Отображаемое имя"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "Base URL без завершающего слэша"
+              },
+              "apiKey": {
+                "type": "string",
+                "description": "API key этого провайдера"
+              }
+            }
+          }
         },
         "agentPanel.models": {
           "type": "array",
@@ -120,10 +147,29 @@
                 "type": "string",
                 "description": "Отображаемое имя в селекторе"
               },
+              "providerId": {
+                "type": "string",
+                "description": "id провайдера из agentPanel.providers"
+              },
               "contextWindow": {
                 "type": "number",
                 "minimum": 1024,
-                "description": "Размер контекстного окна модели в токенах (для индикатора)"
+                "description": "Размер контекстного окна модели в токенах (max input, для индикатора)"
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "minimum": 1,
+                "description": "Лимит выходных токенов модели (max_output_tokens)"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Показывать модель в селекторе чата"
+              },
+              "favorite": {
+                "type": "boolean",
+                "default": false,
+                "description": "Избранная модель — выше в селекторе чата"
               }
             }
           }
