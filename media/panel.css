@@ -936,6 +936,11 @@ button.primary:disabled {
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+  transition: border-color 0.12s ease;
+}
+
+.settings-model-row:hover {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 55%, transparent);
 }
 
 .settings-model-row.is-disabled {
@@ -1010,12 +1015,39 @@ button.primary:disabled {
   gap: 1px;
 }
 
+.settings-model-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .settings-model-name {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.settings-model-info-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  opacity: 0.55;
+  background: transparent;
+}
+
+.settings-model-info-btn .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.settings-model-info-btn:hover,
+.settings-model-info-btn:focus-visible {
+  opacity: 1;
+  background: transparent;
 }
 
 .settings-model-id {
@@ -1024,6 +1056,52 @@ button.primary:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.settings-model-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  font-size: 11px;
+  line-height: 1.35;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.settings-model-tip[hidden] {
+  display: none !important;
+}
+
+.settings-model-tip-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: baseline;
+}
+
+.settings-model-tip-row + .settings-model-tip-row {
+  margin-top: 4px;
+}
+
+.settings-model-tip-key {
+  opacity: 0.65;
+  white-space: nowrap;
+}
+
+.settings-model-tip-val {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-model-limits {
