@@ -18,6 +18,8 @@ export interface AgentModel {
   maxOutputTokens?: number;
   /** false — скрыта из селектора чата; отсутствие = включена */
   enabled?: boolean;
+  /** true — избранная: выше в селекторе чата */
+  favorite?: boolean;
 }
 
 export interface ModelEndpoint {
@@ -170,6 +172,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       contextWindow?: unknown;
       maxOutputTokens?: unknown;
       enabled?: unknown;
+      favorite?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -211,10 +214,34 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     if (row.enabled === false) {
       model.enabled = false;
     }
+    if (row.favorite === true) {
+      model.favorite = true;
+    }
     models.push(model);
   }
 
   return models.length > 0 ? models : DEFAULT_MODELS;
+}
+
+function compareModelsByFavoriteThenLabel(a: AgentModel, b: AgentModel): number {
+  const favA = a.favorite === true ? 0 : 1;
+  const favB = b.favorite === true ? 0 : 1;
+  if (favA !== favB) {
+    return favA - favB;
+  }
+  const labelA = String(a.label || a.id || "").trim();
+  const labelB = String(b.label || b.id || "").trim();
+  const byLabel = labelA.localeCompare(labelB, "ru", {
+    sensitivity: "base",
+    numeric: true,
+  });
+  if (byLabel !== 0) {
+    return byLabel;
+  }
+  return String(a.id || "").localeCompare(String(b.id || ""), "ru", {
+    sensitivity: "base",
+    numeric: true,
+  });
 }
 
 export function getConfig(): AgentPanelConfig {
@@ -273,9 +300,12 @@ export function getContextWindow(modelId: string): number {
   return config.defaultContextWindow;
 }
 
-/** Модели, доступные в селекторе чата (enabled !== false). */
+/** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
 export function getEnabledModels(): AgentModel[] {
-  return getConfig().models.filter((m) => m.enabled !== false);
+  return getConfig()
+    .models.filter((m) => m.enabled !== false)
+    .slice()
+    .sort(compareModelsByFavoriteThenLabel);
 }
 
 /** Endpoint для модели через её провайдера (или primary). */

@@ -117,6 +117,9 @@
   const INFO_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">info</span>';
 
+  const HEART_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
+
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
@@ -613,11 +616,17 @@
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
       enabled: model.enabled !== false,
+      favorite: model.favorite === true,
     };
   }
 
   function sortSettingsModels() {
     settingsModels.sort((a, b) => {
+      const favA = a.favorite === true ? 0 : 1;
+      const favB = b.favorite === true ? 0 : 1;
+      if (favA !== favB) {
+        return favA - favB;
+      }
       const labelA = String(a.label || a.id || "").trim();
       const labelB = String(b.label || b.id || "").trim();
       const byLabel = labelA.localeCompare(labelB, "ru", {
@@ -660,6 +669,7 @@
           maxOutputTokens:
             model.maxOutputTokens || prev.maxOutputTokens || undefined,
           enabled: prev.enabled !== false,
+          favorite: prev.favorite === true,
         });
         updated += 1;
       } else {
@@ -981,6 +991,7 @@
         settingsModels[existing] = {
           ...next,
           enabled: prev.enabled !== false,
+          favorite: prev.favorite === true,
         };
       } else {
         settingsModels.push(next);
@@ -1001,6 +1012,7 @@
       settingsModels[modelEditIndex] = {
         ...next,
         enabled: prev.enabled !== false,
+        favorite: prev.favorite === true,
       };
     }
     closeModelEditModal();
@@ -1033,6 +1045,7 @@
       "Контекст (вход)",
       "Ответ (выход)",
       "Статус",
+      "Избранное",
     ];
     settingsModelTipRows = labels.map((label) => {
       const line = document.createElement("div");
@@ -1070,6 +1083,7 @@
       formatModelTokens(model.contextWindow),
       formatModelTokens(model.maxOutputTokens),
       model.enabled !== false ? "Включена" : "Выключена",
+      model.favorite === true ? "Да" : "Нет",
     ];
     ensureSettingsModelTip();
     for (let i = 0; i < settingsModelTipRows.length; i += 1) {
@@ -1140,6 +1154,7 @@
     settingsModels.forEach((model, index) => {
       const row = document.createElement("div");
       const enabled = model.enabled !== false;
+      const favorite = model.favorite === true;
       row.className =
         "settings-model-row" + (enabled ? "" : " is-disabled");
       row.dataset.index = String(index);
@@ -1166,6 +1181,15 @@
         `</div>` +
         `<div class="settings-model-id"></div>` +
         `</div>` +
+        `<button type="button" class="icon-btn settings-model-fav${
+          favorite ? " is-on" : ""
+        }" data-index="${index}" title="${
+          favorite ? "Убрать из избранного" : "В избранное"
+        }" aria-label="${
+          favorite ? "Убрать из избранного" : "В избранное"
+        }" aria-pressed="${favorite ? "true" : "false"}">` +
+        HEART_ICON +
+        `</button>` +
         `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
         SETTINGS_ICON +
         `</button>` +
@@ -1256,6 +1280,7 @@
           contextWindow: m.contextWindow,
           maxOutputTokens: m.maxOutputTokens,
           enabled: m.enabled !== false,
+          favorite: m.favorite === true,
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -1327,6 +1352,9 @@
         delete row.enabled;
       } else {
         row.enabled = false;
+      }
+      if (m.favorite === true) {
+        row.favorite = true;
       }
       return row;
     });
@@ -1838,6 +1866,14 @@
         btn.appendChild(check);
       }
 
+      if (model.favorite === true) {
+        const heart = document.createElement("span");
+        heart.className = "model-option-fav";
+        heart.innerHTML = HEART_ICON;
+        heart.setAttribute("aria-hidden", "true");
+        btn.appendChild(heart);
+      }
+
       modelMenu.appendChild(btn);
     }
   }
@@ -2167,6 +2203,16 @@
     });
     settingsModelsList.addEventListener("scroll", hideSettingsModelTip, true);
     settingsModelsList.addEventListener("click", (event) => {
+      const favBtn = event.target.closest(".settings-model-fav");
+      if (favBtn) {
+        const index = Number(favBtn.dataset.index);
+        if (Number.isFinite(index) && settingsModels[index]) {
+          settingsModels[index].favorite = settingsModels[index].favorite !== true;
+          renderSettingsModels();
+          schedulePersistSettings(0);
+        }
+        return;
+      }
       const editBtn = event.target.closest(".settings-model-edit");
       if (editBtn) {
         hideSettingsModelTip();
