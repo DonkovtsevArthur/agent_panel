@@ -1,4 +1,4 @@
-import { getConfig } from "./config";
+import { getConfig, resolveModelEndpoint } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import { buildEditorContextMessage } from "./editorContext";
 import {
@@ -107,13 +107,19 @@ export async function runAgentTurn(options: {
   callbacks: AgentRunCallbacks;
 }): Promise<ChatMessage[]> {
   const config = getConfig();
-  if (!config.apiKey) {
+  const endpoint = resolveModelEndpoint(options.model);
+  if (!endpoint.baseUrl) {
     throw new Error(
-      "Не задан agentPanel.apiKey. Возьмите sk-... из Давинчи и укажите в Settings → Agent Panel."
+      `Не задан baseUrl для «${endpoint.providerName}». Укажите провайдера у модели.`
+    );
+  }
+  if (!endpoint.apiKey) {
+    throw new Error(
+      `Не задан API key для «${endpoint.providerName}». Укажите ключ у провайдера.`
     );
   }
 
-  const client = new OpenAICompatibleClient(config.baseUrl, config.apiKey, {
+  const client = new OpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
     rejectUnauthorized: config.rejectUnauthorized,
     caBundlePath: config.caBundlePath,
   });
