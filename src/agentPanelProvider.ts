@@ -35,6 +35,7 @@ type SettingsPayload = {
     contextWindow?: number;
     maxOutputTokens?: number;
     enabled?: boolean;
+    favorite?: boolean;
   }>;
   defaultModel: string;
   defaultContextWindow: number;
@@ -651,7 +652,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const items = models.map((m) => ({
-      label: m.label || m.id,
+      label: `${m.favorite === true ? "$(heart-filled) " : ""}${m.label || m.id}`,
       description: m.id === this.selectedModel ? "текущая" : m.id,
       id: m.id,
     }));
@@ -953,6 +954,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           contextWindow: m.contextWindow || undefined,
           maxOutputTokens: m.maxOutputTokens || undefined,
           enabled: m.enabled !== false,
+          favorite: m.favorite === true,
         })),
         defaultModel: config.defaultModel,
         defaultContextWindow: config.defaultContextWindow,
@@ -1044,6 +1046,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           contextWindow?: number;
           maxOutputTokens?: number;
           enabled?: boolean;
+          favorite?: boolean;
         } = {
           id,
           providerId,
@@ -1060,6 +1063,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (m?.enabled === false) {
           row.enabled = false;
         }
+        if (m?.favorite === true) {
+          row.favorite = true;
+        }
         return row;
       })
       .filter(
@@ -1072,6 +1078,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           contextWindow?: number;
           maxOutputTokens?: number;
           enabled?: boolean;
+          favorite?: boolean;
         } => Boolean(m)
       );
 

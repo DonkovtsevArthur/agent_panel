@@ -668,7 +668,7 @@ body {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   margin: 0;
   padding: 7px 8px;
@@ -697,7 +697,23 @@ body {
   font-weight: 400;
 }
 
+.model-option-fav {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--vscode-button-background, #0e639c);
+  opacity: 0.95;
+}
+
+.model-option-fav .material-symbols-outlined {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .model-option-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -706,6 +722,14 @@ body {
 .model-check {
   flex-shrink: 0;
   color: var(--vscode-focusBorder, #007fd4);
+}
+
+.model-check + .model-option-fav {
+  margin-left: 0;
+}
+
+.model-option:not(:has(.model-option-fav)) .model-check {
+  margin-left: auto;
 }
 
 .model-check .material-symbols-outlined {
@@ -1048,6 +1072,38 @@ button.primary:disabled {
 .settings-model-info-btn:focus-visible {
   opacity: 1;
   background: transparent;
+}
+
+.settings-model-fav {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  opacity: 0.4;
+  background: transparent;
+  color: var(--vscode-foreground);
+}
+
+.settings-model-fav .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.settings-model-fav:hover,
+.settings-model-fav:focus-visible {
+  opacity: 0.85;
+  background: transparent;
+}
+
+.settings-model-fav.is-on {
+  opacity: 1;
+  color: var(--vscode-button-background, #0e639c);
+}
+
+.settings-model-fav.is-on:hover,
+.settings-model-fav.is-on:focus-visible {
+  opacity: 1;
+  background: transparent;
+  color: var(--vscode-button-background, #0e639c);
 }
 
 .settings-model-id {
