@@ -2277,6 +2277,22 @@
     modelEditModal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeModelEditModal();
+        return;
+      }
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.isComposing
+      ) {
+        const tag = event.target instanceof HTMLElement ? event.target.tagName : "";
+        if (tag === "TEXTAREA" || tag === "BUTTON" || tag === "SELECT") {
+          return;
+        }
+        event.preventDefault();
+        applyModelEditModal();
       }
     });
   }
@@ -2308,6 +2324,22 @@
     providerEditModal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeProviderEditModal();
+        return;
+      }
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.isComposing
+      ) {
+        const tag = event.target instanceof HTMLElement ? event.target.tagName : "";
+        if (tag === "TEXTAREA" || tag === "BUTTON") {
+          return;
+        }
+        event.preventDefault();
+        applyProviderEditModal();
       }
     });
   }
