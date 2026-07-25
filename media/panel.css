@@ -787,6 +787,13 @@ button.primary:disabled {
   font-weight: 600;
 }
 
+.settings-save-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.8;
+  color: var(--vscode-descriptionForeground);
+}
+
 .agents-list {
   flex: 1;
   overflow-y: auto;
