@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.6.43",
+  "version": "0.6.44",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
