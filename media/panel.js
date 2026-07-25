@@ -26,13 +26,36 @@
   const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
   const saveSettingsBtn = document.getElementById("saveSettingsBtn");
   const addModelBtn = document.getElementById("addModelBtn");
-  const quickAddModelBtn = document.getElementById("quickAddModelBtn");
-  const settingsQuickModelId = document.getElementById("settingsQuickModelId");
   const settingsModelsHint = document.getElementById("settingsModelsHint");
   const settingsModelsJson = document.getElementById("settingsModelsJson");
   const importModelsJsonBtn = document.getElementById("importModelsJsonBtn");
   const exportModelsJsonBtn = document.getElementById("exportModelsJsonBtn");
   const settingsJsonHint = document.getElementById("settingsJsonHint");
+  const modelEditModal = document.getElementById("modelEditModal");
+  const modelEditTitle = document.getElementById("modelEditTitle");
+  const modelEditTabs = document.getElementById("modelEditTabs");
+  const modelEditManualPane = document.getElementById("modelEditManualPane");
+  const modelEditJsonPane = document.getElementById("modelEditJsonPane");
+  const modelEditId = document.getElementById("modelEditId");
+  const modelEditLabel = document.getElementById("modelEditLabel");
+  const modelEditContext = document.getElementById("modelEditContext");
+  const modelEditOutput = document.getElementById("modelEditOutput");
+  const modelEditProvider = document.getElementById("modelEditProvider");
+  const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
+  const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
+  const modelEditDoneBtn = document.getElementById("modelEditDoneBtn");
+  const settingsProvidersList = document.getElementById("settingsProvidersList");
+  const settingsProvidersHint = document.getElementById("settingsProvidersHint");
+  const addProviderBtn = document.getElementById("addProviderBtn");
+  const providerEditModal = document.getElementById("providerEditModal");
+  const providerEditTitle = document.getElementById("providerEditTitle");
+  const providerEditId = document.getElementById("providerEditId");
+  const providerEditName = document.getElementById("providerEditName");
+  const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
+  const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
+  const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
+  const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
@@ -43,9 +66,6 @@
   const contextTipEl = document.getElementById("contextTip");
 
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
-  const settingsDefaultContext = document.getElementById("settingsDefaultContext");
-  const settingsBaseUrl = document.getElementById("settingsBaseUrl");
-  const settingsApiKey = document.getElementById("settingsApiKey");
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
@@ -60,7 +80,12 @@
   let agentsData = [];
   let archiveAgentsData = [];
   let settingsModels = [];
+  let settingsProviders = [];
   let settingsDefaultModelId = "";
+  let settingsDefaultContextWindow = 128000;
+  let modelEditIndex = null;
+  let modelEditMode = "manual";
+  let providerEditIndex = null;
   let contextUsed = 0;
   let contextMax = 128000;
 
@@ -78,6 +103,9 @@
 
   const CHECK_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">check</span>';
+
+  const SETTINGS_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
 
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
@@ -236,6 +264,187 @@
     settingsModelsHint.classList.toggle("is-error", Boolean(isError));
   }
 
+  function setProvidersHint(text, isError) {
+    if (!settingsProvidersHint) {
+      return;
+    }
+    if (!text) {
+      settingsProvidersHint.hidden = true;
+      settingsProvidersHint.textContent = "";
+      settingsProvidersHint.classList.remove("is-error");
+      return;
+    }
+    settingsProvidersHint.hidden = false;
+    settingsProvidersHint.textContent = text;
+    settingsProvidersHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function providerLabel(providerId) {
+    const provider = settingsProviders.find((p) => p.id === providerId);
+    return provider ? provider.name || provider.id : providerId || "—";
+  }
+
+  function primaryProviderId() {
+    const def = settingsProviders.find((p) => p.id === "default");
+    return def?.id || settingsProviders[0]?.id || "";
+  }
+
+  function cloneProvider(provider) {
+    return {
+      id: provider.id || "",
+      name: provider.name || "",
+      baseUrl: provider.baseUrl || "",
+      apiKey: provider.apiKey || "",
+    };
+  }
+
+  function fillModelProviderSelect(selectedId) {
+    if (!modelEditProvider) {
+      return;
+    }
+    const fallback = primaryProviderId();
+    const current = selectedId || fallback;
+    modelEditProvider.innerHTML = "";
+    if (!settingsProviders.length) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "Сначала добавьте провайдера";
+      modelEditProvider.appendChild(empty);
+      return;
+    }
+    for (const provider of settingsProviders) {
+      const id = String(provider.id || "").trim();
+      if (!id) {
+        continue;
+      }
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = provider.name ? `${provider.name} (${id})` : id;
+      modelEditProvider.appendChild(option);
+    }
+    if (
+      current &&
+      Array.from(modelEditProvider.options).some((o) => o.value === current)
+    ) {
+      modelEditProvider.value = current;
+    } else if (modelEditProvider.options.length) {
+      modelEditProvider.selectedIndex = 0;
+    }
+  }
+
+  function openProviderEditModal(index, preset) {
+    if (!providerEditModal) {
+      return;
+    }
+    providerEditIndex = index;
+    const isNew = index === -1;
+    const provider = isNew
+      ? preset || { id: "", name: "", baseUrl: "", apiKey: "" }
+      : settingsProviders[index] || {
+          id: "",
+          name: "",
+          baseUrl: "",
+          apiKey: "",
+        };
+    if (providerEditTitle) {
+      providerEditTitle.textContent = isNew ? "Новый провайдер" : "Провайдер";
+    }
+    if (providerEditId) {
+      providerEditId.value = provider.id || "";
+      providerEditId.readOnly = !isNew;
+    }
+    if (providerEditName) {
+      providerEditName.value = provider.name || "";
+    }
+    if (providerEditBaseUrl) {
+      providerEditBaseUrl.value = provider.baseUrl || "";
+    }
+    if (providerEditApiKey) {
+      providerEditApiKey.value = provider.apiKey || "";
+    }
+    providerEditModal.hidden = false;
+    (isNew ? providerEditId : providerEditName)?.focus();
+  }
+
+  function closeProviderEditModal() {
+    if (!providerEditModal) {
+      return;
+    }
+    providerEditModal.hidden = true;
+    providerEditIndex = null;
+  }
+
+  function applyProviderEditModal() {
+    const id = providerEditId ? providerEditId.value.trim() : "";
+    const baseUrl = providerEditBaseUrl
+      ? providerEditBaseUrl.value.trim().replace(/\/$/, "")
+      : "";
+    if (!id) {
+      setProvidersHint("Укажите id провайдера.", true);
+      providerEditId?.focus();
+      return;
+    }
+    if (!baseUrl) {
+      setProvidersHint("Укажите base URL.", true);
+      providerEditBaseUrl?.focus();
+      return;
+    }
+    const name = providerEditName ? providerEditName.value.trim() : "";
+    const apiKey = providerEditApiKey ? providerEditApiKey.value : "";
+    const next = { id, name: name || id, baseUrl, apiKey };
+
+    if (providerEditIndex === -1) {
+      if (settingsProviders.some((p) => p.id === id)) {
+        setProvidersHint(`Провайдер «${id}» уже есть.`, true);
+        return;
+      }
+      settingsProviders.push(next);
+    } else if (
+      Number.isFinite(providerEditIndex) &&
+      providerEditIndex >= 0 &&
+      providerEditIndex < settingsProviders.length
+    ) {
+      settingsProviders[providerEditIndex] = next;
+    }
+    closeProviderEditModal();
+    setProvidersHint("");
+    renderSettingsProviders();
+    fillModelProviderSelect(modelEditProvider?.value || "");
+  }
+
+  function renderSettingsProviders() {
+    if (!settingsProvidersList) {
+      return;
+    }
+    settingsProvidersList.innerHTML = "";
+    if (!settingsProviders.length) {
+      settingsProvidersList.innerHTML =
+        '<div class="settings-models-empty">Нет провайдеров — добавьте хотя бы один.</div>';
+      return;
+    }
+    settingsProviders.forEach((provider, index) => {
+      const row = document.createElement("div");
+      row.className = "settings-model-row";
+      row.dataset.index = String(index);
+      const title = provider.name || provider.id || "Провайдер";
+      row.innerHTML =
+        `<div class="settings-model-info">` +
+        `<div class="settings-model-name"></div>` +
+        `<div class="settings-model-id"></div>` +
+        `</div>` +
+        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        SETTINGS_ICON +
+        `</button>` +
+        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        DELETE_ICON +
+        `</button>`;
+      row.querySelector(".settings-model-name").textContent = title;
+      row.querySelector(".settings-model-id").textContent =
+        provider.baseUrl || provider.id || "";
+      settingsProvidersList.appendChild(row);
+    });
+  }
+
   function setJsonHint(text, isError) {
     if (!settingsJsonHint) {
       return;
@@ -375,7 +584,7 @@
     ]);
     const contextWindow = Number(contextRaw);
     const maxOutputTokens = Number(outputRaw);
-    const model = { id, label };
+    const model = { id, label, enabled: true };
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       model.contextWindow = Math.floor(contextWindow);
     }
@@ -385,18 +594,23 @@
     return model;
   }
 
+  function cloneModel(model) {
+    return {
+      id: model.id || "",
+      label: model.label || "",
+      providerId: model.providerId || "",
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      enabled: model.enabled !== false,
+    };
+  }
+
   function upsertModels(incoming) {
-    settingsModels = readModelsFromDom();
     const byId = new Map();
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
       if (id) {
-        byId.set(id, {
-          id,
-          label: model.label || "",
-          contextWindow: model.contextWindow,
-          maxOutputTokens: model.maxOutputTokens,
-        });
+        byId.set(id, cloneModel(model));
       }
     }
     let added = 0;
@@ -411,44 +625,22 @@
         byId.set(model.id, {
           id: model.id,
           label: model.label || prev.label || model.id,
+          providerId: prev.providerId || "",
           contextWindow:
             model.contextWindow || prev.contextWindow || undefined,
           maxOutputTokens:
             model.maxOutputTokens || prev.maxOutputTokens || undefined,
+          enabled: prev.enabled !== false,
         });
         updated += 1;
       } else {
-        byId.set(model.id, model);
+        byId.set(model.id, cloneModel(model));
         added += 1;
       }
     }
     settingsModels = Array.from(byId.values());
-    if (!settingsModels.length) {
-      settingsModels.push({ id: "", label: "" });
-    }
     renderSettingsModels();
     return { added, updated, total: settingsModels.filter((m) => m.id).length };
-  }
-
-  function quickAddModel() {
-    const id = settingsQuickModelId
-      ? settingsQuickModelId.value.trim()
-      : "";
-    if (!id) {
-      setModelsHint("Введите id модели.", true);
-      settingsQuickModelId?.focus();
-      return;
-    }
-    const result = upsertModels([{ id, label: id }]);
-    if (settingsQuickModelId) {
-      settingsQuickModelId.value = "";
-      settingsQuickModelId.focus();
-    }
-    if (result.added) {
-      setModelsHint(`Добавлено: ${id}`);
-    } else {
-      setModelsHint(`Уже есть: ${id}`);
-    }
   }
 
   function looksLikeModelEntry(item) {
@@ -561,16 +753,29 @@
       setJsonHint(
         `Готово: +${result.added}, обновлено ${result.updated}, всего ${result.total}.`
       );
+      return true;
     } catch (error) {
       setJsonHint(error.message || "Не удалось импортировать.", true);
+      return false;
     }
   }
 
   function exportModelsToJson() {
-    settingsModels = readModelsFromDom();
     const payload = settingsModels
-      .map((m) => normalizeModelEntry(m))
-      .filter(Boolean);
+      .filter((m) => String(m.id || "").trim())
+      .map((m) => {
+        const row = {
+          id: m.id,
+          label: m.label || m.id,
+        };
+        if (m.contextWindow) {
+          row.contextWindow = m.contextWindow;
+        }
+        if (m.maxOutputTokens) {
+          row.maxOutputTokens = m.maxOutputTokens;
+        }
+        return row;
+      });
     const text = JSON.stringify(payload, null, 2);
     if (settingsModelsJson) {
       settingsModelsJson.value = text;
@@ -593,7 +798,7 @@
     settingsDefaultModel.innerHTML = "";
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
-      if (!id) {
+      if (!id || model.enabled === false) {
         continue;
       }
       const option = document.createElement("option");
@@ -609,7 +814,167 @@
     } else if (settingsDefaultModel.options.length) {
       settingsDefaultModel.selectedIndex = 0;
       settingsDefaultModelId = settingsDefaultModel.value;
+    } else {
+      settingsDefaultModelId = "";
     }
+  }
+
+  function setModelEditMode(mode) {
+    modelEditMode = mode === "json" ? "json" : "manual";
+    if (modelEditTabs) {
+      modelEditTabs.querySelectorAll("[data-model-mode]").forEach((btn) => {
+        btn.classList.toggle(
+          "is-active",
+          btn.getAttribute("data-model-mode") === modelEditMode
+        );
+      });
+    }
+    if (modelEditManualPane) {
+      modelEditManualPane.hidden = modelEditMode !== "manual";
+    }
+    if (modelEditJsonPane) {
+      modelEditJsonPane.hidden = modelEditMode !== "json";
+    }
+    if (modelEditDoneBtn) {
+      modelEditDoneBtn.textContent =
+        modelEditMode === "json" ? "Применить" : "Готово";
+    }
+  }
+
+  function openModelEditModal(index) {
+    if (!modelEditModal) {
+      return;
+    }
+    modelEditIndex = index;
+    const isNew = index === -1;
+    const model = isNew
+      ? {
+          id: "",
+          label: "",
+          providerId: "",
+          contextWindow: undefined,
+          maxOutputTokens: undefined,
+        }
+      : settingsModels[index] || { id: "", label: "", providerId: "" };
+    if (modelEditTitle) {
+      modelEditTitle.textContent = isNew ? "Добавить модели" : "Настройки модели";
+    }
+    if (modelEditTabs) {
+      modelEditTabs.hidden = !isNew;
+    }
+    setModelEditMode("manual");
+    setJsonHint("");
+    if (modelEditId) {
+      modelEditId.value = model.id || "";
+    }
+    if (modelEditLabel) {
+      modelEditLabel.value = model.label || "";
+    }
+    fillModelProviderSelect(model.providerId || primaryProviderId());
+    if (modelEditContext) {
+      modelEditContext.value =
+        model.contextWindow && Number(model.contextWindow) > 0
+          ? String(model.contextWindow)
+          : "";
+    }
+    if (modelEditOutput) {
+      modelEditOutput.value =
+        model.maxOutputTokens && Number(model.maxOutputTokens) > 0
+          ? String(model.maxOutputTokens)
+          : "";
+    }
+    if (isNew && settingsModelsJson && !settingsModelsJson.value.trim()) {
+      settingsModelsJson.value = "";
+    }
+    modelEditModal.hidden = false;
+    if (isNew) {
+      modelEditId?.focus();
+    } else {
+      modelEditId?.focus();
+    }
+  }
+
+  function closeModelEditModal() {
+    if (!modelEditModal) {
+      return;
+    }
+    modelEditModal.hidden = true;
+    modelEditIndex = null;
+    setModelEditMode("manual");
+    setJsonHint("");
+  }
+
+  function applyModelEditModal() {
+    if (modelEditIndex === -1 && modelEditMode === "json") {
+      if (importModelsFromJson()) {
+        closeModelEditModal();
+        setModelsHint("Модели из JSON добавлены.");
+      }
+      return;
+    }
+
+    const id = modelEditId ? modelEditId.value.trim() : "";
+    if (!id) {
+      setModelsHint("Укажите id модели.", true);
+      setModelEditMode("manual");
+      modelEditId?.focus();
+      return;
+    }
+    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
+    const providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    if (!providerId) {
+      setModelsHint("Выберите провайдера (или сначала добавьте его).", true);
+      setModelEditMode("manual");
+      modelEditProvider?.focus();
+      return;
+    }
+    const contextWindow = Number(modelEditContext?.value);
+    const maxOutputTokens = Number(modelEditOutput?.value);
+    const next = {
+      id,
+      label: label || id,
+      providerId,
+      enabled: true,
+    };
+    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
+      next.contextWindow = Math.floor(contextWindow);
+    }
+    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+      next.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+
+    if (modelEditIndex === -1) {
+      const existing = settingsModels.findIndex((m) => m.id === id);
+      if (existing >= 0) {
+        const prev = settingsModels[existing];
+        settingsModels[existing] = {
+          ...next,
+          enabled: prev.enabled !== false,
+        };
+      } else {
+        settingsModels.push(next);
+      }
+    } else if (
+      Number.isFinite(modelEditIndex) &&
+      modelEditIndex >= 0 &&
+      modelEditIndex < settingsModels.length
+    ) {
+      const prev = settingsModels[modelEditIndex];
+      const duplicate = settingsModels.findIndex(
+        (m, i) => i !== modelEditIndex && m.id === id
+      );
+      if (duplicate >= 0) {
+        setModelsHint(`Модель с id «${id}» уже есть.`, true);
+        return;
+      }
+      settingsModels[modelEditIndex] = {
+        ...next,
+        enabled: prev.enabled !== false,
+      };
+    }
+    closeModelEditModal();
+    setModelsHint("");
+    renderSettingsModels();
   }
 
   function renderSettingsModels() {
@@ -617,102 +982,94 @@
       return;
     }
     settingsModelsList.innerHTML = "";
+    if (!settingsModels.length) {
+      settingsModelsList.innerHTML =
+        '<div class="settings-models-empty">Список пуст — добавьте модель.</div>';
+      syncDefaultModelSelect();
+      return;
+    }
     settingsModels.forEach((model, index) => {
       const row = document.createElement("div");
-      row.className = "settings-model-row";
+      const enabled = model.enabled !== false;
+      row.className =
+        "settings-model-row" + (enabled ? "" : " is-disabled");
+      row.dataset.index = String(index);
+      const title = model.label || model.id || "Без id";
+      const parts = [];
+      if (model.label && model.id && model.label !== model.id) {
+        parts.push(model.id);
+      }
+      parts.push(providerLabel(model.providerId));
+      const subtitle = parts.join(" · ");
       row.innerHTML =
-        `<div class="settings-model-head">` +
-        `<span class="settings-model-title">Модель ${index + 1}</span>` +
-        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
-        CLOSE_ICON +
-        `</button>` +
+        `<label class="settings-model-switch" title="${enabled ? "Выключить" : "Включить"}">` +
+        `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
+          enabled ? "checked" : ""
+        } />` +
+        `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+        `</label>` +
+        `<div class="settings-model-info">` +
+        `<div class="settings-model-name"></div>` +
+        `<div class="settings-model-id"></div>` +
         `</div>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">ID</span>` +
-        `<input class="settings-input" data-field="id" data-index="${index}" type="text" placeholder="как в API, напр. gpt-4.1" />` +
-        `</label>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">Название</span>` +
-        `<input class="settings-input" data-field="label" data-index="${index}" type="text" placeholder="как видно в списке" />` +
-        `</label>` +
-        `<div class="settings-model-limits">` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">Контекст (вход)</span>` +
-        `<input class="settings-input" data-field="contextWindow" data-index="${index}" type="number" min="1024" step="1024" placeholder="max_input" />` +
-        `</label>` +
-        `<label class="settings-field">` +
-        `<span class="settings-label">Ответ (выход)</span>` +
-        `<input class="settings-input" data-field="maxOutputTokens" data-index="${index}" type="number" min="1" step="1024" placeholder="max_output" />` +
-        `</label>` +
-        `</div>`;
-      const idInput = row.querySelector('[data-field="id"]');
-      const labelInput = row.querySelector('[data-field="label"]');
-      const ctxInput = row.querySelector('[data-field="contextWindow"]');
-      const outInput = row.querySelector('[data-field="maxOutputTokens"]');
-      idInput.value = model.id || "";
-      labelInput.value = model.label || "";
-      ctxInput.value =
-        model.contextWindow && Number(model.contextWindow) > 0
-          ? String(model.contextWindow)
-          : "";
-      outInput.value =
-        model.maxOutputTokens && Number(model.maxOutputTokens) > 0
-          ? String(model.maxOutputTokens)
-          : "";
+        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        SETTINGS_ICON +
+        `</button>` +
+        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        DELETE_ICON +
+        `</button>`;
+      row.querySelector(".settings-model-name").textContent = title;
+      row.querySelector(".settings-model-id").textContent = subtitle;
       settingsModelsList.appendChild(row);
     });
     syncDefaultModelSelect();
   }
 
   function readModelsFromDom() {
-    if (!settingsModelsList) {
-      return settingsModels.slice();
-    }
-    const rows = Array.from(
-      settingsModelsList.querySelectorAll(".settings-model-row")
-    );
-    return rows.map((row) => {
-      const id = row.querySelector('[data-field="id"]').value.trim();
-      const label = row.querySelector('[data-field="label"]').value.trim();
-      const ctxRaw = row.querySelector('[data-field="contextWindow"]').value;
-      const outRaw = row.querySelector('[data-field="maxOutputTokens"]')?.value;
-      const contextWindow = Number(ctxRaw);
-      const maxOutputTokens = Number(outRaw);
-      const model = { id, label };
-      if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
-        model.contextWindow = Math.floor(contextWindow);
-      }
-      if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
-        model.maxOutputTokens = Math.floor(maxOutputTokens);
-      }
-      return model;
-    });
+    return settingsModels
+      .map((m) => cloneModel(m))
+      .filter((m) => String(m.id || "").trim());
   }
 
   function fillSettings(settings) {
     if (!settings || typeof settings !== "object") {
       return;
     }
+    settingsProviders = Array.isArray(settings.providers)
+      ? settings.providers.map((p) => ({
+          id: p.id || "",
+          name: p.name || "",
+          baseUrl: p.baseUrl || "",
+          apiKey: p.apiKey || "",
+        }))
+      : [];
+    if (
+      !settingsProviders.length &&
+      (settings.baseUrl || settings.apiKey)
+    ) {
+      settingsProviders.push({
+        id: "default",
+        name: "Основной",
+        baseUrl: String(settings.baseUrl || "").replace(/\/$/, ""),
+        apiKey: settings.apiKey || "",
+      });
+    }
+    const primaryId = primaryProviderId();
     settingsModels = Array.isArray(settings.models)
       ? settings.models.map((m) => ({
           id: m.id || "",
           label: m.label || "",
+          providerId: m.providerId || primaryId,
           contextWindow: m.contextWindow,
           maxOutputTokens: m.maxOutputTokens,
+          enabled: m.enabled !== false,
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
-    if (settingsDefaultContext) {
-      settingsDefaultContext.value = String(
-        settings.defaultContextWindow || 128000
-      );
-    }
-    if (settingsBaseUrl) {
-      settingsBaseUrl.value = settings.baseUrl || "";
-    }
-    if (settingsApiKey) {
-      settingsApiKey.value = settings.apiKey || "";
-    }
+    settingsDefaultContextWindow =
+      Number(settings.defaultContextWindow) > 0
+        ? Number(settings.defaultContextWindow)
+        : 128000;
     if (settingsRejectUnauthorized) {
       settingsRejectUnauthorized.checked = Boolean(settings.rejectUnauthorized);
     }
@@ -733,19 +1090,62 @@
         settings.maxResponseChars || 12000
       );
     }
+    closeModelEditModal();
+    closeProviderEditModal();
+    renderSettingsProviders();
     renderSettingsModels();
   }
 
   function collectSettings() {
-    settingsModels = readModelsFromDom();
+    const providers = settingsProviders
+      .map((p) => cloneProvider(p))
+      .filter((p) => String(p.id || "").trim() && String(p.baseUrl || "").trim())
+      .map((p) => {
+        const row = {
+          id: p.id,
+          baseUrl: String(p.baseUrl || "").replace(/\/$/, ""),
+        };
+        if (p.name) {
+          row.name = p.name;
+        }
+        if (p.apiKey) {
+          row.apiKey = p.apiKey;
+        }
+        return row;
+      });
+
+    const models = readModelsFromDom().map((m) => {
+      const row = {
+        id: m.id,
+        label: m.label || m.id,
+        providerId: m.providerId || primaryProviderId(),
+        enabled: m.enabled !== false,
+      };
+      if (m.contextWindow) {
+        row.contextWindow = m.contextWindow;
+      }
+      if (m.maxOutputTokens) {
+        row.maxOutputTokens = m.maxOutputTokens;
+      }
+      if (row.enabled) {
+        delete row.enabled;
+      } else {
+        row.enabled = false;
+      }
+      return row;
+    });
+    const primary =
+      settingsProviders.find((p) => p.id === "default") ||
+      settingsProviders[0];
     return {
-      models: settingsModels,
+      providers,
+      models,
       defaultModel: settingsDefaultModel
         ? settingsDefaultModel.value
         : settingsDefaultModelId,
-      defaultContextWindow: Number(settingsDefaultContext?.value || 128000),
-      baseUrl: settingsBaseUrl ? settingsBaseUrl.value.trim() : "",
-      apiKey: settingsApiKey ? settingsApiKey.value : "",
+      defaultContextWindow: settingsDefaultContextWindow,
+      baseUrl: primary ? String(primary.baseUrl || "").replace(/\/$/, "") : "",
+      apiKey: primary ? primary.apiKey || "" : "",
       rejectUnauthorized: settingsRejectUnauthorized
         ? settingsRejectUnauthorized.checked
         : false,
@@ -1429,24 +1829,49 @@
 
   if (addModelBtn) {
     addModelBtn.addEventListener("click", () => {
-      settingsModels = readModelsFromDom();
-      settingsModels.push({ id: "", label: "" });
-      renderSettingsModels();
       setModelsHint("");
+      openModelEditModal(-1);
     });
   }
 
-  if (quickAddModelBtn) {
-    quickAddModelBtn.addEventListener("click", () => {
-      quickAddModel();
+  if (addProviderBtn) {
+    addProviderBtn.addEventListener("click", () => {
+      setProvidersHint("");
+      openProviderEditModal(-1);
     });
   }
 
-  if (settingsQuickModelId) {
-    settingsQuickModelId.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        quickAddModel();
+  if (settingsProvidersList) {
+    settingsProvidersList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".settings-provider-edit");
+      if (editBtn) {
+        const index = Number(editBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openProviderEditModal(index);
+        }
+        return;
+      }
+      const removeBtn = event.target.closest(".settings-provider-remove");
+      if (!removeBtn) {
+        return;
+      }
+      const index = Number(removeBtn.dataset.index);
+      if (
+        Number.isFinite(index) &&
+        index >= 0 &&
+        index < settingsProviders.length
+      ) {
+        const removedId = settingsProviders[index].id;
+        settingsProviders.splice(index, 1);
+        const fallback = primaryProviderId();
+        for (const model of settingsModels) {
+          if (model.providerId === removedId) {
+            model.providerId = fallback;
+          }
+        }
+        renderSettingsProviders();
+        renderSettingsModels();
+        fillModelProviderSelect(modelEditProvider?.value || fallback);
       }
     });
   }
@@ -1463,30 +1888,112 @@
     });
   }
 
+  if (modelEditTabs) {
+    modelEditTabs.addEventListener("click", (event) => {
+      const tab = event.target.closest("[data-model-mode]");
+      if (!tab) {
+        return;
+      }
+      setModelEditMode(tab.getAttribute("data-model-mode"));
+      if (modelEditMode === "json") {
+        settingsModelsJson?.focus();
+      } else {
+        modelEditId?.focus();
+      }
+    });
+  }
+
   if (settingsModelsList) {
     settingsModelsList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".settings-model-edit");
+      if (editBtn) {
+        const index = Number(editBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openModelEditModal(index);
+        }
+        return;
+      }
       const removeBtn = event.target.closest(".settings-model-remove");
       if (!removeBtn) {
         return;
       }
       const index = Number(removeBtn.dataset.index);
-      settingsModels = readModelsFromDom();
       if (Number.isFinite(index) && index >= 0 && index < settingsModels.length) {
         settingsModels.splice(index, 1);
-        if (!settingsModels.length) {
-          settingsModels.push({ id: "", label: "" });
-        }
         renderSettingsModels();
       }
     });
-    settingsModelsList.addEventListener("input", (event) => {
-      const input = event.target.closest("[data-field]");
-      if (!input) {
+    settingsModelsList.addEventListener("change", (event) => {
+      const toggle = event.target.closest(".settings-model-toggle");
+      if (!toggle) {
         return;
       }
-      settingsModels = readModelsFromDom();
-      if (input.dataset.field === "id" || input.dataset.field === "label") {
-        syncDefaultModelSelect();
+      const index = Number(toggle.dataset.index);
+      if (Number.isFinite(index) && settingsModels[index]) {
+        settingsModels[index].enabled = Boolean(toggle.checked);
+        renderSettingsModels();
+      }
+    });
+  }
+
+  function bindModelModalDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeModelEditModal();
+    });
+  }
+
+  bindModelModalDismiss(modelEditCloseBtn);
+  bindModelModalDismiss(modelEditCancelBtn);
+
+  if (modelEditDoneBtn) {
+    modelEditDoneBtn.addEventListener("click", () => {
+      applyModelEditModal();
+    });
+  }
+
+  if (modelEditModal) {
+    modelEditModal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-modal-dismiss]")) {
+        closeModelEditModal();
+      }
+    });
+    modelEditModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeModelEditModal();
+      }
+    });
+  }
+
+  function bindProviderModalDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeProviderEditModal();
+    });
+  }
+
+  bindProviderModalDismiss(providerEditCloseBtn);
+  bindProviderModalDismiss(providerEditCancelBtn);
+
+  if (providerEditDoneBtn) {
+    providerEditDoneBtn.addEventListener("click", () => {
+      applyProviderEditModal();
+    });
+  }
+
+  if (providerEditModal) {
+    providerEditModal.addEventListener("click", (event) => {
+      if (event.target.closest("[data-provider-dismiss]")) {
+        closeProviderEditModal();
+      }
+    });
+    providerEditModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeProviderEditModal();
       }
     });
   }
