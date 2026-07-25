@@ -422,6 +422,7 @@
     closeProviderEditModal();
     setProvidersHint("");
     renderSettingsProviders();
+    renderSettingsModels();
     fillModelProviderSelect(modelEditProvider?.value || "");
     schedulePersistSettings(0);
   }
