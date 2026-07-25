@@ -860,7 +860,66 @@ button.primary:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 8px;
+  margin: 10px 0 8px;
+}
+
+.settings-quick-add {
+  margin-top: 4px;
+}
+
+.settings-quick-add-field {
+  margin-bottom: 6px;
+}
+
+.settings-quick-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-quick-add-row .settings-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-inline-btn {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.settings-inline-btn:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.settings-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.settings-hint.is-error {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.settings-json-import {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.settings-json-textarea {
+  min-height: 88px;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+.settings-json-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 .settings-model-row {
@@ -878,6 +937,16 @@ button.primary:disabled {
 }
 
 .settings-model-row .settings-field:last-child {
+  margin-bottom: 0;
+}
+
+.settings-model-limits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-model-limits .settings-field {
   margin-bottom: 0;
 }
 

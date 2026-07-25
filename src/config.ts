@@ -3,8 +3,10 @@ import * as vscode from "vscode";
 export interface AgentModel {
   id: string;
   label?: string;
-  /** Размер контекстного окна модели в токенах */
+  /** Размер контекстного окна модели в токенах (max input) */
   contextWindow?: number;
+  /** Лимит выходных токенов модели */
+  maxOutputTokens?: number;
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
@@ -54,6 +56,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       id?: unknown;
       label?: unknown;
       contextWindow?: unknown;
+      maxOutputTokens?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -69,12 +72,21 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       row.contextWindow > 0
         ? Math.floor(row.contextWindow)
         : undefined;
+    const maxOutputTokens =
+      typeof row.maxOutputTokens === "number" &&
+      Number.isFinite(row.maxOutputTokens) &&
+      row.maxOutputTokens > 0
+        ? Math.floor(row.maxOutputTokens)
+        : undefined;
     const model: AgentModel = { id };
     if (label) {
       model.label = label;
     }
     if (contextWindow) {
       model.contextWindow = contextWindow;
+    }
+    if (maxOutputTokens) {
+      model.maxOutputTokens = maxOutputTokens;
     }
     models.push(model);
   }

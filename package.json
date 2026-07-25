@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.6.21",
+  "version": "0.6.26",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -123,7 +123,12 @@
               "contextWindow": {
                 "type": "number",
                 "minimum": 1024,
-                "description": "Размер контекстного окна модели в токенах (для индикатора)"
+                "description": "Размер контекстного окна модели в токенах (max input, для индикатора)"
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "minimum": 1,
+                "description": "Лимит выходных токенов модели (max_output_tokens)"
               }
             }
           }

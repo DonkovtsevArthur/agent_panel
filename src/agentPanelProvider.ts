@@ -22,7 +22,12 @@ import {
 } from "./sessionStore";
 
 type SettingsPayload = {
-  models: Array<{ id: string; label?: string; contextWindow?: number }>;
+  models: Array<{
+    id: string;
+    label?: string;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+  }>;
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -898,6 +903,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           id: m.id,
           label: m.label || "",
           contextWindow: m.contextWindow || undefined,
+          maxOutputTokens: m.maxOutputTokens || undefined,
         })),
         defaultModel: config.defaultModel,
         defaultContextWindow: config.defaultContextWindow,
@@ -927,7 +933,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           m.contextWindow >= 1024
             ? Math.floor(m.contextWindow)
             : undefined;
-        const row: { id: string; label?: string; contextWindow?: number } = {
+        const maxOutputTokens =
+          typeof m?.maxOutputTokens === "number" &&
+          Number.isFinite(m.maxOutputTokens) &&
+          m.maxOutputTokens > 0
+            ? Math.floor(m.maxOutputTokens)
+            : undefined;
+        const row: {
+          id: string;
+          label?: string;
+          contextWindow?: number;
+          maxOutputTokens?: number;
+        } = {
           id,
         };
         if (label) {
@@ -936,9 +953,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (contextWindow) {
           row.contextWindow = contextWindow;
         }
+        if (maxOutputTokens) {
+          row.maxOutputTokens = maxOutputTokens;
+        }
         return row;
       })
-      .filter((m): m is { id: string; label?: string; contextWindow?: number } =>
+      .filter(
+        (
+          m
+        ): m is {
+          id: string;
+          label?: string;
+          contextWindow?: number;
+          maxOutputTokens?: number;
+        } =>
         Boolean(m)
       );
 
@@ -1128,8 +1156,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <span class="settings-label">Контекст по умолчанию (токены)</span>
           <input id="settingsDefaultContext" class="settings-input" type="number" min="1024" step="1024" />
         </label>
+
+        <div class="settings-quick-add">
+          <label class="settings-field settings-quick-add-field">
+            <span class="settings-label">Быстрое добавление</span>
+            <div class="settings-quick-add-row">
+              <input id="settingsQuickModelId" class="settings-input" type="text" placeholder="id модели, напр. gpt-4.1" autocomplete="off" />
+              <button type="button" class="text-btn settings-inline-btn" id="quickAddModelBtn">Добавить</button>
+            </div>
+          </label>
+          <div id="settingsModelsHint" class="settings-hint" hidden></div>
+        </div>
+
         <div id="settingsModelsList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить модель</button>
+        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Пустая карточка</button>
+
+        <div class="settings-json-import">
+          <label class="settings-field">
+            <span class="settings-label">Импорт JSON</span>
+            <textarea id="settingsModelsJson" class="settings-input settings-textarea settings-json-textarea" rows="5" placeholder='["gpt-4.1", {"model":"claude-sonnet-4-5","name":"Claude","context_window":200000}]'></textarea>
+          </label>
+          <div class="settings-json-actions">
+            <button type="button" class="text-btn" id="importModelsJsonBtn">Применить JSON</button>
+            <button type="button" class="text-btn" id="exportModelsJsonBtn">Скопировать список</button>
+          </div>
+          <div id="settingsJsonHint" class="settings-hint" hidden></div>
+        </div>
       </section>
 
       <section class="settings-section">

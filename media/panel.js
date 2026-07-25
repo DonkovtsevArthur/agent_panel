@@ -26,6 +26,13 @@
   const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
   const saveSettingsBtn = document.getElementById("saveSettingsBtn");
   const addModelBtn = document.getElementById("addModelBtn");
+  const quickAddModelBtn = document.getElementById("quickAddModelBtn");
+  const settingsQuickModelId = document.getElementById("settingsQuickModelId");
+  const settingsModelsHint = document.getElementById("settingsModelsHint");
+  const settingsModelsJson = document.getElementById("settingsModelsJson");
+  const importModelsJsonBtn = document.getElementById("importModelsJsonBtn");
+  const exportModelsJsonBtn = document.getElementById("exportModelsJsonBtn");
+  const settingsJsonHint = document.getElementById("settingsJsonHint");
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
@@ -214,6 +221,370 @@
     }
   }
 
+  function setModelsHint(text, isError) {
+    if (!settingsModelsHint) {
+      return;
+    }
+    if (!text) {
+      settingsModelsHint.hidden = true;
+      settingsModelsHint.textContent = "";
+      settingsModelsHint.classList.remove("is-error");
+      return;
+    }
+    settingsModelsHint.hidden = false;
+    settingsModelsHint.textContent = text;
+    settingsModelsHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function setJsonHint(text, isError) {
+    if (!settingsJsonHint) {
+      return;
+    }
+    if (!text) {
+      settingsJsonHint.hidden = true;
+      settingsJsonHint.textContent = "";
+      settingsJsonHint.classList.remove("is-error");
+      return;
+    }
+    settingsJsonHint.hidden = false;
+    settingsJsonHint.textContent = text;
+    settingsJsonHint.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function pickField(raw, keys) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
+    }
+    const entries = Object.entries(raw);
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(raw, key) && raw[key] != null) {
+        return raw[key];
+      }
+    }
+    const lowerMap = new Map(
+      entries.map(([k, v]) => [String(k).toLowerCase(), v])
+    );
+    for (const key of keys) {
+      const value = lowerMap.get(String(key).toLowerCase());
+      if (value != null) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  function pickNestedField(raw, keys) {
+    const direct = pickField(raw, keys);
+    if (direct != null) {
+      return direct;
+    }
+    const nestKeys = [
+      "model_info",
+      "modelInfo",
+      "limits",
+      "limit",
+      "metadata",
+      "meta",
+      "config",
+      "parameters",
+      "params",
+      "info",
+      "capabilities",
+    ];
+    for (const nestKey of nestKeys) {
+      const nested = pickField(raw, [nestKey]);
+      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+        const value = pickField(nested, keys);
+        if (value != null) {
+          return value;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function normalizeModelEntry(raw) {
+    if (typeof raw === "string") {
+      const id = raw.trim();
+      return id ? { id, label: id } : null;
+    }
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+
+    const id = String(
+      pickField(raw, [
+        "id",
+        "model",
+        "model_id",
+        "modelId",
+        "modelID",
+        "slug",
+        "value",
+        "key",
+      ]) || ""
+    ).trim();
+    if (!id) {
+      return null;
+    }
+
+    const label = String(
+      pickField(raw, [
+        "label",
+        "title",
+        "name",
+        "displayName",
+        "display_name",
+        "display",
+        "text",
+        "description",
+      ]) || ""
+    ).trim() || id;
+
+    const contextRaw = pickNestedField(raw, [
+      "contextWindow",
+      "context_window",
+      "contextLength",
+      "context_length",
+      "maxContext",
+      "max_context",
+      "maxContextTokens",
+      "max_context_tokens",
+      "max_input_tokens",
+      "maxInputTokens",
+      "max_input",
+      "maxInput",
+      "input_tokens",
+      "inputTokens",
+      "context",
+      "tokens",
+      "max_tokens",
+      "maxTokens",
+    ]);
+    const outputRaw = pickNestedField(raw, [
+      "maxOutputTokens",
+      "max_output_tokens",
+      "max_output",
+      "maxOutput",
+      "output_tokens",
+      "outputTokens",
+      "max_completion_tokens",
+      "maxCompletionTokens",
+      "completion_tokens",
+      "completionTokens",
+    ]);
+    const contextWindow = Number(contextRaw);
+    const maxOutputTokens = Number(outputRaw);
+    const model = { id, label };
+    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
+      model.contextWindow = Math.floor(contextWindow);
+    }
+    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+      model.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+    return model;
+  }
+
+  function upsertModels(incoming) {
+    settingsModels = readModelsFromDom();
+    const byId = new Map();
+    for (const model of settingsModels) {
+      const id = String(model.id || "").trim();
+      if (id) {
+        byId.set(id, {
+          id,
+          label: model.label || "",
+          contextWindow: model.contextWindow,
+          maxOutputTokens: model.maxOutputTokens,
+        });
+      }
+    }
+    let added = 0;
+    let updated = 0;
+    for (const item of incoming) {
+      const model = normalizeModelEntry(item);
+      if (!model) {
+        continue;
+      }
+      if (byId.has(model.id)) {
+        const prev = byId.get(model.id);
+        byId.set(model.id, {
+          id: model.id,
+          label: model.label || prev.label || model.id,
+          contextWindow:
+            model.contextWindow || prev.contextWindow || undefined,
+          maxOutputTokens:
+            model.maxOutputTokens || prev.maxOutputTokens || undefined,
+        });
+        updated += 1;
+      } else {
+        byId.set(model.id, model);
+        added += 1;
+      }
+    }
+    settingsModels = Array.from(byId.values());
+    if (!settingsModels.length) {
+      settingsModels.push({ id: "", label: "" });
+    }
+    renderSettingsModels();
+    return { added, updated, total: settingsModels.filter((m) => m.id).length };
+  }
+
+  function quickAddModel() {
+    const id = settingsQuickModelId
+      ? settingsQuickModelId.value.trim()
+      : "";
+    if (!id) {
+      setModelsHint("Введите id модели.", true);
+      settingsQuickModelId?.focus();
+      return;
+    }
+    const result = upsertModels([{ id, label: id }]);
+    if (settingsQuickModelId) {
+      settingsQuickModelId.value = "";
+      settingsQuickModelId.focus();
+    }
+    if (result.added) {
+      setModelsHint(`Добавлено: ${id}`);
+    } else {
+      setModelsHint(`Уже есть: ${id}`);
+    }
+  }
+
+  function looksLikeModelEntry(item) {
+    if (typeof item === "string") {
+      return Boolean(item.trim());
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return false;
+    }
+    return Boolean(
+      pickField(item, [
+        "id",
+        "model",
+        "model_id",
+        "modelId",
+        "modelID",
+        "slug",
+        "value",
+        "key",
+        "name",
+      ])
+    );
+  }
+
+  function extractModelsList(parsed) {
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    if (looksLikeModelEntry(parsed)) {
+      return [parsed];
+    }
+
+    const wrapperKeys = [
+      "models",
+      "data",
+      "items",
+      "results",
+      "list",
+      "model_list",
+      "modelList",
+      "available_models",
+      "availableModels",
+      "choices",
+      "entries",
+      "values",
+      "records",
+      "payload",
+      "response",
+      "body",
+      "result",
+    ];
+
+    for (const key of wrapperKeys) {
+      const value = pickField(parsed, [key]);
+      if (Array.isArray(value)) {
+        return value;
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const nested = extractModelsList(value);
+        if (nested) {
+          return nested;
+        }
+      }
+    }
+
+    for (const value of Object.values(parsed)) {
+      if (!Array.isArray(value) || !value.length) {
+        continue;
+      }
+      if (value.some(looksLikeModelEntry)) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  function parseModelsJson(raw) {
+    const text = String(raw || "").trim();
+    if (!text) {
+      throw new Error("Вставьте JSON со списком моделей.");
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error("Некорректный JSON.");
+    }
+    const items = extractModelsList(parsed);
+    if (!items) {
+      throw new Error("В JSON не найден список моделей.");
+    }
+    return items;
+  }
+
+  function importModelsFromJson() {
+    try {
+      const items = parseModelsJson(settingsModelsJson?.value || "");
+      const normalized = items
+        .map((item) => normalizeModelEntry(item))
+        .filter(Boolean);
+      if (!normalized.length) {
+        throw new Error("В JSON нет ни одной модели с id.");
+      }
+      const result = upsertModels(normalized);
+      setJsonHint(
+        `Готово: +${result.added}, обновлено ${result.updated}, всего ${result.total}.`
+      );
+    } catch (error) {
+      setJsonHint(error.message || "Не удалось импортировать.", true);
+    }
+  }
+
+  function exportModelsToJson() {
+    settingsModels = readModelsFromDom();
+    const payload = settingsModels
+      .map((m) => normalizeModelEntry(m))
+      .filter(Boolean);
+    const text = JSON.stringify(payload, null, 2);
+    if (settingsModelsJson) {
+      settingsModelsJson.value = text;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => setJsonHint("Список скопирован в буфер."),
+        () => setJsonHint("JSON заполнен в поле ниже.")
+      );
+    } else {
+      setJsonHint("JSON заполнен в поле ниже.");
+    }
+  }
+
   function syncDefaultModelSelect() {
     if (!settingsDefaultModel) {
       return;
@@ -264,18 +635,29 @@
         `<span class="settings-label">Название</span>` +
         `<input class="settings-input" data-field="label" data-index="${index}" type="text" placeholder="как видно в списке" />` +
         `</label>` +
+        `<div class="settings-model-limits">` +
         `<label class="settings-field">` +
-        `<span class="settings-label">Контекст (токены)</span>` +
-        `<input class="settings-input" data-field="contextWindow" data-index="${index}" type="number" min="1024" step="1024" placeholder="необязательно" />` +
-        `</label>`;
+        `<span class="settings-label">Контекст (вход)</span>` +
+        `<input class="settings-input" data-field="contextWindow" data-index="${index}" type="number" min="1024" step="1024" placeholder="max_input" />` +
+        `</label>` +
+        `<label class="settings-field">` +
+        `<span class="settings-label">Ответ (выход)</span>` +
+        `<input class="settings-input" data-field="maxOutputTokens" data-index="${index}" type="number" min="1" step="1024" placeholder="max_output" />` +
+        `</label>` +
+        `</div>`;
       const idInput = row.querySelector('[data-field="id"]');
       const labelInput = row.querySelector('[data-field="label"]');
       const ctxInput = row.querySelector('[data-field="contextWindow"]');
+      const outInput = row.querySelector('[data-field="maxOutputTokens"]');
       idInput.value = model.id || "";
       labelInput.value = model.label || "";
       ctxInput.value =
         model.contextWindow && Number(model.contextWindow) > 0
           ? String(model.contextWindow)
+          : "";
+      outInput.value =
+        model.maxOutputTokens && Number(model.maxOutputTokens) > 0
+          ? String(model.maxOutputTokens)
           : "";
       settingsModelsList.appendChild(row);
     });
@@ -293,10 +675,15 @@
       const id = row.querySelector('[data-field="id"]').value.trim();
       const label = row.querySelector('[data-field="label"]').value.trim();
       const ctxRaw = row.querySelector('[data-field="contextWindow"]').value;
+      const outRaw = row.querySelector('[data-field="maxOutputTokens"]')?.value;
       const contextWindow = Number(ctxRaw);
+      const maxOutputTokens = Number(outRaw);
       const model = { id, label };
       if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
         model.contextWindow = Math.floor(contextWindow);
+      }
+      if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
+        model.maxOutputTokens = Math.floor(maxOutputTokens);
       }
       return model;
     });
@@ -311,6 +698,7 @@
           id: m.id || "",
           label: m.label || "",
           contextWindow: m.contextWindow,
+          maxOutputTokens: m.maxOutputTokens,
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -1044,6 +1432,34 @@
       settingsModels = readModelsFromDom();
       settingsModels.push({ id: "", label: "" });
       renderSettingsModels();
+      setModelsHint("");
+    });
+  }
+
+  if (quickAddModelBtn) {
+    quickAddModelBtn.addEventListener("click", () => {
+      quickAddModel();
+    });
+  }
+
+  if (settingsQuickModelId) {
+    settingsQuickModelId.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        quickAddModel();
+      }
+    });
+  }
+
+  if (importModelsJsonBtn) {
+    importModelsJsonBtn.addEventListener("click", () => {
+      importModelsFromJson();
+    });
+  }
+
+  if (exportModelsJsonBtn) {
+    exportModelsJsonBtn.addEventListener("click", () => {
+      exportModelsToJson();
     });
   }
 
