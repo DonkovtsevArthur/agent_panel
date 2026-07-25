@@ -132,9 +132,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("agentPanel")) {
           this.postModels();
-          if (this.store.screen === "settings") {
-            this.postSettings();
-          }
+          // Не перезатираем форму настроек: webview сам автосохраняет.
         }
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -1141,8 +1139,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     this.postModels();
-    this.postSettings();
-    void vscode.window.showInformationMessage("Настройки Agent Panel сохранены.");
   }
 
   private async postInit(): Promise<void> {
@@ -1258,7 +1254,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
       <div class="agents-title">Настройки</div>
-      <button type="button" class="text-btn" id="saveSettingsBtn">Сохранить</button>
+      <div id="settingsSaveStatus" class="settings-save-status" hidden>Сохранено</div>
     </div>
     <div class="settings-body" id="settingsBody">
       <section class="settings-section">

@@ -24,7 +24,7 @@
   const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
   const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
-  const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+  const settingsSaveStatus = document.getElementById("settingsSaveStatus");
   const addModelBtn = document.getElementById("addModelBtn");
   const settingsModelsHint = document.getElementById("settingsModelsHint");
   const settingsModelsJson = document.getElementById("settingsModelsJson");
@@ -86,6 +86,9 @@
   let modelEditIndex = null;
   let modelEditMode = "manual";
   let providerEditIndex = null;
+  let settingsHydrating = false;
+  let settingsSaveTimer = null;
+  let settingsSaveStatusTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
 
@@ -410,6 +413,7 @@
     setProvidersHint("");
     renderSettingsProviders();
     fillModelProviderSelect(modelEditProvider?.value || "");
+    schedulePersistSettings(0);
   }
 
   function renderSettingsProviders() {
@@ -605,6 +609,24 @@
     };
   }
 
+  function sortSettingsModels() {
+    settingsModels.sort((a, b) => {
+      const labelA = String(a.label || a.id || "").trim();
+      const labelB = String(b.label || b.id || "").trim();
+      const byLabel = labelA.localeCompare(labelB, "ru", {
+        sensitivity: "base",
+        numeric: true,
+      });
+      if (byLabel !== 0) {
+        return byLabel;
+      }
+      return String(a.id || "").localeCompare(String(b.id || ""), "ru", {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+  }
+
   function upsertModels(incoming) {
     const byId = new Map();
     for (const model of settingsModels) {
@@ -639,6 +661,7 @@
       }
     }
     settingsModels = Array.from(byId.values());
+    sortSettingsModels();
     renderSettingsModels();
     return { added, updated, total: settingsModels.filter((m) => m.id).length };
   }
@@ -909,6 +932,7 @@
       if (importModelsFromJson()) {
         closeModelEditModal();
         setModelsHint("Модели из JSON добавлены.");
+        schedulePersistSettings(0);
       }
       return;
     }
@@ -974,13 +998,16 @@
     }
     closeModelEditModal();
     setModelsHint("");
+    sortSettingsModels();
     renderSettingsModels();
+    schedulePersistSettings(0);
   }
 
   function renderSettingsModels() {
     if (!settingsModelsList) {
       return;
     }
+    sortSettingsModels();
     settingsModelsList.innerHTML = "";
     if (!settingsModels.length) {
       settingsModelsList.innerHTML =
@@ -1031,10 +1058,49 @@
       .filter((m) => String(m.id || "").trim());
   }
 
+  function showSettingsSaved() {
+    if (!settingsSaveStatus) {
+      return;
+    }
+    settingsSaveStatus.hidden = false;
+    if (settingsSaveStatusTimer) {
+      clearTimeout(settingsSaveStatusTimer);
+    }
+    settingsSaveStatusTimer = setTimeout(() => {
+      settingsSaveStatus.hidden = true;
+    }, 1200);
+  }
+
+  function persistSettingsNow() {
+    if (settingsHydrating) {
+      return;
+    }
+    vscode.postMessage({
+      type: "saveSettings",
+      settings: collectSettings(),
+    });
+    showSettingsSaved();
+  }
+
+  function schedulePersistSettings(delayMs) {
+    if (settingsHydrating) {
+      return;
+    }
+    if (settingsSaveTimer) {
+      clearTimeout(settingsSaveTimer);
+    }
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      persistSettingsNow();
+    }, typeof delayMs === "number" ? delayMs : 450);
+  }
+
   function fillSettings(settings) {
     if (!settings || typeof settings !== "object") {
       return;
     }
+    settingsHydrating = true;
+    try {
     settingsProviders = Array.isArray(settings.providers)
       ? settings.providers.map((p) => ({
           id: p.id || "",
@@ -1094,6 +1160,9 @@
     closeProviderEditModal();
     renderSettingsProviders();
     renderSettingsModels();
+    } finally {
+      settingsHydrating = false;
+    }
   }
 
   function collectSettings() {
@@ -1818,12 +1887,29 @@
     });
   }
 
-  if (saveSettingsBtn) {
-    saveSettingsBtn.addEventListener("click", () => {
-      vscode.postMessage({
-        type: "saveSettings",
-        settings: collectSettings(),
-      });
+  const settingsBody = document.getElementById("settingsBody");
+  if (settingsBody) {
+    settingsBody.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (
+        target.closest(
+          "#settingsCaBundle, #settingsSystemPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
+        )
+      ) {
+        schedulePersistSettings();
+      }
+    });
+    settingsBody.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      if (target.closest("#settingsRejectUnauthorized")) {
+        persistSettingsNow();
+      }
     });
   }
 
@@ -1872,13 +1958,16 @@
         renderSettingsProviders();
         renderSettingsModels();
         fillModelProviderSelect(modelEditProvider?.value || fallback);
+        schedulePersistSettings(0);
       }
     });
   }
 
   if (importModelsJsonBtn) {
     importModelsJsonBtn.addEventListener("click", () => {
-      importModelsFromJson();
+      if (importModelsFromJson()) {
+        schedulePersistSettings(0);
+      }
     });
   }
 
@@ -1921,6 +2010,7 @@
       if (Number.isFinite(index) && index >= 0 && index < settingsModels.length) {
         settingsModels.splice(index, 1);
         renderSettingsModels();
+        schedulePersistSettings(0);
       }
     });
     settingsModelsList.addEventListener("change", (event) => {
@@ -1932,6 +2022,7 @@
       if (Number.isFinite(index) && settingsModels[index]) {
         settingsModels[index].enabled = Boolean(toggle.checked);
         renderSettingsModels();
+        schedulePersistSettings(0);
       }
     });
   }
@@ -2001,6 +2092,7 @@
   if (settingsDefaultModel) {
     settingsDefaultModel.addEventListener("change", () => {
       settingsDefaultModelId = settingsDefaultModel.value;
+      schedulePersistSettings(0);
     });
   }
 
