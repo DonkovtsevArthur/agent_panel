@@ -79,6 +79,8 @@
 
   let agentsData = [];
   let archiveAgentsData = [];
+  let activeAgentId = "";
+  let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
   let settingsDefaultModelId = "";
@@ -1433,6 +1435,9 @@
     if (!agentsListEl) {
       return;
     }
+    if (renamingAgentId) {
+      return;
+    }
     const list = agentsData;
 
     if (!list.length) {
@@ -1453,12 +1458,12 @@
         return (
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
-          `<button type="button" class="agent-row flat" data-agent="${a.id}">` +
+          `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
           `<span class="agent-main">` +
-          `<div class="agent-name"></div>` +
+          `<div class="agent-name" title="Переименовать"></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
-          `</button>` +
+          `</div>` +
           `<div class="row-actions">` +
           action +
           `</div>` +
@@ -1479,6 +1484,108 @@
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
     });
+  }
+
+  function getAgentNameById(agentId) {
+    const row = agentsData.find((a) => a.id === agentId);
+    return (row && row.name) || "Агент";
+  }
+
+  function startAgentRename(agentId, nameEl) {
+    if (!agentId || !nameEl || renamingAgentId) {
+      return;
+    }
+    if (nameEl.tagName === "INPUT" || nameEl.querySelector(".agent-name-input")) {
+      return;
+    }
+    const previous =
+      (nameEl.textContent || "").trim() || getAgentNameById(agentId);
+    renamingAgentId = agentId;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "agent-name-input";
+    input.value = previous;
+    input.maxLength = 80;
+    input.setAttribute("aria-label", "Название агента");
+    input.spellcheck = false;
+
+    const isChat = nameEl === chatAgentNameEl;
+    if (isChat) {
+      input.classList.add("is-chat");
+    }
+
+    const fitInputWidth = () => {
+      input.style.width = "0px";
+      input.style.width = `${Math.max(input.scrollWidth, 1)}px`;
+    };
+
+    const measured = Math.ceil(nameEl.getBoundingClientRect().width);
+    input.style.width = `${Math.max(measured, 1)}px`;
+
+    nameEl.classList.add("is-renaming");
+    nameEl.after(input);
+    requestAnimationFrame(() => {
+      fitInputWidth();
+      input.focus();
+      input.setSelectionRange(0, input.value.length);
+    });
+
+    let finished = false;
+    const cleanup = () => {
+      input.removeEventListener("keydown", onKeyDown);
+      input.removeEventListener("blur", onBlur);
+      input.removeEventListener("input", fitInputWidth);
+      input.remove();
+      nameEl.classList.remove("is-renaming");
+      if (renamingAgentId === agentId) {
+        renamingAgentId = null;
+      }
+    };
+
+    const finish = (save) => {
+      if (finished || renamingAgentId !== agentId) {
+        return;
+      }
+      finished = true;
+      const next = input.value.replace(/\s+/g, " ").trim().slice(0, 80);
+      cleanup();
+      if (!save || !next || next === previous) {
+        nameEl.textContent = previous;
+        return;
+      }
+      nameEl.textContent = next;
+      const item = agentsData.find((a) => a.id === agentId);
+      if (item) {
+        item.name = next;
+      }
+      if (agentId === activeAgentId && chatAgentNameEl) {
+        chatAgentNameEl.textContent = next;
+      }
+      vscode.postMessage({
+        type: "renameAgent",
+        agentId,
+        name: next,
+      });
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(false);
+      }
+    };
+    const onBlur = () => {
+      finish(true);
+    };
+    input.addEventListener("keydown", onKeyDown);
+    input.addEventListener("blur", onBlur);
+    input.addEventListener("input", fitInputWidth);
   }
 
     function focusPrompt() {
@@ -2415,6 +2522,17 @@
         }
         return;
       }
+      const nameEl = event.target.closest(".agent-name");
+      if (nameEl && agentsListEl.contains(nameEl)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const block = nameEl.closest("[data-agent]");
+        const agentId = block ? block.dataset.agent : "";
+        if (agentId) {
+          startAgentRename(agentId, nameEl);
+        }
+        return;
+      }
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
@@ -2422,6 +2540,46 @@
           type: "openAgent",
           agentId: agentRow.dataset.agent,
         });
+      }
+    });
+    agentsListEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const agentRow = event.target.closest(".agent-row");
+      if (!agentRow || !agentsListEl.contains(agentRow)) {
+        return;
+      }
+      if (event.target.closest(".agent-name-input")) {
+        return;
+      }
+      event.preventDefault();
+      vscode.postMessage({
+        type: "openAgent",
+        agentId: agentRow.dataset.agent,
+      });
+    });
+  }
+
+  if (chatAgentNameEl) {
+    chatAgentNameEl.title = "Переименовать";
+    chatAgentNameEl.setAttribute("role", "button");
+    chatAgentNameEl.tabIndex = 0;
+    chatAgentNameEl.addEventListener("click", () => {
+      if (!activeAgentId || renamingAgentId) {
+        return;
+      }
+      startAgentRename(activeAgentId, chatAgentNameEl);
+    });
+    chatAgentNameEl.addEventListener("keydown", (event) => {
+      if (renamingAgentId) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (activeAgentId) {
+          startAgentRename(activeAgentId, chatAgentNameEl);
+        }
       }
     });
   }
@@ -2460,7 +2618,10 @@
       case "init":
         fillModels(msg.models, msg.selectedModel);
         renderMessages(msg.uiMessages || []);
-        if (chatAgentNameEl && msg.agentName) {
+        if (msg.agentId) {
+          activeAgentId = msg.agentId;
+        }
+        if (chatAgentNameEl && msg.agentName && renamingAgentId !== activeAgentId) {
           chatAgentNameEl.textContent = msg.agentName;
         }
         if (chatTitleEl && msg.chatTitle) {
@@ -2474,6 +2635,12 @@
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        {
+          const active = agentsData.find((a) => a.active);
+          if (active) {
+            activeAgentId = active.id;
+          }
+        }
         renderAgentsList();
         if (msg.screen === "agents" || msg.screen === "chat") {
           showScreen(msg.screen);
@@ -2509,7 +2676,14 @@
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages);
         }
-        if (chatAgentNameEl && msg.agentName) {
+        if (msg.agentId) {
+          activeAgentId = msg.agentId;
+        }
+        if (
+          chatAgentNameEl &&
+          msg.agentName &&
+          renamingAgentId !== activeAgentId
+        ) {
           chatAgentNameEl.textContent = msg.agentName;
         }
         if (chatTitleEl && msg.chatTitle) {
@@ -2520,6 +2694,22 @@
         }
         showScreen("chat");
         setBusy(false);
+        break;
+      case "agentRenamed":
+        if (msg.agentId && msg.name) {
+          const item = agentsData.find((a) => a.id === msg.agentId);
+          if (item) {
+            item.name = msg.name;
+          }
+          if (msg.agentId === activeAgentId && chatAgentNameEl) {
+            if (renamingAgentId !== msg.agentId) {
+              chatAgentNameEl.textContent = msg.name;
+            }
+          }
+          if (renamingAgentId !== msg.agentId) {
+            renderAgentsList();
+          }
+        }
         break;
       case "contextUsage":
         setContextUsage(msg.used || 0, msg.max || contextMax);
