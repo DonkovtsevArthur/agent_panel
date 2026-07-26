@@ -398,6 +398,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
+      agentId: agent?.id || "",
       agentName: agent?.name || "Агент",
       chatTitle: agent?.name || "Агент",
       contextUsed: this.contextTokens,
@@ -462,6 +463,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           agent.updatedAt = Date.now();
           this.saveStore();
           this.postAgentsList();
+          this.view?.webview.postMessage({
+            type: "agentRenamed",
+            agentId: agent.id,
+            name: agent.name,
+          });
         }
         break;
       }
@@ -1164,6 +1170,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
       screen: this.store.screen,
+      agentId: this.store.activeAgentId || "",
       agentName:
         this.store.agents.find((a) => a.id === this.store.activeAgentId)?.name ||
         "Агент",
