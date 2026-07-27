@@ -122,6 +122,9 @@
   const HEART_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
 
+  const COPY_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
+
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
@@ -1718,7 +1721,14 @@
           if (isFilePath(inner) && !inner.includes("\n")) {
             return fileLinkHtml(inner);
           }
-          return `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>`;
+          return (
+            `<div class="md-pre-wrap">` +
+            `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>` +
+            `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+            COPY_ICON +
+            `</button>` +
+            `</div>`
+          );
         }
         const lines = block.content.split("\n");
         return lines
@@ -1885,12 +1895,55 @@
       .join("");
   }
 
-  function setMessageContent(el, role, text) {
-    if (role === "assistant") {
-      el.innerHTML = renderInlineMarkdown(text);
+  let copyToastEl = null;
+  let copyToastTimer = null;
+
+  function ensureCopyToast() {
+    if (copyToastEl) {
+      return copyToastEl;
+    }
+    copyToastEl = document.createElement("div");
+    copyToastEl.className = "copy-toast";
+    copyToastEl.hidden = true;
+    document.body.appendChild(copyToastEl);
+    return copyToastEl;
+  }
+
+  function showCopyToast(text) {
+    const toast = ensureCopyToast();
+    toast.textContent = text || "Скопировано";
+    toast.hidden = false;
+    if (copyToastTimer) {
+      clearTimeout(copyToastTimer);
+    }
+    copyToastTimer = setTimeout(() => {
+      copyToastTimer = null;
+      toast.hidden = true;
+    }, 1200);
+  }
+
+  function requestCopyText(text) {
+    const value = String(text || "");
+    if (!value) {
       return;
     }
-    el.textContent = role === "tool" ? formatToolLine(text) : text;
+    vscode.postMessage({ type: "copyText", text: value });
+  }
+
+  function setMessageContent(el, role, text) {
+    const raw = text || "";
+    el.dataset.raw = raw;
+    let body = el.querySelector(".msg-body");
+    if (!body) {
+      body = document.createElement("div");
+      body.className = "msg-body";
+      el.insertBefore(body, el.firstChild);
+    }
+    if (role === "assistant") {
+      body.innerHTML = renderInlineMarkdown(raw);
+      return;
+    }
+    body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
   function appendMessage(role, text) {
@@ -1904,7 +1957,28 @@
     }
     const el = document.createElement("div");
     el.className = `msg ${role}`;
+
+    const body = document.createElement("div");
+    body.className = "msg-body";
+    el.appendChild(body);
     setMessageContent(el, role, text);
+
+    if (role === "user") {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-wrap msg-wrap-user";
+      const actions = document.createElement("div");
+      actions.className = "msg-actions";
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-copy" title="Копировать" aria-label="Копировать">` +
+        COPY_ICON +
+        `</button>`;
+      wrap.appendChild(actions);
+      wrap.appendChild(el);
+      messagesEl.appendChild(wrap);
+      scrollToBottom();
+      return el;
+    }
+
     messagesEl.appendChild(el);
     scrollToBottom();
     return el;
@@ -2585,6 +2659,28 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const copyCodeBtn = event.target.closest(".md-pre-copy");
+    if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const wrap = copyCodeBtn.closest(".md-pre-wrap");
+      const code = wrap ? wrap.querySelector("code") : null;
+      const text = code ? code.textContent || "" : "";
+      requestCopyText(text);
+      return;
+    }
+    const copyMsgBtn = event.target.closest(".msg-copy");
+    if (copyMsgBtn && messagesEl.contains(copyMsgBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const wrap = copyMsgBtn.closest(".msg-wrap");
+      const msg = wrap
+        ? wrap.querySelector(".msg")
+        : copyMsgBtn.closest(".msg");
+      const text = msg ? msg.dataset.raw || "" : "";
+      requestCopyText(text);
+      return;
+    }
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
@@ -2716,6 +2812,9 @@
         break;
       case "modelsUpdated":
         fillModels(msg.models, getSelectedModel() || msg.selectedModel);
+        break;
+      case "copied":
+        showCopyToast("Скопировано");
         break;
       case "append":
         appendMessage(msg.role, msg.text);

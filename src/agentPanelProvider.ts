@@ -68,7 +68,8 @@ type WebviewToHost =
   | { type: "openFile"; path: string }
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
-  | { type: "pickModel" };
+  | { type: "pickModel" }
+  | { type: "copyText"; text: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -497,6 +498,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         const raw = message.url?.trim();
         if (raw && /^https?:\/\//i.test(raw)) {
           await vscode.env.openExternal(vscode.Uri.parse(raw));
+        }
+        break;
+      }
+      case "copyText": {
+        const text = String(message.text || "");
+        if (text) {
+          await vscode.env.clipboard.writeText(text);
+          this.view?.webview.postMessage({ type: "copied" });
         }
         break;
       }
