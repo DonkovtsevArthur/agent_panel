@@ -17,6 +17,7 @@ export interface ChatSession {
   id: string;
   title: string;
   selectedModel: string;
+  lastTurnModel?: string;
   history: ChatMessage[];
   uiMessages: UiMessage[];
   updatedAt: number;
