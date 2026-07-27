@@ -20,6 +20,11 @@ export interface AgentModel {
   enabled?: boolean;
   /** true — избранная: выше в селекторе чата */
   favorite?: boolean;
+  /**
+   * Явный флаг vision/multimodal.
+   * Если не задан — берётся эвристика по id (см. resolveModelSupportsVision).
+   */
+  supportsVision?: boolean;
 }
 
 export interface ModelEndpoint {
@@ -42,13 +47,53 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
   "Gemini 2.5 Flash": 1_048_576,
 };
 
+/** Явные значения vision для дефолтных/известных id. */
+const KNOWN_VISION_SUPPORT: Record<string, boolean> = {
+  "DeepSeek-V4-Flash": false,
+  "Qwen3-Coder-Next": false,
+  "Gemma-4-31b": false,
+  "claude-sonnet-4-5": true,
+  "gpt-4.1": true,
+  "Gemini 2.5 Flash": true,
+};
+
 const DEFAULT_MODELS: AgentModel[] = [
-  { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash", contextWindow: 128_000 },
-  { id: "Qwen3-Coder-Next", label: "Qwen3 Coder Next", contextWindow: 262_144 },
-  { id: "Gemma-4-31b", label: "Gemma 4 31B", contextWindow: 128_000 },
-  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", contextWindow: 200_000 },
-  { id: "gpt-4.1", label: "GPT-4.1", contextWindow: 1_047_576 },
-  { id: "Gemini 2.5 Flash", label: "Gemini 2.5 Flash", contextWindow: 1_048_576 },
+  {
+    id: "DeepSeek-V4-Flash",
+    label: "DeepSeek V4 Flash",
+    contextWindow: 128_000,
+    supportsVision: false,
+  },
+  {
+    id: "Qwen3-Coder-Next",
+    label: "Qwen3 Coder Next",
+    contextWindow: 262_144,
+    supportsVision: false,
+  },
+  {
+    id: "Gemma-4-31b",
+    label: "Gemma 4 31B",
+    contextWindow: 128_000,
+    supportsVision: false,
+  },
+  {
+    id: "claude-sonnet-4-5",
+    label: "Claude Sonnet 4.5",
+    contextWindow: 200_000,
+    supportsVision: true,
+  },
+  {
+    id: "gpt-4.1",
+    label: "GPT-4.1",
+    contextWindow: 1_047_576,
+    supportsVision: true,
+  },
+  {
+    id: "Gemini 2.5 Flash",
+    label: "Gemini 2.5 Flash",
+    contextWindow: 1_048_576,
+    supportsVision: true,
+  },
 ];
 
 export interface AgentPanelConfig {
@@ -173,6 +218,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       maxOutputTokens?: unknown;
       enabled?: unknown;
       favorite?: unknown;
+      supportsVision?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -216,6 +262,11 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     }
     if (row.favorite === true) {
       model.favorite = true;
+    }
+    if (row.supportsVision === true) {
+      model.supportsVision = true;
+    } else if (row.supportsVision === false) {
+      model.supportsVision = false;
     }
     models.push(model);
   }
@@ -300,12 +351,66 @@ export function getContextWindow(modelId: string): number {
   return config.defaultContextWindow;
 }
 
+/** Эвристика vision по id, если флаг не задан в settings. */
+export function guessModelSupportsVision(modelId: string): boolean {
+  const id = String(modelId || "").trim();
+  if (!id) {
+    return false;
+  }
+  if (Object.prototype.hasOwnProperty.call(KNOWN_VISION_SUPPORT, id)) {
+    return KNOWN_VISION_SUPPORT[id];
+  }
+  const lower = id.toLowerCase();
+  if (
+    /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+  if (
+    /gpt-4o|gpt-4\.1|gpt-5|o[1-9]|claude|gemini|llava|vision|pixtral|gpt-image/.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  if (/gemma-3|gemma3/.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
+/** Итоговое supportsVision: явный флаг модели → known/эвристика. */
+export function resolveModelSupportsVision(
+  modelOrId: AgentModel | string | undefined
+): boolean {
+  if (!modelOrId) {
+    return false;
+  }
+  if (typeof modelOrId === "string") {
+    const fromConfig = getConfig().models.find((m) => m.id === modelOrId);
+    if (fromConfig && typeof fromConfig.supportsVision === "boolean") {
+      return fromConfig.supportsVision;
+    }
+    return guessModelSupportsVision(modelOrId);
+  }
+  if (typeof modelOrId.supportsVision === "boolean") {
+    return modelOrId.supportsVision;
+  }
+  return guessModelSupportsVision(modelOrId.id);
+}
+
 /** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
 export function getEnabledModels(): AgentModel[] {
   return getConfig()
     .models.filter((m) => m.enabled !== false)
     .slice()
-    .sort(compareModelsByFavoriteThenLabel);
+    .sort(compareModelsByFavoriteThenLabel)
+    .map((m) => ({
+      ...m,
+      supportsVision: resolveModelSupportsVision(m),
+    }));
 }
 
 /** Endpoint для модели через её провайдера (или primary). */

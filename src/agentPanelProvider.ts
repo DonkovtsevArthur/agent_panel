@@ -1,7 +1,25 @@
 import * as vscode from "vscode";
-import { getConfig, getContextWindow, getEnabledModels, resolveModelEndpoint } from "./config";
+import {
+  IncomingAttachment,
+  MessageAttachment,
+  attachmentsFromUris,
+  enrichAttachmentsForUi,
+  persistIncomingAttachments,
+  pickWorkspaceAttachments,
+  stripAttachmentPayload,
+  stripUiAttachmentPayloads,
+} from "./attachments";
+import {
+  getConfig,
+  getContextWindow,
+  getEnabledModels,
+  resolveModelEndpoint,
+  resolveModelSupportsVision,
+} from "./config";
 import { runAgentTurn } from "./agentLoop";
+import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
+import { searchWorkspaceFiles } from "./fileMentions";
 import { hasUncommittedChanges } from "./gitStatus";
 import type { ChatMessage } from "./openaiClient";
 import {
@@ -36,6 +54,7 @@ type SettingsPayload = {
     maxOutputTokens?: number;
     enabled?: boolean;
     favorite?: boolean;
+    supportsVision?: boolean;
   }>;
   defaultModel: string;
   defaultContextWindow: number;
@@ -51,8 +70,20 @@ type SettingsPayload = {
 
 type WebviewToHost =
   | { type: "ready" }
-  | { type: "send"; text: string; model: string }
+  | {
+      type: "send";
+      text: string;
+      model: string;
+      attachments?: IncomingAttachment[];
+    }
   | { type: "regenerate" }
+  | {
+      type: "editUserMessage";
+      index: number;
+      text: string;
+      model: string;
+      attachments?: IncomingAttachment[];
+    }
   | { type: "stop" }
   | { type: "newChat" }
   | { type: "newAgent" }
@@ -70,6 +101,10 @@ type WebviewToHost =
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
+  | { type: "pickAttachments"; imagesOnly?: boolean }
+  | { type: "attachUris"; uris: string[] }
+  | { type: "attachFiles"; files: IncomingAttachment[] }
+  | { type: "searchFiles"; query: string; requestId: string }
   | { type: "copyText"; text: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
@@ -299,6 +334,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!chatId || !this.store.chats[chatId]) {
       return;
     }
+    stripUiAttachmentPayloads(this.uiMessages);
+    for (const msg of this.history) {
+      if (msg.attachments?.length) {
+        msg.attachments = msg.attachments.map(stripAttachmentPayload);
+      }
+    }
     touchChat(this.store, chatId, {
       selectedModel: this.selectedModel,
       lastTurnModel: this.lastTurnModel,
@@ -308,9 +349,126 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private storageUri(): vscode.Uri | undefined {
+    return this.context.storageUri || this.context.globalStorageUri;
+  }
+
+  private async enrichUiMessages(list: UiMessage[]): Promise<UiMessage[]> {
+    const storage = this.storageUri();
+    const out: UiMessage[] = [];
+    for (const msg of list) {
+      if (!msg.attachments?.length) {
+        out.push(msg);
+        continue;
+      }
+      out.push({
+        ...msg,
+        attachments: await enrichAttachmentsForUi(msg.attachments, storage),
+      });
+    }
+    return out;
+  }
+
+  private async postAttachments(
+    attachments: MessageAttachment[]
+  ): Promise<void> {
+    const enriched = await enrichAttachmentsForUi(
+      attachments,
+      this.storageUri()
+    );
+    this.view?.webview.postMessage({
+      type: "attachmentsAdded",
+      attachments: enriched,
+    });
+    // Показать чат, чтобы превью вложений было видно в composer
+    if (this.store.screen !== "chat") {
+      this.setScreen("chat");
+      this.saveStore();
+      await this.postChatScreen();
+    } else {
+      void vscode.commands.executeCommand("agentPanel.chat.focus");
+    }
+  }
+
+  private selectedModelSupportsVision(): boolean {
+    return resolveModelSupportsVision(this.selectedModel);
+  }
+
+  private filterAttachmentsForVision(
+    attachments: MessageAttachment[]
+  ): MessageAttachment[] {
+    if (this.selectedModelSupportsVision()) {
+      return attachments;
+    }
+    const kept = attachments.filter((a) => a.kind !== "image");
+    if (kept.length < attachments.length) {
+      void vscode.window.showWarningMessage(
+        "Текущая модель не поддерживает изображения. Картинки не прикреплены."
+      );
+    }
+    return kept;
+  }
+
+  async pickAttachmentsFromUi(options?: { imagesOnly?: boolean }): Promise<void> {
+    try {
+      if (options?.imagesOnly && !this.selectedModelSupportsVision()) {
+        void vscode.window.showWarningMessage(
+          "Текущая модель не поддерживает изображения."
+        );
+        return;
+      }
+      const picked = await pickWorkspaceAttachments({
+        imagesOnly: Boolean(options?.imagesOnly),
+      });
+      if (picked.length) {
+        const persisted = this.filterAttachmentsForVision(
+          await persistIncomingAttachments(picked, this.storageUri())
+        );
+        if (persisted.length) {
+          await this.postAttachments(persisted);
+        }
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(text);
+    }
+  }
+
+  async attachUrisFromDrop(uris: vscode.Uri[]): Promise<void> {
+    try {
+      const fromUris = await attachmentsFromUris(uris.map((u) => u.toString()));
+      if (!fromUris.length) {
+        return;
+      }
+      const persisted = this.filterAttachmentsForVision(
+        await persistIncomingAttachments(fromUris, this.storageUri())
+      );
+      if (persisted.length) {
+        await this.postAttachments(persisted);
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(text);
+    }
+  }
+
+  private historyContentText(content: ChatMessage["content"]): string {
+    if (!content) {
+      return "";
+    }
+    if (typeof content === "string") {
+      return content;
+    }
+    return content
+      .map((part) => (part.type === "text" ? part.text : "[image]"))
+      .join("\n")
+      .trim();
+  }
+
   private getRegenerateState():
     | {
         userText: string;
+        attachments: MessageAttachment[];
         model: string;
         history: ChatMessage[];
         uiMessages: UiMessage[];
@@ -323,11 +481,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const lastAssistant = this.history[this.history.length - 1];
     const lastUser = this.history[this.history.length - 2];
+    const lastUserText = this.historyContentText(lastUser?.content);
+    const lastAssistantText = this.historyContentText(lastAssistant?.content);
     if (
       lastUser?.role !== "user" ||
-      !String(lastUser.content || "").trim() ||
+      !lastUserText ||
       lastAssistant?.role !== "assistant" ||
-      !String(lastAssistant.content || "").trim()
+      !lastAssistantText
     ) {
       return undefined;
     }
@@ -346,7 +506,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     for (let i = assistantIndex + 1; i < this.uiMessages.length; i++) {
       const msg = this.uiMessages[i];
-      if (msg.role === "user" && String(msg.text || "").trim()) {
+      if (
+        msg.role === "user" &&
+        (String(msg.text || "").trim() || msg.attachments?.length)
+      ) {
         return undefined;
       }
     }
@@ -354,7 +517,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     let userIndex = -1;
     for (let i = assistantIndex - 1; i >= 0; i--) {
       const msg = this.uiMessages[i];
-      if (msg.role === "user" && String(msg.text || "").trim()) {
+      if (
+        msg.role === "user" &&
+        (String(msg.text || "").trim() || msg.attachments?.length)
+      ) {
         userIndex = i;
         break;
       }
@@ -363,8 +529,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return undefined;
     }
 
+    const uiUser = this.uiMessages[userIndex];
+    const attachments = (uiUser.attachments || lastUser.attachments || []).map(
+      stripAttachmentPayload
+    );
+    const userText =
+      String(uiUser.text || "").trim() ||
+      lastUserText
+        .replace(/\n?\[image: [^\]]+\]/g, "")
+        .replace(/\n?\[file: [^\]]+\]/g, "")
+        .trim();
+
     return {
-      userText: String(lastUser.content || "").trim(),
+      userText,
+      attachments,
       model,
       history: this.history.slice(0, -2),
       uiMessages: this.uiMessages.slice(0, userIndex + 1),
@@ -421,8 +599,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "append", role, text });
   }
 
-  private setStatus(text: string, hidden = false): void {
-    this.view?.webview.postMessage({ type: "status", text, hidden });
+  private setStatus(text: string, hidden = false, phase?: AgentPhase): void {
+    this.view?.webview.postMessage({ type: "status", text, hidden, phase });
   }
 
   private modelLabel(id: string): string {
@@ -464,7 +642,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private postChatScreen(): void {
+  private async postChatScreen(): Promise<void> {
     const config = getConfig();
     const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
@@ -478,7 +656,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "showChat",
       models,
       selectedModel: this.selectedModel,
-      uiMessages: this.uiMessages,
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       canRegenerate: this.canRegenerate(),
       agentId: agent?.id || "",
       agentName: agent?.name || "Агент",
@@ -573,6 +751,67 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "regenerate":
         await this.handleRegenerate();
         break;
+      case "editUserMessage":
+        await this.handleEditUserMessage(
+          Number(message.index),
+          String(message.text || ""),
+          String(message.model || ""),
+          message.attachments
+        );
+        break;
+      case "pickAttachments":
+        await this.pickAttachmentsFromUi({
+          imagesOnly: Boolean(message.imagesOnly),
+        });
+        break;
+      case "searchFiles": {
+        const requestId = String(message.requestId || "");
+        const query = String(message.query || "");
+        try {
+          const files = await searchWorkspaceFiles(query, 12);
+          this.view?.webview.postMessage({
+            type: "fileSearchResults",
+            requestId,
+            files,
+          });
+        } catch {
+          this.view?.webview.postMessage({
+            type: "fileSearchResults",
+            requestId,
+            files: [],
+          });
+        }
+        break;
+      }
+      case "attachUris":
+        await this.attachUrisFromDrop(
+          (Array.isArray(message.uris) ? message.uris : [])
+            .map((u) => {
+              try {
+                return vscode.Uri.parse(String(u || ""));
+              } catch {
+                return undefined;
+              }
+            })
+            .filter((u): u is vscode.Uri => Boolean(u))
+        );
+        break;
+      case "attachFiles":
+        try {
+          const persisted = this.filterAttachmentsForVision(
+            await persistIncomingAttachments(
+              Array.isArray(message.files) ? message.files : [],
+              this.storageUri()
+            )
+          );
+          if (persisted.length) {
+            await this.postAttachments(persisted);
+          }
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          void vscode.window.showErrorMessage(text);
+        }
+        break;
       case "openFile":
         await this.openWorkspaceFile(message.path);
         break;
@@ -599,7 +838,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.pickModel();
         break;
       case "send":
-        await this.handleSend(message.text, message.model);
+        await this.handleSend(message.text, message.model, {
+          attachments: message.attachments,
+        });
         break;
     }
   }
@@ -801,7 +1042,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async handleSend(
     text: string,
     model: string,
-    options?: { appendUser?: boolean }
+    options?: { appendUser?: boolean; attachments?: IncomingAttachment[] }
   ): Promise<void> {
     const config = getConfig();
     const enabledModels = getEnabledModels();
@@ -810,6 +1051,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         "error",
         "Нет включённых моделей. Включите модели в настройках Agent Panel."
       );
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await persistIncomingAttachments(
+        options?.attachments,
+        this.storageUri()
+      );
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.pushUi("error", messageText);
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    const trimmed = String(text || "").trim();
+    if (!trimmed && !attachments.length) {
       this.view?.webview.postMessage({ type: "idle" });
       return;
     }
@@ -828,6 +1089,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.selectedModel = chosen;
     this.saveSession();
 
+    if (!resolveModelSupportsVision(chosen)) {
+      const withoutImages = attachments.filter((a) => a.kind !== "image");
+      if (withoutImages.length < attachments.length) {
+        this.pushUi(
+          "error",
+          "Модель не поддерживает изображения — картинки из сообщения убраны."
+        );
+        attachments = withoutImages;
+        if (!trimmed && !attachments.length) {
+          this.view?.webview.postMessage({ type: "idle" });
+          return;
+        }
+      }
+    }
+
     const endpoint = resolveModelEndpoint(chosen);
     if (!endpoint.baseUrl) {
       this.pushUi(
@@ -839,13 +1115,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     if (options?.appendUser !== false) {
-      this.uiMessages.push({ role: "user", text });
+      const uiMsg: UiMessage = { role: "user", text: trimmed };
+      if (attachments.length) {
+        uiMsg.attachments = attachments.map(stripAttachmentPayload);
+      }
+      this.uiMessages.push(uiMsg);
       this.saveSession();
     }
 
     this.abort?.abort();
     this.abort = new AbortController();
-    this.setStatus("Думает…");
+    this.setStatus("Думает…", false, "thinking");
 
     const turnEdits: FileEditStat[] = [];
 
@@ -853,17 +1133,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.history = await runAgentTurn({
         model: chosen,
         history: this.history,
-        userText: text,
+        userText: trimmed,
+        attachments,
+        storageUri: this.storageUri(),
         signal: this.abort.signal,
         callbacks: {
           onPhase: (phase, detail) => {
-            if (phase === "done") {
-              this.setStatus(detail || "Надумал");
-              return;
-            }
-            this.setStatus(
-              detail || (phase === "editing" ? "Редактирует…" : "Думает…")
-            );
+            const fallback =
+              phase === "done"
+                ? "Надумал"
+                : phase === "editing"
+                  ? "Редактирует…"
+                  : phase === "reading"
+                    ? "Читает…"
+                    : phase === "listing"
+                      ? "Смотрит…"
+                      : phase === "running"
+                        ? "Запускает…"
+                        : "Думает…";
+            this.setStatus(detail || fallback, false, phase);
           },
           onTool: (toolText) => this.pushUi("tool", toolText),
           onFileEdit: (edit) => {
@@ -926,11 +1214,87 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.saveSession();
     this.view?.webview.postMessage({
       type: "messagesReplaced",
-      uiMessages: this.uiMessages,
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       selectedModel: this.selectedModel,
       canRegenerate: false,
     });
-    await this.handleSend(state.userText, state.model, { appendUser: false });
+    await this.handleSend(state.userText, state.model, {
+      appendUser: false,
+      attachments: state.attachments,
+    });
+  }
+
+  private async handleEditUserMessage(
+    index: number,
+    text: string,
+    model: string,
+    incomingAttachments?: IncomingAttachment[]
+  ): Promise<void> {
+    const nextText = text.trim();
+    const target = this.uiMessages[index];
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      !target ||
+      target.role !== "user"
+    ) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    let attachments: MessageAttachment[] = [];
+    try {
+      if (incomingAttachments?.length) {
+        attachments = await persistIncomingAttachments(
+          incomingAttachments,
+          this.storageUri()
+        );
+      } else if (target.attachments?.length) {
+        attachments = target.attachments.map(stripAttachmentPayload);
+      }
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.pushUi("error", messageText);
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    if (!nextText && !attachments.length) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    let userOrdinal = 0;
+    for (let i = 0; i < index; i++) {
+      if (this.uiMessages[i]?.role === "user") {
+        userOrdinal += 1;
+      }
+    }
+
+    this.abort?.abort();
+    this.history = this.history.slice(0, Math.max(0, userOrdinal * 2));
+    this.uiMessages = this.uiMessages.slice(0, index);
+    const uiMsg: UiMessage = { role: "user", text: nextText };
+    if (attachments.length) {
+      uiMsg.attachments = attachments.map(stripAttachmentPayload);
+    }
+    this.uiMessages.push(uiMsg);
+    this.lastTurnModel = "";
+    this.contextTokens = 0;
+    this.saveSession();
+    this.view?.webview.postMessage({
+      type: "messagesReplaced",
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
+      selectedModel: this.selectedModel,
+      canRegenerate: false,
+    });
+    await this.handleSend(nextText, model, {
+      appendUser: false,
+      attachments,
+    });
   }
 
   private async publishReview(edits: FileEditStat[]): Promise<void> {
@@ -1088,6 +1452,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens: m.maxOutputTokens || undefined,
           enabled: m.enabled !== false,
           favorite: m.favorite === true,
+          supportsVision: resolveModelSupportsVision(m),
         })),
         defaultModel: config.defaultModel,
         defaultContextWindow: config.defaultContextWindow,
@@ -1180,6 +1545,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens?: number;
           enabled?: boolean;
           favorite?: boolean;
+          supportsVision?: boolean;
         } = {
           id,
           providerId,
@@ -1199,6 +1565,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (m?.favorite === true) {
           row.favorite = true;
         }
+        if (m?.supportsVision === true) {
+          row.supportsVision = true;
+        } else if (m?.supportsVision === false) {
+          row.supportsVision = false;
+        }
         return row;
       })
       .filter(
@@ -1212,6 +1583,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens?: number;
           enabled?: boolean;
           favorite?: boolean;
+          supportsVision?: boolean;
         } => Boolean(m)
       );
 
@@ -1295,7 +1667,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "init",
       models,
       selectedModel: this.selectedModel,
-      uiMessages: this.uiMessages,
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       canRegenerate: this.canRegenerate(),
       screen: this.store.screen,
       agentId: this.store.activeAgentId || "",
@@ -1309,7 +1681,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postAgentsList();
     if (this.store.screen === "chat") {
-      this.postChatScreen();
+      await this.postChatScreen();
     } else if (this.store.screen === "archive") {
       this.postArchiveList();
       this.view?.webview.postMessage({ type: "showArchive" });
@@ -1332,6 +1704,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const jsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.js"))
       .with({ query: `v=${bust}` });
+    const markedUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "marked.js"))
+      .with({ query: `v=${bust}` });
     const materialIconsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(
         this.extensionUri,
@@ -1348,7 +1723,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; img-src ${webview.cspSource} data: blob:; script-src 'nonce-${nonce}';"
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${cssUri}" />
@@ -1487,6 +1862,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               <input id="modelEditOutput" class="settings-input" type="number" min="1" step="1024" placeholder="max_output" />
             </label>
           </div>
+          <label class="settings-field settings-check">
+            <input id="modelEditVision" type="checkbox" />
+            <span class="settings-label">Поддерживает изображения (vision)</span>
+          </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
           <label class="settings-field">
@@ -1550,15 +1929,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
     <div id="messages"></div>
-    <div class="composer-wrap">
-      <div id="agentStatus" class="agent-status" hidden></div>
-      <div class="composer">
-        <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
+    <div class="composer-wrap" id="composerWrap">
+      <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
+      <div class="composer" id="composer">
+        <div id="attachPreview" class="attach-preview" hidden></div>
+        <textarea id="prompt" placeholder="Задача для агента... (@ — файл)" rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
-            <button class="icon-btn" id="newChatBtn" title="Новый агент" aria-label="Новый агент">
-              <span class="material-symbols-outlined" aria-hidden="true">add</span>
-            </button>
+            <div class="composer-plus" id="composerPlus">
+              <button type="button" class="icon-btn" id="composerPlusBtn" title="Добавить" aria-label="Добавить" aria-haspopup="menu" aria-expanded="false">
+                <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              </button>
+              <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
+                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
+                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
+                  <span>Изображение</span>
+                </button>
+              </div>
+            </div>
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">
                 <span class="model-label" id="modelLabel">Модель</span>
@@ -1574,6 +1962,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </button>
           </div>
         </div>
+        <div id="composerDropHint" class="composer-drop-hint" hidden>
+          <span class="composer-drop-hint-text">Отпустите файл, чтобы прикрепить</span>
+        </div>
       </div>
       <div class="composer-meta">
         <button type="button" class="context-meter" id="contextRing" aria-label="Использование контекста">
@@ -1587,6 +1978,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </section>
+  <script nonce="${nonce}" src="${markedUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;

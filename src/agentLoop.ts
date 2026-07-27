@@ -1,16 +1,53 @@
+import {
+  buildUserApiContent,
+  MessageAttachment,
+  stripAttachmentPayload,
+  userContentForHistory,
+} from "./attachments";
 import { getConfig, resolveModelEndpoint } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import { buildEditorContextMessage } from "./editorContext";
 import {
   ChatCompletionUsage,
   ChatMessage,
+  ContentPart,
   OpenAICompatibleClient,
   ToolCall,
 } from "./openaiClient";
 import { sanitizeAssistantText } from "./sanitize";
 import { agentTools, runTool } from "./tools";
+import type * as vscode from "vscode";
 
-export type AgentPhase = "thinking" | "editing" | "done";
+function contentCharLength(content: ChatMessage["content"]): number {
+  if (!content) {
+    return 0;
+  }
+  if (typeof content === "string") {
+    return content.length;
+  }
+  let chars = 0;
+  for (const part of content) {
+    if (part.type === "text") {
+      chars += part.text.length;
+    } else if (part.type === "image_url") {
+      chars += Math.ceil((part.image_url?.url?.length || 0) / 4);
+    }
+  }
+  return chars;
+}
+
+function toApiMessage(message: ChatMessage): ChatMessage {
+  const { attachments: _a, ...rest } = message;
+  return rest;
+}
+
+export type AgentPhase =
+  | "thinking"
+  | "reading"
+  | "listing"
+  | "running"
+  | "editing"
+  | "done";
 
 export interface ContextUsageInfo {
   /** Занято токенов в окне (обычно prompt + completion последнего запроса). */
@@ -32,6 +69,14 @@ function toolSignature(call: ToolCall): string {
   return `${call.function.name}::${call.function.arguments}`;
 }
 
+function truncateStatus(value: string, max = 56): string {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) {
+    return text;
+  }
+  return `${text.slice(0, max - 1)}…`;
+}
+
 function formatEditingDetail(edits: FileEditStat[]): string {
   const { files, added, removed } = formatEditTotals(edits);
   if (files === 0) {
@@ -42,12 +87,60 @@ function formatEditingDetail(edits: FileEditStat[]): string {
   return `Редактирует · ${filesLabel} · +${added} −${removed}`;
 }
 
+function formatToolStatus(
+  name: string,
+  argsJson: string
+): { phase: AgentPhase; detail: string } {
+  let args: Record<string, unknown> = {};
+  try {
+    args = argsJson ? (JSON.parse(argsJson) as Record<string, unknown>) : {};
+  } catch {
+    args = {};
+  }
+
+  switch (name) {
+    case "read_file": {
+      const path = String(args.relativePath || "").trim();
+      return {
+        phase: "reading",
+        detail: path ? `Читает · ${truncateStatus(path)}` : "Читает…",
+      };
+    }
+    case "list_files": {
+      const path = String(args.relativePath || ".").trim() || ".";
+      return {
+        phase: "listing",
+        detail: `Смотрит · ${truncateStatus(path)}`,
+      };
+    }
+    case "run_command": {
+      const command = String(args.command || "").trim();
+      return {
+        phase: "running",
+        detail: command
+          ? `Запускает · ${truncateStatus(command)}`
+          : "Запускает…",
+      };
+    }
+    case "write_file": {
+      const path = String(args.relativePath || "").trim();
+      return {
+        phase: "editing",
+        detail: path ? `Пишет · ${truncateStatus(path)}` : "Редактирует…",
+      };
+    }
+    default:
+      return {
+        phase: "thinking",
+        detail: name ? `Tool · ${truncateStatus(name)}` : "Думает…",
+      };
+  }
+}
+
 function estimateTokens(messages: ChatMessage[]): number {
   let chars = 0;
   for (const message of messages) {
-    if (message.content) {
-      chars += message.content.length;
-    }
+    chars += contentCharLength(message.content);
     if (message.tool_calls?.length) {
       for (const call of message.tool_calls) {
         chars += (call.function?.name || "").length;
@@ -77,20 +170,46 @@ function resolveUsage(
   return { used, promptTokens, completionTokens };
 }
 
+function hasUserContent(content: ChatMessage["content"]): boolean {
+  if (!content) {
+    return false;
+  }
+  if (typeof content === "string") {
+    return Boolean(content.trim());
+  }
+  return content.length > 0;
+}
+
 /** Для следующего хода оставляем только user + финальные ответы assistant. */
 export function compactHistory(messages: ChatMessage[]): ChatMessage[] {
   const compact: ChatMessage[] = [];
   for (const message of messages) {
-    if (message.role === "user" && message.content) {
-      compact.push({ role: "user", content: message.content });
+    if (message.role === "user" && hasUserContent(message.content)) {
+      const entry: ChatMessage = {
+        role: "user",
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : contentPartsToHistoryText(message.content || []),
+      };
+      if (message.attachments?.length) {
+        entry.attachments = message.attachments.map(stripAttachmentPayload);
+      }
+      compact.push(entry);
       continue;
     }
     if (
       message.role === "assistant" &&
-      message.content &&
+      hasUserContent(message.content) &&
       !(message.tool_calls && message.tool_calls.length > 0)
     ) {
-      compact.push({ role: "assistant", content: message.content });
+      compact.push({
+        role: "assistant",
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : contentPartsToHistoryText(message.content || []),
+      });
     }
   }
   const maxMessages = 24;
@@ -99,10 +218,65 @@ export function compactHistory(messages: ChatMessage[]): ChatMessage[] {
     : compact;
 }
 
+function contentPartsToHistoryText(parts: ContentPart[]): string {
+  const bits: string[] = [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      bits.push(part.text);
+    } else if (part.type === "image_url") {
+      bits.push("[image]");
+    }
+  }
+  return bits.join("\n").trim() || "[attachment]";
+}
+
+function contentAsString(content: ChatMessage["content"]): string {
+  if (!content) {
+    return "";
+  }
+  if (typeof content === "string") {
+    return content;
+  }
+  return contentPartsToHistoryText(content);
+}
+
+async function hydrateHistoryForApi(
+  history: ChatMessage[],
+  storageUri: vscode.Uri | undefined
+): Promise<ChatMessage[]> {
+  const out: ChatMessage[] = [];
+  for (const message of history) {
+    if (message.role === "user" && message.attachments?.length) {
+      const text =
+        typeof message.content === "string"
+          ? message.content
+          : contentPartsToHistoryText(message.content || []);
+      // В history текст уже с маркерами [image]/[file] — для API берём «чистый» текст
+      // из первого маркера-свободного куска сложно; проще пересобрать из attachments,
+      // передав текст без хвостовых маркеров.
+      const cleanText = text
+        .replace(/\n?\[image: [^\]]+\]/g, "")
+        .replace(/\n?\[file: [^\]]+\]/g, "")
+        .trim();
+      const content = await buildUserApiContent(
+        cleanText,
+        message.attachments,
+        storageUri
+      );
+      out.push(toApiMessage({ role: "user", content }));
+      continue;
+    }
+    out.push(toApiMessage(message));
+  }
+  return out;
+}
+
 export async function runAgentTurn(options: {
   model: string;
   history: ChatMessage[];
   userText: string;
+  attachments?: MessageAttachment[];
+  storageUri?: vscode.Uri;
   signal?: AbortSignal;
   callbacks: AgentRunCallbacks;
 }): Promise<ChatMessage[]> {
@@ -125,11 +299,20 @@ export async function runAgentTurn(options: {
   });
 
   const prior = compactHistory(options.history);
+  const priorApi = await hydrateHistoryForApi(prior, options.storageUri);
+  const persistedAttachments = (options.attachments || []).map(
+    stripAttachmentPayload
+  );
+  const userApiContent = await buildUserApiContent(
+    options.userText,
+    options.attachments,
+    options.storageUri
+  );
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
-    ...prior,
-    { role: "user", content: options.userText },
+    ...priorApi,
+    toApiMessage({ role: "user", content: userApiContent }),
   ];
 
   const editsByPath = new Map<string, FileEditStat>();
@@ -168,10 +351,7 @@ export async function runAgentTurn(options: {
       throw new Error("aborted");
     }
 
-    options.callbacks.onPhase(
-      "thinking",
-      editsByPath.size > 0 ? "Думает…" : "Думает…"
-    );
+    options.callbacks.onPhase("thinking", "Думает…");
 
     const requestMessages = messages.slice();
     const { message: assistant, usage } = await client.chatCompletions(
@@ -200,7 +380,7 @@ export async function runAgentTurn(options: {
     if (toolCalls.length === 0) {
       options.callbacks.onPhase("done", "Надумал");
       const text = sanitizeAssistantText(
-        assistant.content?.trim() || "(пустой ответ)",
+        contentAsString(assistant.content).trim() || "(пустой ответ)",
         { maxChars: config.maxResponseChars }
       );
       messages[messages.length - 1] = { role: "assistant", content: text };
@@ -218,14 +398,11 @@ export async function runAgentTurn(options: {
       }
       seenToolCalls.add(signature);
 
-      if (call.function.name === "write_file") {
-        options.callbacks.onPhase(
-          "editing",
-          formatEditingDetail([...editsByPath.values()])
-        );
-      } else {
-        options.callbacks.onPhase("thinking", "Думает…");
-      }
+      const toolStatus = formatToolStatus(
+        call.function.name,
+        call.function.arguments || ""
+      );
+      options.callbacks.onPhase(toolStatus.phase, toolStatus.detail);
 
       options.callbacks.onTool(
         `⚙ ${call.function.name}(${call.function.arguments})`
@@ -274,7 +451,7 @@ export async function runAgentTurn(options: {
       throw new Error("aborted");
     }
 
-    options.callbacks.onPhase("thinking", "Думает…");
+    options.callbacks.onPhase("thinking", "Собирает ответ…");
 
     const finalRequest = [
       ...messages,
@@ -296,7 +473,7 @@ export async function runAgentTurn(options: {
       );
     reportUsage(finalUsage, finalRequest);
 
-    let text = finalMessage.content?.trim() ?? "";
+    let text = contentAsString(finalMessage.content).trim();
     if (!text && finalMessage.tool_calls?.length) {
       text =
         "Модель продолжила вызывать инструменты. Попробуйте другую модель (например DeepSeek-V4-Flash) или уточните задачу.";
@@ -315,5 +492,29 @@ export async function runAgentTurn(options: {
     options.callbacks.onReview([...editsByPath.values()]);
   }
 
-  return compactHistory(messages.slice(1));
+  let finalAssistant = "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (
+      msg.role === "assistant" &&
+      !(msg.tool_calls && msg.tool_calls.length > 0)
+    ) {
+      finalAssistant = contentAsString(msg.content).trim();
+      break;
+    }
+  }
+
+  const historyUser: ChatMessage = {
+    role: "user",
+    content: userContentForHistory(options.userText, persistedAttachments),
+  };
+  if (persistedAttachments.length) {
+    historyUser.attachments = persistedAttachments;
+  }
+
+  return compactHistory([
+    ...prior,
+    historyUser,
+    { role: "assistant", content: finalAssistant || "(пустой ответ)" },
+  ]);
 }
