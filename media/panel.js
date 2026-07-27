@@ -125,6 +125,9 @@
   const COPY_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
 
+  const REGENERATE_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">refresh</span>';
+
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
@@ -138,6 +141,8 @@
   ];
 
   let busy = false;
+  let canRegenerate = false;
+  let uiMessagesCache = [];
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
@@ -145,6 +150,55 @@
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setCanRegenerate(nextValue) {
+    canRegenerate = Boolean(nextValue);
+  }
+
+  function removeRegenerateButtons() {
+    const btns = messagesEl.querySelectorAll(".msg-regenerate");
+    btns.forEach((b) => b.remove());
+  }
+
+  function ensureRegenerateButton() {
+    removeRegenerateButtons();
+    if (!canRegenerate) {
+      return;
+    }
+    const all = messagesEl.querySelectorAll(".msg.assistant");
+    const last = all.length ? all[all.length - 1] : null;
+    if (!last) {
+      return;
+    }
+
+    const parent = last.parentElement;
+    if (parent && parent.classList.contains("msg-wrap-assistant")) {
+      let actions = parent.querySelector(".msg-actions");
+      if (!actions) {
+        actions = document.createElement("div");
+        actions.className = "msg-actions";
+        parent.insertBefore(actions, last);
+      }
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+        REGENERATE_ICON +
+        `</button>`;
+      return;
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+    actions.innerHTML =
+      `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+      REGENERATE_ICON +
+      `</button>`;
+
+    const wrap = document.createElement("div");
+    wrap.className = "msg-wrap msg-wrap-assistant";
+    (parent || messagesEl).insertBefore(wrap, last);
+    wrap.appendChild(actions);
+    wrap.appendChild(last);
   }
 
   function setAgentStatus(text, hidden) {
@@ -1946,7 +2000,7 @@
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
-  function appendMessage(role, text) {
+  function appendMessage(role, text, index, regenAssistantIndex) {
     if (role === "review") {
       try {
         appendReview(parseReviewData(text));
@@ -1979,6 +2033,28 @@
       return el;
     }
 
+    if (
+      role === "assistant" &&
+      typeof index === "number" &&
+      regenAssistantIndex >= 0 &&
+      index === regenAssistantIndex &&
+      canRegenerate
+    ) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-wrap msg-wrap-assistant";
+      const actions = document.createElement("div");
+      actions.className = "msg-actions";
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+        REGENERATE_ICON +
+        `</button>`;
+      wrap.appendChild(actions);
+      wrap.appendChild(el);
+      messagesEl.appendChild(wrap);
+      scrollToBottom();
+      return el;
+    }
+
     messagesEl.appendChild(el);
     scrollToBottom();
     return el;
@@ -1986,11 +2062,28 @@
 
   function renderMessages(list) {
     messagesEl.innerHTML = "";
+    uiMessagesCache = Array.isArray(list) ? list : [];
     if (!Array.isArray(list)) {
       return;
     }
-    for (const item of list) {
-      appendMessage(item.role, item.text);
+
+    let regenAssistantIndex = -1;
+    if (canRegenerate) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const item = list[i];
+        if (
+          item?.role === "assistant" &&
+          String(item?.text || "").trim()
+        ) {
+          regenAssistantIndex = i;
+          break;
+        }
+      }
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      appendMessage(item.role, item.text, i, regenAssistantIndex);
     }
   }
 
@@ -2659,6 +2752,17 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const regenBtn = event.target.closest(".msg-regenerate");
+    if (regenBtn && messagesEl.contains(regenBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy || !canRegenerate) {
+        return;
+      }
+      setBusy(true);
+      vscode.postMessage({ type: "regenerate" });
+      return;
+    }
     const copyCodeBtn = event.target.closest(".md-pre-copy");
     if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
       event.preventDefault();
@@ -2713,6 +2817,7 @@
     switch (msg.type) {
       case "init":
         fillModels(msg.models, msg.selectedModel);
+        setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         if (msg.agentId) {
           activeAgentId = msg.agentId;
@@ -2769,6 +2874,7 @@
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
+        setCanRegenerate(msg.canRegenerate);
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages);
         }
@@ -2813,6 +2919,20 @@
       case "modelsUpdated":
         fillModels(msg.models, getSelectedModel() || msg.selectedModel);
         break;
+      case "regenerateState":
+        if (msg.selectedModel) {
+          fillModels(models, msg.selectedModel);
+        }
+        setCanRegenerate(msg.canRegenerate);
+        ensureRegenerateButton();
+        break;
+      case "messagesReplaced":
+        if (msg.selectedModel) {
+          fillModels(models, msg.selectedModel);
+        }
+        setCanRegenerate(msg.canRegenerate);
+        renderMessages(msg.uiMessages || []);
+        break;
       case "copied":
         showCopyToast("Скопировано");
         break;
@@ -2846,6 +2966,7 @@
         }
         streamingEl = null;
         setBusy(false);
+        ensureRegenerateButton();
         break;
       case "idle":
         streamingEl = null;

@@ -111,7 +111,25 @@ body {
   gap: 2px;
 }
 
+.msg-wrap.msg-wrap-assistant {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg-wrap.msg-wrap-user {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
 .msg-wrap .msg.user {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg-wrap .msg.assistant {
   align-self: stretch;
   max-width: 100%;
   margin-right: 0;
@@ -120,9 +138,9 @@ body {
 .msg.user {
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.25));
-  align-self: flex-end;
-  max-width: calc(100% - 8px);
-  margin-right: 2px;
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
   border-radius: var(--radius-msg);
   border-bottom-right-radius: 6px;
   padding: 10px 12px;
@@ -145,7 +163,8 @@ body {
   pointer-events: auto;
 }
 
-.msg-actions .icon-btn.msg-copy {
+.msg-actions .icon-btn.msg-copy,
+.msg-actions .icon-btn.msg-regenerate {
   width: 18px;
   height: 18px;
   min-width: 18px;
@@ -158,13 +177,16 @@ body {
 }
 
 .msg-actions .icon-btn.msg-copy:hover,
-.msg-actions .icon-btn.msg-copy:focus-visible {
+.msg-actions .icon-btn.msg-copy:focus-visible,
+.msg-actions .icon-btn.msg-regenerate:hover,
+.msg-actions .icon-btn.msg-regenerate:focus-visible {
   opacity: 1;
   background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent) !important;
   color: var(--vscode-foreground);
 }
 
-.msg-actions .icon-btn.msg-copy .material-symbols-outlined {
+.msg-actions .icon-btn.msg-copy .material-symbols-outlined,
+.msg-actions .icon-btn.msg-regenerate .material-symbols-outlined {
   font-size: 13px;
   line-height: 1;
 }
