@@ -5,9 +5,11 @@
   const messagesEl = document.getElementById("messages");
   const promptEl = document.getElementById("prompt");
   const sendBtn = document.getElementById("sendBtn");
-  const newChatBtn = document.getElementById("newChatBtn");
-  const attachBtn = document.getElementById("attachBtn");
+  const composerPlusEl = document.getElementById("composerPlus");
+  const composerPlusBtn = document.getElementById("composerPlusBtn");
+  const composerPlusMenu = document.getElementById("composerPlusMenu");
   const attachPreviewEl = document.getElementById("attachPreview");
+  const mentionMenuEl = document.getElementById("mentionMenu");
   const composerEl = document.getElementById("composer");
   const composerWrapEl = document.getElementById("composerWrap");
   const composerDropHintEl = document.getElementById("composerDropHint");
@@ -46,6 +48,7 @@
   const modelEditLabel = document.getElementById("modelEditLabel");
   const modelEditContext = document.getElementById("modelEditContext");
   const modelEditOutput = document.getElementById("modelEditOutput");
+  const modelEditVision = document.getElementById("modelEditVision");
   const modelEditProvider = document.getElementById("modelEditProvider");
   const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
   const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
@@ -138,18 +141,104 @@
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
   const DEFAULT_MODELS = [
-    { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
-    { id: "Qwen3-Coder-Next", label: "Qwen3 Coder Next" },
-    { id: "Gemma-4-31b", label: "Gemma 4 31B" },
-    { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { id: "gpt-4.1", label: "GPT-4.1" },
-    { id: "Gemini 2.5 Flash", label: "Gemini 2.5 Flash" },
+    {
+      id: "DeepSeek-V4-Flash",
+      label: "DeepSeek V4 Flash",
+      supportsVision: false,
+    },
+    {
+      id: "Qwen3-Coder-Next",
+      label: "Qwen3 Coder Next",
+      supportsVision: false,
+    },
+    { id: "Gemma-4-31b", label: "Gemma 4 31B", supportsVision: false },
+    {
+      id: "claude-sonnet-4-5",
+      label: "Claude Sonnet 4.5",
+      supportsVision: true,
+    },
+    { id: "gpt-4.1", label: "GPT-4.1", supportsVision: true },
+    {
+      id: "Gemini 2.5 Flash",
+      label: "Gemini 2.5 Flash",
+      supportsVision: true,
+    },
   ];
+
+  const KNOWN_VISION_SUPPORT = {
+    "DeepSeek-V4-Flash": false,
+    "Qwen3-Coder-Next": false,
+    "Gemma-4-31b": false,
+    "claude-sonnet-4-5": true,
+    "gpt-4.1": true,
+    "Gemini 2.5 Flash": true,
+  };
+
+  function guessModelSupportsVision(modelId) {
+    const id = String(modelId || "").trim();
+    if (!id) {
+      return false;
+    }
+    if (Object.prototype.hasOwnProperty.call(KNOWN_VISION_SUPPORT, id)) {
+      return KNOWN_VISION_SUPPORT[id];
+    }
+    const lower = id.toLowerCase();
+    if (
+      /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/.test(
+        lower
+      )
+    ) {
+      return false;
+    }
+    if (
+      /gpt-4o|gpt-4\.1|gpt-5|o[1-9]|claude|gemini|llava|vision|pixtral|gpt-image/.test(
+        lower
+      )
+    ) {
+      return true;
+    }
+    if (/gemma-3|gemma3/.test(lower)) {
+      return true;
+    }
+    return false;
+  }
+
+  function resolveModelSupportsVision(model) {
+    if (!model) {
+      return false;
+    }
+    if (typeof model === "string") {
+      const found = models.find((m) => m.id === model);
+      if (found && typeof found.supportsVision === "boolean") {
+        return found.supportsVision;
+      }
+      return guessModelSupportsVision(model);
+    }
+    if (typeof model.supportsVision === "boolean") {
+      return model.supportsVision;
+    }
+    return guessModelSupportsVision(model.id);
+  }
+
+  function currentModelSupportsVision() {
+    return resolveModelSupportsVision(
+      models.find((m) => m.id === selectedModelId) || selectedModelId
+    );
+  }
 
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
   let pendingAttachments = [];
+  let mentionOpen = false;
+  let mentionItems = [];
+  let mentionActiveIndex = 0;
+  let mentionRequestId = 0;
+  let mentionQuery = "";
+  let mentionStart = -1;
+  /** @type {HTMLTextAreaElement | null} */
+  let mentionTarget = null;
+  let mentionSearchTimer = null;
   let editingUserIndex = null;
   let editingUserText = "";
   let editingModelId = "";
@@ -158,6 +247,7 @@
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
+  let plusMenuOpen = false;
   let streamingEl = null;
   let composerDragDepth = 0;
 
@@ -180,6 +270,8 @@
     if (!Array.isArray(list) || !list.length) {
       return;
     }
+    const visionOk = currentModelSupportsVision();
+    let skippedImages = 0;
     for (const item of list) {
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
@@ -188,9 +280,16 @@
       if (pendingAttachments.some((a) => a.id === id)) {
         continue;
       }
+      const kind =
+        item.kind ||
+        (String(item.mime || "").startsWith("image/") ? "image" : "file");
+      if (kind === "image" && !visionOk) {
+        skippedImages += 1;
+        continue;
+      }
       pendingAttachments.push({
         id,
-        kind: item.kind || (String(item.mime || "").startsWith("image/") ? "image" : "file"),
+        kind,
         name: item.name || "file",
         mime: item.mime || "application/octet-stream",
         path: item.path,
@@ -199,6 +298,9 @@
         dataBase64: item.dataBase64,
         previewDataUrl: item.previewDataUrl,
       });
+    }
+    if (skippedImages) {
+      showCopyToast("Модель не поддерживает изображения");
     }
     renderAttachPreview();
   }
@@ -252,6 +354,225 @@
         );
       })
       .join("");
+  }
+
+  function closeMentionMenu() {
+    mentionOpen = false;
+    mentionItems = [];
+    mentionActiveIndex = 0;
+    mentionQuery = "";
+    mentionStart = -1;
+    mentionTarget = null;
+    if (mentionSearchTimer) {
+      clearTimeout(mentionSearchTimer);
+      mentionSearchTimer = null;
+    }
+    if (mentionMenuEl) {
+      mentionMenuEl.hidden = true;
+      mentionMenuEl.innerHTML = "";
+    }
+  }
+
+  function renderMentionMenu() {
+    if (!mentionMenuEl) {
+      return;
+    }
+    if (!mentionOpen) {
+      mentionMenuEl.hidden = true;
+      mentionMenuEl.innerHTML = "";
+      return;
+    }
+    if (!mentionItems.length) {
+      mentionMenuEl.hidden = false;
+      mentionMenuEl.innerHTML =
+        `<div class="mention-empty">Нет файлов</div>`;
+      return;
+    }
+    mentionMenuEl.hidden = false;
+    mentionMenuEl.innerHTML = mentionItems
+      .map((item, index) => {
+        const active = index === mentionActiveIndex ? " is-active" : "";
+        const name = escapeHtml(item.name || pathBasename(item.path));
+        const filePath = escapeHtml(item.path || "");
+        return (
+          `<button type="button" class="mention-option${active}" role="option" data-index="${index}" data-path="${filePath}" aria-selected="${
+            index === mentionActiveIndex ? "true" : "false"
+          }">` +
+          `<span class="material-symbols-outlined mention-option-icon" aria-hidden="true">draft</span>` +
+          `<span class="mention-option-text">` +
+          `<span class="mention-option-name">${name}</span>` +
+          `<span class="mention-option-path">${filePath}</span>` +
+          `</span></button>`
+        );
+      })
+      .join("");
+    const activeEl = mentionMenuEl.querySelector(".mention-option.is-active");
+    if (activeEl && typeof activeEl.scrollIntoView === "function") {
+      activeEl.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function pathBasename(filePath) {
+    const parts = String(filePath || "").split("/");
+    return parts[parts.length - 1] || filePath || "file";
+  }
+
+  function findMentionAtCursor(textarea) {
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      return null;
+    }
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const before = value.slice(0, cursor);
+    const match = before.match(/(^|[\s\n])@([^\s@]*)$/);
+    if (!match) {
+      return null;
+    }
+    const atIndex = before.length - match[2].length - 1;
+    return {
+      start: atIndex,
+      query: match[2],
+      end: cursor,
+    };
+  }
+
+  function requestMentionSearch(query) {
+    mentionRequestId += 1;
+    const requestId = String(mentionRequestId);
+    vscode.postMessage({
+      type: "searchFiles",
+      query: String(query || ""),
+      requestId,
+    });
+  }
+
+  function openMentionMenu(textarea, start, query) {
+    mentionOpen = true;
+    mentionTarget = textarea;
+    mentionStart = start;
+    mentionQuery = query;
+    mentionItems = [];
+    mentionActiveIndex = 0;
+    closePlusMenu();
+    closeMenu();
+    closeEditModelMenu();
+    if (mentionMenuEl) {
+      mentionMenuEl.hidden = false;
+      mentionMenuEl.innerHTML =
+        `<div class="mention-empty">Поиск…</div>`;
+    }
+    if (mentionSearchTimer) {
+      clearTimeout(mentionSearchTimer);
+    }
+    mentionSearchTimer = setTimeout(() => {
+      mentionSearchTimer = null;
+      requestMentionSearch(query);
+    }, 80);
+  }
+
+  function applyMentionSelection(index) {
+    const item = mentionItems[index];
+    const textarea = mentionTarget;
+    if (!item || !(textarea instanceof HTMLTextAreaElement) || mentionStart < 0) {
+      closeMentionMenu();
+      return;
+    }
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const insert = `@${item.path} `;
+    const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
+    const caret = mentionStart + insert.length;
+    textarea.value = next;
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+    if (textarea === promptEl) {
+      // keep as is
+    } else if (textarea.classList.contains("msg-edit-input")) {
+      editingUserText = next;
+    }
+    closeMentionMenu();
+  }
+
+  function handleMentionResults(msg) {
+    if (!mentionOpen) {
+      return;
+    }
+    if (String(msg.requestId || "") !== String(mentionRequestId)) {
+      return;
+    }
+    mentionItems = Array.isArray(msg.files) ? msg.files : [];
+    mentionActiveIndex = 0;
+    renderMentionMenu();
+  }
+
+  function onMentionInput(textarea) {
+    const mention = findMentionAtCursor(textarea);
+    if (!mention) {
+      if (mentionOpen && mentionTarget === textarea) {
+        closeMentionMenu();
+      }
+      return;
+    }
+    openMentionMenu(textarea, mention.start, mention.query);
+  }
+
+  function onMentionKeydown(event, textarea) {
+    if (!mentionOpen || mentionTarget !== textarea) {
+      return false;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMentionMenu();
+      return true;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!mentionItems.length) {
+        return true;
+      }
+      mentionActiveIndex = (mentionActiveIndex + 1) % mentionItems.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!mentionItems.length) {
+        return true;
+      }
+      mentionActiveIndex =
+        (mentionActiveIndex - 1 + mentionItems.length) % mentionItems.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      if (mentionItems.length) {
+        event.preventDefault();
+        applyMentionSelection(mentionActiveIndex);
+        return true;
+      }
+      closeMentionMenu();
+      return false;
+    }
+    return false;
+  }
+
+  function renderUserTextWithMentions(text) {
+    const raw = String(text || "");
+    const re = /@([^\s@]+)/g;
+    let html = "";
+    let last = 0;
+    let match;
+    while ((match = re.exec(raw))) {
+      html += escapeHtml(raw.slice(last, match.index));
+      const filePath = match[1];
+      html +=
+        `<button type="button" class="msg-mention" data-path="${escapeHtml(
+          filePath
+        )}" title="${escapeHtml(filePath)}">@${escapeHtml(filePath)}</button>`;
+      last = match.index + match[0].length;
+    }
+    html += escapeHtml(raw.slice(last));
+    return html;
   }
 
   function renderMessageAttachments(attachments) {
@@ -1312,12 +1633,27 @@
     ]);
     const contextWindow = Number(contextRaw);
     const maxOutputTokens = Number(outputRaw);
+    const visionRaw = pickField(raw, [
+      "supportsVision",
+      "supports_vision",
+      "vision",
+      "multimodal",
+    ]);
     const model = { id, label, enabled: true };
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       model.contextWindow = Math.floor(contextWindow);
     }
     if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
       model.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+    if (visionRaw === true || visionRaw === "true" || visionRaw === 1) {
+      model.supportsVision = true;
+    } else if (
+      visionRaw === false ||
+      visionRaw === "false" ||
+      visionRaw === 0
+    ) {
+      model.supportsVision = false;
     }
     return model;
   }
@@ -1331,6 +1667,10 @@
       maxOutputTokens: model.maxOutputTokens,
       enabled: model.enabled !== false,
       favorite: model.favorite === true,
+      supportsVision:
+        typeof model.supportsVision === "boolean"
+          ? model.supportsVision
+          : guessModelSupportsVision(model.id),
     };
   }
 
@@ -1384,6 +1724,12 @@
             model.maxOutputTokens || prev.maxOutputTokens || undefined,
           enabled: prev.enabled !== false,
           favorite: prev.favorite === true,
+          supportsVision:
+            typeof model.supportsVision === "boolean"
+              ? model.supportsVision
+              : typeof prev.supportsVision === "boolean"
+                ? prev.supportsVision
+                : guessModelSupportsVision(model.id),
         });
         updated += 1;
       } else {
@@ -1528,6 +1874,9 @@
         if (m.maxOutputTokens) {
           row.maxOutputTokens = m.maxOutputTokens;
         }
+        if (typeof m.supportsVision === "boolean") {
+          row.supportsVision = m.supportsVision;
+        }
         return row;
       });
     const text = JSON.stringify(payload, null, 2);
@@ -1637,6 +1986,12 @@
           ? String(model.maxOutputTokens)
           : "";
     }
+    if (modelEditVision) {
+      modelEditVision.checked =
+        typeof model.supportsVision === "boolean"
+          ? model.supportsVision
+          : guessModelSupportsVision(model.id);
+    }
     if (isNew && settingsModelsJson && !settingsModelsJson.value.trim()) {
       settingsModelsJson.value = "";
     }
@@ -1690,6 +2045,7 @@
       label: label || id,
       providerId,
       enabled: true,
+      supportsVision: modelEditVision ? Boolean(modelEditVision.checked) : false,
     };
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       next.contextWindow = Math.floor(contextWindow);
@@ -1760,6 +2116,7 @@
       "Ответ (выход)",
       "Статус",
       "Избранное",
+      "Vision",
     ];
     settingsModelTipRows = labels.map((label) => {
       const line = document.createElement("div");
@@ -1798,6 +2155,7 @@
       formatModelTokens(model.maxOutputTokens),
       model.enabled !== false ? "Включена" : "Выключена",
       model.favorite === true ? "Да" : "Нет",
+      resolveModelSupportsVision(model) ? "Да" : "Нет",
     ];
     ensureSettingsModelTip();
     for (let i = 0; i < settingsModelTipRows.length; i += 1) {
@@ -1995,6 +2353,10 @@
           maxOutputTokens: m.maxOutputTokens,
           enabled: m.enabled !== false,
           favorite: m.favorite === true,
+          supportsVision:
+            typeof m.supportsVision === "boolean"
+              ? m.supportsVision
+              : guessModelSupportsVision(m.id),
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -2070,6 +2432,10 @@
       if (m.favorite === true) {
         row.favorite = true;
       }
+      row.supportsVision =
+        typeof m.supportsVision === "boolean"
+          ? m.supportsVision
+          : guessModelSupportsVision(m.id);
       return row;
     });
     const primary =
@@ -2731,6 +3097,10 @@
       body.innerHTML = renderInlineMarkdown(raw);
       return;
     }
+    if (role === "user") {
+      body.innerHTML = renderUserTextWithMentions(raw);
+      return;
+    }
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
@@ -2902,11 +3272,46 @@
       : selectedModelId || "Нет моделей";
   }
 
+  function stripPendingImagesIfNeeded(notify) {
+    const before = pendingAttachments.length;
+    if (currentModelSupportsVision()) {
+      return;
+    }
+    pendingAttachments = pendingAttachments.filter((a) => a.kind !== "image");
+    if (pendingAttachments.length < before) {
+      renderAttachPreview();
+      if (notify) {
+        showCopyToast("Модель не поддерживает изображения");
+      }
+    }
+  }
+
+  function updateVisionUi() {
+    stripPendingImagesIfNeeded(true);
+    const visionOk = currentModelSupportsVision();
+    if (!composerPlusMenu) {
+      return;
+    }
+    const imageItem = composerPlusMenu.querySelector(
+      '.composer-plus-item[data-action="image"]'
+    );
+    if (!imageItem) {
+      return;
+    }
+    imageItem.disabled = !visionOk;
+    imageItem.classList.toggle("is-disabled", !visionOk);
+    imageItem.setAttribute("aria-disabled", visionOk ? "false" : "true");
+    imageItem.title = visionOk
+      ? "Прикрепить изображение"
+      : "Текущая модель не поддерживает изображения";
+  }
+
   function setSelectedModel(id, notify) {
     selectedModelId = id || "";
     state.selectedModel = selectedModelId;
     vscode.setState(state);
     updateTriggerLabel();
+    updateVisionUi();
     if (menuOpen) {
       renderMenu();
     }
@@ -2961,6 +3366,7 @@
     if (busy) {
       return;
     }
+    closePlusMenu();
     menuOpen = true;
     renderMenu();
     modelPicker.classList.add("is-open");
@@ -2975,10 +3381,47 @@
     modelMenu.hidden = true;
   }
 
+  function closePlusMenu() {
+    plusMenuOpen = false;
+    if (composerPlusEl) {
+      composerPlusEl.classList.remove("is-open");
+    }
+    if (composerPlusBtn) {
+      composerPlusBtn.setAttribute("aria-expanded", "false");
+    }
+    if (composerPlusMenu) {
+      composerPlusMenu.hidden = true;
+    }
+  }
+
+  function openPlusMenu() {
+    closeMenu();
+    closeEditModelMenu();
+    plusMenuOpen = true;
+    if (composerPlusEl) {
+      composerPlusEl.classList.add("is-open");
+    }
+    if (composerPlusBtn) {
+      composerPlusBtn.setAttribute("aria-expanded", "true");
+    }
+    if (composerPlusMenu) {
+      composerPlusMenu.hidden = false;
+    }
+  }
+
+  function togglePlusMenu() {
+    if (plusMenuOpen) {
+      closePlusMenu();
+    } else {
+      openPlusMenu();
+    }
+  }
+
   function toggleMenu() {
     if (menuOpen) {
       closeMenu();
     } else {
+      closePlusMenu();
       openMenu();
     }
   }
@@ -2987,9 +3430,13 @@
     busy = nextBusy;
     promptEl.disabled = busy;
     modelTrigger.disabled = busy;
-    newChatBtn.disabled = busy;
+    if (composerPlusBtn) {
+      composerPlusBtn.disabled = busy;
+    }
     if (busy) {
       closeMenu();
+      closePlusMenu();
+      closeMentionMenu();
     }
     sendBtn.dataset.mode = busy ? "stop" : "send";
     sendBtn.title = busy ? "Остановить" : "Отправить";
@@ -3057,6 +3504,21 @@
     if (menuOpen && !modelPicker.contains(event.target)) {
       closeMenu();
     }
+    if (
+      plusMenuOpen &&
+      composerPlusEl &&
+      !composerPlusEl.contains(event.target)
+    ) {
+      closePlusMenu();
+    }
+    if (
+      mentionOpen &&
+      mentionMenuEl &&
+      !mentionMenuEl.contains(event.target) &&
+      event.target !== mentionTarget
+    ) {
+      closeMentionMenu();
+    }
     if (editModelMenuOpen) {
       const picker = getEditModelPicker();
       if (!picker || !picker.contains(event.target)) {
@@ -3072,8 +3534,14 @@
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && mentionOpen) {
+      closeMentionMenu();
+    }
     if (event.key === "Escape" && menuOpen) {
       closeMenu();
+    }
+    if (event.key === "Escape" && plusMenuOpen) {
+      closePlusMenu();
     }
     if (event.key === "Escape" && editModelMenuOpen) {
       closeEditModelMenu();
@@ -3095,6 +3563,7 @@
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
     clearPendingAttachments();
+    closeMentionMenu();
     setBusy(true);
     vscode.postMessage({
       type: "send",
@@ -3112,12 +3581,34 @@
     sendPrompt();
   });
 
-  if (attachBtn) {
-    attachBtn.addEventListener("click", () => {
+  if (composerPlusBtn) {
+    composerPlusBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       if (busy) {
         return;
       }
-      vscode.postMessage({ type: "pickAttachments" });
+      togglePlusMenu();
+    });
+  }
+
+  if (composerPlusMenu) {
+    composerPlusMenu.addEventListener("click", (event) => {
+      const item = event.target.closest(".composer-plus-item");
+      if (!item || busy || item.disabled || item.classList.contains("is-disabled")) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = item.getAttribute("data-action");
+      closePlusMenu();
+      if (action === "image") {
+        if (!currentModelSupportsVision()) {
+          showCopyToast("Модель не поддерживает изображения");
+          return;
+        }
+        vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
+      }
     });
   }
 
@@ -3282,6 +3773,10 @@
     }
     event.preventDefault();
     event.stopPropagation();
+    if (!currentModelSupportsVision()) {
+      showCopyToast("Модель не поддерживает изображения");
+      return;
+    }
     await ingestDroppedFiles(imageFiles);
     if (promptEl && typeof promptEl.focus === "function") {
       promptEl.focus();
@@ -3318,20 +3813,16 @@
       if (!imageFiles.length) {
         return;
       }
+      if (!currentModelSupportsVision()) {
+        showCopyToast("Модель не поддерживает изображения");
+        return;
+      }
       event.preventDefault();
       await ingestDroppedFiles(imageFiles);
       if (promptEl && typeof promptEl.focus === "function") {
         promptEl.focus();
       }
     })();
-  });
-
-  newChatBtn.addEventListener("click", () => {
-    if (busy) {
-      return;
-    }
-    clearPendingAttachments();
-    vscode.postMessage({ type: "newChat" });
   });
 
   if (newAgentBtn) {
@@ -3862,6 +4353,16 @@
       requestCopyText(text);
       return;
     }
+    const mentionBtn = event.target.closest(".msg-mention");
+    if (mentionBtn && messagesEl.contains(mentionBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const path = mentionBtn.getAttribute("data-path");
+      if (path) {
+        vscode.postMessage({ type: "openFile", path });
+      }
+      return;
+    }
     const userMsg = event.target.closest(".msg.user");
     if (
       userMsg &&
@@ -3910,11 +4411,15 @@
       return;
     }
     editingUserText = input.value;
+    onMentionInput(input);
   });
 
   messagesEl.addEventListener("keydown", (event) => {
     const input = event.target.closest(".msg-edit-input");
     if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (onMentionKeydown(event, input)) {
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -3928,12 +4433,33 @@
     }
   });
 
+  promptEl.addEventListener("input", () => {
+    onMentionInput(promptEl);
+  });
+
   promptEl.addEventListener("keydown", (event) => {
+    if (onMentionKeydown(event, promptEl)) {
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendPrompt();
     }
   });
+
+  if (mentionMenuEl) {
+    mentionMenuEl.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const option = event.target.closest(".mention-option");
+      if (!option) {
+        return;
+      }
+      const index = Number(option.getAttribute("data-index"));
+      if (Number.isInteger(index)) {
+        applyMentionSelection(index);
+      }
+    });
+  }
 
   window.addEventListener("message", (event) => {
     const msg = event.data;
@@ -3964,6 +4490,9 @@
         break;
       case "attachmentsAdded":
         mergePendingAttachments(msg.attachments || []);
+        break;
+      case "fileSearchResults":
+        handleMentionResults(msg);
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
