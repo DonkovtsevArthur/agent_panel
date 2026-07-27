@@ -341,7 +341,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private storageUri(): vscode.Uri | undefined {
-    return this.context.storageUri;
+    return this.context.storageUri || this.context.globalStorageUri;
   }
 
   private async enrichUiMessages(list: UiMessage[]): Promise<UiMessage[]> {
@@ -371,6 +371,47 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "attachmentsAdded",
       attachments: enriched,
     });
+    // Показать чат, чтобы превью вложений было видно в composer
+    if (this.store.screen !== "chat") {
+      this.setScreen("chat");
+      this.saveStore();
+      await this.postChatScreen();
+    } else {
+      void vscode.commands.executeCommand("agentPanel.chat.focus");
+    }
+  }
+
+  async pickAttachmentsFromUi(): Promise<void> {
+    try {
+      const picked = await pickWorkspaceAttachments();
+      if (picked.length) {
+        const persisted = await persistIncomingAttachments(
+          picked,
+          this.storageUri()
+        );
+        await this.postAttachments(persisted);
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(text);
+    }
+  }
+
+  async attachUrisFromDrop(uris: vscode.Uri[]): Promise<void> {
+    try {
+      const fromUris = await attachmentsFromUris(uris.map((u) => u.toString()));
+      if (!fromUris.length) {
+        return;
+      }
+      const persisted = await persistIncomingAttachments(
+        fromUris,
+        this.storageUri()
+      );
+      await this.postAttachments(persisted);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(text);
+    }
   }
 
   private historyContentText(content: ChatMessage["content"]): string {
@@ -681,19 +722,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         );
         break;
       case "pickAttachments":
-        try {
-          const picked = await pickWorkspaceAttachments();
-          if (picked.length) {
-            const persisted = await persistIncomingAttachments(
-              picked,
-              this.storageUri()
-            );
-            await this.postAttachments(persisted);
-          }
-        } catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          void vscode.window.showErrorMessage(text);
-        }
+        await this.pickAttachmentsFromUi();
         break;
       case "attachUris":
         try {
@@ -1595,6 +1624,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const jsUri = webview
       .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "panel.js"))
       .with({ query: `v=${bust}` });
+    const markedUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "marked.js"))
+      .with({ query: `v=${bust}` });
     const materialIconsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(
         this.extensionUri,
@@ -1611,7 +1643,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   <meta charset="UTF-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';"
+    content="default-src 'none'; style-src ${webview.cspSource} 'nonce-${nonce}'; font-src ${webview.cspSource}; img-src ${webview.cspSource} data: blob:; script-src 'nonce-${nonce}';"
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="stylesheet" href="${cssUri}" />
@@ -1813,11 +1845,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
     <div id="messages"></div>
-    <div class="composer-wrap">
-      <div class="composer">
+    <div class="composer-wrap" id="composerWrap">
+      <div class="composer" id="composer">
+        <div id="attachPreview" class="attach-preview" hidden></div>
         <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
+            <button class="icon-btn" id="attachBtn" title="Прикрепить файл" aria-label="Прикрепить файл">
+              <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
+            </button>
             <button class="icon-btn" id="newChatBtn" title="Новый агент" aria-label="Новый агент">
               <span class="material-symbols-outlined" aria-hidden="true">add</span>
             </button>
@@ -1836,6 +1872,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </button>
           </div>
         </div>
+        <div id="composerDropHint" class="composer-drop-hint" hidden>
+          <span class="composer-drop-hint-text">Отпустите файл, чтобы прикрепить</span>
+        </div>
       </div>
       <div class="composer-meta">
         <button type="button" class="context-meter" id="contextRing" aria-label="Использование контекста">
@@ -1849,6 +1888,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </section>
+  <script nonce="${nonce}" src="${markedUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
