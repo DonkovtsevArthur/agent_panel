@@ -1,4 +1,13 @@
 import * as vscode from "vscode";
+import {
+  AgentModeDef,
+  mergeModes,
+  parseCustomModes,
+  resolveMode,
+} from "./modes";
+
+export type { AgentModeDef } from "./modes";
+export { mergeModes, resolveMode } from "./modes";
 
 export interface AgentProvider {
   id: string;
@@ -103,6 +112,8 @@ export interface AgentPanelConfig {
   apiKey: string;
   providers: AgentProvider[];
   models: AgentModel[];
+  /** Пользовательские режимы (Агент/План/Спросить — встроенные) */
+  modes: AgentModeDef[];
   defaultModel: string;
   defaultContextWindow: number;
   systemPrompt: string;
@@ -308,6 +319,7 @@ export function getConfig(): AgentPanelConfig {
     legacyApiKey
   );
   const models = assignMissingProviderIds(readModels(cfg), providers);
+  const modes = parseCustomModes(cfg.get<unknown>("modes"));
   const primary = primaryProvider(providers);
   const defaultContextWindowRaw = cfg.get<number>("defaultContextWindow");
   const defaultContextWindow =
@@ -322,6 +334,7 @@ export function getConfig(): AgentPanelConfig {
     apiKey: primary?.apiKey || legacyApiKey,
     providers,
     models,
+    modes,
     defaultModel: cfg.get<string>("defaultModel") ?? models[0]?.id ?? "",
     defaultContextWindow,
     systemPrompt:
@@ -335,6 +348,14 @@ export function getConfig(): AgentPanelConfig {
       cfg.get<string>("caBundlePath") ??
       "~/Documents/Cline/severstal-ca-bundle.pem",
   };
+}
+
+export function getResolvedModes(): AgentModeDef[] {
+  return mergeModes(getConfig().modes);
+}
+
+export function getModeById(id: unknown): AgentModeDef {
+  return resolveMode(id, getConfig().modes);
 }
 
 /** Контекстное окно для модели: settings → known map → default. */

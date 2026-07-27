@@ -7,3 +7,7 @@ tsconfig.json
 **/*.ts
 **/*.map
 node_modules/**
+media/*preview*
+media/harbor-icon*
+media/icon-marketplace.svg
+*.vsix
