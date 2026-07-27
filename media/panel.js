@@ -6,6 +6,11 @@
   const promptEl = document.getElementById("prompt");
   const sendBtn = document.getElementById("sendBtn");
   const newChatBtn = document.getElementById("newChatBtn");
+  const attachBtn = document.getElementById("attachBtn");
+  const attachPreviewEl = document.getElementById("attachPreview");
+  const composerEl = document.getElementById("composer");
+  const composerWrapEl = document.getElementById("composerWrap");
+  const composerDropHintEl = document.getElementById("composerDropHint");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
   const modelLabel = document.getElementById("modelLabel");
@@ -144,14 +149,333 @@
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
+  let pendingAttachments = [];
   let editingUserIndex = null;
   let editingUserText = "";
   let editingModelId = "";
+  let editingAttachments = [];
   let editModelMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
   let streamingEl = null;
+  let composerDragDepth = 0;
+
+  const MAX_PENDING_ATTACHMENTS = 8;
+
+  function attachmentPayload(att) {
+    return {
+      id: att.id,
+      kind: att.kind,
+      name: att.name,
+      mime: att.mime,
+      path: att.path,
+      storageKey: att.storageKey,
+      size: att.size,
+      dataBase64: att.dataBase64,
+    };
+  }
+
+  function mergePendingAttachments(list) {
+    if (!Array.isArray(list) || !list.length) {
+      return;
+    }
+    for (const item of list) {
+      if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      const id = item.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      if (pendingAttachments.some((a) => a.id === id)) {
+        continue;
+      }
+      pendingAttachments.push({
+        id,
+        kind: item.kind || (String(item.mime || "").startsWith("image/") ? "image" : "file"),
+        name: item.name || "file",
+        mime: item.mime || "application/octet-stream",
+        path: item.path,
+        storageKey: item.storageKey,
+        size: item.size,
+        dataBase64: item.dataBase64,
+        previewDataUrl: item.previewDataUrl,
+      });
+    }
+    renderAttachPreview();
+  }
+
+  function removePendingAttachment(id) {
+    pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
+    renderAttachPreview();
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments = [];
+    renderAttachPreview();
+  }
+
+  function renderAttachPreview() {
+    if (!attachPreviewEl) {
+      return;
+    }
+    if (!pendingAttachments.length) {
+      attachPreviewEl.hidden = true;
+      attachPreviewEl.innerHTML = "";
+      return;
+    }
+    attachPreviewEl.hidden = false;
+    attachPreviewEl.innerHTML = pendingAttachments
+      .map((att) => {
+        const label = escapeHtml(att.path || att.name || "file");
+        if (att.kind === "image" && (att.previewDataUrl || att.dataBase64)) {
+          const src =
+            att.previewDataUrl ||
+            `data:${att.mime || "image/png"};base64,${att.dataBase64}`;
+          return (
+            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(att.id)}" title="${label}">` +
+            `<img class="attach-thumb" src="${src}" alt="" />` +
+            `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+              att.id
+            )}" title="Убрать" aria-label="Убрать">` +
+            `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+            `</button></div>`
+          );
+        }
+        return (
+          `<div class="attach-chip" data-id="${escapeHtml(att.id)}">` +
+          `<span class="material-symbols-outlined attach-chip-icon" aria-hidden="true">draft</span>` +
+          `<span class="attach-chip-name" title="${label}">${label}</span>` +
+          `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+            att.id
+          )}" title="Убрать" aria-label="Убрать">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+          `</button></div>`
+        );
+      })
+      .join("");
+  }
+
+  function renderMessageAttachments(attachments) {
+    if (!Array.isArray(attachments) || !attachments.length) {
+      return "";
+    }
+    return (
+      `<div class="msg-attachments">` +
+      attachments
+        .map((att) => {
+          const label = escapeHtml(att.path || att.name || "file");
+          if (att.kind === "image" && att.previewDataUrl) {
+            return (
+              `<div class="msg-attach msg-attach-image" title="${label}">` +
+              `<img src="${att.previewDataUrl}" alt="" />` +
+              `</div>`
+            );
+          }
+          return (
+            `<div class="msg-attach" title="${label}">` +
+            `<span class="material-symbols-outlined" aria-hidden="true">${
+              att.kind === "image" ? "image" : "draft"
+            }</span>` +
+            `<span class="msg-attach-name">${label}</span>` +
+            `</div>`
+          );
+        })
+        .join("") +
+      `</div>`
+    );
+  }
+
+  function readFileAsAttachment(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        const dataBase64 = comma >= 0 ? result.slice(comma + 1) : result;
+        const mime = file.type || "application/octet-stream";
+        const kind = mime.startsWith("image/") ? "image" : "file";
+        resolve({
+          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          kind,
+          name: file.name || (kind === "image" ? "image.png" : "file"),
+          mime,
+          size: file.size,
+          dataBase64,
+          previewDataUrl: kind === "image" ? result : undefined,
+        });
+      };
+      reader.onerror = () => reject(reader.error || new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function fsPathToFileUri(fsPath) {
+    const raw = String(fsPath || "").trim();
+    if (!raw) {
+      return "";
+    }
+    if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+      return `file:///${raw.replace(/\\/g, "/")}`;
+    }
+    if (raw.startsWith("\\\\")) {
+      return `file://${raw.replace(/\\/g, "/")}`;
+    }
+    if (raw.startsWith("/")) {
+      return `file://${raw}`;
+    }
+    return "";
+  }
+
+  function parseUriCandidates(raw) {
+    const text = String(raw || "").trim();
+    if (!text) {
+      return [];
+    }
+    const out = [];
+    for (const line of text.split(/\r?\n/)) {
+      const value = line.trim();
+      if (!value || value.startsWith("#")) {
+        continue;
+      }
+      if (/^(file|vscode-remote|vscode-vfs):/i.test(value)) {
+        out.push(value);
+        continue;
+      }
+      const asFile = fsPathToFileUri(value);
+      if (asFile) {
+        out.push(asFile);
+      }
+    }
+    return out;
+  }
+
+  function extractDropUris(dataTransfer) {
+    if (!dataTransfer) {
+      return [];
+    }
+    const found = [];
+    const seen = new Set();
+    const add = (uri) => {
+      const value = String(uri || "").trim();
+      if (!value || seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      found.push(value);
+    };
+
+    const types = Array.from(dataTransfer.types || []);
+    for (const type of [
+      "text/uri-list",
+      "text/plain",
+      "application/vnd.code.uri-list",
+      "resourceurls",
+    ]) {
+      if (!types.includes(type)) {
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = dataTransfer.getData(type);
+      } catch {
+        raw = "";
+      }
+      if (!raw && type === "resourceurls") {
+        try {
+          raw = dataTransfer.getData("ResourceURLs");
+        } catch {
+          raw = "";
+        }
+      }
+      if (raw) {
+        // resourceurls иногда JSON-массив
+        if (raw.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              for (const item of parsed) {
+                add(String(item));
+              }
+              continue;
+            }
+          } catch {
+            // fall through
+          }
+        }
+        for (const uri of parseUriCandidates(raw)) {
+          add(uri);
+        }
+      }
+    }
+
+    const files = dataTransfer.files ? Array.from(dataTransfer.files) : [];
+    for (const file of files) {
+      // Electron File.path — абсолютный путь
+      if (file && file.path) {
+        add(fsPathToFileUri(file.path));
+      }
+    }
+
+    return found;
+  }
+
+  function isFileDrag(dataTransfer) {
+    if (!dataTransfer) {
+      return false;
+    }
+    const types = Array.from(dataTransfer.types || []);
+    return (
+      types.includes("Files") ||
+      types.includes("text/uri-list") ||
+      types.includes("application/vnd.code.uri-list") ||
+      types.includes("resourceurls") ||
+      (dataTransfer.files && dataTransfer.files.length > 0)
+    );
+  }
+
+  async function ingestDroppedFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) {
+      return;
+    }
+    const withPath = [];
+    const withoutPath = [];
+    for (const file of files) {
+      if (pendingAttachments.length + withPath.length + withoutPath.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      if (file && file.path) {
+        const uri = fsPathToFileUri(file.path);
+        if (uri) {
+          withPath.push(uri);
+          continue;
+        }
+      }
+      withoutPath.push(file);
+    }
+    if (withPath.length) {
+      vscode.postMessage({ type: "attachUris", uris: withPath });
+    }
+    if (!withoutPath.length) {
+      return;
+    }
+    const parsed = [];
+    for (const file of withoutPath) {
+      if (pendingAttachments.length + parsed.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      try {
+        parsed.push(await readFileAsAttachment(file));
+      } catch {
+        // skip unreadable
+      }
+    }
+    if (parsed.length) {
+      vscode.postMessage({
+        type: "attachFiles",
+        files: parsed.map(attachmentPayload),
+      });
+    }
+  }
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -249,6 +573,9 @@
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
+    editingAttachments = Array.isArray(item.attachments)
+      ? item.attachments.slice()
+      : [];
     renderMessages(uiMessagesCache);
   }
 
@@ -257,6 +584,7 @@
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingAttachments = [];
     renderMessages(uiMessagesCache);
   }
 
@@ -265,7 +593,8 @@
       return;
     }
     const nextText = editingUserText.trim();
-    if (!nextText) {
+    const attachments = editingAttachments.slice();
+    if (!nextText && !attachments.length) {
       return;
     }
     const model =
@@ -280,10 +609,12 @@
       index: editingUserIndex,
       text: nextText,
       model,
+      attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingAttachments = [];
   }
 
   function modelDisplayName(id) {
@@ -2088,84 +2419,27 @@
       .replace(/"/g, "&quot;");
   }
 
-  /** Лёгкий markdown: заголовки, `код`, **жирный**, fences. */
-  function renderInlineMarkdown(text) {
-    const blocks = splitFenceBlocks(String(text));
-    return blocks
-      .map((block) => {
-        if (block.type === "fence") {
-          const inner = block.content.trim();
-          // один путь в fence → просто ссылка на файл, без ```
-          if (isFilePath(inner) && !inner.includes("\n")) {
-            return fileLinkHtml(inner);
-          }
-          return (
-            `<div class="md-pre-wrap">` +
-            `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>` +
-            `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
-            COPY_ICON +
-            `</button>` +
-            `</div>`
-          );
-        }
-        const lines = block.content.split("\n");
-        return lines
-          .map((line) => {
-            const heading = line.match(/^(#{1,3})\s+(.+)$/);
-            if (heading) {
-              const level = heading[1].length;
-              const content = renderInlineSpans(heading[2]);
-              return `<div class="md-h md-h${level}">${content}</div>`;
-            }
-            return renderInlineSpans(line);
-          })
-          .join("<br>");
-      })
-      .join("<br>");
-  }
-
-  function splitFenceBlocks(text) {
-    const blocks = [];
-    const re = /```[^\n]*\n?([\s\S]*?)```/g;
-    let last = 0;
-    let match;
-    while ((match = re.exec(text))) {
-      if (match.index > last) {
-        blocks.push({ type: "text", content: text.slice(last, match.index) });
-      }
-      blocks.push({ type: "fence", content: match[1] });
-      last = match.index + match[0].length;
-    }
-    if (last < text.length) {
-      blocks.push({ type: "text", content: text.slice(last) });
-    }
-    if (!blocks.length) {
-      blocks.push({ type: "text", content: text });
-    }
-    return blocks;
-  }
-
   const FILE_EXT =
     "ts|tsx|js|jsx|mjs|cjs|json|css|scss|less|sass|md|mdx|py|go|rs|java|kt|kts|vue|svelte|html|htm|yml|yaml|toml|xml|svg|sh|bash|zsh|env|lock|swift|dart|php|rb|cs|cpp|cc|cxx|h|hpp|sql|graphql|gql|proto|txt|csv|gitignore|dockerignore|editorconfig";
 
   function isFilePath(value) {
     const s = String(value || "").trim();
-    // только пути с каталогом (src/...), голые имена файлов — не кликабельны
-    if (!s || /\s/.test(s) || !s.includes("/")) {
+    if (!s || /\s/.test(s) || s.includes("://")) {
       return false;
     }
-    if (/^https?:\/\//i.test(s) || s.includes("://")) {
+    if (/^https?:\/\//i.test(s)) {
       return false;
     }
-    // путь с расширением
-    if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
-      return true;
+    if (s.includes("/")) {
+      if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
+        return true;
+      }
+      if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
+        return true;
+      }
+      return false;
     }
-    // путь со слэшами без странных символов
-    if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
-      return true;
-    }
-    return false;
+    return new RegExp(`^[\\w.-]+\\.(?:${FILE_EXT})$`, "i").test(s);
   }
 
   function fileLinkHtml(path) {
@@ -2183,9 +2457,9 @@
     return { href, trailing };
   }
 
-  function linkifyAndEscape(raw) {
+  function linkifyPlainText(raw, alreadyEscaped) {
     const tokens = [];
-    let text = String(raw);
+    let text = String(raw || "");
 
     text = text.replace(/(https?:\/\/[^\s<>"'`]+)/g, (url) => {
       const { href, trailing } = splitTrailingPunctuation(url);
@@ -2194,14 +2468,16 @@
       }
       const id = tokens.length;
       tokens.push(
-        `<a class="md-link" href="${escapeHtml(href)}" data-href="${escapeHtml(href)}">${escapeHtml(href)}</a>`
+        `<a class="md-link" href="${escapeHtml(href)}" data-href="${escapeHtml(
+          href
+        )}">${escapeHtml(href)}</a>`
       );
       return `\u0001T${id}\u0001${trailing}`;
     });
 
     text = text.replace(
       new RegExp(
-        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
+        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+(?:\\.(?:${FILE_EXT}))?|[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
         "gi"
       ),
       (full, path) => {
@@ -2214,63 +2490,197 @@
       }
     );
 
-    let html = escapeHtml(text);
-    html = html.replace(/\u0001T(\d+)\u0001/g, (_, id) => tokens[Number(id)] || "");
+    const html = (alreadyEscaped ? text : escapeHtml(text)).replace(
+      /\u0001T(\d+)\u0001/g,
+      (_, id) => tokens[Number(id)] || ""
+    );
     return html;
   }
 
-  function renderTextChunk(raw) {
-    // Сначала **жирный** / *курсив*, внутри — ссылки и пути
-    const tokens = [];
-    let text = String(raw);
+  let markdownReady = false;
 
-    text = text.replace(/\*\*([^*\n]+)\*\*/g, (_, inner) => {
-      const id = tokens.length;
-      tokens.push(`<strong class="md-strong">${linkifyAndEscape(inner)}</strong>`);
-      return `\u0001B${id}\u0001`;
-    });
+  function ensureMarkdownRenderer() {
+    if (markdownReady) {
+      return typeof marked !== "undefined";
+    }
+    if (typeof marked === "undefined" || !marked.Renderer) {
+      return false;
+    }
+    markdownReady = true;
 
-    text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_, lead, inner) => {
-      const id = tokens.length;
-      tokens.push(`<em class="md-em">${linkifyAndEscape(inner)}</em>`);
-      return `${lead}\u0001B${id}\u0001`;
-    });
+    const renderer = new marked.Renderer();
 
-    let html = linkifyAndEscape(text);
-    html = html.replace(/\u0001B(\d+)\u0001/g, (_, id) => tokens[Number(id)] || "");
-    return html;
-  }
-
-  function renderInlineSpans(text) {
-    const parts = [];
-    const re = /`([^`\n]+)`/g;
-    let last = 0;
-    let match;
-    while ((match = re.exec(text))) {
-      if (match.index > last) {
-        parts.push({ type: "text", value: text.slice(last, match.index) });
+    renderer.code = function ({ text }) {
+      const inner = String(text || "").replace(/\n$/, "");
+      if (isFilePath(inner.trim()) && !inner.includes("\n")) {
+        return fileLinkHtml(inner.trim());
       }
-      parts.push({ type: "tick", value: match[1] });
-      last = match.index + match[0].length;
-    }
-    if (last < text.length) {
-      parts.push({ type: "text", value: text.slice(last) });
-    }
-    if (!parts.length) {
-      parts.push({ type: "text", value: text });
-    }
+      return (
+        `<div class="md-pre-wrap">` +
+        `<pre class="md-pre"><code>${escapeHtml(inner)}</code></pre>` +
+        `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+        COPY_ICON +
+        `</button>` +
+        `</div>\n`
+      );
+    };
 
-    return parts
-      .map((part) => {
-        if (part.type === "tick") {
-          if (isFilePath(part.value)) {
-            return fileLinkHtml(part.value);
-          }
-          return `<code class="md-code">${escapeHtml(part.value)}</code>`;
+    renderer.codespan = function ({ text }) {
+      const value = String(text || "");
+      if (isFilePath(value)) {
+        return fileLinkHtml(value);
+      }
+      return `<code class="md-code">${escapeHtml(value)}</code>`;
+    };
+
+    renderer.heading = function ({ tokens, depth }) {
+      const level = Math.min(3, Math.max(1, depth || 1));
+      return `<div class="md-h md-h${level}">${this.parser.parseInline(
+        tokens
+      )}</div>\n`;
+    };
+
+    renderer.paragraph = function ({ tokens }) {
+      return `<div class="md-p">${this.parser.parseInline(tokens)}</div>\n`;
+    };
+
+    renderer.blockquote = function ({ tokens }) {
+      return `<blockquote class="md-quote">${this.parser.parse(
+        tokens
+      )}</blockquote>\n`;
+    };
+
+    renderer.list = function ({ items, ordered, start }) {
+      const tag = ordered ? "ol" : "ul";
+      const startAttr = ordered && start !== 1 ? ` start="${start}"` : "";
+      const body = items.map((item) => this.listitem(item)).join("");
+      return `<${tag} class="md-list md-${tag}"${startAttr}>${body}</${tag}>\n`;
+    };
+
+    renderer.listitem = function (item) {
+      let body = "";
+      if (item.task) {
+        const checked = item.checked ? " checked" : "";
+        body += `<input class="md-task" type="checkbox" disabled${checked} /> `;
+      }
+      body += this.parser.parse(item.tokens, !!item.loose);
+      return `<li class="md-li">${body}</li>\n`;
+    };
+
+    renderer.checkbox = function () {
+      return "";
+    };
+
+    renderer.strong = function ({ tokens }) {
+      return `<strong class="md-strong">${this.parser.parseInline(
+        tokens
+      )}</strong>`;
+    };
+
+    renderer.em = function ({ tokens }) {
+      return `<em class="md-em">${this.parser.parseInline(tokens)}</em>`;
+    };
+
+    renderer.del = function ({ tokens }) {
+      return `<del class="md-del">${this.parser.parseInline(tokens)}</del>`;
+    };
+
+    renderer.link = function ({ href, title, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      const safeHref = String(href || "");
+      if (!/^https?:\/\//i.test(safeHref)) {
+        if (isFilePath(safeHref)) {
+          return fileLinkHtml(safeHref);
         }
-        return renderTextChunk(part.value);
-      })
-      .join("");
+        return label;
+      }
+      const t = title ? ` title="${escapeHtml(title)}"` : "";
+      return `<a class="md-link" href="${escapeHtml(
+        safeHref
+      )}" data-href="${escapeHtml(safeHref)}"${t}>${label}</a>`;
+    };
+
+    renderer.image = function ({ text, href }) {
+      return escapeHtml(text || href || "");
+    };
+
+    renderer.html = function ({ text }) {
+      return escapeHtml(text || "");
+    };
+
+    renderer.hr = function () {
+      return '<hr class="md-hr" />\n';
+    };
+
+    renderer.br = function () {
+      return "<br />";
+    };
+
+    renderer.table = function (token) {
+      let header = "";
+      for (const cell of token.header) {
+        header += this.tablecell(cell);
+      }
+      let body = "";
+      for (const row of token.rows) {
+        let cells = "";
+        for (const cell of row) {
+          cells += this.tablecell(cell);
+        }
+        body += this.tablerow({ text: cells });
+      }
+      return (
+        `<div class="md-table-wrap"><table class="md-table"><thead>${this.tablerow(
+          { text: header }
+        )}</thead><tbody>${body}</tbody></table></div>\n`
+      );
+    };
+
+    renderer.tablerow = function ({ text }) {
+      return `<tr>${text}</tr>\n`;
+    };
+
+    renderer.tablecell = function (cell) {
+      const tag = cell.header ? "th" : "td";
+      const align = cell.align ? ` style="text-align:${cell.align}"` : "";
+      return `<${tag} class="md-td"${align}>${this.parser.parseInline(
+        cell.tokens
+      )}</${tag}>`;
+    };
+
+    renderer.text = function (token) {
+      if (token.tokens && token.tokens.length) {
+        return this.parser.parseInline(token.tokens);
+      }
+      return linkifyPlainText(String(token.text || ""), !!token.escaped);
+    };
+
+    marked.use({
+      renderer,
+      gfm: true,
+      breaks: true,
+      pedantic: false,
+    });
+    return true;
+  }
+
+  /** Markdown (GFM): таблицы, списки, заголовки, код, ссылки, жирный/курсив и т.д. */
+  function renderInlineMarkdown(text) {
+    const raw = String(text || "");
+    if (!raw) {
+      return "";
+    }
+    if (ensureMarkdownRenderer()) {
+      try {
+        return marked.parse(raw, { async: false });
+      } catch {
+        // fallback below
+      }
+    }
+    return `<div class="md-p">${linkifyPlainText(raw, false).replace(
+      /\n/g,
+      "<br />"
+    )}</div>`;
   }
 
   let copyToastEl = null;
@@ -2317,14 +2727,14 @@
       body.className = "msg-body";
       el.insertBefore(body, el.firstChild);
     }
-    if (role === "assistant") {
+    if (role === "assistant" || role === "error") {
       body.innerHTML = renderInlineMarkdown(raw);
       return;
     }
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
-  function appendMessage(role, text, index, regenAssistantIndex) {
+  function appendMessage(role, text, index, regenAssistantIndex, attachments) {
     if (role === "review") {
       sealToolGroups();
       try {
@@ -2354,6 +2764,11 @@
 
     if (role === "user") {
       const isEditing = index === editingUserIndex;
+      const msgAttachments = isEditing
+        ? editingAttachments
+        : Array.isArray(attachments)
+          ? attachments
+          : [];
       if (isEditing) {
         el.classList.add("is-editing");
         const editModelLabel = modelDisplayName(
@@ -2361,6 +2776,9 @@
         );
         body.innerHTML =
           `<div class="msg-edit-composer">` +
+          (msgAttachments.length
+            ? renderMessageAttachments(msgAttachments)
+            : "") +
           `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="Редактирование сообщения"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
@@ -2384,6 +2802,11 @@
         const input = body.querySelector(".msg-edit-input");
         if (input) {
           input.value = editingUserText;
+        }
+      } else if (msgAttachments.length) {
+        const attachHtml = renderMessageAttachments(msgAttachments);
+        if (attachHtml) {
+          body.insertAdjacentHTML("afterbegin", attachHtml);
         }
       }
       const wrap = document.createElement("div");
@@ -2456,7 +2879,13 @@
 
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
-      appendMessage(item.role, item.text, i, regenAssistantIndex);
+      appendMessage(
+        item.role,
+        item.text,
+        i,
+        regenAssistantIndex,
+        item.attachments
+      );
     }
     restoreAgentStatus();
     focusEditingInput();
@@ -2654,20 +3083,24 @@
 
   function sendPrompt() {
     const text = promptEl.value.trim();
-    if (!text || busy) {
+    const attachments = pendingAttachments.slice();
+    if ((!text && !attachments.length) || busy) {
       return;
     }
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
-    uiMessagesCache.push({ role: "user", text });
-    appendMessage("user", text);
+    editingAttachments = [];
+    uiMessagesCache.push({ role: "user", text, attachments });
+    appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
+    clearPendingAttachments();
     setBusy(true);
     vscode.postMessage({
       type: "send",
       text,
       model: getSelectedModel(),
+      attachments: attachments.map(attachmentPayload),
     });
   }
 
@@ -2679,10 +3112,225 @@
     sendPrompt();
   });
 
+  if (attachBtn) {
+    attachBtn.addEventListener("click", () => {
+      if (busy) {
+        return;
+      }
+      vscode.postMessage({ type: "pickAttachments" });
+    });
+  }
+
+  if (attachPreviewEl) {
+    attachPreviewEl.addEventListener("click", (event) => {
+      const btn = event.target.closest(".attach-chip-remove");
+      if (!btn) {
+        return;
+      }
+      event.preventDefault();
+      removePendingAttachment(btn.getAttribute("data-id"));
+    });
+  }
+
+  function setComposerDropActive(active, withHint) {
+    if (!composerEl) {
+      return;
+    }
+    // Подсветка только у поля ввода, даже если drag над всей областью чата
+    composerEl.classList.toggle("is-drop-target", Boolean(active));
+    if (composerWrapEl) {
+      composerWrapEl.classList.remove("is-drop-target");
+    }
+    if (composerDropHintEl) {
+      composerDropHintEl.hidden = !(active && withHint);
+    }
+  }
+
+  function clearComposerDropState() {
+    composerDragDepth = 0;
+    setComposerDropActive(false, false);
+  }
+
+  // Drop принимаем на весь экран чата; визуально подсвечиваем только composer
+  const dropRoot = chatScreen || composerWrapEl || composerEl;
+  if (dropRoot) {
+    dropRoot.addEventListener("dragenter", (event) => {
+      if (!isFileDrag(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      composerDragDepth += 1;
+      setComposerDropActive(true, true);
+    });
+    dropRoot.addEventListener("dragover", (event) => {
+      if (!isFileDrag(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setComposerDropActive(true, true);
+    });
+    dropRoot.addEventListener("dragleave", (event) => {
+      const related = event.relatedTarget;
+      if (related instanceof Node && dropRoot.contains(related)) {
+        return;
+      }
+      composerDragDepth = Math.max(0, composerDragDepth - 1);
+      if (composerDragDepth === 0) {
+        setComposerDropActive(false, false);
+      }
+    });
+    dropRoot.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearComposerDropState();
+      if (busy) {
+        return;
+      }
+      const uris = extractDropUris(event.dataTransfer);
+      if (uris.length) {
+        vscode.postMessage({ type: "attachUris", uris });
+        return;
+      }
+      if (event.dataTransfer?.files?.length) {
+        void ingestDroppedFiles(event.dataTransfer.files);
+        return;
+      }
+      showCopyToast("Не удалось прочитать файл");
+    });
+  }
+
+  window.addEventListener("dragend", clearComposerDropState);
+
+  function extractClipboardImages(clipboardData) {
+    const files = [];
+    const seen = new Set();
+    const push = (file) => {
+      if (!file) {
+        return;
+      }
+      const key = `${file.name}:${file.size}:${file.type}:${file.lastModified || 0}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      files.push(file);
+    };
+
+    if (clipboardData?.files?.length) {
+      for (const file of Array.from(clipboardData.files)) {
+        if (!file.type || file.type.startsWith("image/")) {
+          push(file);
+        }
+      }
+    }
+
+    const items = clipboardData?.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item && item.type && item.type.startsWith("image/")) {
+          push(item.getAsFile());
+        }
+      }
+    }
+    return files;
+  }
+
+  async function readClipboardImagesFallback() {
+    if (!navigator.clipboard || typeof navigator.clipboard.read !== "function") {
+      return [];
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      const files = [];
+      for (const item of items) {
+        for (const type of item.types) {
+          if (!type.startsWith("image/")) {
+            continue;
+          }
+          const blob = await item.getType(type);
+          const ext = type.split("/")[1] || "png";
+          files.push(
+            new File([blob], `clipboard.${ext}`, {
+              type,
+              lastModified: Date.now(),
+            })
+          );
+        }
+      }
+      return files;
+    } catch {
+      return [];
+    }
+  }
+
+  async function handleChatImagePaste(event) {
+    if (busy || !chatScreen || chatScreen.hidden) {
+      return;
+    }
+    let imageFiles = extractClipboardImages(event.clipboardData);
+    if (!imageFiles.length) {
+      imageFiles = await readClipboardImagesFallback();
+    }
+    if (!imageFiles.length) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    await ingestDroppedFiles(imageFiles);
+    if (promptEl && typeof promptEl.focus === "function") {
+      promptEl.focus();
+    }
+  }
+
+  // Capture на document: работает не только когда фокус в textarea
+  document.addEventListener(
+    "paste",
+    (event) => {
+      void handleChatImagePaste(event);
+    },
+    true
+  );
+
+  // На случай, если paste пришёл до фокуса webview — подхватим после фокуса по Cmd/Ctrl+V
+  document.addEventListener("keydown", (event) => {
+    const isPaste =
+      (event.key === "v" || event.key === "V" || event.code === "KeyV") &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!isPaste || busy || !chatScreen || chatScreen.hidden) {
+      return;
+    }
+    // Если фокус не в поле ввода — всё равно даём шанс прочитать буфер
+    const active = document.activeElement;
+    const inPrompt = active === promptEl;
+    if (inPrompt) {
+      return;
+    }
+    void (async () => {
+      const imageFiles = await readClipboardImagesFallback();
+      if (!imageFiles.length) {
+        return;
+      }
+      event.preventDefault();
+      await ingestDroppedFiles(imageFiles);
+      if (promptEl && typeof promptEl.focus === "function") {
+        promptEl.focus();
+      }
+    })();
+  });
+
   newChatBtn.addEventListener("click", () => {
     if (busy) {
       return;
     }
+    clearPendingAttachments();
     vscode.postMessage({ type: "newChat" });
   });
 
@@ -3295,6 +3943,8 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingAttachments = [];
+        clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         if (msg.agentId) {
@@ -3311,6 +3961,9 @@
         }
         showScreen(msg.screen || "agents");
         setBusy(false);
+        break;
+      case "attachmentsAdded":
+        mergePendingAttachments(msg.attachments || []);
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
@@ -3414,6 +4067,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingAttachments = [];
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;
@@ -3421,8 +4075,18 @@
         showCopyToast("Скопировано");
         break;
       case "append":
-        uiMessagesCache.push({ role: msg.role, text: msg.text });
-        appendMessage(msg.role, msg.text);
+        uiMessagesCache.push({
+          role: msg.role,
+          text: msg.text,
+          attachments: msg.attachments,
+        });
+        appendMessage(
+          msg.role,
+          msg.text,
+          uiMessagesCache.length - 1,
+          -1,
+          msg.attachments
+        );
         break;
       case "status":
         setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
