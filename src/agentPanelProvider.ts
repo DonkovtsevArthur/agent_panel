@@ -1558,7 +1558,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "init",
       models,
       selectedModel: this.selectedModel,
-      uiMessages: this.uiMessages,
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       canRegenerate: this.canRegenerate(),
       screen: this.store.screen,
       agentId: this.store.activeAgentId || "",
@@ -1572,7 +1572,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postAgentsList();
     if (this.store.screen === "chat") {
-      this.postChatScreen();
+      await this.postChatScreen();
     } else if (this.store.screen === "archive") {
       this.postArchiveList();
       this.view?.webview.postMessage({ type: "showArchive" });
