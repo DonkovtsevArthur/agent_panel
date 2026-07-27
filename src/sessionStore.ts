@@ -1,3 +1,4 @@
+import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiClient";
 
 export type UiMessageRole =
@@ -8,9 +9,12 @@ export type UiMessageRole =
   | "error"
   | "review";
 
+export type { MessageAttachment };
+
 export interface UiMessage {
   role: UiMessageRole;
   text: string;
+  attachments?: MessageAttachment[];
 }
 
 export interface ChatSession {

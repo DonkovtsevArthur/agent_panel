@@ -144,6 +144,15 @@ body {
   border-radius: var(--radius-msg);
   border-bottom-right-radius: 6px;
   padding: 10px 12px;
+  cursor: text;
+}
+
+.msg.user.is-editing {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: default;
 }
 
 .msg.assistant {
@@ -189,6 +198,63 @@ body {
 .msg-actions .icon-btn.msg-regenerate .material-symbols-outlined {
   font-size: 13px;
   line-height: 1;
+}
+
+.msg-edit-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 12px 10px;
+  border-radius: var(--radius-composer);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
+}
+
+.msg-edit-input {
+  width: 100%;
+  min-height: 56px;
+  max-height: 180px;
+  resize: none;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  border: none;
+  outline: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.45;
+}
+
+.msg-edit-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-edit-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.msg-edit-footer-left .model-picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-edit-model-menu {
+  z-index: 1100;
+}
+
+.msg-edit-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .msg.assistant .md-code {
@@ -342,6 +408,63 @@ body {
   color: var(--vscode-descriptionForeground, #888);
 }
 
+.tool-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  align-self: stretch;
+  max-width: 100%;
+}
+
+.tool-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #888);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.tool-group-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.tool-group-chevron {
+  font-size: 14px;
+  transition: transform 0.12s ease;
+}
+
+.tool-group:not(.is-collapsed) .tool-group-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-group-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding-left: 2px;
+}
+
+.tool-group.is-collapsed .tool-group-body {
+  display: none;
+}
+
 .msg.error {
   background: transparent;
   border: none;
@@ -351,10 +474,16 @@ body {
 }
 
 .agent-status {
-  padding: 0 4px 6px;
+  padding: 2px 2px 4px;
   font-size: 12px;
   color: var(--vscode-descriptionForeground, #888);
   min-height: 16px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.agent-status-in-messages {
+  margin-top: 2px;
 }
 
 .agent-status:not([hidden]) {
@@ -370,6 +499,25 @@ body {
   border-radius: 50%;
   background: var(--vscode-focusBorder, #007fd4);
   animation: pulse 1s ease-in-out infinite;
+}
+
+.agent-status[data-phase="reading"]::before,
+.agent-status[data-phase="listing"]::before {
+  background: var(--vscode-charts-blue, #3794ff);
+}
+
+.agent-status[data-phase="running"]::before {
+  background: var(--vscode-charts-orange, #e2a03f);
+}
+
+.agent-status[data-phase="editing"]::before {
+  background: var(--vscode-charts-green, #89d185);
+}
+
+.agent-status[data-phase="done"]::before {
+  background: var(--vscode-charts-green, #89d185);
+  animation: none;
+  opacity: 1;
 }
 
 @keyframes pulse {
