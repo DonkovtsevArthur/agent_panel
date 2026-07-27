@@ -97,12 +97,50 @@ body {
   line-height: 1.45;
 }
 
-.msg.user {
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.25));
+.msg-body {
+  min-width: 0;
+}
+
+.msg-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   align-self: flex-end;
   max-width: calc(100% - 8px);
   margin-right: 2px;
+  gap: 2px;
+}
+
+.msg-wrap.msg-wrap-assistant {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg-wrap.msg-wrap-user {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg-wrap .msg.user {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg-wrap .msg.assistant {
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.msg.user {
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.25));
+  align-self: stretch;
+  max-width: 100%;
+  margin-right: 0;
   border-radius: var(--radius-msg);
   border-bottom-right-radius: 6px;
   padding: 10px 12px;
@@ -117,6 +155,42 @@ body {
   color: var(--vscode-foreground);
 }
 
+.msg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-actions .icon-btn.msg-copy,
+.msg-actions .icon-btn.msg-regenerate {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  opacity: 0.7;
+  background: transparent !important;
+  border-radius: 2px;
+  color: var(--vscode-descriptionForeground, #888);
+  transition: color 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+}
+
+.msg-actions .icon-btn.msg-copy:hover,
+.msg-actions .icon-btn.msg-copy:focus-visible,
+.msg-actions .icon-btn.msg-regenerate:hover,
+.msg-actions .icon-btn.msg-regenerate:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent) !important;
+  color: var(--vscode-foreground);
+}
+
+.msg-actions .icon-btn.msg-copy .material-symbols-outlined,
+.msg-actions .icon-btn.msg-regenerate .material-symbols-outlined {
+  font-size: 13px;
+  line-height: 1;
+}
+
 .msg.assistant .md-code {
   font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
   font-size: 0.92em;
@@ -126,9 +200,15 @@ body {
   color: var(--vscode-foreground);
 }
 
-.msg.assistant .md-pre {
+.md-pre-wrap {
+  position: relative;
   margin: 6px 0;
+}
+
+.msg.assistant .md-pre {
+  margin: 0;
   padding: 8px 10px;
+  padding-right: 34px;
   border-radius: 6px;
   overflow-x: auto;
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
@@ -136,6 +216,52 @@ body {
   font-size: 0.9em;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.md-pre-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 75%, transparent);
+  transition: opacity 0.12s ease;
+}
+
+.md-pre-wrap:hover .md-pre-copy,
+.md-pre-wrap:focus-within .md-pre-copy {
+  opacity: 0.85;
+}
+
+.md-pre-copy:hover,
+.md-pre-copy:focus-visible {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.md-pre-copy .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.copy-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 1200;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.copy-toast[hidden] {
+  display: none !important;
 }
 
 .msg.assistant .md-pre code {
@@ -1347,11 +1473,95 @@ button.primary:disabled {
 }
 
 .agent-name {
+  display: inline-block;
+  max-width: 100%;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
+  border-radius: 2px;
+  outline: none;
+  line-height: 1.3;
+  padding: 0;
+  margin: 0;
+  vertical-align: top;
+}
+
+.agent-name:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.agent-name.is-renaming {
+  display: none;
+}
+
+.agent-name-input {
+  display: inline-block;
+  box-sizing: content-box;
+  min-width: 1ch;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  height: 1.3em;
+  outline: none;
+  box-shadow: none;
+  vertical-align: top;
+  caret-color: var(--vscode-foreground);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.agent-name-input.is-chat {
+  color: var(--vscode-foreground);
+}
+
+.agent-name-input::selection {
+  background: var(--vscode-editor-selectionBackground, rgba(14, 99, 156, 0.45));
+  color: var(--vscode-editor-selectionForeground, var(--vscode-foreground));
+}
+
+.chat-agent-name {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  border-radius: 2px;
+  outline: none;
+  line-height: 1.3;
+  padding: 0;
+  margin: 0;
+  vertical-align: top;
+}
+
+.chat-agent-name:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.chat-agent-name.is-renaming {
+  display: none;
+}
+
+.chat-top-text {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
 }
 
 .agent-meta {
@@ -1561,20 +1771,6 @@ button.primary:disabled {
   text-align: center;
   font-size: 12px;
   color: var(--vscode-descriptionForeground, #888);
-}
-
-.chat-top-text {
-  min-width: 0;
-  flex: 1;
-}
-
-.chat-agent-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .chat-title {

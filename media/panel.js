@@ -79,6 +79,8 @@
 
   let agentsData = [];
   let archiveAgentsData = [];
+  let activeAgentId = "";
+  let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
   let settingsDefaultModelId = "";
@@ -120,6 +122,12 @@
   const HEART_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
 
+  const COPY_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
+
+  const REGENERATE_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">refresh</span>';
+
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
@@ -133,6 +141,8 @@
   ];
 
   let busy = false;
+  let canRegenerate = false;
+  let uiMessagesCache = [];
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
@@ -140,6 +150,55 @@
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setCanRegenerate(nextValue) {
+    canRegenerate = Boolean(nextValue);
+  }
+
+  function removeRegenerateButtons() {
+    const btns = messagesEl.querySelectorAll(".msg-regenerate");
+    btns.forEach((b) => b.remove());
+  }
+
+  function ensureRegenerateButton() {
+    removeRegenerateButtons();
+    if (!canRegenerate) {
+      return;
+    }
+    const all = messagesEl.querySelectorAll(".msg.assistant");
+    const last = all.length ? all[all.length - 1] : null;
+    if (!last) {
+      return;
+    }
+
+    const parent = last.parentElement;
+    if (parent && parent.classList.contains("msg-wrap-assistant")) {
+      let actions = parent.querySelector(".msg-actions");
+      if (!actions) {
+        actions = document.createElement("div");
+        actions.className = "msg-actions";
+        parent.insertBefore(actions, last);
+      }
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+        REGENERATE_ICON +
+        `</button>`;
+      return;
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+    actions.innerHTML =
+      `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+      REGENERATE_ICON +
+      `</button>`;
+
+    const wrap = document.createElement("div");
+    wrap.className = "msg-wrap msg-wrap-assistant";
+    (parent || messagesEl).insertBefore(wrap, last);
+    wrap.appendChild(actions);
+    wrap.appendChild(last);
   }
 
   function setAgentStatus(text, hidden) {
@@ -1433,6 +1492,9 @@
     if (!agentsListEl) {
       return;
     }
+    if (renamingAgentId) {
+      return;
+    }
     const list = agentsData;
 
     if (!list.length) {
@@ -1453,12 +1515,12 @@
         return (
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
-          `<button type="button" class="agent-row flat" data-agent="${a.id}">` +
+          `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
           `<span class="agent-main">` +
-          `<div class="agent-name"></div>` +
+          `<div class="agent-name" title="Переименовать"></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
-          `</button>` +
+          `</div>` +
           `<div class="row-actions">` +
           action +
           `</div>` +
@@ -1479,6 +1541,108 @@
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
     });
+  }
+
+  function getAgentNameById(agentId) {
+    const row = agentsData.find((a) => a.id === agentId);
+    return (row && row.name) || "Агент";
+  }
+
+  function startAgentRename(agentId, nameEl) {
+    if (!agentId || !nameEl || renamingAgentId) {
+      return;
+    }
+    if (nameEl.tagName === "INPUT" || nameEl.querySelector(".agent-name-input")) {
+      return;
+    }
+    const previous =
+      (nameEl.textContent || "").trim() || getAgentNameById(agentId);
+    renamingAgentId = agentId;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "agent-name-input";
+    input.value = previous;
+    input.maxLength = 80;
+    input.setAttribute("aria-label", "Название агента");
+    input.spellcheck = false;
+
+    const isChat = nameEl === chatAgentNameEl;
+    if (isChat) {
+      input.classList.add("is-chat");
+    }
+
+    const fitInputWidth = () => {
+      input.style.width = "0px";
+      input.style.width = `${Math.max(input.scrollWidth, 1)}px`;
+    };
+
+    const measured = Math.ceil(nameEl.getBoundingClientRect().width);
+    input.style.width = `${Math.max(measured, 1)}px`;
+
+    nameEl.classList.add("is-renaming");
+    nameEl.after(input);
+    requestAnimationFrame(() => {
+      fitInputWidth();
+      input.focus();
+      input.setSelectionRange(0, input.value.length);
+    });
+
+    let finished = false;
+    const cleanup = () => {
+      input.removeEventListener("keydown", onKeyDown);
+      input.removeEventListener("blur", onBlur);
+      input.removeEventListener("input", fitInputWidth);
+      input.remove();
+      nameEl.classList.remove("is-renaming");
+      if (renamingAgentId === agentId) {
+        renamingAgentId = null;
+      }
+    };
+
+    const finish = (save) => {
+      if (finished || renamingAgentId !== agentId) {
+        return;
+      }
+      finished = true;
+      const next = input.value.replace(/\s+/g, " ").trim().slice(0, 80);
+      cleanup();
+      if (!save || !next || next === previous) {
+        nameEl.textContent = previous;
+        return;
+      }
+      nameEl.textContent = next;
+      const item = agentsData.find((a) => a.id === agentId);
+      if (item) {
+        item.name = next;
+      }
+      if (agentId === activeAgentId && chatAgentNameEl) {
+        chatAgentNameEl.textContent = next;
+      }
+      vscode.postMessage({
+        type: "renameAgent",
+        agentId,
+        name: next,
+      });
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(false);
+      }
+    };
+    const onBlur = () => {
+      finish(true);
+    };
+    input.addEventListener("keydown", onKeyDown);
+    input.addEventListener("blur", onBlur);
+    input.addEventListener("input", fitInputWidth);
   }
 
     function focusPrompt() {
@@ -1611,7 +1775,14 @@
           if (isFilePath(inner) && !inner.includes("\n")) {
             return fileLinkHtml(inner);
           }
-          return `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>`;
+          return (
+            `<div class="md-pre-wrap">` +
+            `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>` +
+            `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+            COPY_ICON +
+            `</button>` +
+            `</div>`
+          );
         }
         const lines = block.content.split("\n");
         return lines
@@ -1778,15 +1949,58 @@
       .join("");
   }
 
-  function setMessageContent(el, role, text) {
-    if (role === "assistant") {
-      el.innerHTML = renderInlineMarkdown(text);
-      return;
+  let copyToastEl = null;
+  let copyToastTimer = null;
+
+  function ensureCopyToast() {
+    if (copyToastEl) {
+      return copyToastEl;
     }
-    el.textContent = role === "tool" ? formatToolLine(text) : text;
+    copyToastEl = document.createElement("div");
+    copyToastEl.className = "copy-toast";
+    copyToastEl.hidden = true;
+    document.body.appendChild(copyToastEl);
+    return copyToastEl;
   }
 
-  function appendMessage(role, text) {
+  function showCopyToast(text) {
+    const toast = ensureCopyToast();
+    toast.textContent = text || "Скопировано";
+    toast.hidden = false;
+    if (copyToastTimer) {
+      clearTimeout(copyToastTimer);
+    }
+    copyToastTimer = setTimeout(() => {
+      copyToastTimer = null;
+      toast.hidden = true;
+    }, 1200);
+  }
+
+  function requestCopyText(text) {
+    const value = String(text || "");
+    if (!value) {
+      return;
+    }
+    vscode.postMessage({ type: "copyText", text: value });
+  }
+
+  function setMessageContent(el, role, text) {
+    const raw = text || "";
+    el.dataset.raw = raw;
+    let body = el.querySelector(".msg-body");
+    if (!body) {
+      body = document.createElement("div");
+      body.className = "msg-body";
+      el.insertBefore(body, el.firstChild);
+    }
+    if (role === "assistant") {
+      body.innerHTML = renderInlineMarkdown(raw);
+      return;
+    }
+    body.textContent = role === "tool" ? formatToolLine(raw) : raw;
+  }
+
+  function appendMessage(role, text, index, regenAssistantIndex) {
     if (role === "review") {
       try {
         appendReview(parseReviewData(text));
@@ -1797,7 +2011,50 @@
     }
     const el = document.createElement("div");
     el.className = `msg ${role}`;
+
+    const body = document.createElement("div");
+    body.className = "msg-body";
+    el.appendChild(body);
     setMessageContent(el, role, text);
+
+    if (role === "user") {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-wrap msg-wrap-user";
+      const actions = document.createElement("div");
+      actions.className = "msg-actions";
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-copy" title="Копировать" aria-label="Копировать">` +
+        COPY_ICON +
+        `</button>`;
+      wrap.appendChild(actions);
+      wrap.appendChild(el);
+      messagesEl.appendChild(wrap);
+      scrollToBottom();
+      return el;
+    }
+
+    if (
+      role === "assistant" &&
+      typeof index === "number" &&
+      regenAssistantIndex >= 0 &&
+      index === regenAssistantIndex &&
+      canRegenerate
+    ) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-wrap msg-wrap-assistant";
+      const actions = document.createElement("div");
+      actions.className = "msg-actions";
+      actions.innerHTML =
+        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+        REGENERATE_ICON +
+        `</button>`;
+      wrap.appendChild(actions);
+      wrap.appendChild(el);
+      messagesEl.appendChild(wrap);
+      scrollToBottom();
+      return el;
+    }
+
     messagesEl.appendChild(el);
     scrollToBottom();
     return el;
@@ -1805,11 +2062,28 @@
 
   function renderMessages(list) {
     messagesEl.innerHTML = "";
+    uiMessagesCache = Array.isArray(list) ? list : [];
     if (!Array.isArray(list)) {
       return;
     }
-    for (const item of list) {
-      appendMessage(item.role, item.text);
+
+    let regenAssistantIndex = -1;
+    if (canRegenerate) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const item = list[i];
+        if (
+          item?.role === "assistant" &&
+          String(item?.text || "").trim()
+        ) {
+          regenAssistantIndex = i;
+          break;
+        }
+      }
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      appendMessage(item.role, item.text, i, regenAssistantIndex);
     }
   }
 
@@ -2415,6 +2689,17 @@
         }
         return;
       }
+      const nameEl = event.target.closest(".agent-name");
+      if (nameEl && agentsListEl.contains(nameEl)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const block = nameEl.closest("[data-agent]");
+        const agentId = block ? block.dataset.agent : "";
+        if (agentId) {
+          startAgentRename(agentId, nameEl);
+        }
+        return;
+      }
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
@@ -2424,9 +2709,82 @@
         });
       }
     });
+    agentsListEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const agentRow = event.target.closest(".agent-row");
+      if (!agentRow || !agentsListEl.contains(agentRow)) {
+        return;
+      }
+      if (event.target.closest(".agent-name-input")) {
+        return;
+      }
+      event.preventDefault();
+      vscode.postMessage({
+        type: "openAgent",
+        agentId: agentRow.dataset.agent,
+      });
+    });
+  }
+
+  if (chatAgentNameEl) {
+    chatAgentNameEl.title = "Переименовать";
+    chatAgentNameEl.setAttribute("role", "button");
+    chatAgentNameEl.tabIndex = 0;
+    chatAgentNameEl.addEventListener("click", () => {
+      if (!activeAgentId || renamingAgentId) {
+        return;
+      }
+      startAgentRename(activeAgentId, chatAgentNameEl);
+    });
+    chatAgentNameEl.addEventListener("keydown", (event) => {
+      if (renamingAgentId) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (activeAgentId) {
+          startAgentRename(activeAgentId, chatAgentNameEl);
+        }
+      }
+    });
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const regenBtn = event.target.closest(".msg-regenerate");
+    if (regenBtn && messagesEl.contains(regenBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy || !canRegenerate) {
+        return;
+      }
+      setBusy(true);
+      vscode.postMessage({ type: "regenerate" });
+      return;
+    }
+    const copyCodeBtn = event.target.closest(".md-pre-copy");
+    if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const wrap = copyCodeBtn.closest(".md-pre-wrap");
+      const code = wrap ? wrap.querySelector("code") : null;
+      const text = code ? code.textContent || "" : "";
+      requestCopyText(text);
+      return;
+    }
+    const copyMsgBtn = event.target.closest(".msg-copy");
+    if (copyMsgBtn && messagesEl.contains(copyMsgBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const wrap = copyMsgBtn.closest(".msg-wrap");
+      const msg = wrap
+        ? wrap.querySelector(".msg")
+        : copyMsgBtn.closest(".msg");
+      const text = msg ? msg.dataset.raw || "" : "";
+      requestCopyText(text);
+      return;
+    }
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
@@ -2459,8 +2817,12 @@
     switch (msg.type) {
       case "init":
         fillModels(msg.models, msg.selectedModel);
+        setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
-        if (chatAgentNameEl && msg.agentName) {
+        if (msg.agentId) {
+          activeAgentId = msg.agentId;
+        }
+        if (chatAgentNameEl && msg.agentName && renamingAgentId !== activeAgentId) {
           chatAgentNameEl.textContent = msg.agentName;
         }
         if (chatTitleEl && msg.chatTitle) {
@@ -2474,6 +2836,12 @@
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        {
+          const active = agentsData.find((a) => a.active);
+          if (active) {
+            activeAgentId = active.id;
+          }
+        }
         renderAgentsList();
         if (msg.screen === "agents" || msg.screen === "chat") {
           showScreen(msg.screen);
@@ -2506,10 +2874,18 @@
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
+        setCanRegenerate(msg.canRegenerate);
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages);
         }
-        if (chatAgentNameEl && msg.agentName) {
+        if (msg.agentId) {
+          activeAgentId = msg.agentId;
+        }
+        if (
+          chatAgentNameEl &&
+          msg.agentName &&
+          renamingAgentId !== activeAgentId
+        ) {
           chatAgentNameEl.textContent = msg.agentName;
         }
         if (chatTitleEl && msg.chatTitle) {
@@ -2521,11 +2897,44 @@
         showScreen("chat");
         setBusy(false);
         break;
+      case "agentRenamed":
+        if (msg.agentId && msg.name) {
+          const item = agentsData.find((a) => a.id === msg.agentId);
+          if (item) {
+            item.name = msg.name;
+          }
+          if (msg.agentId === activeAgentId && chatAgentNameEl) {
+            if (renamingAgentId !== msg.agentId) {
+              chatAgentNameEl.textContent = msg.name;
+            }
+          }
+          if (renamingAgentId !== msg.agentId) {
+            renderAgentsList();
+          }
+        }
+        break;
       case "contextUsage":
         setContextUsage(msg.used || 0, msg.max || contextMax);
         break;
       case "modelsUpdated":
         fillModels(msg.models, getSelectedModel() || msg.selectedModel);
+        break;
+      case "regenerateState":
+        if (msg.selectedModel) {
+          fillModels(models, msg.selectedModel);
+        }
+        setCanRegenerate(msg.canRegenerate);
+        ensureRegenerateButton();
+        break;
+      case "messagesReplaced":
+        if (msg.selectedModel) {
+          fillModels(models, msg.selectedModel);
+        }
+        setCanRegenerate(msg.canRegenerate);
+        renderMessages(msg.uiMessages || []);
+        break;
+      case "copied":
+        showCopyToast("Скопировано");
         break;
       case "append":
         appendMessage(msg.role, msg.text);
@@ -2557,6 +2966,7 @@
         }
         streamingEl = null;
         setBusy(false);
+        ensureRegenerateButton();
         break;
       case "idle":
         streamingEl = null;
