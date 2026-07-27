@@ -7,6 +7,8 @@ import type { ChatTool } from "./openaiClient";
 
 const execFileAsync = promisify(execFile);
 
+export const READONLY_TOOL_NAMES = new Set(["list_files", "read_file"]);
+
 export const agentTools: ChatTool[] = [
   {
     type: "function",
