@@ -1119,6 +1119,168 @@ body {
   flex: 1;
 }
 
+.mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% - 2px);
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0 0 6px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background, #fff));
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 1100;
+}
+
+.mention-menu[hidden] {
+  display: none !important;
+}
+
+.mention-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.9));
+}
+
+.mention-option {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention-option:hover,
+.mention-option.is-active {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.mention-option-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+.mention-option-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mention-option-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-option-path {
+  font-size: 11px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-mention {
+  display: inline;
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 16%, transparent);
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.msg-mention:hover {
+  background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 28%, transparent);
+  text-decoration: underline;
+}
+
+.composer-plus {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.composer-plus-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  min-width: 168px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--vscode-editorWidget-background, var(--vscode-input-background, #fff));
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+}
+
+.composer-plus-menu[hidden] {
+  display: none !important;
+}
+
+.composer-plus-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-plus-item:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.composer-plus-item.is-disabled,
+.composer-plus-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer-plus-item.is-disabled:hover,
+.composer-plus-item:disabled:hover {
+  background: transparent;
+}
+
+.composer-plus-item .material-symbols-outlined {
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+.composer-plus.is-open .icon-btn {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
 .composer-footer-right {
   display: flex;
   align-items: center;

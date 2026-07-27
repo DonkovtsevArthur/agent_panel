@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Agent Panel",
   "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.6.83",
+  "version": "0.6.86",
   "publisher": "local",
   "engines": {
     "vscode": "^1.85.0"
@@ -178,6 +178,10 @@
                 "type": "boolean",
                 "default": false,
                 "description": "Избранная модель — выше в селекторе чата"
+              },
+              "supportsVision": {
+                "type": "boolean",
+                "description": "Модель принимает изображения (vision). Если не задано — определяется по id"
               }
             }
           }

@@ -372,39 +372,46 @@ export async function attachmentsFromUris(
   return result;
 }
 
-export async function pickWorkspaceAttachments(): Promise<MessageAttachment[]> {
+export async function pickWorkspaceAttachments(options?: {
+  imagesOnly?: boolean;
+}): Promise<MessageAttachment[]> {
   const defaultUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+  const imagesOnly = Boolean(options?.imagesOnly);
   const uris = await vscode.window.showOpenDialog({
     canSelectMany: true,
     canSelectFiles: true,
     canSelectFolders: false,
     defaultUri,
-    openLabel: "Прикрепить",
-    filters: {
-      "Изображения и текст": [
-        "png",
-        "jpg",
-        "jpeg",
-        "gif",
-        "webp",
-        "bmp",
-        "txt",
-        "md",
-        "json",
-        "ts",
-        "tsx",
-        "js",
-        "jsx",
-        "css",
-        "html",
-        "py",
-        "go",
-        "rs",
-        "yml",
-        "yaml",
-      ],
-      "Все файлы": ["*"],
-    },
+    openLabel: imagesOnly ? "Прикрепить изображение" : "Прикрепить",
+    filters: imagesOnly
+      ? {
+          Изображения: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+        }
+      : {
+          "Изображения и текст": [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "webp",
+            "bmp",
+            "txt",
+            "md",
+            "json",
+            "ts",
+            "tsx",
+            "js",
+            "jsx",
+            "css",
+            "html",
+            "py",
+            "go",
+            "rs",
+            "yml",
+            "yaml",
+          ],
+          "Все файлы": ["*"],
+        },
   });
   if (!uris?.length) {
     return [];
@@ -515,8 +522,80 @@ async function fileTextExcerpt(
   }
 }
 
+const MENTION_RE = /@([^\s@]+)/g;
+
+/** Пути из `@path` в тексте сообщения. */
+export function extractMentionPaths(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = new RegExp(MENTION_RE.source, "g");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(text || "")))) {
+    const rel = match[1].replace(/^\.\//, "").replace(/^\/+/, "");
+    if (!rel || seen.has(rel)) {
+      continue;
+    }
+    seen.add(rel);
+    out.push(rel);
+  }
+  return out;
+}
+
+async function fileExistsInWorkspace(relPath: string): Promise<boolean> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) {
+    return false;
+  }
+  const uri = vscode.Uri.joinPath(folders[0].uri, relPath);
+  try {
+    const stat = await fs.stat(uri.fsPath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Превращает существующие `@path` в виртуальные вложения (без дублей).
+ */
+export async function attachmentsFromMentions(
+  userText: string,
+  existing: MessageAttachment[] | undefined
+): Promise<MessageAttachment[]> {
+  const list = existing || [];
+  const known = new Set(
+    list.map((a) => a.path).filter((p): p is string => Boolean(p))
+  );
+  const extra: MessageAttachment[] = [];
+
+  for (const rel of extractMentionPaths(userText)) {
+    if (known.has(rel)) {
+      continue;
+    }
+    if (!(await fileExistsInWorkspace(rel))) {
+      continue;
+    }
+    const name = path.basename(rel);
+    const mime = guessMime(name);
+    const kind: AttachmentKind = isImageAttachment(name, mime)
+      ? "image"
+      : "file";
+    extra.push({
+      id: newAttachmentId(),
+      kind,
+      name,
+      mime,
+      path: rel,
+    });
+    known.add(rel);
+  }
+
+  return extra;
+}
+
 /**
  * Собирает content для API: текст + файлы; картинки — multimodal parts.
+ * `@path` в тексте подтягивают содержимое файла (если есть в workspace).
  */
 export async function buildUserApiContent(
   userText: string,
@@ -524,7 +603,9 @@ export async function buildUserApiContent(
   storageUri: vscode.Uri | undefined
 ): Promise<string | ContentPart[]> {
   const text = String(userText || "").trim();
-  const list = attachments || [];
+  const baseList = attachments || [];
+  const mentionList = await attachmentsFromMentions(text, baseList);
+  const list = [...baseList, ...mentionList];
   if (!list.length) {
     return text;
   }

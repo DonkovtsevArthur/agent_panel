@@ -9,10 +9,17 @@ import {
   stripAttachmentPayload,
   stripUiAttachmentPayloads,
 } from "./attachments";
-import { getConfig, getContextWindow, getEnabledModels, resolveModelEndpoint } from "./config";
+import {
+  getConfig,
+  getContextWindow,
+  getEnabledModels,
+  resolveModelEndpoint,
+  resolveModelSupportsVision,
+} from "./config";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
+import { searchWorkspaceFiles } from "./fileMentions";
 import { hasUncommittedChanges } from "./gitStatus";
 import type { ChatMessage } from "./openaiClient";
 import {
@@ -47,6 +54,7 @@ type SettingsPayload = {
     maxOutputTokens?: number;
     enabled?: boolean;
     favorite?: boolean;
+    supportsVision?: boolean;
   }>;
   defaultModel: string;
   defaultContextWindow: number;
@@ -93,9 +101,10 @@ type WebviewToHost =
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
-  | { type: "pickAttachments" }
+  | { type: "pickAttachments"; imagesOnly?: boolean }
   | { type: "attachUris"; uris: string[] }
   | { type: "attachFiles"; files: IncomingAttachment[] }
+  | { type: "searchFiles"; query: string; requestId: string }
   | { type: "copyText"; text: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
@@ -381,15 +390,43 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  async pickAttachmentsFromUi(): Promise<void> {
+  private selectedModelSupportsVision(): boolean {
+    return resolveModelSupportsVision(this.selectedModel);
+  }
+
+  private filterAttachmentsForVision(
+    attachments: MessageAttachment[]
+  ): MessageAttachment[] {
+    if (this.selectedModelSupportsVision()) {
+      return attachments;
+    }
+    const kept = attachments.filter((a) => a.kind !== "image");
+    if (kept.length < attachments.length) {
+      void vscode.window.showWarningMessage(
+        "Текущая модель не поддерживает изображения. Картинки не прикреплены."
+      );
+    }
+    return kept;
+  }
+
+  async pickAttachmentsFromUi(options?: { imagesOnly?: boolean }): Promise<void> {
     try {
-      const picked = await pickWorkspaceAttachments();
-      if (picked.length) {
-        const persisted = await persistIncomingAttachments(
-          picked,
-          this.storageUri()
+      if (options?.imagesOnly && !this.selectedModelSupportsVision()) {
+        void vscode.window.showWarningMessage(
+          "Текущая модель не поддерживает изображения."
         );
-        await this.postAttachments(persisted);
+        return;
+      }
+      const picked = await pickWorkspaceAttachments({
+        imagesOnly: Boolean(options?.imagesOnly),
+      });
+      if (picked.length) {
+        const persisted = this.filterAttachmentsForVision(
+          await persistIncomingAttachments(picked, this.storageUri())
+        );
+        if (persisted.length) {
+          await this.postAttachments(persisted);
+        }
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
@@ -403,11 +440,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (!fromUris.length) {
         return;
       }
-      const persisted = await persistIncomingAttachments(
-        fromUris,
-        this.storageUri()
+      const persisted = this.filterAttachmentsForVision(
+        await persistIncomingAttachments(fromUris, this.storageUri())
       );
-      await this.postAttachments(persisted);
+      if (persisted.length) {
+        await this.postAttachments(persisted);
+      }
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(text);
@@ -722,30 +760,49 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         );
         break;
       case "pickAttachments":
-        await this.pickAttachmentsFromUi();
+        await this.pickAttachmentsFromUi({
+          imagesOnly: Boolean(message.imagesOnly),
+        });
         break;
-      case "attachUris":
+      case "searchFiles": {
+        const requestId = String(message.requestId || "");
+        const query = String(message.query || "");
         try {
-          const fromUris = await attachmentsFromUris(
-            Array.isArray(message.uris) ? message.uris : []
-          );
-          if (fromUris.length) {
-            const persisted = await persistIncomingAttachments(
-              fromUris,
-              this.storageUri()
-            );
-            await this.postAttachments(persisted);
-          }
-        } catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          void vscode.window.showErrorMessage(text);
+          const files = await searchWorkspaceFiles(query, 12);
+          this.view?.webview.postMessage({
+            type: "fileSearchResults",
+            requestId,
+            files,
+          });
+        } catch {
+          this.view?.webview.postMessage({
+            type: "fileSearchResults",
+            requestId,
+            files: [],
+          });
         }
+        break;
+      }
+      case "attachUris":
+        await this.attachUrisFromDrop(
+          (Array.isArray(message.uris) ? message.uris : [])
+            .map((u) => {
+              try {
+                return vscode.Uri.parse(String(u || ""));
+              } catch {
+                return undefined;
+              }
+            })
+            .filter((u): u is vscode.Uri => Boolean(u))
+        );
         break;
       case "attachFiles":
         try {
-          const persisted = await persistIncomingAttachments(
-            Array.isArray(message.files) ? message.files : [],
-            this.storageUri()
+          const persisted = this.filterAttachmentsForVision(
+            await persistIncomingAttachments(
+              Array.isArray(message.files) ? message.files : [],
+              this.storageUri()
+            )
           );
           if (persisted.length) {
             await this.postAttachments(persisted);
@@ -1031,6 +1088,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       enabledModels[0].id;
     this.selectedModel = chosen;
     this.saveSession();
+
+    if (!resolveModelSupportsVision(chosen)) {
+      const withoutImages = attachments.filter((a) => a.kind !== "image");
+      if (withoutImages.length < attachments.length) {
+        this.pushUi(
+          "error",
+          "Модель не поддерживает изображения — картинки из сообщения убраны."
+        );
+        attachments = withoutImages;
+        if (!trimmed && !attachments.length) {
+          this.view?.webview.postMessage({ type: "idle" });
+          return;
+        }
+      }
+    }
 
     const endpoint = resolveModelEndpoint(chosen);
     if (!endpoint.baseUrl) {
@@ -1380,6 +1452,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens: m.maxOutputTokens || undefined,
           enabled: m.enabled !== false,
           favorite: m.favorite === true,
+          supportsVision: resolveModelSupportsVision(m),
         })),
         defaultModel: config.defaultModel,
         defaultContextWindow: config.defaultContextWindow,
@@ -1472,6 +1545,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens?: number;
           enabled?: boolean;
           favorite?: boolean;
+          supportsVision?: boolean;
         } = {
           id,
           providerId,
@@ -1491,6 +1565,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (m?.favorite === true) {
           row.favorite = true;
         }
+        if (m?.supportsVision === true) {
+          row.supportsVision = true;
+        } else if (m?.supportsVision === false) {
+          row.supportsVision = false;
+        }
         return row;
       })
       .filter(
@@ -1504,6 +1583,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           maxOutputTokens?: number;
           enabled?: boolean;
           favorite?: boolean;
+          supportsVision?: boolean;
         } => Boolean(m)
       );
 
@@ -1782,6 +1862,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               <input id="modelEditOutput" class="settings-input" type="number" min="1" step="1024" placeholder="max_output" />
             </label>
           </div>
+          <label class="settings-field settings-check">
+            <input id="modelEditVision" type="checkbox" />
+            <span class="settings-label">Поддерживает изображения (vision)</span>
+          </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
           <label class="settings-field">
@@ -1846,17 +1930,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     </div>
     <div id="messages"></div>
     <div class="composer-wrap" id="composerWrap">
+      <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
       <div class="composer" id="composer">
         <div id="attachPreview" class="attach-preview" hidden></div>
-        <textarea id="prompt" placeholder="Задача для агента..." rows="3"></textarea>
+        <textarea id="prompt" placeholder="Задача для агента... (@ — файл)" rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
-            <button class="icon-btn" id="attachBtn" title="Прикрепить файл" aria-label="Прикрепить файл">
-              <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
-            </button>
-            <button class="icon-btn" id="newChatBtn" title="Новый агент" aria-label="Новый агент">
-              <span class="material-symbols-outlined" aria-hidden="true">add</span>
-            </button>
+            <div class="composer-plus" id="composerPlus">
+              <button type="button" class="icon-btn" id="composerPlusBtn" title="Добавить" aria-label="Добавить" aria-haspopup="menu" aria-expanded="false">
+                <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              </button>
+              <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
+                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
+                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
+                  <span>Изображение</span>
+                </button>
+              </div>
+            </div>
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">
                 <span class="model-label" id="modelLabel">Модель</span>
