@@ -29,12 +29,19 @@ export interface ChatSession {
   archivedAt?: number;
   /** Последний известный расход контекста (токены). */
   contextTokens?: number;
+  /** Чат, от которого ответвились. */
+  parentChatId?: string;
+  /** Индекс ui-сообщения в родителе, от которого создана ветка. */
+  branchedFromUiIndex?: number;
 }
 
 export interface AgentRecord {
   id: string;
   name: string;
+  /** Активный чат агента (текущая ветка). */
   chatId: string;
+  /** Все чаты/ветки агента (включая chatId). */
+  chatIds: string[];
   updatedAt: number;
   /** Если задано — агент в архиве и скрыт из основного списка */
   archivedAt?: number;
@@ -133,6 +140,38 @@ function createEmptyChat(selectedModel = ""): ChatSession {
   };
 }
 
+export function getAgentChatIds(agent: AgentRecord): string[] {
+  const fromList = Array.isArray(agent.chatIds) ? agent.chatIds : [];
+  const ids = fromList.length
+    ? fromList
+    : agent.chatId
+      ? [agent.chatId]
+      : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    out.push(id);
+  }
+  if (agent.chatId && !seen.has(agent.chatId)) {
+    out.unshift(agent.chatId);
+  }
+  return out;
+}
+
+export function findAgentByChatId(
+  store: AgentsStoreV2,
+  chatId: string
+): AgentRecord | undefined {
+  if (!chatId) {
+    return undefined;
+  }
+  return store.agents.find((a) => getAgentChatIds(a).includes(chatId));
+}
+
 export function createEmptyAgent(selectedModel = ""): {
   agent: AgentRecord;
   chat: ChatSession;
@@ -144,6 +183,7 @@ export function createEmptyAgent(selectedModel = ""): {
       id: uid("agent"),
       name: "Новый агент",
       chatId: chat.id,
+      chatIds: [chat.id],
       updatedAt: now,
     },
     chat,
@@ -165,7 +205,7 @@ function uniqueAgentId(id: string, used: Set<string>): string {
 }
 
 function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
-  return {
+  const next: ChatSession = {
     ...chat,
     title: chat.title || titleFromMessages(chat.uiMessages || []),
     selectedModel: chat.selectedModel || fallbackModel,
@@ -173,9 +213,16 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
     uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
     updatedAt: chat.updatedAt || Date.now(),
   };
+  if (chat.parentChatId) {
+    next.parentChatId = chat.parentChatId;
+  }
+  if (typeof chat.branchedFromUiIndex === "number") {
+    next.branchedFromUiIndex = chat.branchedFromUiIndex;
+  }
+  return next;
 }
 
-function flattenAgents(
+function normalizeAgents(
   rawAgents: LegacyAgentRecord[],
   chats: Record<string, ChatSession>,
   activeAgentId: string,
@@ -187,43 +234,45 @@ function flattenAgents(
   let nextActiveAgentId = activeAgentId;
 
   for (const rawAgent of rawAgents) {
-    const chatIds = Array.isArray(rawAgent.chatIds)
+    const rawIds = Array.isArray(rawAgent.chatIds)
       ? rawAgent.chatIds
       : rawAgent.chatId
         ? [rawAgent.chatId]
         : [];
-    const existingChatIds = chatIds.filter((chatId) => {
+    const chatIds = rawIds.filter((chatId) => {
       if (!chats[chatId]) {
         return false;
       }
       referencedChatIds.add(chatId);
       return true;
     });
+    if (!chatIds.length) {
+      continue;
+    }
 
-    existingChatIds.forEach((chatId, index) => {
-      const chat = chats[chatId];
-      const single = existingChatIds.length === 1;
-      const baseName = rawAgent.name || "Новый агент";
-      const name =
-        single || index === 0
-          ? baseName
-          : isMeaningfulTitle(chat.title)
-            ? chat.title
-            : baseName;
-      const id =
-        single || index === 0
-          ? uniqueAgentId(rawAgent.id || "", used)
-          : uniqueAgentId(`${rawAgent.id || "agent"}_${chatId}`, used);
-      if (rawAgent.id === activeAgentId && chatId === activeChatId) {
-        nextActiveAgentId = id;
+    const id = uniqueAgentId(rawAgent.id || "", used);
+    let chatId =
+      rawAgent.chatId && chatIds.includes(rawAgent.chatId)
+        ? rawAgent.chatId
+        : chatIds[0];
+    if (rawAgent.id === activeAgentId) {
+      nextActiveAgentId = id;
+      if (chatIds.includes(activeChatId)) {
+        chatId = activeChatId;
       }
-      agents.push({
-        id,
-        name: name || "Новый агент",
-        chatId,
-        updatedAt: Math.max(rawAgent.updatedAt || 0, chat.updatedAt || 0),
-        archivedAt: rawAgent.archivedAt || chat.archivedAt,
-      });
+    }
+
+    const latestChatUpdated = Math.max(
+      ...chatIds.map((cid) => chats[cid]?.updatedAt || 0),
+      0
+    );
+    agents.push({
+      id,
+      name: rawAgent.name || "Новый агент",
+      chatId,
+      chatIds,
+      updatedAt: Math.max(rawAgent.updatedAt || 0, latestChatUpdated),
+      archivedAt: rawAgent.archivedAt,
     });
   }
 
@@ -239,6 +288,7 @@ function flattenAgents(
       id,
       name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
       chatId,
+      chatIds: [chatId],
       updatedAt: chat.updatedAt || Date.now(),
       archivedAt: chat.archivedAt,
     });
@@ -262,7 +312,7 @@ export function migrateToStoreV2(
         normalizeChat(chat as ChatSession, fallbackModel),
       ])
     );
-    const flattened = flattenAgents(
+    const normalized = normalizeAgents(
       store.agents as LegacyAgentRecord[],
       chats,
       store.activeAgentId || "",
@@ -270,9 +320,9 @@ export function migrateToStoreV2(
     );
     return {
       version: 2,
-      agents: flattened.agents,
+      agents: normalized.agents,
       chats,
-      activeAgentId: flattened.activeAgentId || flattened.agents[0]?.id || "",
+      activeAgentId: normalized.activeAgentId || normalized.agents[0]?.id || "",
       activeChatId: store.activeChatId || "",
       screen:
         store.screen === "chat"
@@ -299,6 +349,7 @@ export function migrateToStoreV2(
       id: uid("agent"),
       name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
       chatId: chat.id,
+      chatIds: [chat.id],
       updatedAt: chat.updatedAt,
     };
     return {
@@ -344,15 +395,24 @@ export function touchChat(
     ...patch,
     updatedAt: Date.now(),
   };
-  if (Array.isArray(next.uiMessages) && next.uiMessages.length) {
+  // Ветки держат своё имя («Ветка N»); не перетирать первым сообщением — у форков оно одинаковое.
+  if (
+    !next.parentChatId &&
+    Array.isArray(next.uiMessages) &&
+    next.uiMessages.length
+  ) {
     next.title = titleFromMessages(next.uiMessages);
   }
   store.chats[chatId] = next;
 
-  const agent = store.agents.find((a) => a.chatId === chatId);
+  const agent = findAgentByChatId(store, chatId);
   if (agent) {
     agent.updatedAt = next.updatedAt;
-    if (isDefaultTitle(agent.name) && isMeaningfulTitle(next.title)) {
+    if (
+      !next.parentChatId &&
+      isDefaultTitle(agent.name) &&
+      isMeaningfulTitle(next.title)
+    ) {
       agent.name = next.title;
     }
   }
@@ -403,18 +463,26 @@ function pickFallbackActive(store: AgentsStoreV2): void {
 export function ensureActiveVisible(store: AgentsStoreV2): void {
   const agent = store.agents.find((a) => a.id === store.activeAgentId);
   const chat = store.chats[store.activeChatId];
+  const ids = agent ? getAgentChatIds(agent) : [];
   if (
     !agent ||
     agent.archivedAt ||
     !chat ||
     chat.archivedAt ||
-    agent.chatId !== chat.id
+    !ids.includes(store.activeChatId)
   ) {
     pickFallbackActive(store);
+    return;
+  }
+  if (agent.chatId !== store.activeChatId) {
+    agent.chatId = store.activeChatId;
+  }
+  if (!Array.isArray(agent.chatIds) || !agent.chatIds.length) {
+    agent.chatIds = ids;
   }
 }
 
-/** Архивирует агента и его единственный чат. */
+/** Архивирует агента и все его чаты/ветки. */
 export function archiveAgentInStore(
   store: AgentsStoreV2,
   agentId: string
@@ -427,10 +495,12 @@ export function archiveAgentInStore(
   const now = Date.now();
   agent.archivedAt = now;
   agent.updatedAt = now;
-  const chat = store.chats[agent.chatId];
-  if (chat && !chat.archivedAt) {
-    chat.archivedAt = now;
-    chat.updatedAt = now;
+  for (const chatId of getAgentChatIds(agent)) {
+    const chat = store.chats[chatId];
+    if (chat && !chat.archivedAt) {
+      chat.archivedAt = now;
+      chat.updatedAt = now;
+    }
   }
 
   if (store.activeAgentId === agentId) {
@@ -465,25 +535,36 @@ export function buildArchiveList(store: AgentsStoreV2): ArchiveAgentItem[] {
     });
 }
 
-/** Восстанавливает агента и его единственный чат из архива. */
+/** Восстанавливает агента и все его чаты/ветки из архива. */
 export function restoreAgentInStore(
   store: AgentsStoreV2,
   agentId: string
 ): boolean {
   const agent = store.agents.find((a) => a.id === agentId);
-  const chat = agent ? store.chats[agent.chatId] : undefined;
-  if (!agent || !chat || (!agent.archivedAt && !chat.archivedAt)) {
+  if (!agent) {
+    return false;
+  }
+  const chatIds = getAgentChatIds(agent);
+  const chats = chatIds
+    .map((id) => store.chats[id])
+    .filter((c): c is ChatSession => Boolean(c));
+  if (!chats.length) {
+    return false;
+  }
+  if (!agent.archivedAt && chats.every((c) => !c.archivedAt)) {
     return false;
   }
   const now = Date.now();
   agent.archivedAt = undefined;
   agent.updatedAt = now;
-  chat.archivedAt = undefined;
-  chat.updatedAt = now;
+  for (const chat of chats) {
+    chat.archivedAt = undefined;
+    chat.updatedAt = now;
+  }
   return true;
 }
 
-/** Безвозвратно удаляет агента и его чат. */
+/** Безвозвратно удаляет агента и все его чаты/ветки. */
 export function deleteAgentFromStore(
   store: AgentsStoreV2,
   agentId: string
@@ -492,7 +573,9 @@ export function deleteAgentFromStore(
   if (!agent) {
     return false;
   }
-  delete store.chats[agent.chatId];
+  for (const chatId of getAgentChatIds(agent)) {
+    delete store.chats[chatId];
+  }
   store.agents = store.agents.filter((a) => a.id !== agentId);
   if (store.activeAgentId === agentId) {
     pickFallbackActive(store);
@@ -524,6 +607,255 @@ export function formatListTime(ts: number): string {
     return "вчера";
   }
   return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+}
+
+export interface ChatBranchItem {
+  id: string;
+  label: string;
+  active: boolean;
+  canDelete: boolean;
+  parentChatId?: string;
+}
+
+function cloneUiMessage(msg: UiMessage): UiMessage {
+  const next: UiMessage = { role: msg.role, text: msg.text };
+  if (msg.attachments?.length) {
+    next.attachments = msg.attachments.map((a) => ({ ...a }));
+  }
+  return next;
+}
+
+function cloneHistoryMessage(msg: ChatMessage): ChatMessage {
+  const next: ChatMessage = { ...msg };
+  if (msg.attachments?.length) {
+    next.attachments = msg.attachments.map((a) => ({ ...a }));
+  }
+  if (Array.isArray(msg.tool_calls)) {
+    next.tool_calls = msg.tool_calls.map((t) => ({
+      ...t,
+      function: { ...t.function },
+    }));
+  }
+  return next;
+}
+
+/** Префикс истории/UI до сообщения включительно — для новой ветки. */
+export function historyPrefixForBranch(
+  history: ChatMessage[],
+  uiMessages: UiMessage[],
+  endInclusive: number
+): { history: ChatMessage[]; uiMessages: UiMessage[] } | undefined {
+  if (
+    !Number.isInteger(endInclusive) ||
+    endInclusive < 0 ||
+    endInclusive >= uiMessages.length
+  ) {
+    return undefined;
+  }
+  const target = uiMessages[endInclusive];
+  if (!target || (target.role !== "user" && target.role !== "assistant")) {
+    return undefined;
+  }
+  if (target.role === "assistant" && !String(target.text || "").trim()) {
+    return undefined;
+  }
+
+  const uiSlice = uiMessages.slice(0, endInclusive + 1).map(cloneUiMessage);
+  let users = 0;
+  let lastPairRole: "user" | "assistant" | null = null;
+  for (const m of uiSlice) {
+    if (m.role === "user") {
+      users += 1;
+      lastPairRole = "user";
+    } else if (m.role === "assistant" && String(m.text || "").trim()) {
+      lastPairRole = "assistant";
+    }
+  }
+  if (users === 0) {
+    return undefined;
+  }
+  const histLen =
+    lastPairRole === "assistant" ? users * 2 : Math.max(0, users * 2 - 1);
+  return {
+    history: history
+      .slice(0, Math.min(histLen, history.length))
+      .map(cloneHistoryMessage),
+    uiMessages: uiSlice,
+  };
+}
+
+export function buildBranchesList(
+  store: AgentsStoreV2,
+  agentId: string
+): ChatBranchItem[] {
+  const agent = store.agents.find((a) => a.id === agentId);
+  if (!agent) {
+    return [];
+  }
+  const agentName = String(agent.name || "").trim() || "Агент";
+  const ids = getAgentChatIds(agent);
+  const canDelete =
+    ids.filter((id) => {
+      const chat = store.chats[id];
+      return Boolean(chat) && !chat.archivedAt;
+    }).length > 1;
+  return ids
+    .map((id, index) => {
+      const chat = store.chats[id];
+      if (!chat || chat.archivedAt) {
+        return null;
+      }
+      // Корень — «Основная»; форки — «Имя агента · 2», «· 3», …
+      const label =
+        index === 0 ? "Основная" : `${agentName} · ${index + 1}`;
+      const item: ChatBranchItem = {
+        id,
+        label,
+        active: id === store.activeChatId,
+        canDelete,
+      };
+      if (chat.parentChatId) {
+        item.parentChatId = chat.parentChatId;
+      }
+      return item;
+    })
+    .filter((b): b is ChatBranchItem => Boolean(b));
+}
+
+/**
+ * Создаёт ветку от сообщения: копия префикса диалога, исходный чат не трогается.
+ */
+export function branchChatFromMessage(
+  store: AgentsStoreV2,
+  agentId: string,
+  fromChatId: string,
+  uiIndex: number,
+  sourceHistory: ChatMessage[],
+  sourceUi: UiMessage[]
+): ChatSession | undefined {
+  const agent = store.agents.find((a) => a.id === agentId);
+  if (!agent || agent.archivedAt) {
+    return undefined;
+  }
+  const ids = getAgentChatIds(agent);
+  if (!ids.includes(fromChatId)) {
+    return undefined;
+  }
+  const source = store.chats[fromChatId];
+  if (!source || source.archivedAt) {
+    return undefined;
+  }
+
+  const prefix = historyPrefixForBranch(sourceHistory, sourceUi, uiIndex);
+  if (!prefix || !prefix.uiMessages.length) {
+    return undefined;
+  }
+
+  const now = Date.now();
+  const agentName = String(agent.name || "").trim() || "Агент";
+  const branchIndex = ids.length + 1;
+  const chat: ChatSession = {
+    id: uid("chat"),
+    title: `${agentName} · ${branchIndex}`,
+    selectedModel: source.selectedModel || "",
+    history: prefix.history,
+    uiMessages: prefix.uiMessages,
+    updatedAt: now,
+    parentChatId: fromChatId,
+    branchedFromUiIndex: uiIndex,
+    contextTokens: source.contextTokens,
+  };
+  if (source.lastTurnModel) {
+    chat.lastTurnModel = source.lastTurnModel;
+  }
+
+  store.chats[chat.id] = chat;
+  agent.chatIds = [...ids, chat.id];
+  agent.chatId = chat.id;
+  agent.updatedAt = now;
+  store.activeAgentId = agentId;
+  store.activeChatId = chat.id;
+  return chat;
+}
+
+export function switchAgentBranch(
+  store: AgentsStoreV2,
+  agentId: string,
+  chatId: string
+): boolean {
+  const agent = store.agents.find((a) => a.id === agentId);
+  if (!agent || agent.archivedAt) {
+    return false;
+  }
+  const ids = getAgentChatIds(agent);
+  if (!ids.includes(chatId)) {
+    return false;
+  }
+  const chat = store.chats[chatId];
+  if (!chat || chat.archivedAt) {
+    return false;
+  }
+  agent.chatId = chatId;
+  agent.chatIds = ids;
+  agent.updatedAt = Date.now();
+  store.activeAgentId = agentId;
+  store.activeChatId = chatId;
+  return true;
+}
+
+/** Удаляет ветку. Последнюю ветку агента удалить нельзя. */
+export function deleteAgentBranch(
+  store: AgentsStoreV2,
+  agentId: string,
+  chatId: string
+): boolean {
+  const agent = store.agents.find((a) => a.id === agentId);
+  if (!agent || agent.archivedAt) {
+    return false;
+  }
+  const ids = getAgentChatIds(agent);
+  if (!ids.includes(chatId) || ids.length < 2) {
+    return false;
+  }
+  const chat = store.chats[chatId];
+  if (!chat) {
+    return false;
+  }
+
+  const remaining = ids.filter((id) => id !== chatId);
+  delete store.chats[chatId];
+
+  // Перенаправить дочерние ветки на родителя удалённой (или на первую оставшуюся).
+  const fallbackParent = chat.parentChatId && remaining.includes(chat.parentChatId)
+    ? chat.parentChatId
+    : remaining[0];
+  for (const id of remaining) {
+    const child = store.chats[id];
+    if (child?.parentChatId === chatId) {
+      if (fallbackParent && fallbackParent !== id) {
+        child.parentChatId = fallbackParent;
+      } else {
+        delete child.parentChatId;
+        delete child.branchedFromUiIndex;
+      }
+    }
+  }
+
+  const nextActive =
+    store.activeChatId === chatId || agent.chatId === chatId
+      ? chat.parentChatId && remaining.includes(chat.parentChatId)
+        ? chat.parentChatId
+        : remaining[0]
+      : store.activeChatId && remaining.includes(store.activeChatId)
+        ? store.activeChatId
+        : remaining[0];
+
+  agent.chatIds = remaining;
+  agent.chatId = nextActive;
+  agent.updatedAt = Date.now();
+  store.activeAgentId = agentId;
+  store.activeChatId = nextActive;
+  return true;
 }
 
 export type ChatSearchScope = "current" | "all";
@@ -626,38 +958,40 @@ export function searchChatMessages(
     if (agent.archivedAt) {
       continue;
     }
-    const chat = store.chats[agent.chatId];
-    if (!chat || chat.archivedAt) {
-      continue;
-    }
-    if (typeof sinceMs === "number" && chat.updatedAt < sinceMs) {
-      continue;
-    }
+    for (const chatId of getAgentChatIds(agent)) {
+      const chat = store.chats[chatId];
+      if (!chat || chat.archivedAt) {
+        continue;
+      }
+      if (typeof sinceMs === "number" && chat.updatedAt < sinceMs) {
+        continue;
+      }
 
-    const messages = Array.isArray(chat.uiMessages) ? chat.uiMessages : [];
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg || (msg.role !== "user" && msg.role !== "assistant")) {
-        continue;
-      }
-      if (roleFilter !== "all" && msg.role !== roleFilter) {
-        continue;
-      }
-      const text = String(msg.text || "");
-      if (!text.toLowerCase().includes(qLower)) {
-        continue;
-      }
-      hits.push({
-        agentId: agent.id,
-        agentName: agent.name || "Агент",
-        chatId: chat.id,
-        messageIndex: i,
-        role: msg.role,
-        snippet: makeSearchSnippet(text, query),
-        updatedAt: chat.updatedAt,
-      });
-      if (hits.length >= limit) {
-        return hits;
+      const messages = Array.isArray(chat.uiMessages) ? chat.uiMessages : [];
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        if (!msg || (msg.role !== "user" && msg.role !== "assistant")) {
+          continue;
+        }
+        if (roleFilter !== "all" && msg.role !== roleFilter) {
+          continue;
+        }
+        const text = String(msg.text || "");
+        if (!text.toLowerCase().includes(qLower)) {
+          continue;
+        }
+        hits.push({
+          agentId: agent.id,
+          agentName: agent.name || "Агент",
+          chatId: chat.id,
+          messageIndex: i,
+          role: msg.role,
+          snippet: makeSearchSnippet(text, query),
+          updatedAt: chat.updatedAt,
+        });
+        if (hits.length >= limit) {
+          return hits;
+        }
       }
     }
   }

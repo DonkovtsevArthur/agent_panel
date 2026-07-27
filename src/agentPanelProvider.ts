@@ -41,10 +41,15 @@ import {
   ensureActiveVisible,
   formatListTime,
   getActiveChat,
+  getAgentChatIds,
   migrateToStoreV2,
   restoreAgentInStore,
   searchChatMessages,
+  switchAgentBranch,
   touchChat,
+  branchChatFromMessage,
+  buildBranchesList,
+  deleteAgentBranch,
   type ChatSearchDate,
   type ChatSearchRole,
   type ChatSearchScope,
@@ -128,8 +133,11 @@ type WebviewToHost =
       role?: ChatSearchRole;
       date?: ChatSearchDate;
     }
-  | { type: "openSearchHit"; agentId: string; messageIndex: number }
-  | { type: "copyText"; text: string };
+  | { type: "openSearchHit"; agentId: string; messageIndex: number; chatId?: string }
+  | { type: "copyText"; text: string }
+  | { type: "branchFromMessage"; messageIndex: number }
+  | { type: "switchBranch"; chatId: string }
+  | { type: "deleteBranch"; chatId: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -676,6 +684,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         "";
     }
     const agent = this.store.agents.find((a) => a.id === this.store.activeAgentId);
+    const branches = agent ? buildBranchesList(this.store, agent.id) : [];
     const payload: Record<string, unknown> = {
       type: "showChat",
       models,
@@ -685,6 +694,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       agentId: agent?.id || "",
       agentName: agent?.name || "Агент",
       chatTitle: agent?.name || "Агент",
+      chatId: this.store.activeChatId || "",
+      branches,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
     };
@@ -843,12 +854,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "openSearchHit": {
         const agentId = String(message.agentId || "");
         const messageIndex = Number(message.messageIndex);
+        const chatId = String(message.chatId || "");
         if (!agentId || !Number.isInteger(messageIndex) || messageIndex < 0) {
           break;
         }
-        this.openAgent(agentId, messageIndex);
+        this.openAgent(agentId, messageIndex, chatId || undefined);
         break;
       }
+      case "branchFromMessage":
+        this.branchFromMessage(Number(message.messageIndex));
+        break;
+      case "switchBranch":
+        this.switchBranch(String(message.chatId || ""));
+        break;
+      case "deleteBranch":
+        void this.deleteBranch(String(message.chatId || ""));
+        break;
       case "attachUris":
         await this.attachUrisFromDrop(
           (Array.isArray(message.uris) ? message.uris : [])
@@ -912,24 +933,35 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private openAgent(agentId: string, highlightMessageIndex?: number): void {
+  private openAgent(
+    agentId: string,
+    highlightMessageIndex?: number,
+    chatId?: string
+  ): void {
     this.abort?.abort();
     this.abort = undefined;
     this.persistActiveChat();
 
     const agent = this.store.agents.find((a) => a.id === agentId);
-    const chat = agent ? this.store.chats[agent.chatId] : undefined;
-    if (
-      !agent ||
-      !chat ||
-      agent.archivedAt ||
-      chat.archivedAt
-    ) {
+    if (!agent || agent.archivedAt) {
+      return;
+    }
+    const ids = getAgentChatIds(agent);
+    const wantedChatId =
+      chatId && ids.includes(chatId)
+        ? chatId
+        : ids.includes(agent.chatId)
+          ? agent.chatId
+          : ids[0];
+    const chat = wantedChatId ? this.store.chats[wantedChatId] : undefined;
+    if (!chat || chat.archivedAt) {
       return;
     }
 
+    agent.chatId = chat.id;
+    agent.chatIds = ids;
     this.store.activeAgentId = agentId;
-    this.store.activeChatId = agent.chatId;
+    this.store.activeChatId = chat.id;
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -939,6 +971,100 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? (highlightMessageIndex as number)
         : undefined
     );
+  }
+
+  private branchFromMessage(messageIndex: number): void {
+    if (this.abort) {
+      void vscode.window.showWarningMessage(
+        "Дождитесь окончания ответа, затем создайте ветку."
+      );
+      return;
+    }
+    const agentId = this.store.activeAgentId;
+    const fromChatId = this.store.activeChatId;
+    if (!agentId || !fromChatId) {
+      return;
+    }
+
+    this.persistActiveChat();
+    const created = branchChatFromMessage(
+      this.store,
+      agentId,
+      fromChatId,
+      messageIndex,
+      this.history,
+      this.uiMessages
+    );
+    if (!created) {
+      void vscode.window.showWarningMessage(
+        "Нельзя ответвить от этого сообщения."
+      );
+      return;
+    }
+
+    this.setScreen("chat");
+    this.hydrateActiveChat();
+    this.saveStore();
+    void this.postChatScreen();
+  }
+
+  private switchBranch(chatId: string): void {
+    if (!chatId) {
+      return;
+    }
+    if (chatId === this.store.activeChatId) {
+      return;
+    }
+    this.abort?.abort();
+    this.abort = undefined;
+    this.persistActiveChat();
+    if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
+      return;
+    }
+    this.setScreen("chat");
+    this.hydrateActiveChat();
+    this.saveStore();
+    void this.postChatScreen();
+  }
+
+  private async deleteBranch(chatId: string): Promise<void> {
+    if (!chatId) {
+      return;
+    }
+    const agent = this.store.agents.find(
+      (a) => a.id === this.store.activeAgentId
+    );
+    if (!agent) {
+      return;
+    }
+    const branches = buildBranchesList(this.store, agent.id);
+    const target = branches.find((b) => b.id === chatId);
+    if (!target || !target.canDelete) {
+      return;
+    }
+
+    const answer = await vscode.window.showWarningMessage(
+      `Удалить ветку «${target.label}»?`,
+      {
+        modal: true,
+        detail: "История этой ветки будет удалена без восстановления.",
+      },
+      "Удалить"
+    );
+    if (answer !== "Удалить") {
+      return;
+    }
+
+    this.abort?.abort();
+    this.abort = undefined;
+    this.persistActiveChat();
+    if (!deleteAgentBranch(this.store, agent.id, chatId)) {
+      return;
+    }
+    this.setScreen("chat");
+    this.hydrateActiveChat();
+    this.saveStore();
+    void this.postChatScreen();
   }
 
   private async createAgent(): Promise<void> {
@@ -1020,8 +1146,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!agent) {
       return;
     }
-    const chat = this.store.chats[agent.chatId];
-    const empty = !chatHasMessages(chat?.uiMessages);
+    const empty = getAgentChatIds(agent).every(
+      (id) => !chatHasMessages(this.store.chats[id]?.uiMessages)
+    );
     const answer = await vscode.window.showWarningMessage(
       empty
         ? `Удалить пустого агента «${agent.name}»?`
@@ -2132,6 +2259,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <span class="material-symbols-outlined" aria-hidden="true">search</span>
       </button>
     </div>
+    <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Ветки диалога"></div>
     <div id="chatSearchPanel" class="chat-search-panel" hidden>
       <div class="chat-search-bar">
         <input
