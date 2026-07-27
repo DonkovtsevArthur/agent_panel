@@ -3,7 +3,7 @@ description: Сборка в VS Code и хранение агентов по wor
 alwaysApply: true
 ---
 
-# Agent Panel: сборка и хранение
+# Гавань агентов / Harbor Agents: сборка и хранение
 
 ## Куда ставить расширение
 

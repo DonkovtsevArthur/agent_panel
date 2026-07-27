@@ -13,6 +13,8 @@ import {
   getConfig,
   getContextWindow,
   getEnabledModels,
+  getModeById,
+  getResolvedModes,
   resolveModelEndpoint,
   resolveModelSupportsVision,
 } from "./config";
@@ -21,6 +23,11 @@ import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
 import { searchWorkspaceFiles } from "./fileMentions";
 import { hasUncommittedChanges } from "./gitStatus";
+import {
+  modeThinkingLabel,
+  parseCustomModes,
+  type AgentModeDef,
+} from "./modes";
 import type { ChatMessage } from "./openaiClient";
 import {
   AgentsStoreV2,
@@ -36,7 +43,11 @@ import {
   getActiveChat,
   migrateToStoreV2,
   restoreAgentInStore,
+  searchChatMessages,
   touchChat,
+  type ChatSearchDate,
+  type ChatSearchRole,
+  type ChatSearchScope,
 } from "./sessionStore";
 
 type SettingsPayload = {
@@ -66,6 +77,7 @@ type SettingsPayload = {
   maxToolRounds: number;
   maxTokens: number;
   maxResponseChars: number;
+  modes: AgentModeDef[];
 };
 
 type WebviewToHost =
@@ -74,14 +86,16 @@ type WebviewToHost =
       type: "send";
       text: string;
       model: string;
+      agentMode?: string;
       attachments?: IncomingAttachment[];
     }
-  | { type: "regenerate" }
+  | { type: "regenerate"; agentMode?: string }
   | {
       type: "editUserMessage";
       index: number;
       text: string;
       model: string;
+      agentMode?: string;
       attachments?: IncomingAttachment[];
     }
   | { type: "stop" }
@@ -92,6 +106,7 @@ type WebviewToHost =
   | { type: "showArchive" }
   | { type: "showSettings" }
   | { type: "saveSettings"; settings: SettingsPayload }
+  | { type: "saveModes"; modes: SettingsPayload["modes"] }
   | { type: "renameAgent"; agentId: string; name: string }
   | { type: "archiveAgent"; agentId: string }
   | { type: "restoreAgent"; agentId: string }
@@ -105,6 +120,15 @@ type WebviewToHost =
   | { type: "attachUris"; uris: string[] }
   | { type: "attachFiles"; files: IncomingAttachment[] }
   | { type: "searchFiles"; query: string; requestId: string }
+  | {
+      type: "searchChat";
+      query: string;
+      requestId: string;
+      scope?: ChatSearchScope;
+      role?: ChatSearchRole;
+      date?: ChatSearchDate;
+    }
+  | { type: "openSearchHit"; agentId: string; messageIndex: number }
   | { type: "copyText"; text: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
@@ -642,7 +666,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async postChatScreen(): Promise<void> {
+  private async postChatScreen(highlightMessageIndex?: number): Promise<void> {
     const config = getConfig();
     const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
@@ -652,7 +676,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         "";
     }
     const agent = this.store.agents.find((a) => a.id === this.store.activeAgentId);
-    this.view?.webview.postMessage({
+    const payload: Record<string, unknown> = {
       type: "showChat",
       models,
       selectedModel: this.selectedModel,
@@ -663,7 +687,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       chatTitle: agent?.name || "Агент",
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
-    });
+    };
+    if (
+      typeof highlightMessageIndex === "number" &&
+      Number.isInteger(highlightMessageIndex) &&
+      highlightMessageIndex >= 0
+    ) {
+      payload.highlightMessageIndex = highlightMessageIndex;
+    }
+    this.view?.webview.postMessage(payload);
     this.scheduleScmRefresh();
   }
 
@@ -714,6 +746,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "saveSettings":
         await this.saveSettings(message.settings);
         break;
+      case "saveModes":
+        await this.saveModes(message.modes);
+        break;
       case "openAgent":
         this.openAgent(message.agentId);
         break;
@@ -749,14 +784,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({ type: "stopped" });
         break;
       case "regenerate":
-        await this.handleRegenerate();
+        await this.handleRegenerate(getModeById(message.agentMode).id);
         break;
       case "editUserMessage":
         await this.handleEditUserMessage(
           Number(message.index),
           String(message.text || ""),
           String(message.model || ""),
-          message.attachments
+          message.attachments,
+          getModeById(message.agentMode).id
         );
         break;
       case "pickAttachments":
@@ -781,6 +817,36 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             files: [],
           });
         }
+        break;
+      }
+      case "searchChat": {
+        const requestId = String(message.requestId || "");
+        this.persistActiveChat();
+        const hits = searchChatMessages(this.store, {
+          query: String(message.query || ""),
+          scope: message.scope,
+          role: message.role,
+          date: message.date,
+          activeAgentId: this.store.activeAgentId,
+          limit: 50,
+        }).map((hit) => ({
+          ...hit,
+          time: formatListTime(hit.updatedAt),
+        }));
+        this.view?.webview.postMessage({
+          type: "chatSearchResults",
+          requestId,
+          hits,
+        });
+        break;
+      }
+      case "openSearchHit": {
+        const agentId = String(message.agentId || "");
+        const messageIndex = Number(message.messageIndex);
+        if (!agentId || !Number.isInteger(messageIndex) || messageIndex < 0) {
+          break;
+        }
+        this.openAgent(agentId, messageIndex);
         break;
       }
       case "attachUris":
@@ -840,12 +906,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "send":
         await this.handleSend(message.text, message.model, {
           attachments: message.attachments,
+          agentMode: getModeById(message.agentMode).id,
         });
         break;
     }
   }
 
-  private openAgent(agentId: string): void {
+  private openAgent(agentId: string, highlightMessageIndex?: number): void {
     this.abort?.abort();
     this.abort = undefined;
     this.persistActiveChat();
@@ -866,7 +933,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
-    this.postChatScreen();
+    void this.postChatScreen(
+      Number.isInteger(highlightMessageIndex) &&
+        (highlightMessageIndex as number) >= 0
+        ? (highlightMessageIndex as number)
+        : undefined
+    );
   }
 
   private async createAgent(): Promise<void> {
@@ -988,7 +1060,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const models = getEnabledModels();
     if (!models.length) {
       void vscode.window.showWarningMessage(
-        "Нет включённых моделей. Включите модели в настройках Agent Panel."
+        "Нет включённых моделей. Включите модели в настройках «Гавань агентов»."
       );
       return;
     }
@@ -1042,14 +1114,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async handleSend(
     text: string,
     model: string,
-    options?: { appendUser?: boolean; attachments?: IncomingAttachment[] }
+    options?: {
+      appendUser?: boolean;
+      attachments?: IncomingAttachment[] | MessageAttachment[];
+      agentMode?: string;
+    }
   ): Promise<void> {
     const config = getConfig();
     const enabledModels = getEnabledModels();
     if (!enabledModels.length) {
       this.pushUi(
         "error",
-        "Нет включённых моделей. Включите модели в настройках Agent Panel."
+        "Нет включённых моделей. Включите модели в настройках «Гавань агентов»."
       );
       this.view?.webview.postMessage({ type: "idle" });
       return;
@@ -1125,7 +1201,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.abort?.abort();
     this.abort = new AbortController();
-    this.setStatus("Думает…", false, "thinking");
+    const mode = getModeById(options?.agentMode);
+    const agentMode = mode.id;
+    this.setStatus(modeThinkingLabel(mode), false, "thinking");
 
     const turnEdits: FileEditStat[] = [];
 
@@ -1137,6 +1215,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         attachments,
         storageUri: this.storageUri(),
         signal: this.abort.signal,
+        agentMode,
         callbacks: {
           onPhase: (phase, detail) => {
             const fallback =
@@ -1199,7 +1278,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleRegenerate(): Promise<void> {
+  private async handleRegenerate(agentMode = "agent"): Promise<void> {
     const state = this.getRegenerateState();
     if (!state) {
       this.postRegenerateState();
@@ -1221,6 +1300,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await this.handleSend(state.userText, state.model, {
       appendUser: false,
       attachments: state.attachments,
+      agentMode,
     });
   }
 
@@ -1228,7 +1308,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     index: number,
     text: string,
     model: string,
-    incomingAttachments?: IncomingAttachment[]
+    incomingAttachments?: IncomingAttachment[],
+    agentMode = "agent"
   ): Promise<void> {
     const nextText = text.trim();
     const target = this.uiMessages[index];
@@ -1294,6 +1375,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await this.handleSend(nextText, model, {
       appendUser: false,
       attachments,
+      agentMode,
     });
   }
 
@@ -1417,6 +1499,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private serializeModesForUi(): Array<{
+    id: string;
+    label: string;
+    description: string;
+    tools: AgentModeDef["tools"];
+    prompt: string;
+    enabled: boolean;
+    builtin: boolean;
+    overridden: boolean;
+    placeholder: string;
+  }> {
+    const storedIds = new Set(getConfig().modes.map((m) => m.id));
+    return getResolvedModes().map((m) => ({
+      id: m.id,
+      label: m.label,
+      description: m.description || "",
+      tools: m.tools,
+      prompt: m.prompt || "",
+      enabled: m.enabled !== false,
+      builtin: Boolean(m.builtin),
+      overridden: storedIds.has(m.id),
+      placeholder: m.placeholder || "",
+    }));
+  }
+
   private postModels(): void {
     const config = getConfig();
     const models = getEnabledModels();
@@ -1464,6 +1571,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxToolRounds: config.maxToolRounds,
         maxTokens: config.maxTokens,
         maxResponseChars: config.maxResponseChars,
+        modes: this.serializeModesForUi(),
       },
     });
   }
@@ -1643,6 +1751,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
 
+    await this.writeModes(raw.modes);
+
     if (
       !enabledModels.some((m) => m.id === this.selectedModel)
     ) {
@@ -1651,6 +1761,52 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     this.postModels();
+    this.postModes();
+  }
+
+  private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
+    await this.writeModes(raw);
+    this.postModes();
+  }
+
+  private async writeModes(raw: SettingsPayload["modes"]): Promise<void> {
+    const target = vscode.ConfigurationTarget.Global;
+    const cfg = vscode.workspace.getConfiguration("agentPanel");
+    const modes = parseCustomModes(raw)
+      .map((m) => {
+        const id = String(m.id || "").trim();
+        const label = String(m.label || "").trim();
+        if (!id || !label) {
+          return null;
+        }
+        const row: AgentModeDef = {
+          id,
+          label,
+          tools: m.tools === "readonly" ? "readonly" : "agent",
+        };
+        if (m.description) {
+          row.description = m.description;
+        }
+        if (m.prompt) {
+          row.prompt = m.prompt;
+        }
+        if (m.placeholder) {
+          row.placeholder = m.placeholder;
+        }
+        if (m.enabled === false) {
+          row.enabled = false;
+        }
+        return row;
+      })
+      .filter((m): m is AgentModeDef => Boolean(m));
+    await cfg.update("modes", modes, target);
+  }
+
+  private postModes(): void {
+    this.view?.webview.postMessage({
+      type: "modesUpdated",
+      modes: this.serializeModesForUi(),
+    });
   }
 
   private async postInit(): Promise<void> {
@@ -1677,6 +1833,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       chatTitle: getActiveChat(this.store)?.title || "Чат",
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      modes: this.serializeModesForUi(),
     });
 
     this.postAgentsList();
@@ -1736,7 +1893,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       src: url("${materialIconsUri}") format("truetype");
     }
   </style>
-  <title>Agent Panel</title>
+  <title>Гавань агентов</title>
 </head>
 <body>
   <section id="agentsScreen" class="screen" hidden>
@@ -1792,6 +1949,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div id="settingsModelsList" class="settings-models"></div>
         <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить</button>
         <div id="settingsModelsHint" class="settings-hint" hidden></div>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Режимы</h3>
+        <p class="settings-section-note">Агент, План и Спросить встроены — их тоже можно править. Свои режимы можно добавлять и удалять.</p>
+        <div id="settingsModesList" class="settings-models"></div>
+        <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Режим</button>
       </section>
 
       <section class="settings-section">
@@ -1918,6 +2082,43 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     </div>
   </section>
 
+  <div id="modeEditModal" class="settings-modal" hidden>
+    <div class="settings-modal-backdrop" data-mode-dismiss="1"></div>
+    <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="modeEditTitle">
+      <div class="settings-modal-head">
+        <h3 id="modeEditTitle" class="settings-modal-title">Режим</h3>
+        <button type="button" class="icon-btn" id="modeEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+      </div>
+      <div class="settings-modal-body">
+        <label class="settings-field">
+          <span class="settings-label">Название</span>
+          <input id="modeEditLabel" class="settings-input" type="text" placeholder="Напр. Ревью" />
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Описание</span>
+          <input id="modeEditDescription" class="settings-input" type="text" placeholder="Кратко во всплывашке" />
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Tools</span>
+          <select id="modeEditTools" class="settings-input">
+            <option value="agent">Агент — чтение и правки</option>
+            <option value="readonly">Только чтение</option>
+          </select>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label">Промпт режима</span>
+          <textarea id="modeEditPrompt" class="settings-input settings-textarea" rows="6" placeholder="Инструкции для этого режима…"></textarea>
+        </label>
+      </div>
+      <div class="settings-modal-foot">
+        <button type="button" class="text-btn" id="modeEditCancelBtn">Отмена</button>
+        <button type="button" class="text-btn settings-modal-done" id="modeEditDoneBtn">Готово</button>
+      </div>
+    </div>
+  </div>
+
   <section id="chatScreen" class="screen chat-screen" hidden>
     <div class="chat-top">
       <button type="button" class="icon-btn" id="backToAgentsBtn" title="К списку агентов" aria-label="К списку агентов">
@@ -1927,7 +2128,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div id="chatAgentName" class="chat-agent-name">Агент</div>
         <div id="chatTitle" class="chat-title" hidden></div>
       </div>
+      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Поиск по чату" aria-label="Поиск по чату">
+        <span class="material-symbols-outlined" aria-hidden="true">search</span>
+      </button>
     </div>
+    <div id="chatSearchPanel" class="chat-search-panel" hidden>
+      <div class="chat-search-bar">
+        <input
+          id="chatSearchInput"
+          class="chat-search-input"
+          type="search"
+          placeholder="Поиск"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Поиск по чату"
+        />
+        <button type="button" class="icon-btn" id="closeChatSearchBtn" title="Закрыть поиск" aria-label="Закрыть поиск">
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+      </div>
+    </div>
+    <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Результаты поиска" hidden></div>
     <div id="messages"></div>
     <div class="composer-wrap" id="composerWrap">
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
@@ -1946,6 +2167,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   <span>Изображение</span>
                 </button>
               </div>
+            </div>
+            <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
+              <button type="button" class="model-trigger" id="modeTrigger" aria-haspopup="listbox" aria-expanded="false" title="Режим">
+                <span class="model-label" id="modeLabel">Агент</span>
+                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+              </button>
+              <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
             </div>
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">
@@ -1978,6 +2206,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </section>
+
   <script nonce="${nonce}" src="${markedUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>

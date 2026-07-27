@@ -8,6 +8,10 @@
   const composerPlusEl = document.getElementById("composerPlus");
   const composerPlusBtn = document.getElementById("composerPlusBtn");
   const composerPlusMenu = document.getElementById("composerPlusMenu");
+  const modePicker = document.getElementById("modePicker");
+  const modeTrigger = document.getElementById("modeTrigger");
+  const modeLabel = document.getElementById("modeLabel");
+  const modeMenu = document.getElementById("modeMenu");
   const attachPreviewEl = document.getElementById("attachPreview");
   const mentionMenuEl = document.getElementById("mentionMenu");
   const composerEl = document.getElementById("composer");
@@ -68,6 +72,11 @@
   const backToAgentsBtn = document.getElementById("backToAgentsBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
+  const openChatSearchBtn = document.getElementById("openChatSearchBtn");
+  const chatSearchPanel = document.getElementById("chatSearchPanel");
+  const chatSearchInput = document.getElementById("chatSearchInput");
+  const closeChatSearchBtn = document.getElementById("closeChatSearchBtn");
+  const chatSearchResults = document.getElementById("chatSearchResults");
   const contextRingEl = document.getElementById("contextRing");
   const contextRingValueEl = contextRingEl
     ? contextRingEl.querySelector(".context-ring-value")
@@ -85,6 +94,17 @@
   const settingsMaxResponseChars = document.getElementById(
     "settingsMaxResponseChars"
   );
+  const settingsModesList = document.getElementById("settingsModesList");
+  const addModeBtn = document.getElementById("addModeBtn");
+  const modeEditModal = document.getElementById("modeEditModal");
+  const modeEditTitle = document.getElementById("modeEditTitle");
+  const modeEditLabel = document.getElementById("modeEditLabel");
+  const modeEditDescription = document.getElementById("modeEditDescription");
+  const modeEditTools = document.getElementById("modeEditTools");
+  const modeEditPrompt = document.getElementById("modeEditPrompt");
+  const modeEditCloseBtn = document.getElementById("modeEditCloseBtn");
+  const modeEditCancelBtn = document.getElementById("modeEditCancelBtn");
+  const modeEditDoneBtn = document.getElementById("modeEditDoneBtn");
 
   let agentsData = [];
   let archiveAgentsData = [];
@@ -92,6 +112,7 @@
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
+  let settingsModes = [];
   let settingsDefaultModelId = "";
   let settingsDefaultContextWindow = 128000;
   let modelEditIndex = null;
@@ -139,6 +160,19 @@
 
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
+
+  let chatSearchOpen = false;
+  let chatSearchScope = "current";
+  let chatSearchRequestId = 0;
+  let chatSearchTimer = null;
+  let chatSearchHits = [];
+  let chatSearchActiveIndex = -1;
+  let chatSearchHighlightTimer = null;
+  let chatSearchPendingRequestId = "";
+  let pendingHighlightIndex = null;
+  let pendingOpenSearch = null;
+  let chatSearchMatchEls = [];
+  let chatSearchMatchIndex = -1;
 
   const DEFAULT_MODELS = [
     {
@@ -248,6 +282,11 @@
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
   let plusMenuOpen = false;
+  let modeMenuOpen = false;
+  let agentMode = "agent";
+  let modeEditIndex = null;
+  let modeEditSource = "settings";
+  let chatModes = [];
   let streamingEl = null;
   let composerDragDepth = 0;
 
@@ -930,6 +969,7 @@
       index: editingUserIndex,
       text: nextText,
       model,
+      agentMode,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
@@ -1292,8 +1332,411 @@
     }
     if (screen === "chat") {
       setContextUsage(contextUsed, contextMax);
-      focusPrompt();
+      if (!chatSearchOpen) {
+        focusPrompt();
+      }
     }
+    if (screen !== "chat" && chatSearchOpen) {
+      closeChatSearch();
+    }
+  }
+
+  function highlightQueryInText(text, query) {
+    const raw = String(text || "");
+    const q = String(query || "").trim();
+    if (!q) {
+      return escapeHtml(raw);
+    }
+    const lower = raw.toLowerCase();
+    const qLower = q.toLowerCase();
+    let out = "";
+    let cursor = 0;
+    let idx = lower.indexOf(qLower, cursor);
+    while (idx !== -1) {
+      out += escapeHtml(raw.slice(cursor, idx));
+      out +=
+        `<mark class="chat-search-mark">` +
+        escapeHtml(raw.slice(idx, idx + q.length)) +
+        `</mark>`;
+      cursor = idx + q.length;
+      idx = lower.indexOf(qLower, cursor);
+    }
+    out += escapeHtml(raw.slice(cursor));
+    return out;
+  }
+
+  function getMsgRole(el) {
+    if (!el) {
+      return "assistant";
+    }
+    if (el.classList.contains("user")) {
+      return "user";
+    }
+    if (el.classList.contains("error")) {
+      return "error";
+    }
+    if (el.classList.contains("system")) {
+      return "system";
+    }
+    if (el.classList.contains("tool")) {
+      return "tool";
+    }
+    return "assistant";
+  }
+
+  function wrapMatchesInTextNode(textNode, query) {
+    const text = textNode.nodeValue;
+    if (!text || !textNode.parentNode) {
+      return false;
+    }
+    const qLower = query.toLowerCase();
+    const lower = text.toLowerCase();
+    let idx = lower.indexOf(qLower);
+    if (idx === -1) {
+      return false;
+    }
+    const frag = document.createDocumentFragment();
+    let cursor = 0;
+    const qLen = qLower.length;
+    while (idx !== -1) {
+      if (idx > cursor) {
+        frag.appendChild(document.createTextNode(text.slice(cursor, idx)));
+      }
+      const mark = document.createElement("mark");
+      mark.className = "chat-search-mark";
+      mark.textContent = text.slice(idx, idx + qLen);
+      frag.appendChild(mark);
+      cursor = idx + qLen;
+      idx = lower.indexOf(qLower, cursor);
+    }
+    if (cursor < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+    textNode.parentNode.replaceChild(frag, textNode);
+    return true;
+  }
+
+  function highlightTextInElement(root, query) {
+    if (!root || !query) {
+      return false;
+    }
+    const qLower = query.toLowerCase();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const nodes = [];
+    let current;
+    while ((current = walker.nextNode())) {
+      const parent = current.parentElement;
+      if (!parent) {
+        continue;
+      }
+      if (parent.closest("textarea, input, .msg-edit-composer, .msg-actions")) {
+        continue;
+      }
+      if (parent.closest("mark.chat-search-mark")) {
+        continue;
+      }
+      if (!current.nodeValue || !current.nodeValue.toLowerCase().includes(qLower)) {
+        continue;
+      }
+      nodes.push(current);
+    }
+    let found = false;
+    for (const node of nodes) {
+      if (wrapMatchesInTextNode(node, query)) {
+        found = true;
+      }
+    }
+    return found;
+  }
+
+  function focusChatSearchMatch(index, scrollIntoView) {
+    if (!messagesEl || !chatSearchMatchEls.length) {
+      chatSearchMatchIndex = -1;
+      return;
+    }
+    messagesEl.querySelectorAll(".msg.is-search-current").forEach((el) => {
+      el.classList.remove("is-search-current");
+    });
+    const len = chatSearchMatchEls.length;
+    chatSearchMatchIndex = ((index % len) + len) % len;
+    const el = chatSearchMatchEls[chatSearchMatchIndex];
+    if (!el) {
+      return;
+    }
+    el.classList.add("is-search-current");
+    if (scrollIntoView !== false) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  function applyInChatSearchHighlights(query) {
+    if (!messagesEl) {
+      return;
+    }
+    const q = String(query || "").trim();
+    const msgs = messagesEl.querySelectorAll(
+      ".msg.user, .msg.assistant, .msg.error"
+    );
+    chatSearchMatchEls = [];
+    chatSearchMatchIndex = -1;
+
+    msgs.forEach((el) => {
+      el.classList.remove(
+        "has-search-match",
+        "is-search-current",
+        "is-search-hit"
+      );
+      const existingBody = el.querySelector(".msg-body");
+      if (existingBody) {
+        existingBody.classList.remove("has-search-match-fallback");
+      }
+      if (el.classList.contains("is-editing")) {
+        return;
+      }
+      const raw = el.dataset.raw;
+      if (raw == null) {
+        return;
+      }
+      const role = getMsgRole(el);
+      setMessageContent(el, role, raw);
+      if (!chatSearchOpen || q.length < 1) {
+        return;
+      }
+      if (!raw.toLowerCase().includes(q.toLowerCase())) {
+        return;
+      }
+      const body = el.querySelector(".msg-body");
+      const marked = highlightTextInElement(body, q);
+      // Даже если текст разбит по DOM-узлам — помечаем сообщение.
+      el.classList.add("has-search-match");
+      chatSearchMatchEls.push(el);
+      if (!marked && body) {
+        body.classList.add("has-search-match-fallback");
+      }
+    });
+
+    if (chatSearchMatchEls.length) {
+      focusChatSearchMatch(0, true);
+    }
+  }
+
+  function clearMessageSearchHighlight() {
+    if (chatSearchHighlightTimer) {
+      clearTimeout(chatSearchHighlightTimer);
+      chatSearchHighlightTimer = null;
+    }
+    if (!messagesEl) {
+      return;
+    }
+    messagesEl
+      .querySelectorAll(".is-search-hit")
+      .forEach((el) => el.classList.remove("is-search-hit"));
+  }
+
+  function highlightMessageByIndex(index) {
+    clearMessageSearchHighlight();
+    if (!messagesEl || !Number.isInteger(index) || index < 0) {
+      return;
+    }
+    const el = messagesEl.querySelector(`.msg[data-index="${index}"]`);
+    if (!el) {
+      return;
+    }
+    const target = el.closest(".msg-wrap") || el;
+    target.classList.add("is-search-hit");
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    chatSearchHighlightTimer = setTimeout(() => {
+      target.classList.remove("is-search-hit");
+      chatSearchHighlightTimer = null;
+    }, 2400);
+  }
+
+  function syncChatSearchBody() {
+    const query = chatSearchInput
+      ? String(chatSearchInput.value || "").trim()
+      : "";
+    const showResults =
+      chatSearchOpen && chatSearchScope === "all" && query.length >= 1;
+    if (chatSearchResults) {
+      chatSearchResults.hidden = !showResults;
+    }
+    if (messagesEl) {
+      messagesEl.hidden = false;
+    }
+    if (chatScreen) {
+      chatScreen.classList.toggle("is-searching", chatSearchOpen);
+    }
+  }
+
+  function renderChatSearchResults(hits, query) {
+    if (!chatSearchResults) {
+      return;
+    }
+    chatSearchHits = Array.isArray(hits) ? hits : [];
+    chatSearchActiveIndex = chatSearchHits.length ? 0 : -1;
+    const q = String(query || "").trim();
+    syncChatSearchBody();
+
+    if (chatSearchScope !== "all" || q.length < 1) {
+      chatSearchResults.innerHTML = "";
+      return;
+    }
+    if (!chatSearchHits.length) {
+      chatSearchResults.innerHTML =
+        '<div class="chat-search-empty">Ничего не найдено</div>';
+      return;
+    }
+
+    chatSearchResults.innerHTML = chatSearchHits
+      .map((hit, index) => {
+        const roleLabel = hit.role === "user" ? "Вы" : "Агент";
+        return (
+          `<button type="button" class="chat-search-hit${
+            index === chatSearchActiveIndex ? " is-active" : ""
+          }" role="option" data-index="${index}">` +
+          `<div class="chat-search-hit-meta">` +
+          `<span class="chat-search-hit-role">${escapeHtml(roleLabel)}</span>` +
+          `<span class="chat-search-hit-agent">${escapeHtml(
+            hit.agentName || "Агент"
+          )}</span>` +
+          `<span class="chat-search-hit-time">${escapeHtml(
+            hit.time || ""
+          )}</span>` +
+          `</div>` +
+          `<div class="chat-search-hit-snippet">${highlightQueryInText(
+            hit.snippet || "",
+            q
+          )}</div>` +
+          `</button>`
+        );
+      })
+      .join("");
+  }
+
+  function setChatSearchActiveIndex(next) {
+    if (!chatSearchHits.length || !chatSearchResults) {
+      return;
+    }
+    const max = chatSearchHits.length - 1;
+    chatSearchActiveIndex = Math.max(0, Math.min(max, next));
+    chatSearchResults.querySelectorAll(".chat-search-hit").forEach((el, i) => {
+      el.classList.toggle("is-active", i === chatSearchActiveIndex);
+    });
+    const active = chatSearchResults.querySelector(
+      `.chat-search-hit[data-index="${chatSearchActiveIndex}"]`
+    );
+    if (active && typeof active.scrollIntoView === "function") {
+      active.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function requestChatSearch() {
+    if (!chatSearchOpen) {
+      return;
+    }
+    const query = chatSearchInput ? String(chatSearchInput.value || "") : "";
+    applyInChatSearchHighlights(query);
+    syncChatSearchBody();
+    if (String(query).trim().length < 1) {
+      renderChatSearchResults([], query);
+      return;
+    }
+    if (chatSearchScope !== "all") {
+      renderChatSearchResults([], query);
+      return;
+    }
+    const requestId = `cs_${Date.now().toString(36)}_${++chatSearchRequestId}`;
+    vscode.postMessage({
+      type: "searchChat",
+      requestId,
+      query,
+      scope: "all",
+      role: "all",
+      date: "any",
+    });
+    chatSearchPendingRequestId = requestId;
+  }
+
+  function scheduleChatSearch() {
+    const query = chatSearchInput ? String(chatSearchInput.value || "") : "";
+    applyInChatSearchHighlights(query);
+    syncChatSearchBody();
+    if (chatSearchTimer) {
+      clearTimeout(chatSearchTimer);
+    }
+    chatSearchTimer = setTimeout(() => {
+      chatSearchTimer = null;
+      requestChatSearch();
+    }, 160);
+  }
+
+  function openSearchHit(hit) {
+    if (!hit || !hit.agentId) {
+      return;
+    }
+    const messageIndex = Number(hit.messageIndex);
+    if (!Number.isInteger(messageIndex) || messageIndex < 0) {
+      return;
+    }
+    closeChatSearch();
+    if (hit.agentId === activeAgentId && chatScreen && !chatScreen.hidden) {
+      highlightMessageByIndex(messageIndex);
+      return;
+    }
+    pendingHighlightIndex = messageIndex;
+    vscode.postMessage({
+      type: "openSearchHit",
+      agentId: hit.agentId,
+      messageIndex,
+    });
+  }
+
+  function openChatSearch(opts) {
+    if (!chatSearchPanel) {
+      return;
+    }
+    const fromAgents = Boolean(opts && opts.fromAgents);
+    if (chatScreen && chatScreen.hidden) {
+      pendingOpenSearch = opts || { fromAgents: true };
+      if (activeAgentId) {
+        vscode.postMessage({ type: "openAgent", agentId: activeAgentId });
+      }
+      return;
+    }
+    chatSearchOpen = true;
+    chatSearchPanel.hidden = false;
+    if (fromAgents || !activeAgentId) {
+      chatSearchScope = "all";
+    } else if (!opts || opts.scope == null) {
+      chatSearchScope = "current";
+    } else {
+      chatSearchScope = opts.scope;
+    }
+    syncChatSearchBody();
+    if (chatSearchInput) {
+      chatSearchInput.focus();
+      chatSearchInput.select();
+    }
+    scheduleChatSearch();
+  }
+
+  function closeChatSearch() {
+    chatSearchOpen = false;
+    if (chatSearchTimer) {
+      clearTimeout(chatSearchTimer);
+      chatSearchTimer = null;
+    }
+    if (chatSearchPanel) {
+      chatSearchPanel.hidden = true;
+    }
+    chatSearchHits = [];
+    chatSearchActiveIndex = -1;
+    chatSearchPendingRequestId = "";
+    if (chatSearchResults) {
+      chatSearchResults.innerHTML = "";
+    }
+    applyInChatSearchHighlights("");
+    syncChatSearchBody();
   }
 
   function setModelsHint(text, isError) {
@@ -2305,6 +2748,16 @@
     showSettingsSaved();
   }
 
+  function persistModesNow() {
+    if (settingsHydrating) {
+      return;
+    }
+    vscode.postMessage({
+      type: "saveModes",
+      modes: collectCustomModesForSave(),
+    });
+  }
+
   function schedulePersistSettings(delayMs) {
     if (settingsHydrating) {
       return;
@@ -2373,6 +2826,7 @@
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
     }
+    applyModes(settings.modes);
     if (settingsMaxToolRounds) {
       settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
     }
@@ -2458,7 +2912,298 @@
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
+      modes: collectCustomModesForSave(),
     };
+  }
+
+  function collectCustomModesForSave() {
+    return settingsModes
+      .filter((m) => m && m.id && m.label)
+      .filter((m) => {
+        if (!m.builtin && !["agent", "plan", "ask"].includes(m.id)) {
+          return true;
+        }
+        return Boolean(m.overridden);
+      })
+      .map((m) => {
+        const row = {
+          id: m.id,
+          label: m.label,
+          tools: m.tools === "readonly" ? "readonly" : "agent",
+        };
+        if (m.description) {
+          row.description = m.description;
+        }
+        if (m.prompt) {
+          row.prompt = m.prompt;
+        }
+        if (m.placeholder) {
+          row.placeholder = m.placeholder;
+        }
+        if (m.enabled === false) {
+          row.enabled = false;
+        }
+        return row;
+      });
+  }
+
+  const DEFAULT_CHAT_MODES = [
+    {
+      id: "agent",
+      label: "Агент",
+      description: "Читает и правит код",
+      tools: "agent",
+      builtin: true,
+      placeholder: "Задача для агента... (@ — файл)",
+    },
+    {
+      id: "plan",
+      label: "План",
+      description: "Только план, без правок",
+      tools: "readonly",
+      builtin: true,
+      placeholder:
+        "Опишите задачу — агент составит план без правок… (@ — файл)",
+    },
+    {
+      id: "ask",
+      label: "Спросить",
+      description: "Ответы и объяснения",
+      tools: "readonly",
+      builtin: true,
+      placeholder: "Спросите про код или задачу… (@ — файл)",
+    },
+  ];
+  if (!chatModes.length) {
+    chatModes = DEFAULT_CHAT_MODES.slice();
+  }
+  if (!settingsModes.length) {
+    settingsModes = DEFAULT_CHAT_MODES.map((m) => ({ ...m }));
+  }
+
+  function slugifyModeId(label) {
+    const map = {
+      а: "a",
+      б: "b",
+      в: "v",
+      г: "g",
+      д: "d",
+      е: "e",
+      ё: "e",
+      ж: "zh",
+      з: "z",
+      и: "i",
+      й: "y",
+      к: "k",
+      л: "l",
+      м: "m",
+      н: "n",
+      о: "o",
+      п: "p",
+      р: "r",
+      с: "s",
+      т: "t",
+      у: "u",
+      ф: "f",
+      х: "h",
+      ц: "ts",
+      ч: "ch",
+      ш: "sh",
+      щ: "sch",
+      ъ: "",
+      ы: "y",
+      ь: "",
+      э: "e",
+      ю: "yu",
+      я: "ya",
+    };
+    const ascii = String(label || "")
+      .trim()
+      .toLowerCase()
+      .split("")
+      .map((ch) => map[ch] ?? ch)
+      .join("")
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    return ascii || `mode-${Date.now().toString(36)}`;
+  }
+
+  function normalizeModesList(list) {
+    const incoming = Array.isArray(list) ? list : [];
+    if (!incoming.length) {
+      return DEFAULT_CHAT_MODES.map((m) => ({ ...m }));
+    }
+    return incoming.map((m) => ({
+      id: m.id || "",
+      label: m.label || m.id || "",
+      description: m.description || "",
+      tools: m.tools === "readonly" ? "readonly" : "agent",
+      prompt: m.prompt || "",
+      placeholder: m.placeholder || "",
+      enabled: m.enabled !== false,
+      builtin: Boolean(m.builtin) || ["agent", "plan", "ask"].includes(m.id),
+      overridden: Boolean(m.overridden),
+    }));
+  }
+
+  function applyModes(list, { keepSelection = true } = {}) {
+    const next = normalizeModesList(list);
+    settingsModes = next.map((m) => ({ ...m }));
+    chatModes = next.filter((m) => m.enabled !== false);
+    renderSettingsModes();
+    if (typeof renderModeMenu === "function") {
+      renderModeMenu();
+    }
+    const still =
+      keepSelection && chatModes.some((m) => m.id === agentMode)
+        ? agentMode
+        : chatModes[0]?.id || "agent";
+    if (typeof setAgentMode === "function") {
+      setAgentMode(still, { close: false });
+    } else {
+      agentMode = still;
+    }
+  }
+
+  function renderSettingsModes() {
+    if (!settingsModesList) {
+      return;
+    }
+    settingsModesList.innerHTML = "";
+    if (!settingsModes.length) {
+      settingsModesList.innerHTML =
+        '<div class="settings-models-empty">Нет режимов.</div>';
+      return;
+    }
+    settingsModes.forEach((mode, index) => {
+      const row = document.createElement("div");
+      row.className = "settings-model-row";
+      row.dataset.index = String(index);
+      const toolsLabel =
+        mode.tools === "readonly" ? "только чтение" : "агент";
+      const subtitle = mode.builtin
+        ? `встроенный · ${toolsLabel}`
+        : toolsLabel;
+      row.innerHTML =
+        `<div class="settings-model-info">` +
+        `<div class="settings-model-name"></div>` +
+        `<div class="settings-model-id"></div>` +
+        `</div>` +
+        `<button type="button" class="icon-btn settings-mode-edit" data-index="${index}" title="Изменить" aria-label="Изменить">` +
+        SETTINGS_ICON +
+        `</button>` +
+        (mode.builtin
+          ? ""
+          : `<button type="button" class="icon-btn settings-mode-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+            DELETE_ICON +
+            `</button>`);
+      row.querySelector(".settings-model-name").textContent =
+        mode.label || mode.id;
+      row.querySelector(".settings-model-id").textContent = mode.description
+        ? `${mode.description} · ${subtitle}`
+        : subtitle;
+      settingsModesList.appendChild(row);
+    });
+  }
+
+  function closeModeEditModal() {
+    if (!modeEditModal) {
+      return;
+    }
+    modeEditModal.hidden = true;
+    modeEditIndex = null;
+    modeEditSource = "settings";
+  }
+
+  function openModeEditModal(index, source) {
+    if (!modeEditModal) {
+      return;
+    }
+    modeEditSource = source || "settings";
+    modeEditIndex = Number.isInteger(index) ? index : -1;
+    const existing =
+      modeEditIndex >= 0 ? settingsModes[modeEditIndex] : null;
+    if (modeEditTitle) {
+      modeEditTitle.textContent = existing ? "Режим" : "Новый режим";
+    }
+    if (modeEditLabel) {
+      modeEditLabel.value = existing ? existing.label || "" : "";
+    }
+    if (modeEditDescription) {
+      modeEditDescription.value = existing ? existing.description || "" : "";
+    }
+    if (modeEditTools) {
+      modeEditTools.value =
+        existing && existing.tools === "readonly" ? "readonly" : "agent";
+    }
+    if (modeEditPrompt) {
+      modeEditPrompt.value = existing ? existing.prompt || "" : "";
+    }
+    modeEditModal.hidden = false;
+    if (modeEditLabel) {
+      modeEditLabel.focus();
+    }
+  }
+
+  function commitModeEdit() {
+    const label = modeEditLabel ? modeEditLabel.value.trim() : "";
+    if (!label) {
+      showCopyToast("Укажите название режима");
+      return;
+    }
+    const description = modeEditDescription
+      ? modeEditDescription.value.trim()
+      : "";
+    const tools =
+      modeEditTools && modeEditTools.value === "readonly"
+        ? "readonly"
+        : "agent";
+    const prompt = modeEditPrompt ? modeEditPrompt.value.trim() : "";
+    const existing =
+      modeEditIndex >= 0 ? settingsModes[modeEditIndex] : null;
+    let id = existing && existing.id ? existing.id : slugifyModeId(label);
+    const isBuiltin =
+      Boolean(existing?.builtin) || ["agent", "plan", "ask"].includes(id);
+    if (!existing) {
+      const taken = new Set(settingsModes.map((m) => m.id));
+      const base = id;
+      let n = 2;
+      while (taken.has(id) || ["agent", "plan", "ask"].includes(id)) {
+        id = `${base}-${n}`;
+        n += 1;
+      }
+    }
+    const next = {
+      id,
+      label,
+      description,
+      tools,
+      prompt,
+      enabled: true,
+      builtin: isBuiltin,
+      overridden: true,
+      placeholder:
+        existing?.placeholder ||
+        (tools === "readonly"
+          ? `${label}… (@ — файл)`
+          : `Задача (${label})… (@ — файл)`),
+    };
+    if (existing && modeEditIndex >= 0) {
+      settingsModes[modeEditIndex] = next;
+    } else {
+      settingsModes.push(next);
+    }
+    chatModes = settingsModes.filter((m) => m.enabled !== false);
+    renderSettingsModes();
+    if (typeof renderModeMenu === "function") {
+      renderModeMenu();
+    }
+    closeModeEditModal();
+    persistModesNow();
+    if (modeEditSource === "composer" && typeof setAgentMode === "function") {
+      setAgentMode(id, { focus: true });
+    }
   }
 
   function renderArchiveList() {
@@ -3259,6 +4004,9 @@
     }
     restoreAgentStatus();
     focusEditingInput();
+    if (chatSearchOpen && chatSearchInput) {
+      applyInChatSearchHighlights(chatSearchInput.value);
+    }
   }
 
   function getSelectedModel() {
@@ -3396,6 +4144,7 @@
 
   function openPlusMenu() {
     closeMenu();
+    closeModeMenu();
     closeEditModelMenu();
     plusMenuOpen = true;
     if (composerPlusEl) {
@@ -3422,7 +4171,133 @@
       closeMenu();
     } else {
       closePlusMenu();
+      closeModeMenu();
       openMenu();
+    }
+  }
+
+  function renderModeMenu() {
+    if (!modeMenu) {
+      return;
+    }
+    modeMenu.innerHTML = "";
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    for (const mode of modes) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (mode.id === agentMode ? " is-active" : "");
+      btn.dataset.mode = mode.id;
+      btn.setAttribute("role", "option");
+      const text = document.createElement("span");
+      text.className = "mode-option-text";
+      const title = document.createElement("span");
+      title.className = "model-option-label";
+      title.textContent = mode.label || mode.id;
+      text.appendChild(title);
+      if (mode.description) {
+        const desc = document.createElement("span");
+        desc.className = "mode-option-desc";
+        desc.textContent = mode.description;
+        text.appendChild(desc);
+      }
+      btn.appendChild(text);
+      if (mode.id === agentMode) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      modeMenu.appendChild(btn);
+    }
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "model-option mode-option-add";
+    addBtn.dataset.action = "add-mode";
+    addBtn.setAttribute("role", "option");
+    const addLabel = document.createElement("span");
+    addLabel.className = "model-option-label";
+    addLabel.textContent = "+ Добавить режим";
+    addBtn.appendChild(addLabel);
+    modeMenu.appendChild(addBtn);
+  }
+
+  function normalizeAgentModeUi(value) {
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    if (modes.some((m) => m.id === value)) {
+      return value;
+    }
+    return modes[0]?.id || "agent";
+  }
+
+  function closeModeMenu() {
+    modeMenuOpen = false;
+    if (modePicker) {
+      modePicker.classList.remove("is-open");
+    }
+    if (modeTrigger) {
+      modeTrigger.setAttribute("aria-expanded", "false");
+    }
+    if (modeMenu) {
+      modeMenu.hidden = true;
+    }
+  }
+
+  function openModeMenu() {
+    closeMenu();
+    closePlusMenu();
+    renderModeMenu();
+    modeMenuOpen = true;
+    if (modePicker) {
+      modePicker.classList.add("is-open");
+    }
+    if (modeTrigger) {
+      modeTrigger.setAttribute("aria-expanded", "true");
+    }
+    if (modeMenu) {
+      modeMenu.hidden = false;
+    }
+  }
+
+  function toggleModeMenu() {
+    if (modeMenuOpen) {
+      closeModeMenu();
+    } else {
+      openModeMenu();
+    }
+  }
+
+  function setAgentMode(next, { focus = false, close = true } = {}) {
+    agentMode = normalizeAgentModeUi(next);
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    const meta = modes.find((m) => m.id === agentMode) || modes[0] || {
+      id: "agent",
+      label: "Агент",
+      placeholder: "Задача для агента... (@ — файл)",
+    };
+    if (modePicker) {
+      modePicker.dataset.mode = agentMode;
+    }
+    if (modeLabel) {
+      modeLabel.textContent = meta.label || meta.id;
+    }
+    if (modeTrigger) {
+      modeTrigger.title = meta.description
+        ? `${meta.label}: ${meta.description}`
+        : meta.label || "Режим";
+    }
+    if (modeMenu && !modeMenu.hidden) {
+      renderModeMenu();
+    }
+    if (promptEl) {
+      promptEl.placeholder =
+        meta.placeholder || "Задача для агента... (@ — файл)";
+    }
+    if (close) {
+      closeModeMenu();
+    }
+    if (focus && promptEl && typeof promptEl.focus === "function") {
+      promptEl.focus();
     }
   }
 
@@ -3433,9 +4308,13 @@
     if (composerPlusBtn) {
       composerPlusBtn.disabled = busy;
     }
+    if (modeTrigger) {
+      modeTrigger.disabled = busy;
+    }
     if (busy) {
       closeMenu();
       closePlusMenu();
+      closeModeMenu();
       closeMentionMenu();
     }
     sendBtn.dataset.mode = busy ? "stop" : "send";
@@ -3512,6 +4391,13 @@
       closePlusMenu();
     }
     if (
+      modeMenuOpen &&
+      modePicker &&
+      !modePicker.contains(event.target)
+    ) {
+      closeModeMenu();
+    }
+    if (
       mentionOpen &&
       mentionMenuEl &&
       !mentionMenuEl.contains(event.target) &&
@@ -3543,6 +4429,9 @@
     if (event.key === "Escape" && plusMenuOpen) {
       closePlusMenu();
     }
+    if (event.key === "Escape" && modeMenuOpen) {
+      closeModeMenu();
+    }
     if (event.key === "Escape" && editModelMenuOpen) {
       closeEditModelMenu();
     }
@@ -3569,6 +4458,7 @@
       type: "send",
       text,
       model: getSelectedModel(),
+      agentMode,
       attachments: attachments.map(attachmentPayload),
     });
   }
@@ -3591,6 +4481,48 @@
       togglePlusMenu();
     });
   }
+
+  if (modeTrigger) {
+    modeTrigger.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    modeTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy) {
+        return;
+      }
+      toggleModeMenu();
+    });
+  }
+
+  if (modeMenu) {
+    modeMenu.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    modeMenu.addEventListener("click", (event) => {
+      const add = event.target.closest('[data-action="add-mode"]');
+      if (add) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeModeMenu();
+        openModeEditModal(-1, "composer");
+        return;
+      }
+      const option = event.target.closest(".model-option");
+      if (!option || busy || option.dataset.action === "add-mode") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setAgentMode(option.dataset.mode, { focus: true });
+    });
+  }
+
+  setAgentMode(agentMode, { close: false });
+  renderModeMenu();
 
   if (composerPlusMenu) {
     composerPlusMenu.addEventListener("click", (event) => {
@@ -3889,6 +4821,61 @@
     });
   }
 
+  if (addModeBtn) {
+    addModeBtn.addEventListener("click", () => {
+      openModeEditModal(-1, "settings");
+    });
+  }
+
+  if (settingsModesList) {
+    settingsModesList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".settings-mode-edit");
+      if (editBtn) {
+        const index = Number(editBtn.dataset.index);
+        if (Number.isInteger(index)) {
+          openModeEditModal(index, "settings");
+        }
+        return;
+      }
+      const removeBtn = event.target.closest(".settings-mode-remove");
+      if (removeBtn) {
+        const index = Number(removeBtn.dataset.index);
+        if (
+          !Number.isInteger(index) ||
+          !settingsModes[index] ||
+          settingsModes[index].builtin
+        ) {
+          return;
+        }
+        settingsModes.splice(index, 1);
+        chatModes = settingsModes.filter((m) => m.enabled !== false);
+        renderSettingsModes();
+        renderModeMenu();
+        if (!chatModes.some((m) => m.id === agentMode)) {
+          setAgentMode(chatModes[0]?.id || "agent", { close: false });
+        }
+        persistModesNow();
+      }
+    });
+  }
+
+  if (modeEditDoneBtn) {
+    modeEditDoneBtn.addEventListener("click", () => commitModeEdit());
+  }
+  if (modeEditCancelBtn) {
+    modeEditCancelBtn.addEventListener("click", () => closeModeEditModal());
+  }
+  if (modeEditCloseBtn) {
+    modeEditCloseBtn.addEventListener("click", () => closeModeEditModal());
+  }
+  if (modeEditModal) {
+    modeEditModal.addEventListener("click", (event) => {
+      if (event.target?.dataset?.modeDismiss === "1") {
+        closeModeEditModal();
+      }
+    });
+  }
+
   if (addProviderBtn) {
     addProviderBtn.addEventListener("click", () => {
       setProvidersHint("");
@@ -4164,6 +5151,140 @@
     });
   }
 
+  if (openChatSearchBtn) {
+    openChatSearchBtn.addEventListener("click", () => {
+      openChatSearch({ fromAgents: false });
+    });
+  }
+
+  if (closeChatSearchBtn) {
+    closeChatSearchBtn.addEventListener("click", () => {
+      closeChatSearch();
+    });
+  }
+
+  if (chatSearchInput) {
+    chatSearchInput.addEventListener("input", () => {
+      scheduleChatSearch();
+    });
+    chatSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeChatSearch();
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (chatSearchMatchEls.length) {
+          focusChatSearchMatch(chatSearchMatchIndex + 1, true);
+        } else {
+          setChatSearchActiveIndex(chatSearchActiveIndex + 1);
+        }
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (chatSearchMatchEls.length) {
+          focusChatSearchMatch(chatSearchMatchIndex - 1, true);
+        } else {
+          setChatSearchActiveIndex(chatSearchActiveIndex - 1);
+        }
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (chatSearchMatchEls.length) {
+          focusChatSearchMatch(
+            chatSearchMatchIndex >= 0 ? chatSearchMatchIndex : 0,
+            true
+          );
+          return;
+        }
+        if (
+          chatSearchActiveIndex >= 0 &&
+          chatSearchHits[chatSearchActiveIndex]
+        ) {
+          openSearchHit(chatSearchHits[chatSearchActiveIndex]);
+        }
+      }
+    });
+  }
+
+  if (chatSearchPanel) {
+    chatSearchPanel.addEventListener("click", (event) => {
+      const hit = event.target.closest(".chat-search-hit");
+      if (!hit) {
+        return;
+      }
+      const index = Number(hit.dataset.index);
+      if (!Number.isInteger(index) || !chatSearchHits[index]) {
+        return;
+      }
+      openSearchHit(chatSearchHits[index]);
+    });
+  }
+
+  if (chatSearchResults) {
+    chatSearchResults.addEventListener("click", (event) => {
+      const hit = event.target.closest(".chat-search-hit");
+      if (!hit) {
+        return;
+      }
+      const index = Number(hit.dataset.index);
+      if (!Number.isInteger(index) || !chatSearchHits[index]) {
+        return;
+      }
+      openSearchHit(chatSearchHits[index]);
+    });
+  }
+
+  document.addEventListener("mousedown", (event) => {
+    if (!chatSearchOpen) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      return;
+    }
+    if (chatSearchPanel && chatSearchPanel.contains(target)) {
+      return;
+    }
+    if (chatSearchResults && chatSearchResults.contains(target)) {
+      return;
+    }
+    if (openChatSearchBtn && openChatSearchBtn.contains(target)) {
+      return;
+    }
+    closeChatSearch();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (chatSearchOpen && event.key === "Escape") {
+      event.preventDefault();
+      closeChatSearch();
+      return;
+    }
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") {
+      return;
+    }
+    if (settingsScreen && !settingsScreen.hidden && !chatSearchOpen) {
+      return;
+    }
+    if (archiveScreen && !archiveScreen.hidden && !chatSearchOpen) {
+      return;
+    }
+    event.preventDefault();
+    if (chatSearchOpen) {
+      if (chatSearchInput) {
+        chatSearchInput.focus();
+        chatSearchInput.select();
+      }
+      return;
+    }
+    const fromAgents = Boolean(agentsScreen && !agentsScreen.hidden);
+    openChatSearch({ fromAgents });
+  });
+
   if (archiveListEl) {
     archiveListEl.addEventListener("click", (event) => {
       const deleteBtn = event.target.closest(".row-delete");
@@ -4328,7 +5449,7 @@
         return;
       }
       setBusy(true);
-      vscode.postMessage({ type: "regenerate" });
+      vscode.postMessage({ type: "regenerate", agentMode });
       return;
     }
     const copyCodeBtn = event.target.closest(".md-pre-copy");
@@ -4466,6 +5587,9 @@
     switch (msg.type) {
       case "init":
         fillModels(msg.models, msg.selectedModel);
+        if (msg.modes) {
+          applyModes(msg.modes);
+        }
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -4493,6 +5617,20 @@
         break;
       case "fileSearchResults":
         handleMentionResults(msg);
+        break;
+      case "chatSearchResults":
+        if (
+          !chatSearchOpen ||
+          (chatSearchPendingRequestId &&
+            msg.requestId &&
+            msg.requestId !== chatSearchPendingRequestId)
+        ) {
+          break;
+        }
+        renderChatSearchResults(
+          msg.hits || [],
+          chatSearchInput ? chatSearchInput.value : ""
+        );
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
@@ -4559,6 +5697,22 @@
         }
         showScreen("chat");
         setBusy(false);
+        {
+          const highlight =
+            typeof msg.highlightMessageIndex === "number"
+              ? msg.highlightMessageIndex
+              : pendingHighlightIndex;
+          pendingHighlightIndex = null;
+          if (pendingOpenSearch) {
+            const opts = pendingOpenSearch;
+            pendingOpenSearch = null;
+            openChatSearch(opts);
+          } else if (typeof highlight === "number") {
+            requestAnimationFrame(() => {
+              highlightMessageByIndex(highlight);
+            });
+          }
+        }
         break;
       case "agentRenamed":
         if (msg.agentId && msg.name) {
@@ -4581,6 +5735,9 @@
         break;
       case "modelsUpdated":
         fillModels(msg.models, getSelectedModel() || msg.selectedModel);
+        break;
+      case "modesUpdated":
+        applyModes(msg.modes);
         break;
       case "regenerateState":
         if (msg.selectedModel) {
