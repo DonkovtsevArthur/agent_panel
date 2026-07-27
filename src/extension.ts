@@ -25,6 +25,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.clearChat", () => {
       provider.newChat();
     }),
+    vscode.commands.registerCommand("agentPanel.pickAttachments", () =>
+      provider.pickAttachmentsFromUi()
+    ),
     { dispose: () => provider.dispose() }
   );
 }

@@ -7,12 +7,21 @@ import { URL } from "url";
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string | null;
+  content: string | ContentPart[] | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /**
+   * Локальные вложения user-хода (пути/метаданные).
+   * В JSON для API не отправляется — см. toApiMessage.
+   */
+  attachments?: import("./attachments").MessageAttachment[];
 }
 
 export interface ToolCall {

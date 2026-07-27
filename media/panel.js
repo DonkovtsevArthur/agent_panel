@@ -5,13 +5,21 @@
   const messagesEl = document.getElementById("messages");
   const promptEl = document.getElementById("prompt");
   const sendBtn = document.getElementById("sendBtn");
-  const newChatBtn = document.getElementById("newChatBtn");
+  const composerPlusEl = document.getElementById("composerPlus");
+  const composerPlusBtn = document.getElementById("composerPlusBtn");
+  const composerPlusMenu = document.getElementById("composerPlusMenu");
+  const attachPreviewEl = document.getElementById("attachPreview");
+  const mentionMenuEl = document.getElementById("mentionMenu");
+  const composerEl = document.getElementById("composer");
+  const composerWrapEl = document.getElementById("composerWrap");
+  const composerDropHintEl = document.getElementById("composerDropHint");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
   const modelLabel = document.getElementById("modelLabel");
   const modelMenu = document.getElementById("modelMenu");
 
-  const agentStatusEl = document.getElementById("agentStatus");
+  let agentStatusEl = null;
+  let agentStatusState = { text: "", hidden: true, phase: "" };
   const agentsScreen = document.getElementById("agentsScreen");
   const archiveScreen = document.getElementById("archiveScreen");
   const settingsScreen = document.getElementById("settingsScreen");
@@ -40,6 +48,7 @@
   const modelEditLabel = document.getElementById("modelEditLabel");
   const modelEditContext = document.getElementById("modelEditContext");
   const modelEditOutput = document.getElementById("modelEditOutput");
+  const modelEditVision = document.getElementById("modelEditVision");
   const modelEditProvider = document.getElementById("modelEditProvider");
   const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
   const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
@@ -132,28 +141,913 @@
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
   const DEFAULT_MODELS = [
-    { id: "DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
-    { id: "Qwen3-Coder-Next", label: "Qwen3 Coder Next" },
-    { id: "Gemma-4-31b", label: "Gemma 4 31B" },
-    { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-    { id: "gpt-4.1", label: "GPT-4.1" },
-    { id: "Gemini 2.5 Flash", label: "Gemini 2.5 Flash" },
+    {
+      id: "DeepSeek-V4-Flash",
+      label: "DeepSeek V4 Flash",
+      supportsVision: false,
+    },
+    {
+      id: "Qwen3-Coder-Next",
+      label: "Qwen3 Coder Next",
+      supportsVision: false,
+    },
+    { id: "Gemma-4-31b", label: "Gemma 4 31B", supportsVision: false },
+    {
+      id: "claude-sonnet-4-5",
+      label: "Claude Sonnet 4.5",
+      supportsVision: true,
+    },
+    { id: "gpt-4.1", label: "GPT-4.1", supportsVision: true },
+    {
+      id: "Gemini 2.5 Flash",
+      label: "Gemini 2.5 Flash",
+      supportsVision: true,
+    },
   ];
+
+  const KNOWN_VISION_SUPPORT = {
+    "DeepSeek-V4-Flash": false,
+    "Qwen3-Coder-Next": false,
+    "Gemma-4-31b": false,
+    "claude-sonnet-4-5": true,
+    "gpt-4.1": true,
+    "Gemini 2.5 Flash": true,
+  };
+
+  function guessModelSupportsVision(modelId) {
+    const id = String(modelId || "").trim();
+    if (!id) {
+      return false;
+    }
+    if (Object.prototype.hasOwnProperty.call(KNOWN_VISION_SUPPORT, id)) {
+      return KNOWN_VISION_SUPPORT[id];
+    }
+    const lower = id.toLowerCase();
+    if (
+      /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/.test(
+        lower
+      )
+    ) {
+      return false;
+    }
+    if (
+      /gpt-4o|gpt-4\.1|gpt-5|o[1-9]|claude|gemini|llava|vision|pixtral|gpt-image/.test(
+        lower
+      )
+    ) {
+      return true;
+    }
+    if (/gemma-3|gemma3/.test(lower)) {
+      return true;
+    }
+    return false;
+  }
+
+  function resolveModelSupportsVision(model) {
+    if (!model) {
+      return false;
+    }
+    if (typeof model === "string") {
+      const found = models.find((m) => m.id === model);
+      if (found && typeof found.supportsVision === "boolean") {
+        return found.supportsVision;
+      }
+      return guessModelSupportsVision(model);
+    }
+    if (typeof model.supportsVision === "boolean") {
+      return model.supportsVision;
+    }
+    return guessModelSupportsVision(model.id);
+  }
+
+  function currentModelSupportsVision() {
+    return resolveModelSupportsVision(
+      models.find((m) => m.id === selectedModelId) || selectedModelId
+    );
+  }
 
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
+  let pendingAttachments = [];
+  let mentionOpen = false;
+  let mentionItems = [];
+  let mentionActiveIndex = 0;
+  let mentionRequestId = 0;
+  let mentionQuery = "";
+  let mentionStart = -1;
+  /** @type {HTMLTextAreaElement | null} */
+  let mentionTarget = null;
+  let mentionSearchTimer = null;
+  let editingUserIndex = null;
+  let editingUserText = "";
+  let editingModelId = "";
+  let editingAttachments = [];
+  let editModelMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
+  let plusMenuOpen = false;
   let streamingEl = null;
+  let composerDragDepth = 0;
+
+  const MAX_PENDING_ATTACHMENTS = 8;
+
+  function attachmentPayload(att) {
+    return {
+      id: att.id,
+      kind: att.kind,
+      name: att.name,
+      mime: att.mime,
+      path: att.path,
+      storageKey: att.storageKey,
+      size: att.size,
+      dataBase64: att.dataBase64,
+    };
+  }
+
+  function mergePendingAttachments(list) {
+    if (!Array.isArray(list) || !list.length) {
+      return;
+    }
+    const visionOk = currentModelSupportsVision();
+    let skippedImages = 0;
+    for (const item of list) {
+      if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      const id = item.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      if (pendingAttachments.some((a) => a.id === id)) {
+        continue;
+      }
+      const kind =
+        item.kind ||
+        (String(item.mime || "").startsWith("image/") ? "image" : "file");
+      if (kind === "image" && !visionOk) {
+        skippedImages += 1;
+        continue;
+      }
+      pendingAttachments.push({
+        id,
+        kind,
+        name: item.name || "file",
+        mime: item.mime || "application/octet-stream",
+        path: item.path,
+        storageKey: item.storageKey,
+        size: item.size,
+        dataBase64: item.dataBase64,
+        previewDataUrl: item.previewDataUrl,
+      });
+    }
+    if (skippedImages) {
+      showCopyToast("Модель не поддерживает изображения");
+    }
+    renderAttachPreview();
+  }
+
+  function removePendingAttachment(id) {
+    pendingAttachments = pendingAttachments.filter((a) => a.id !== id);
+    renderAttachPreview();
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments = [];
+    renderAttachPreview();
+  }
+
+  function renderAttachPreview() {
+    if (!attachPreviewEl) {
+      return;
+    }
+    if (!pendingAttachments.length) {
+      attachPreviewEl.hidden = true;
+      attachPreviewEl.innerHTML = "";
+      return;
+    }
+    attachPreviewEl.hidden = false;
+    attachPreviewEl.innerHTML = pendingAttachments
+      .map((att) => {
+        const label = escapeHtml(att.path || att.name || "file");
+        if (att.kind === "image" && (att.previewDataUrl || att.dataBase64)) {
+          const src =
+            att.previewDataUrl ||
+            `data:${att.mime || "image/png"};base64,${att.dataBase64}`;
+          return (
+            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(att.id)}" title="${label}">` +
+            `<img class="attach-thumb" src="${src}" alt="" />` +
+            `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+              att.id
+            )}" title="Убрать" aria-label="Убрать">` +
+            `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+            `</button></div>`
+          );
+        }
+        return (
+          `<div class="attach-chip" data-id="${escapeHtml(att.id)}">` +
+          `<span class="material-symbols-outlined attach-chip-icon" aria-hidden="true">draft</span>` +
+          `<span class="attach-chip-name" title="${label}">${label}</span>` +
+          `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+            att.id
+          )}" title="Убрать" aria-label="Убрать">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+          `</button></div>`
+        );
+      })
+      .join("");
+  }
+
+  function closeMentionMenu() {
+    mentionOpen = false;
+    mentionItems = [];
+    mentionActiveIndex = 0;
+    mentionQuery = "";
+    mentionStart = -1;
+    mentionTarget = null;
+    if (mentionSearchTimer) {
+      clearTimeout(mentionSearchTimer);
+      mentionSearchTimer = null;
+    }
+    if (mentionMenuEl) {
+      mentionMenuEl.hidden = true;
+      mentionMenuEl.innerHTML = "";
+    }
+  }
+
+  function renderMentionMenu() {
+    if (!mentionMenuEl) {
+      return;
+    }
+    if (!mentionOpen) {
+      mentionMenuEl.hidden = true;
+      mentionMenuEl.innerHTML = "";
+      return;
+    }
+    if (!mentionItems.length) {
+      mentionMenuEl.hidden = false;
+      mentionMenuEl.innerHTML =
+        `<div class="mention-empty">Нет файлов</div>`;
+      return;
+    }
+    mentionMenuEl.hidden = false;
+    mentionMenuEl.innerHTML = mentionItems
+      .map((item, index) => {
+        const active = index === mentionActiveIndex ? " is-active" : "";
+        const name = escapeHtml(item.name || pathBasename(item.path));
+        const filePath = escapeHtml(item.path || "");
+        return (
+          `<button type="button" class="mention-option${active}" role="option" data-index="${index}" data-path="${filePath}" aria-selected="${
+            index === mentionActiveIndex ? "true" : "false"
+          }">` +
+          `<span class="material-symbols-outlined mention-option-icon" aria-hidden="true">draft</span>` +
+          `<span class="mention-option-text">` +
+          `<span class="mention-option-name">${name}</span>` +
+          `<span class="mention-option-path">${filePath}</span>` +
+          `</span></button>`
+        );
+      })
+      .join("");
+    const activeEl = mentionMenuEl.querySelector(".mention-option.is-active");
+    if (activeEl && typeof activeEl.scrollIntoView === "function") {
+      activeEl.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function pathBasename(filePath) {
+    const parts = String(filePath || "").split("/");
+    return parts[parts.length - 1] || filePath || "file";
+  }
+
+  function findMentionAtCursor(textarea) {
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      return null;
+    }
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const before = value.slice(0, cursor);
+    const match = before.match(/(^|[\s\n])@([^\s@]*)$/);
+    if (!match) {
+      return null;
+    }
+    const atIndex = before.length - match[2].length - 1;
+    return {
+      start: atIndex,
+      query: match[2],
+      end: cursor,
+    };
+  }
+
+  function requestMentionSearch(query) {
+    mentionRequestId += 1;
+    const requestId = String(mentionRequestId);
+    vscode.postMessage({
+      type: "searchFiles",
+      query: String(query || ""),
+      requestId,
+    });
+  }
+
+  function openMentionMenu(textarea, start, query) {
+    mentionOpen = true;
+    mentionTarget = textarea;
+    mentionStart = start;
+    mentionQuery = query;
+    mentionItems = [];
+    mentionActiveIndex = 0;
+    closePlusMenu();
+    closeMenu();
+    closeEditModelMenu();
+    if (mentionMenuEl) {
+      mentionMenuEl.hidden = false;
+      mentionMenuEl.innerHTML =
+        `<div class="mention-empty">Поиск…</div>`;
+    }
+    if (mentionSearchTimer) {
+      clearTimeout(mentionSearchTimer);
+    }
+    mentionSearchTimer = setTimeout(() => {
+      mentionSearchTimer = null;
+      requestMentionSearch(query);
+    }, 80);
+  }
+
+  function applyMentionSelection(index) {
+    const item = mentionItems[index];
+    const textarea = mentionTarget;
+    if (!item || !(textarea instanceof HTMLTextAreaElement) || mentionStart < 0) {
+      closeMentionMenu();
+      return;
+    }
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const insert = `@${item.path} `;
+    const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
+    const caret = mentionStart + insert.length;
+    textarea.value = next;
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+    if (textarea === promptEl) {
+      // keep as is
+    } else if (textarea.classList.contains("msg-edit-input")) {
+      editingUserText = next;
+    }
+    closeMentionMenu();
+  }
+
+  function handleMentionResults(msg) {
+    if (!mentionOpen) {
+      return;
+    }
+    if (String(msg.requestId || "") !== String(mentionRequestId)) {
+      return;
+    }
+    mentionItems = Array.isArray(msg.files) ? msg.files : [];
+    mentionActiveIndex = 0;
+    renderMentionMenu();
+  }
+
+  function onMentionInput(textarea) {
+    const mention = findMentionAtCursor(textarea);
+    if (!mention) {
+      if (mentionOpen && mentionTarget === textarea) {
+        closeMentionMenu();
+      }
+      return;
+    }
+    openMentionMenu(textarea, mention.start, mention.query);
+  }
+
+  function onMentionKeydown(event, textarea) {
+    if (!mentionOpen || mentionTarget !== textarea) {
+      return false;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMentionMenu();
+      return true;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!mentionItems.length) {
+        return true;
+      }
+      mentionActiveIndex = (mentionActiveIndex + 1) % mentionItems.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!mentionItems.length) {
+        return true;
+      }
+      mentionActiveIndex =
+        (mentionActiveIndex - 1 + mentionItems.length) % mentionItems.length;
+      renderMentionMenu();
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      if (mentionItems.length) {
+        event.preventDefault();
+        applyMentionSelection(mentionActiveIndex);
+        return true;
+      }
+      closeMentionMenu();
+      return false;
+    }
+    return false;
+  }
+
+  function renderUserTextWithMentions(text) {
+    const raw = String(text || "");
+    const re = /@([^\s@]+)/g;
+    let html = "";
+    let last = 0;
+    let match;
+    while ((match = re.exec(raw))) {
+      html += escapeHtml(raw.slice(last, match.index));
+      const filePath = match[1];
+      html +=
+        `<button type="button" class="msg-mention" data-path="${escapeHtml(
+          filePath
+        )}" title="${escapeHtml(filePath)}">@${escapeHtml(filePath)}</button>`;
+      last = match.index + match[0].length;
+    }
+    html += escapeHtml(raw.slice(last));
+    return html;
+  }
+
+  function renderMessageAttachments(attachments) {
+    if (!Array.isArray(attachments) || !attachments.length) {
+      return "";
+    }
+    return (
+      `<div class="msg-attachments">` +
+      attachments
+        .map((att) => {
+          const label = escapeHtml(att.path || att.name || "file");
+          if (att.kind === "image" && att.previewDataUrl) {
+            return (
+              `<div class="msg-attach msg-attach-image" title="${label}">` +
+              `<img src="${att.previewDataUrl}" alt="" />` +
+              `</div>`
+            );
+          }
+          return (
+            `<div class="msg-attach" title="${label}">` +
+            `<span class="material-symbols-outlined" aria-hidden="true">${
+              att.kind === "image" ? "image" : "draft"
+            }</span>` +
+            `<span class="msg-attach-name">${label}</span>` +
+            `</div>`
+          );
+        })
+        .join("") +
+      `</div>`
+    );
+  }
+
+  function readFileAsAttachment(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        const dataBase64 = comma >= 0 ? result.slice(comma + 1) : result;
+        const mime = file.type || "application/octet-stream";
+        const kind = mime.startsWith("image/") ? "image" : "file";
+        resolve({
+          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          kind,
+          name: file.name || (kind === "image" ? "image.png" : "file"),
+          mime,
+          size: file.size,
+          dataBase64,
+          previewDataUrl: kind === "image" ? result : undefined,
+        });
+      };
+      reader.onerror = () => reject(reader.error || new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function fsPathToFileUri(fsPath) {
+    const raw = String(fsPath || "").trim();
+    if (!raw) {
+      return "";
+    }
+    if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+      return `file:///${raw.replace(/\\/g, "/")}`;
+    }
+    if (raw.startsWith("\\\\")) {
+      return `file://${raw.replace(/\\/g, "/")}`;
+    }
+    if (raw.startsWith("/")) {
+      return `file://${raw}`;
+    }
+    return "";
+  }
+
+  function parseUriCandidates(raw) {
+    const text = String(raw || "").trim();
+    if (!text) {
+      return [];
+    }
+    const out = [];
+    for (const line of text.split(/\r?\n/)) {
+      const value = line.trim();
+      if (!value || value.startsWith("#")) {
+        continue;
+      }
+      if (/^(file|vscode-remote|vscode-vfs):/i.test(value)) {
+        out.push(value);
+        continue;
+      }
+      const asFile = fsPathToFileUri(value);
+      if (asFile) {
+        out.push(asFile);
+      }
+    }
+    return out;
+  }
+
+  function extractDropUris(dataTransfer) {
+    if (!dataTransfer) {
+      return [];
+    }
+    const found = [];
+    const seen = new Set();
+    const add = (uri) => {
+      const value = String(uri || "").trim();
+      if (!value || seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      found.push(value);
+    };
+
+    const types = Array.from(dataTransfer.types || []);
+    for (const type of [
+      "text/uri-list",
+      "text/plain",
+      "application/vnd.code.uri-list",
+      "resourceurls",
+    ]) {
+      if (!types.includes(type)) {
+        continue;
+      }
+      let raw = "";
+      try {
+        raw = dataTransfer.getData(type);
+      } catch {
+        raw = "";
+      }
+      if (!raw && type === "resourceurls") {
+        try {
+          raw = dataTransfer.getData("ResourceURLs");
+        } catch {
+          raw = "";
+        }
+      }
+      if (raw) {
+        // resourceurls иногда JSON-массив
+        if (raw.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              for (const item of parsed) {
+                add(String(item));
+              }
+              continue;
+            }
+          } catch {
+            // fall through
+          }
+        }
+        for (const uri of parseUriCandidates(raw)) {
+          add(uri);
+        }
+      }
+    }
+
+    const files = dataTransfer.files ? Array.from(dataTransfer.files) : [];
+    for (const file of files) {
+      // Electron File.path — абсолютный путь
+      if (file && file.path) {
+        add(fsPathToFileUri(file.path));
+      }
+    }
+
+    return found;
+  }
+
+  function isFileDrag(dataTransfer) {
+    if (!dataTransfer) {
+      return false;
+    }
+    const types = Array.from(dataTransfer.types || []);
+    return (
+      types.includes("Files") ||
+      types.includes("text/uri-list") ||
+      types.includes("application/vnd.code.uri-list") ||
+      types.includes("resourceurls") ||
+      (dataTransfer.files && dataTransfer.files.length > 0)
+    );
+  }
+
+  async function ingestDroppedFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) {
+      return;
+    }
+    const withPath = [];
+    const withoutPath = [];
+    for (const file of files) {
+      if (pendingAttachments.length + withPath.length + withoutPath.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      if (file && file.path) {
+        const uri = fsPathToFileUri(file.path);
+        if (uri) {
+          withPath.push(uri);
+          continue;
+        }
+      }
+      withoutPath.push(file);
+    }
+    if (withPath.length) {
+      vscode.postMessage({ type: "attachUris", uris: withPath });
+    }
+    if (!withoutPath.length) {
+      return;
+    }
+    const parsed = [];
+    for (const file of withoutPath) {
+      if (pendingAttachments.length + parsed.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      try {
+        parsed.push(await readFileAsAttachment(file));
+      } catch {
+        // skip unreadable
+      }
+    }
+    if (parsed.length) {
+      vscode.postMessage({
+        type: "attachFiles",
+        files: parsed.map(attachmentPayload),
+      });
+    }
+  }
 
   function scrollToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function ensureAgentStatusEl() {
+    if (agentStatusEl && messagesEl.contains(agentStatusEl)) {
+      return agentStatusEl;
+    }
+    agentStatusEl = document.createElement("div");
+    agentStatusEl.id = "agentStatus";
+    agentStatusEl.className = "agent-status agent-status-in-messages";
+    agentStatusEl.hidden = true;
+    messagesEl.appendChild(agentStatusEl);
+    return agentStatusEl;
+  }
+
+  function setAgentStatus(text, hidden, phase) {
+    const nextHidden = Boolean(hidden || !text);
+    agentStatusState = {
+      text: nextHidden ? "" : text,
+      hidden: nextHidden,
+      phase: nextHidden ? "" : phase || "",
+    };
+
+    if (agentStatusState.hidden) {
+      if (agentStatusEl) {
+        agentStatusEl.hidden = true;
+        agentStatusEl.textContent = "";
+        agentStatusEl.removeAttribute("data-phase");
+      }
+      return;
+    }
+
+    const el = ensureAgentStatusEl();
+    el.hidden = false;
+    el.textContent = agentStatusState.text;
+    if (agentStatusState.phase) {
+      el.dataset.phase = agentStatusState.phase;
+    } else {
+      el.removeAttribute("data-phase");
+    }
+    messagesEl.appendChild(el);
+    scrollToBottom();
+  }
+
+  function restoreAgentStatus() {
+    if (agentStatusState.hidden) {
+      agentStatusEl = null;
+      return;
+    }
+    agentStatusEl = null;
+    setAgentStatus(
+      agentStatusState.text,
+      false,
+      agentStatusState.phase
+    );
+  }
+
+  function keepStatusAtEnd() {
+    if (agentStatusState.hidden) {
+      return;
+    }
+    messagesEl.appendChild(ensureAgentStatusEl());
+  }
+
   function setCanRegenerate(nextValue) {
     canRegenerate = Boolean(nextValue);
+  }
+
+  function focusEditingInput() {
+    if (!Number.isInteger(editingUserIndex)) {
+      return;
+    }
+    const input = messagesEl.querySelector(
+      `.msg-edit-input[data-index="${editingUserIndex}"]`
+    );
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      input.focus();
+      const pos = input.value.length;
+      input.setSelectionRange(pos, pos);
+    });
+  }
+
+  function startEditingUserMessage(index) {
+    const item = uiMessagesCache[index];
+    if (!item || item.role !== "user" || busy) {
+      return;
+    }
+    closeMenu();
+    closeEditModelMenu();
+    editingUserIndex = index;
+    editingUserText = String(item.text || "");
+    editingModelId = selectedModelId || models[0]?.id || "";
+    editingAttachments = Array.isArray(item.attachments)
+      ? item.attachments.slice()
+      : [];
+    renderMessages(uiMessagesCache);
+  }
+
+  function cancelEditingUserMessage() {
+    closeEditModelMenu();
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    editingAttachments = [];
+    renderMessages(uiMessagesCache);
+  }
+
+  function submitEditedUserMessage() {
+    if (!Number.isInteger(editingUserIndex) || busy) {
+      return;
+    }
+    const nextText = editingUserText.trim();
+    const attachments = editingAttachments.slice();
+    if (!nextText && !attachments.length) {
+      return;
+    }
+    const model =
+      editingModelId || selectedModelId || models[0]?.id || "";
+    if (model && model !== selectedModelId) {
+      setSelectedModel(model, true);
+    }
+    closeEditModelMenu();
+    setBusy(true);
+    vscode.postMessage({
+      type: "editUserMessage",
+      index: editingUserIndex,
+      text: nextText,
+      model,
+      attachments: attachments.map(attachmentPayload),
+    });
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    editingAttachments = [];
+  }
+
+  function modelDisplayName(id) {
+    const model = models.find((m) => m.id === id);
+    return model ? model.label || model.id : id || "Нет моделей";
+  }
+
+  function renderEditModelMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    if (!models.length) {
+      const empty = document.createElement("div");
+      empty.className = "model-option is-empty";
+      empty.textContent = "Нет моделей в настройках";
+      menuEl.appendChild(empty);
+      return;
+    }
+    for (const model of models) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (model.id === editingModelId ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.dataset.id = model.id;
+
+      const label = document.createElement("span");
+      label.className = "model-option-label";
+      label.textContent = model.label || model.id;
+      btn.appendChild(label);
+
+      if (model.id === editingModelId) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+
+      if (model.favorite === true) {
+        const heart = document.createElement("span");
+        heart.className = "model-option-fav";
+        heart.innerHTML = HEART_ICON;
+        heart.setAttribute("aria-hidden", "true");
+        btn.appendChild(heart);
+      }
+
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function getEditModelPicker() {
+    return messagesEl.querySelector(".msg-edit-model-picker");
+  }
+
+  function closeEditModelMenu() {
+    editModelMenuOpen = false;
+    const picker = getEditModelPicker();
+    if (!picker) {
+      return;
+    }
+    picker.classList.remove("is-open");
+    const trigger = picker.querySelector(".msg-edit-model-trigger");
+    const menu = picker.querySelector(".msg-edit-model-menu");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+  }
+
+  function openEditModelMenu() {
+    const picker = getEditModelPicker();
+    if (!picker || busy) {
+      return;
+    }
+    closeMenu();
+    editModelMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-model-trigger");
+    const menu = picker.querySelector(".msg-edit-model-menu");
+    renderEditModelMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+    }
+  }
+
+  function toggleEditModelMenu() {
+    if (editModelMenuOpen) {
+      closeEditModelMenu();
+    } else {
+      openEditModelMenu();
+    }
+  }
+
+  function selectEditingModel(id) {
+    if (!id || busy) {
+      return;
+    }
+    editingModelId = id;
+    const picker = getEditModelPicker();
+    const label = picker
+      ? picker.querySelector(".msg-edit-model-label")
+      : null;
+    if (label) {
+      label.textContent = modelDisplayName(editingModelId);
+    }
+    closeEditModelMenu();
   }
 
   function removeRegenerateButtons() {
@@ -199,19 +1093,6 @@
     (parent || messagesEl).insertBefore(wrap, last);
     wrap.appendChild(actions);
     wrap.appendChild(last);
-  }
-
-  function setAgentStatus(text, hidden) {
-    if (!agentStatusEl) {
-      return;
-    }
-    if (hidden || !text) {
-      agentStatusEl.hidden = true;
-      agentStatusEl.textContent = "";
-      return;
-    }
-    agentStatusEl.hidden = false;
-    agentStatusEl.textContent = text;
   }
 
   function formatTokenCount(n) {
@@ -296,6 +1177,100 @@
         return values.length ? `${name} · ${values.join(" · ")}` : name;
       }
     }
+  }
+
+  function toolStepsLabel(count) {
+    if (count === 1) {
+      return "1 шаг";
+    }
+    if (count > 1 && count < 5) {
+      return `${count} шага`;
+    }
+    return `${count} шагов`;
+  }
+
+  function sealToolGroups() {
+    for (const group of messagesEl.querySelectorAll(
+      ".tool-group:not([data-sealed])"
+    )) {
+      group.dataset.sealed = "1";
+    }
+  }
+
+  function updateToolGroupSummary(group) {
+    if (!group) {
+      return;
+    }
+    const count = group.querySelectorAll(".msg.tool").length;
+    const summary = group.querySelector(".tool-group-summary");
+    if (summary) {
+      summary.textContent = toolStepsLabel(count);
+    }
+    group.title = group.classList.contains("is-collapsed")
+      ? "Показать шаги"
+      : "Скрыть шаги";
+  }
+
+  function createToolGroup() {
+    const group = document.createElement("div");
+    group.className = "tool-group is-collapsed";
+    group.innerHTML =
+      `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
+      `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
+      `<span class="tool-group-summary">0 шагов</span>` +
+      `</button>` +
+      `<div class="tool-group-body"></div>`;
+    return group;
+  }
+
+  function getActiveToolGroup() {
+    let node = messagesEl.lastElementChild;
+    while (
+      node &&
+      (node.id === "agentStatus" ||
+        node.classList.contains("agent-status") ||
+        node.classList.contains("review-actions"))
+    ) {
+      node = node.previousElementSibling;
+    }
+    if (
+      node &&
+      node.classList.contains("tool-group") &&
+      !node.dataset.sealed
+    ) {
+      return node;
+    }
+    return null;
+  }
+
+  function ensureActiveToolGroup() {
+    const existing = getActiveToolGroup();
+    if (existing) {
+      return existing;
+    }
+    const group = createToolGroup();
+    messagesEl.appendChild(group);
+    keepStatusAtEnd();
+    return group;
+  }
+
+  function appendToolToGroup(text, index) {
+    const group = ensureActiveToolGroup();
+    const body = group.querySelector(".tool-group-body");
+    const el = document.createElement("div");
+    el.className = "msg tool";
+    if (typeof index === "number") {
+      el.dataset.index = String(index);
+    }
+    const msgBody = document.createElement("div");
+    msgBody.className = "msg-body";
+    el.appendChild(msgBody);
+    setMessageContent(el, "tool", text);
+    body.appendChild(el);
+    updateToolGroupSummary(group);
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
   }
 
   function showScreen(name) {
@@ -658,12 +1633,27 @@
     ]);
     const contextWindow = Number(contextRaw);
     const maxOutputTokens = Number(outputRaw);
+    const visionRaw = pickField(raw, [
+      "supportsVision",
+      "supports_vision",
+      "vision",
+      "multimodal",
+    ]);
     const model = { id, label, enabled: true };
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       model.contextWindow = Math.floor(contextWindow);
     }
     if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
       model.maxOutputTokens = Math.floor(maxOutputTokens);
+    }
+    if (visionRaw === true || visionRaw === "true" || visionRaw === 1) {
+      model.supportsVision = true;
+    } else if (
+      visionRaw === false ||
+      visionRaw === "false" ||
+      visionRaw === 0
+    ) {
+      model.supportsVision = false;
     }
     return model;
   }
@@ -677,6 +1667,10 @@
       maxOutputTokens: model.maxOutputTokens,
       enabled: model.enabled !== false,
       favorite: model.favorite === true,
+      supportsVision:
+        typeof model.supportsVision === "boolean"
+          ? model.supportsVision
+          : guessModelSupportsVision(model.id),
     };
   }
 
@@ -730,6 +1724,12 @@
             model.maxOutputTokens || prev.maxOutputTokens || undefined,
           enabled: prev.enabled !== false,
           favorite: prev.favorite === true,
+          supportsVision:
+            typeof model.supportsVision === "boolean"
+              ? model.supportsVision
+              : typeof prev.supportsVision === "boolean"
+                ? prev.supportsVision
+                : guessModelSupportsVision(model.id),
         });
         updated += 1;
       } else {
@@ -874,6 +1874,9 @@
         if (m.maxOutputTokens) {
           row.maxOutputTokens = m.maxOutputTokens;
         }
+        if (typeof m.supportsVision === "boolean") {
+          row.supportsVision = m.supportsVision;
+        }
         return row;
       });
     const text = JSON.stringify(payload, null, 2);
@@ -983,6 +1986,12 @@
           ? String(model.maxOutputTokens)
           : "";
     }
+    if (modelEditVision) {
+      modelEditVision.checked =
+        typeof model.supportsVision === "boolean"
+          ? model.supportsVision
+          : guessModelSupportsVision(model.id);
+    }
     if (isNew && settingsModelsJson && !settingsModelsJson.value.trim()) {
       settingsModelsJson.value = "";
     }
@@ -1036,6 +2045,7 @@
       label: label || id,
       providerId,
       enabled: true,
+      supportsVision: modelEditVision ? Boolean(modelEditVision.checked) : false,
     };
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       next.contextWindow = Math.floor(contextWindow);
@@ -1106,6 +2116,7 @@
       "Ответ (выход)",
       "Статус",
       "Избранное",
+      "Vision",
     ];
     settingsModelTipRows = labels.map((label) => {
       const line = document.createElement("div");
@@ -1144,6 +2155,7 @@
       formatModelTokens(model.maxOutputTokens),
       model.enabled !== false ? "Включена" : "Выключена",
       model.favorite === true ? "Да" : "Нет",
+      resolveModelSupportsVision(model) ? "Да" : "Нет",
     ];
     ensureSettingsModelTip();
     for (let i = 0; i < settingsModelTipRows.length; i += 1) {
@@ -1341,6 +2353,10 @@
           maxOutputTokens: m.maxOutputTokens,
           enabled: m.enabled !== false,
           favorite: m.favorite === true,
+          supportsVision:
+            typeof m.supportsVision === "boolean"
+              ? m.supportsVision
+              : guessModelSupportsVision(m.id),
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -1416,6 +2432,10 @@
       if (m.favorite === true) {
         row.favorite = true;
       }
+      row.supportsVision =
+        typeof m.supportsVision === "boolean"
+          ? m.supportsVision
+          : guessModelSupportsVision(m.id);
       return row;
     });
     const primary =
@@ -1735,6 +2755,7 @@
     });
     actions.appendChild(scmBtn);
     messagesEl.appendChild(actions);
+    keepStatusAtEnd();
     scrollToBottom();
   }
 
@@ -1764,84 +2785,27 @@
       .replace(/"/g, "&quot;");
   }
 
-  /** Лёгкий markdown: заголовки, `код`, **жирный**, fences. */
-  function renderInlineMarkdown(text) {
-    const blocks = splitFenceBlocks(String(text));
-    return blocks
-      .map((block) => {
-        if (block.type === "fence") {
-          const inner = block.content.trim();
-          // один путь в fence → просто ссылка на файл, без ```
-          if (isFilePath(inner) && !inner.includes("\n")) {
-            return fileLinkHtml(inner);
-          }
-          return (
-            `<div class="md-pre-wrap">` +
-            `<pre class="md-pre"><code>${escapeHtml(block.content.replace(/\n$/, ""))}</code></pre>` +
-            `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
-            COPY_ICON +
-            `</button>` +
-            `</div>`
-          );
-        }
-        const lines = block.content.split("\n");
-        return lines
-          .map((line) => {
-            const heading = line.match(/^(#{1,3})\s+(.+)$/);
-            if (heading) {
-              const level = heading[1].length;
-              const content = renderInlineSpans(heading[2]);
-              return `<div class="md-h md-h${level}">${content}</div>`;
-            }
-            return renderInlineSpans(line);
-          })
-          .join("<br>");
-      })
-      .join("<br>");
-  }
-
-  function splitFenceBlocks(text) {
-    const blocks = [];
-    const re = /```[^\n]*\n?([\s\S]*?)```/g;
-    let last = 0;
-    let match;
-    while ((match = re.exec(text))) {
-      if (match.index > last) {
-        blocks.push({ type: "text", content: text.slice(last, match.index) });
-      }
-      blocks.push({ type: "fence", content: match[1] });
-      last = match.index + match[0].length;
-    }
-    if (last < text.length) {
-      blocks.push({ type: "text", content: text.slice(last) });
-    }
-    if (!blocks.length) {
-      blocks.push({ type: "text", content: text });
-    }
-    return blocks;
-  }
-
   const FILE_EXT =
     "ts|tsx|js|jsx|mjs|cjs|json|css|scss|less|sass|md|mdx|py|go|rs|java|kt|kts|vue|svelte|html|htm|yml|yaml|toml|xml|svg|sh|bash|zsh|env|lock|swift|dart|php|rb|cs|cpp|cc|cxx|h|hpp|sql|graphql|gql|proto|txt|csv|gitignore|dockerignore|editorconfig";
 
   function isFilePath(value) {
     const s = String(value || "").trim();
-    // только пути с каталогом (src/...), голые имена файлов — не кликабельны
-    if (!s || /\s/.test(s) || !s.includes("/")) {
+    if (!s || /\s/.test(s) || s.includes("://")) {
       return false;
     }
-    if (/^https?:\/\//i.test(s) || s.includes("://")) {
+    if (/^https?:\/\//i.test(s)) {
       return false;
     }
-    // путь с расширением
-    if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
-      return true;
+    if (s.includes("/")) {
+      if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
+        return true;
+      }
+      if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
+        return true;
+      }
+      return false;
     }
-    // путь со слэшами без странных символов
-    if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
-      return true;
-    }
-    return false;
+    return new RegExp(`^[\\w.-]+\\.(?:${FILE_EXT})$`, "i").test(s);
   }
 
   function fileLinkHtml(path) {
@@ -1859,9 +2823,9 @@
     return { href, trailing };
   }
 
-  function linkifyAndEscape(raw) {
+  function linkifyPlainText(raw, alreadyEscaped) {
     const tokens = [];
-    let text = String(raw);
+    let text = String(raw || "");
 
     text = text.replace(/(https?:\/\/[^\s<>"'`]+)/g, (url) => {
       const { href, trailing } = splitTrailingPunctuation(url);
@@ -1870,14 +2834,16 @@
       }
       const id = tokens.length;
       tokens.push(
-        `<a class="md-link" href="${escapeHtml(href)}" data-href="${escapeHtml(href)}">${escapeHtml(href)}</a>`
+        `<a class="md-link" href="${escapeHtml(href)}" data-href="${escapeHtml(
+          href
+        )}">${escapeHtml(href)}</a>`
       );
       return `\u0001T${id}\u0001${trailing}`;
     });
 
     text = text.replace(
       new RegExp(
-        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
+        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+(?:\\.(?:${FILE_EXT}))?|[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
         "gi"
       ),
       (full, path) => {
@@ -1890,63 +2856,197 @@
       }
     );
 
-    let html = escapeHtml(text);
-    html = html.replace(/\u0001T(\d+)\u0001/g, (_, id) => tokens[Number(id)] || "");
+    const html = (alreadyEscaped ? text : escapeHtml(text)).replace(
+      /\u0001T(\d+)\u0001/g,
+      (_, id) => tokens[Number(id)] || ""
+    );
     return html;
   }
 
-  function renderTextChunk(raw) {
-    // Сначала **жирный** / *курсив*, внутри — ссылки и пути
-    const tokens = [];
-    let text = String(raw);
+  let markdownReady = false;
 
-    text = text.replace(/\*\*([^*\n]+)\*\*/g, (_, inner) => {
-      const id = tokens.length;
-      tokens.push(`<strong class="md-strong">${linkifyAndEscape(inner)}</strong>`);
-      return `\u0001B${id}\u0001`;
-    });
+  function ensureMarkdownRenderer() {
+    if (markdownReady) {
+      return typeof marked !== "undefined";
+    }
+    if (typeof marked === "undefined" || !marked.Renderer) {
+      return false;
+    }
+    markdownReady = true;
 
-    text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, (_, lead, inner) => {
-      const id = tokens.length;
-      tokens.push(`<em class="md-em">${linkifyAndEscape(inner)}</em>`);
-      return `${lead}\u0001B${id}\u0001`;
-    });
+    const renderer = new marked.Renderer();
 
-    let html = linkifyAndEscape(text);
-    html = html.replace(/\u0001B(\d+)\u0001/g, (_, id) => tokens[Number(id)] || "");
-    return html;
-  }
-
-  function renderInlineSpans(text) {
-    const parts = [];
-    const re = /`([^`\n]+)`/g;
-    let last = 0;
-    let match;
-    while ((match = re.exec(text))) {
-      if (match.index > last) {
-        parts.push({ type: "text", value: text.slice(last, match.index) });
+    renderer.code = function ({ text }) {
+      const inner = String(text || "").replace(/\n$/, "");
+      if (isFilePath(inner.trim()) && !inner.includes("\n")) {
+        return fileLinkHtml(inner.trim());
       }
-      parts.push({ type: "tick", value: match[1] });
-      last = match.index + match[0].length;
-    }
-    if (last < text.length) {
-      parts.push({ type: "text", value: text.slice(last) });
-    }
-    if (!parts.length) {
-      parts.push({ type: "text", value: text });
-    }
+      return (
+        `<div class="md-pre-wrap">` +
+        `<pre class="md-pre"><code>${escapeHtml(inner)}</code></pre>` +
+        `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+        COPY_ICON +
+        `</button>` +
+        `</div>\n`
+      );
+    };
 
-    return parts
-      .map((part) => {
-        if (part.type === "tick") {
-          if (isFilePath(part.value)) {
-            return fileLinkHtml(part.value);
-          }
-          return `<code class="md-code">${escapeHtml(part.value)}</code>`;
+    renderer.codespan = function ({ text }) {
+      const value = String(text || "");
+      if (isFilePath(value)) {
+        return fileLinkHtml(value);
+      }
+      return `<code class="md-code">${escapeHtml(value)}</code>`;
+    };
+
+    renderer.heading = function ({ tokens, depth }) {
+      const level = Math.min(3, Math.max(1, depth || 1));
+      return `<div class="md-h md-h${level}">${this.parser.parseInline(
+        tokens
+      )}</div>\n`;
+    };
+
+    renderer.paragraph = function ({ tokens }) {
+      return `<div class="md-p">${this.parser.parseInline(tokens)}</div>\n`;
+    };
+
+    renderer.blockquote = function ({ tokens }) {
+      return `<blockquote class="md-quote">${this.parser.parse(
+        tokens
+      )}</blockquote>\n`;
+    };
+
+    renderer.list = function ({ items, ordered, start }) {
+      const tag = ordered ? "ol" : "ul";
+      const startAttr = ordered && start !== 1 ? ` start="${start}"` : "";
+      const body = items.map((item) => this.listitem(item)).join("");
+      return `<${tag} class="md-list md-${tag}"${startAttr}>${body}</${tag}>\n`;
+    };
+
+    renderer.listitem = function (item) {
+      let body = "";
+      if (item.task) {
+        const checked = item.checked ? " checked" : "";
+        body += `<input class="md-task" type="checkbox" disabled${checked} /> `;
+      }
+      body += this.parser.parse(item.tokens, !!item.loose);
+      return `<li class="md-li">${body}</li>\n`;
+    };
+
+    renderer.checkbox = function () {
+      return "";
+    };
+
+    renderer.strong = function ({ tokens }) {
+      return `<strong class="md-strong">${this.parser.parseInline(
+        tokens
+      )}</strong>`;
+    };
+
+    renderer.em = function ({ tokens }) {
+      return `<em class="md-em">${this.parser.parseInline(tokens)}</em>`;
+    };
+
+    renderer.del = function ({ tokens }) {
+      return `<del class="md-del">${this.parser.parseInline(tokens)}</del>`;
+    };
+
+    renderer.link = function ({ href, title, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      const safeHref = String(href || "");
+      if (!/^https?:\/\//i.test(safeHref)) {
+        if (isFilePath(safeHref)) {
+          return fileLinkHtml(safeHref);
         }
-        return renderTextChunk(part.value);
-      })
-      .join("");
+        return label;
+      }
+      const t = title ? ` title="${escapeHtml(title)}"` : "";
+      return `<a class="md-link" href="${escapeHtml(
+        safeHref
+      )}" data-href="${escapeHtml(safeHref)}"${t}>${label}</a>`;
+    };
+
+    renderer.image = function ({ text, href }) {
+      return escapeHtml(text || href || "");
+    };
+
+    renderer.html = function ({ text }) {
+      return escapeHtml(text || "");
+    };
+
+    renderer.hr = function () {
+      return '<hr class="md-hr" />\n';
+    };
+
+    renderer.br = function () {
+      return "<br />";
+    };
+
+    renderer.table = function (token) {
+      let header = "";
+      for (const cell of token.header) {
+        header += this.tablecell(cell);
+      }
+      let body = "";
+      for (const row of token.rows) {
+        let cells = "";
+        for (const cell of row) {
+          cells += this.tablecell(cell);
+        }
+        body += this.tablerow({ text: cells });
+      }
+      return (
+        `<div class="md-table-wrap"><table class="md-table"><thead>${this.tablerow(
+          { text: header }
+        )}</thead><tbody>${body}</tbody></table></div>\n`
+      );
+    };
+
+    renderer.tablerow = function ({ text }) {
+      return `<tr>${text}</tr>\n`;
+    };
+
+    renderer.tablecell = function (cell) {
+      const tag = cell.header ? "th" : "td";
+      const align = cell.align ? ` style="text-align:${cell.align}"` : "";
+      return `<${tag} class="md-td"${align}>${this.parser.parseInline(
+        cell.tokens
+      )}</${tag}>`;
+    };
+
+    renderer.text = function (token) {
+      if (token.tokens && token.tokens.length) {
+        return this.parser.parseInline(token.tokens);
+      }
+      return linkifyPlainText(String(token.text || ""), !!token.escaped);
+    };
+
+    marked.use({
+      renderer,
+      gfm: true,
+      breaks: true,
+      pedantic: false,
+    });
+    return true;
+  }
+
+  /** Markdown (GFM): таблицы, списки, заголовки, код, ссылки, жирный/курсив и т.д. */
+  function renderInlineMarkdown(text) {
+    const raw = String(text || "");
+    if (!raw) {
+      return "";
+    }
+    if (ensureMarkdownRenderer()) {
+      try {
+        return marked.parse(raw, { async: false });
+      } catch {
+        // fallback below
+      }
+    }
+    return `<div class="md-p">${linkifyPlainText(raw, false).replace(
+      /\n/g,
+      "<br />"
+    )}</div>`;
   }
 
   let copyToastEl = null;
@@ -1993,15 +3093,20 @@
       body.className = "msg-body";
       el.insertBefore(body, el.firstChild);
     }
-    if (role === "assistant") {
+    if (role === "assistant" || role === "error") {
       body.innerHTML = renderInlineMarkdown(raw);
+      return;
+    }
+    if (role === "user") {
+      body.innerHTML = renderUserTextWithMentions(raw);
       return;
     }
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
-  function appendMessage(role, text, index, regenAssistantIndex) {
+  function appendMessage(role, text, index, regenAssistantIndex, attachments) {
     if (role === "review") {
+      sealToolGroups();
       try {
         appendReview(parseReviewData(text));
       } catch {
@@ -2009,8 +3114,18 @@
       }
       return null;
     }
+
+    if (role === "tool") {
+      return appendToolToGroup(text, index);
+    }
+
+    sealToolGroups();
+
     const el = document.createElement("div");
     el.className = `msg ${role}`;
+    if (typeof index === "number") {
+      el.dataset.index = String(index);
+    }
 
     const body = document.createElement("div");
     body.className = "msg-body";
@@ -2018,17 +3133,66 @@
     setMessageContent(el, role, text);
 
     if (role === "user") {
+      const isEditing = index === editingUserIndex;
+      const msgAttachments = isEditing
+        ? editingAttachments
+        : Array.isArray(attachments)
+          ? attachments
+          : [];
+      if (isEditing) {
+        el.classList.add("is-editing");
+        const editModelLabel = modelDisplayName(
+          editingModelId || selectedModelId
+        );
+        body.innerHTML =
+          `<div class="msg-edit-composer">` +
+          (msgAttachments.length
+            ? renderMessageAttachments(msgAttachments)
+            : "") +
+          `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="Редактирование сообщения"></textarea>` +
+          `<div class="msg-edit-footer">` +
+          `<div class="msg-edit-footer-left">` +
+          `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
+          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">` +
+          `<span class="model-label msg-edit-model-label">${escapeHtml(
+            editModelLabel
+          )}</span>` +
+          `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+          `</button>` +
+          `<div class="model-menu msg-edit-model-menu" role="listbox" hidden></div>` +
+          `</div>` +
+          `</div>` +
+          `<div class="msg-edit-footer-right">` +
+          `<button type="button" class="primary msg-edit-save" data-index="${index}" title="Сохранить и переотправить" aria-label="Сохранить и переотправить">` +
+          `<span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>` +
+          `</button>` +
+          `</div>` +
+          `</div>` +
+          `</div>`;
+        const input = body.querySelector(".msg-edit-input");
+        if (input) {
+          input.value = editingUserText;
+        }
+      } else if (msgAttachments.length) {
+        const attachHtml = renderMessageAttachments(msgAttachments);
+        if (attachHtml) {
+          body.insertAdjacentHTML("afterbegin", attachHtml);
+        }
+      }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
-      const actions = document.createElement("div");
-      actions.className = "msg-actions";
-      actions.innerHTML =
-        `<button type="button" class="icon-btn msg-copy" title="Копировать" aria-label="Копировать">` +
-        COPY_ICON +
-        `</button>`;
-      wrap.appendChild(actions);
+      if (!isEditing) {
+        const actions = document.createElement("div");
+        actions.className = "msg-actions";
+        actions.innerHTML =
+          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="Копировать" aria-label="Копировать">` +
+          COPY_ICON +
+          `</button>`;
+        wrap.appendChild(actions);
+      }
       wrap.appendChild(el);
       messagesEl.appendChild(wrap);
+      keepStatusAtEnd();
       scrollToBottom();
       return el;
     }
@@ -2051,11 +3215,13 @@
       wrap.appendChild(actions);
       wrap.appendChild(el);
       messagesEl.appendChild(wrap);
+      keepStatusAtEnd();
       scrollToBottom();
       return el;
     }
 
     messagesEl.appendChild(el);
+    keepStatusAtEnd();
     scrollToBottom();
     return el;
   }
@@ -2083,8 +3249,16 @@
 
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
-      appendMessage(item.role, item.text, i, regenAssistantIndex);
+      appendMessage(
+        item.role,
+        item.text,
+        i,
+        regenAssistantIndex,
+        item.attachments
+      );
     }
+    restoreAgentStatus();
+    focusEditingInput();
   }
 
   function getSelectedModel() {
@@ -2098,11 +3272,46 @@
       : selectedModelId || "Нет моделей";
   }
 
+  function stripPendingImagesIfNeeded(notify) {
+    const before = pendingAttachments.length;
+    if (currentModelSupportsVision()) {
+      return;
+    }
+    pendingAttachments = pendingAttachments.filter((a) => a.kind !== "image");
+    if (pendingAttachments.length < before) {
+      renderAttachPreview();
+      if (notify) {
+        showCopyToast("Модель не поддерживает изображения");
+      }
+    }
+  }
+
+  function updateVisionUi() {
+    stripPendingImagesIfNeeded(true);
+    const visionOk = currentModelSupportsVision();
+    if (!composerPlusMenu) {
+      return;
+    }
+    const imageItem = composerPlusMenu.querySelector(
+      '.composer-plus-item[data-action="image"]'
+    );
+    if (!imageItem) {
+      return;
+    }
+    imageItem.disabled = !visionOk;
+    imageItem.classList.toggle("is-disabled", !visionOk);
+    imageItem.setAttribute("aria-disabled", visionOk ? "false" : "true");
+    imageItem.title = visionOk
+      ? "Прикрепить изображение"
+      : "Текущая модель не поддерживает изображения";
+  }
+
   function setSelectedModel(id, notify) {
     selectedModelId = id || "";
     state.selectedModel = selectedModelId;
     vscode.setState(state);
     updateTriggerLabel();
+    updateVisionUi();
     if (menuOpen) {
       renderMenu();
     }
@@ -2157,6 +3366,7 @@
     if (busy) {
       return;
     }
+    closePlusMenu();
     menuOpen = true;
     renderMenu();
     modelPicker.classList.add("is-open");
@@ -2171,10 +3381,47 @@
     modelMenu.hidden = true;
   }
 
+  function closePlusMenu() {
+    plusMenuOpen = false;
+    if (composerPlusEl) {
+      composerPlusEl.classList.remove("is-open");
+    }
+    if (composerPlusBtn) {
+      composerPlusBtn.setAttribute("aria-expanded", "false");
+    }
+    if (composerPlusMenu) {
+      composerPlusMenu.hidden = true;
+    }
+  }
+
+  function openPlusMenu() {
+    closeMenu();
+    closeEditModelMenu();
+    plusMenuOpen = true;
+    if (composerPlusEl) {
+      composerPlusEl.classList.add("is-open");
+    }
+    if (composerPlusBtn) {
+      composerPlusBtn.setAttribute("aria-expanded", "true");
+    }
+    if (composerPlusMenu) {
+      composerPlusMenu.hidden = false;
+    }
+  }
+
+  function togglePlusMenu() {
+    if (plusMenuOpen) {
+      closePlusMenu();
+    } else {
+      openPlusMenu();
+    }
+  }
+
   function toggleMenu() {
     if (menuOpen) {
       closeMenu();
     } else {
+      closePlusMenu();
       openMenu();
     }
   }
@@ -2183,9 +3430,13 @@
     busy = nextBusy;
     promptEl.disabled = busy;
     modelTrigger.disabled = busy;
-    newChatBtn.disabled = busy;
+    if (composerPlusBtn) {
+      composerPlusBtn.disabled = busy;
+    }
     if (busy) {
       closeMenu();
+      closePlusMenu();
+      closeMentionMenu();
     }
     sendBtn.dataset.mode = busy ? "stop" : "send";
     sendBtn.title = busy ? "Остановить" : "Отправить";
@@ -2250,33 +3501,75 @@
   });
 
   document.addEventListener("mousedown", (event) => {
-    if (!menuOpen) {
-      return;
-    }
-    if (!modelPicker.contains(event.target)) {
+    if (menuOpen && !modelPicker.contains(event.target)) {
       closeMenu();
+    }
+    if (
+      plusMenuOpen &&
+      composerPlusEl &&
+      !composerPlusEl.contains(event.target)
+    ) {
+      closePlusMenu();
+    }
+    if (
+      mentionOpen &&
+      mentionMenuEl &&
+      !mentionMenuEl.contains(event.target) &&
+      event.target !== mentionTarget
+    ) {
+      closeMentionMenu();
+    }
+    if (editModelMenuOpen) {
+      const picker = getEditModelPicker();
+      if (!picker || !picker.contains(event.target)) {
+        closeEditModelMenu();
+      }
+    }
+    if (Number.isInteger(editingUserIndex) && !busy) {
+      const composer = messagesEl.querySelector(".msg-edit-composer");
+      if (composer && !composer.contains(event.target)) {
+        cancelEditingUserMessage();
+      }
     }
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && mentionOpen) {
+      closeMentionMenu();
+    }
     if (event.key === "Escape" && menuOpen) {
       closeMenu();
+    }
+    if (event.key === "Escape" && plusMenuOpen) {
+      closePlusMenu();
+    }
+    if (event.key === "Escape" && editModelMenuOpen) {
+      closeEditModelMenu();
     }
   });
 
 
   function sendPrompt() {
     const text = promptEl.value.trim();
-    if (!text || busy) {
+    const attachments = pendingAttachments.slice();
+    if ((!text && !attachments.length) || busy) {
       return;
     }
-    appendMessage("user", text);
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    editingAttachments = [];
+    uiMessagesCache.push({ role: "user", text, attachments });
+    appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
+    clearPendingAttachments();
+    closeMentionMenu();
     setBusy(true);
     vscode.postMessage({
       type: "send",
       text,
       model: getSelectedModel(),
+      attachments: attachments.map(attachmentPayload),
     });
   }
 
@@ -2288,11 +3581,248 @@
     sendPrompt();
   });
 
-  newChatBtn.addEventListener("click", () => {
-    if (busy) {
+  if (composerPlusBtn) {
+    composerPlusBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy) {
+        return;
+      }
+      togglePlusMenu();
+    });
+  }
+
+  if (composerPlusMenu) {
+    composerPlusMenu.addEventListener("click", (event) => {
+      const item = event.target.closest(".composer-plus-item");
+      if (!item || busy || item.disabled || item.classList.contains("is-disabled")) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const action = item.getAttribute("data-action");
+      closePlusMenu();
+      if (action === "image") {
+        if (!currentModelSupportsVision()) {
+          showCopyToast("Модель не поддерживает изображения");
+          return;
+        }
+        vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
+      }
+    });
+  }
+
+  if (attachPreviewEl) {
+    attachPreviewEl.addEventListener("click", (event) => {
+      const btn = event.target.closest(".attach-chip-remove");
+      if (!btn) {
+        return;
+      }
+      event.preventDefault();
+      removePendingAttachment(btn.getAttribute("data-id"));
+    });
+  }
+
+  function setComposerDropActive(active, withHint) {
+    if (!composerEl) {
       return;
     }
-    vscode.postMessage({ type: "newChat" });
+    // Подсветка только у поля ввода, даже если drag над всей областью чата
+    composerEl.classList.toggle("is-drop-target", Boolean(active));
+    if (composerWrapEl) {
+      composerWrapEl.classList.remove("is-drop-target");
+    }
+    if (composerDropHintEl) {
+      composerDropHintEl.hidden = !(active && withHint);
+    }
+  }
+
+  function clearComposerDropState() {
+    composerDragDepth = 0;
+    setComposerDropActive(false, false);
+  }
+
+  // Drop принимаем на весь экран чата; визуально подсвечиваем только composer
+  const dropRoot = chatScreen || composerWrapEl || composerEl;
+  if (dropRoot) {
+    dropRoot.addEventListener("dragenter", (event) => {
+      if (!isFileDrag(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      composerDragDepth += 1;
+      setComposerDropActive(true, true);
+    });
+    dropRoot.addEventListener("dragover", (event) => {
+      if (!isFileDrag(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+      setComposerDropActive(true, true);
+    });
+    dropRoot.addEventListener("dragleave", (event) => {
+      const related = event.relatedTarget;
+      if (related instanceof Node && dropRoot.contains(related)) {
+        return;
+      }
+      composerDragDepth = Math.max(0, composerDragDepth - 1);
+      if (composerDragDepth === 0) {
+        setComposerDropActive(false, false);
+      }
+    });
+    dropRoot.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearComposerDropState();
+      if (busy) {
+        return;
+      }
+      const uris = extractDropUris(event.dataTransfer);
+      if (uris.length) {
+        vscode.postMessage({ type: "attachUris", uris });
+        return;
+      }
+      if (event.dataTransfer?.files?.length) {
+        void ingestDroppedFiles(event.dataTransfer.files);
+        return;
+      }
+      showCopyToast("Не удалось прочитать файл");
+    });
+  }
+
+  window.addEventListener("dragend", clearComposerDropState);
+
+  function extractClipboardImages(clipboardData) {
+    const files = [];
+    const seen = new Set();
+    const push = (file) => {
+      if (!file) {
+        return;
+      }
+      const key = `${file.name}:${file.size}:${file.type}:${file.lastModified || 0}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      files.push(file);
+    };
+
+    if (clipboardData?.files?.length) {
+      for (const file of Array.from(clipboardData.files)) {
+        if (!file.type || file.type.startsWith("image/")) {
+          push(file);
+        }
+      }
+    }
+
+    const items = clipboardData?.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item && item.type && item.type.startsWith("image/")) {
+          push(item.getAsFile());
+        }
+      }
+    }
+    return files;
+  }
+
+  async function readClipboardImagesFallback() {
+    if (!navigator.clipboard || typeof navigator.clipboard.read !== "function") {
+      return [];
+    }
+    try {
+      const items = await navigator.clipboard.read();
+      const files = [];
+      for (const item of items) {
+        for (const type of item.types) {
+          if (!type.startsWith("image/")) {
+            continue;
+          }
+          const blob = await item.getType(type);
+          const ext = type.split("/")[1] || "png";
+          files.push(
+            new File([blob], `clipboard.${ext}`, {
+              type,
+              lastModified: Date.now(),
+            })
+          );
+        }
+      }
+      return files;
+    } catch {
+      return [];
+    }
+  }
+
+  async function handleChatImagePaste(event) {
+    if (busy || !chatScreen || chatScreen.hidden) {
+      return;
+    }
+    let imageFiles = extractClipboardImages(event.clipboardData);
+    if (!imageFiles.length) {
+      imageFiles = await readClipboardImagesFallback();
+    }
+    if (!imageFiles.length) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!currentModelSupportsVision()) {
+      showCopyToast("Модель не поддерживает изображения");
+      return;
+    }
+    await ingestDroppedFiles(imageFiles);
+    if (promptEl && typeof promptEl.focus === "function") {
+      promptEl.focus();
+    }
+  }
+
+  // Capture на document: работает не только когда фокус в textarea
+  document.addEventListener(
+    "paste",
+    (event) => {
+      void handleChatImagePaste(event);
+    },
+    true
+  );
+
+  // На случай, если paste пришёл до фокуса webview — подхватим после фокуса по Cmd/Ctrl+V
+  document.addEventListener("keydown", (event) => {
+    const isPaste =
+      (event.key === "v" || event.key === "V" || event.code === "KeyV") &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!isPaste || busy || !chatScreen || chatScreen.hidden) {
+      return;
+    }
+    // Если фокус не в поле ввода — всё равно даём шанс прочитать буфер
+    const active = document.activeElement;
+    const inPrompt = active === promptEl;
+    if (inPrompt) {
+      return;
+    }
+    void (async () => {
+      const imageFiles = await readClipboardImagesFallback();
+      if (!imageFiles.length) {
+        return;
+      }
+      if (!currentModelSupportsVision()) {
+        showCopyToast("Модель не поддерживает изображения");
+        return;
+      }
+      event.preventDefault();
+      await ingestDroppedFiles(imageFiles);
+      if (promptEl && typeof promptEl.focus === "function") {
+        promptEl.focus();
+      }
+    })();
   });
 
   if (newAgentBtn) {
@@ -2752,6 +4282,44 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const toolToggle = event.target.closest(".tool-group-toggle");
+    if (toolToggle && messagesEl.contains(toolToggle)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const group = toolToggle.closest(".tool-group");
+      if (!group) {
+        return;
+      }
+      const collapsed = group.classList.toggle("is-collapsed");
+      toolToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      updateToolGroupSummary(group);
+      return;
+    }
+    const editModelTrigger = event.target.closest(".msg-edit-model-trigger");
+    if (editModelTrigger && messagesEl.contains(editModelTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleEditModelMenu();
+      return;
+    }
+    const editModelOption = event.target.closest(
+      ".msg-edit-model-menu .model-option"
+    );
+    if (editModelOption && messagesEl.contains(editModelOption)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!editModelOption.classList.contains("is-empty")) {
+        selectEditingModel(editModelOption.dataset.id);
+      }
+      return;
+    }
+    const saveEditBtn = event.target.closest(".msg-edit-save");
+    if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      submitEditedUserMessage();
+      return;
+    }
     const regenBtn = event.target.closest(".msg-regenerate");
     if (regenBtn && messagesEl.contains(regenBtn)) {
       event.preventDefault();
@@ -2785,6 +4353,38 @@
       requestCopyText(text);
       return;
     }
+    const mentionBtn = event.target.closest(".msg-mention");
+    if (mentionBtn && messagesEl.contains(mentionBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const path = mentionBtn.getAttribute("data-path");
+      if (path) {
+        vscode.postMessage({ type: "openFile", path });
+      }
+      return;
+    }
+    const userMsg = event.target.closest(".msg.user");
+    if (
+      userMsg &&
+      messagesEl.contains(userMsg) &&
+      !userMsg.classList.contains("is-editing") &&
+      !busy
+    ) {
+      const selection = window.getSelection();
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        userMsg.contains(selection.anchorNode)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const editIndex = Number(userMsg.dataset.index);
+      if (Number.isInteger(editIndex) && editIndex >= 0) {
+        startEditingUserMessage(editIndex);
+      }
+      return;
+    }
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
@@ -2805,18 +4405,72 @@
     }
   });
 
+  messagesEl.addEventListener("input", (event) => {
+    const input = event.target.closest(".msg-edit-input");
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    editingUserText = input.value;
+    onMentionInput(input);
+  });
+
+  messagesEl.addEventListener("keydown", (event) => {
+    const input = event.target.closest(".msg-edit-input");
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (onMentionKeydown(event, input)) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submitEditedUserMessage();
+      return;
+    }
+    if (event.key === "Escape" && editModelMenuOpen) {
+      event.preventDefault();
+      closeEditModelMenu();
+    }
+  });
+
+  promptEl.addEventListener("input", () => {
+    onMentionInput(promptEl);
+  });
+
   promptEl.addEventListener("keydown", (event) => {
+    if (onMentionKeydown(event, promptEl)) {
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendPrompt();
     }
   });
 
+  if (mentionMenuEl) {
+    mentionMenuEl.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const option = event.target.closest(".mention-option");
+      if (!option) {
+        return;
+      }
+      const index = Number(option.getAttribute("data-index"));
+      if (Number.isInteger(index)) {
+        applyMentionSelection(index);
+      }
+    });
+  }
+
   window.addEventListener("message", (event) => {
     const msg = event.data;
     switch (msg.type) {
       case "init":
         fillModels(msg.models, msg.selectedModel);
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
+        editingAttachments = [];
+        clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         if (msg.agentId) {
@@ -2833,6 +4487,12 @@
         }
         showScreen(msg.screen || "agents");
         setBusy(false);
+        break;
+      case "attachmentsAdded":
+        mergePendingAttachments(msg.attachments || []);
+        break;
+      case "fileSearchResults":
+        handleMentionResults(msg);
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
@@ -2874,6 +4534,9 @@
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages);
@@ -2930,6 +4593,10 @@
         if (msg.selectedModel) {
           fillModels(models, msg.selectedModel);
         }
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
+        editingAttachments = [];
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;
@@ -2937,12 +4604,27 @@
         showCopyToast("Скопировано");
         break;
       case "append":
-        appendMessage(msg.role, msg.text);
+        uiMessagesCache.push({
+          role: msg.role,
+          text: msg.text,
+          attachments: msg.attachments,
+        });
+        appendMessage(
+          msg.role,
+          msg.text,
+          uiMessagesCache.length - 1,
+          -1,
+          msg.attachments
+        );
         break;
       case "status":
-        setAgentStatus(msg.text || "", Boolean(msg.hidden));
+        setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
         break;
       case "review":
+        uiMessagesCache.push({
+          role: "review",
+          text: JSON.stringify({ files: msg.files || [], showScm: msg.showScm }),
+        });
         appendReview(msg.files || [], msg.showScm);
         break;
       case "scmButtons":
@@ -2959,12 +4641,17 @@
         break;
       case "assistantDone":
         if (!streamingEl && msg.text) {
+          uiMessagesCache.push({ role: "assistant", text: msg.text });
           appendMessage("assistant", msg.text);
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
           setMessageContent(streamingEl, "assistant", raw);
+          uiMessagesCache.push({ role: "assistant", text: raw });
         }
         streamingEl = null;
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setBusy(false);
         ensureRegenerateButton();
         break;
@@ -2980,6 +4667,10 @@
         break;
       case "cleared":
         messagesEl.innerHTML = "";
+        uiMessagesCache = [];
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         streamingEl = null;
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
