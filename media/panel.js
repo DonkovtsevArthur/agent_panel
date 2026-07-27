@@ -11,7 +11,8 @@
   const modelLabel = document.getElementById("modelLabel");
   const modelMenu = document.getElementById("modelMenu");
 
-  const agentStatusEl = document.getElementById("agentStatus");
+  let agentStatusEl = null;
+  let agentStatusState = { text: "", hidden: true, phase: "" };
   const agentsScreen = document.getElementById("agentsScreen");
   const archiveScreen = document.getElementById("archiveScreen");
   const settingsScreen = document.getElementById("settingsScreen");
@@ -143,6 +144,10 @@
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
+  let editingUserIndex = null;
+  let editingUserText = "";
+  let editingModelId = "";
+  let editModelMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
   let menuOpen = false;
@@ -152,8 +157,245 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function ensureAgentStatusEl() {
+    if (agentStatusEl && messagesEl.contains(agentStatusEl)) {
+      return agentStatusEl;
+    }
+    agentStatusEl = document.createElement("div");
+    agentStatusEl.id = "agentStatus";
+    agentStatusEl.className = "agent-status agent-status-in-messages";
+    agentStatusEl.hidden = true;
+    messagesEl.appendChild(agentStatusEl);
+    return agentStatusEl;
+  }
+
+  function setAgentStatus(text, hidden, phase) {
+    const nextHidden = Boolean(hidden || !text);
+    agentStatusState = {
+      text: nextHidden ? "" : text,
+      hidden: nextHidden,
+      phase: nextHidden ? "" : phase || "",
+    };
+
+    if (agentStatusState.hidden) {
+      if (agentStatusEl) {
+        agentStatusEl.hidden = true;
+        agentStatusEl.textContent = "";
+        agentStatusEl.removeAttribute("data-phase");
+      }
+      return;
+    }
+
+    const el = ensureAgentStatusEl();
+    el.hidden = false;
+    el.textContent = agentStatusState.text;
+    if (agentStatusState.phase) {
+      el.dataset.phase = agentStatusState.phase;
+    } else {
+      el.removeAttribute("data-phase");
+    }
+    messagesEl.appendChild(el);
+    scrollToBottom();
+  }
+
+  function restoreAgentStatus() {
+    if (agentStatusState.hidden) {
+      agentStatusEl = null;
+      return;
+    }
+    agentStatusEl = null;
+    setAgentStatus(
+      agentStatusState.text,
+      false,
+      agentStatusState.phase
+    );
+  }
+
+  function keepStatusAtEnd() {
+    if (agentStatusState.hidden) {
+      return;
+    }
+    messagesEl.appendChild(ensureAgentStatusEl());
+  }
+
   function setCanRegenerate(nextValue) {
     canRegenerate = Boolean(nextValue);
+  }
+
+  function focusEditingInput() {
+    if (!Number.isInteger(editingUserIndex)) {
+      return;
+    }
+    const input = messagesEl.querySelector(
+      `.msg-edit-input[data-index="${editingUserIndex}"]`
+    );
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      input.focus();
+      const pos = input.value.length;
+      input.setSelectionRange(pos, pos);
+    });
+  }
+
+  function startEditingUserMessage(index) {
+    const item = uiMessagesCache[index];
+    if (!item || item.role !== "user" || busy) {
+      return;
+    }
+    closeMenu();
+    closeEditModelMenu();
+    editingUserIndex = index;
+    editingUserText = String(item.text || "");
+    editingModelId = selectedModelId || models[0]?.id || "";
+    renderMessages(uiMessagesCache);
+  }
+
+  function cancelEditingUserMessage() {
+    closeEditModelMenu();
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    renderMessages(uiMessagesCache);
+  }
+
+  function submitEditedUserMessage() {
+    if (!Number.isInteger(editingUserIndex) || busy) {
+      return;
+    }
+    const nextText = editingUserText.trim();
+    if (!nextText) {
+      return;
+    }
+    const model =
+      editingModelId || selectedModelId || models[0]?.id || "";
+    if (model && model !== selectedModelId) {
+      setSelectedModel(model, true);
+    }
+    closeEditModelMenu();
+    setBusy(true);
+    vscode.postMessage({
+      type: "editUserMessage",
+      index: editingUserIndex,
+      text: nextText,
+      model,
+    });
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+  }
+
+  function modelDisplayName(id) {
+    const model = models.find((m) => m.id === id);
+    return model ? model.label || model.id : id || "Нет моделей";
+  }
+
+  function renderEditModelMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    if (!models.length) {
+      const empty = document.createElement("div");
+      empty.className = "model-option is-empty";
+      empty.textContent = "Нет моделей в настройках";
+      menuEl.appendChild(empty);
+      return;
+    }
+    for (const model of models) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (model.id === editingModelId ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.dataset.id = model.id;
+
+      const label = document.createElement("span");
+      label.className = "model-option-label";
+      label.textContent = model.label || model.id;
+      btn.appendChild(label);
+
+      if (model.id === editingModelId) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+
+      if (model.favorite === true) {
+        const heart = document.createElement("span");
+        heart.className = "model-option-fav";
+        heart.innerHTML = HEART_ICON;
+        heart.setAttribute("aria-hidden", "true");
+        btn.appendChild(heart);
+      }
+
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function getEditModelPicker() {
+    return messagesEl.querySelector(".msg-edit-model-picker");
+  }
+
+  function closeEditModelMenu() {
+    editModelMenuOpen = false;
+    const picker = getEditModelPicker();
+    if (!picker) {
+      return;
+    }
+    picker.classList.remove("is-open");
+    const trigger = picker.querySelector(".msg-edit-model-trigger");
+    const menu = picker.querySelector(".msg-edit-model-menu");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+  }
+
+  function openEditModelMenu() {
+    const picker = getEditModelPicker();
+    if (!picker || busy) {
+      return;
+    }
+    closeMenu();
+    editModelMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-model-trigger");
+    const menu = picker.querySelector(".msg-edit-model-menu");
+    renderEditModelMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+    }
+  }
+
+  function toggleEditModelMenu() {
+    if (editModelMenuOpen) {
+      closeEditModelMenu();
+    } else {
+      openEditModelMenu();
+    }
+  }
+
+  function selectEditingModel(id) {
+    if (!id || busy) {
+      return;
+    }
+    editingModelId = id;
+    const picker = getEditModelPicker();
+    const label = picker
+      ? picker.querySelector(".msg-edit-model-label")
+      : null;
+    if (label) {
+      label.textContent = modelDisplayName(editingModelId);
+    }
+    closeEditModelMenu();
   }
 
   function removeRegenerateButtons() {
@@ -199,19 +441,6 @@
     (parent || messagesEl).insertBefore(wrap, last);
     wrap.appendChild(actions);
     wrap.appendChild(last);
-  }
-
-  function setAgentStatus(text, hidden) {
-    if (!agentStatusEl) {
-      return;
-    }
-    if (hidden || !text) {
-      agentStatusEl.hidden = true;
-      agentStatusEl.textContent = "";
-      return;
-    }
-    agentStatusEl.hidden = false;
-    agentStatusEl.textContent = text;
   }
 
   function formatTokenCount(n) {
@@ -296,6 +525,100 @@
         return values.length ? `${name} · ${values.join(" · ")}` : name;
       }
     }
+  }
+
+  function toolStepsLabel(count) {
+    if (count === 1) {
+      return "1 шаг";
+    }
+    if (count > 1 && count < 5) {
+      return `${count} шага`;
+    }
+    return `${count} шагов`;
+  }
+
+  function sealToolGroups() {
+    for (const group of messagesEl.querySelectorAll(
+      ".tool-group:not([data-sealed])"
+    )) {
+      group.dataset.sealed = "1";
+    }
+  }
+
+  function updateToolGroupSummary(group) {
+    if (!group) {
+      return;
+    }
+    const count = group.querySelectorAll(".msg.tool").length;
+    const summary = group.querySelector(".tool-group-summary");
+    if (summary) {
+      summary.textContent = toolStepsLabel(count);
+    }
+    group.title = group.classList.contains("is-collapsed")
+      ? "Показать шаги"
+      : "Скрыть шаги";
+  }
+
+  function createToolGroup() {
+    const group = document.createElement("div");
+    group.className = "tool-group is-collapsed";
+    group.innerHTML =
+      `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
+      `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
+      `<span class="tool-group-summary">0 шагов</span>` +
+      `</button>` +
+      `<div class="tool-group-body"></div>`;
+    return group;
+  }
+
+  function getActiveToolGroup() {
+    let node = messagesEl.lastElementChild;
+    while (
+      node &&
+      (node.id === "agentStatus" ||
+        node.classList.contains("agent-status") ||
+        node.classList.contains("review-actions"))
+    ) {
+      node = node.previousElementSibling;
+    }
+    if (
+      node &&
+      node.classList.contains("tool-group") &&
+      !node.dataset.sealed
+    ) {
+      return node;
+    }
+    return null;
+  }
+
+  function ensureActiveToolGroup() {
+    const existing = getActiveToolGroup();
+    if (existing) {
+      return existing;
+    }
+    const group = createToolGroup();
+    messagesEl.appendChild(group);
+    keepStatusAtEnd();
+    return group;
+  }
+
+  function appendToolToGroup(text, index) {
+    const group = ensureActiveToolGroup();
+    const body = group.querySelector(".tool-group-body");
+    const el = document.createElement("div");
+    el.className = "msg tool";
+    if (typeof index === "number") {
+      el.dataset.index = String(index);
+    }
+    const msgBody = document.createElement("div");
+    msgBody.className = "msg-body";
+    el.appendChild(msgBody);
+    setMessageContent(el, "tool", text);
+    body.appendChild(el);
+    updateToolGroupSummary(group);
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
   }
 
   function showScreen(name) {
@@ -1735,6 +2058,7 @@
     });
     actions.appendChild(scmBtn);
     messagesEl.appendChild(actions);
+    keepStatusAtEnd();
     scrollToBottom();
   }
 
@@ -2002,6 +2326,7 @@
 
   function appendMessage(role, text, index, regenAssistantIndex) {
     if (role === "review") {
+      sealToolGroups();
       try {
         appendReview(parseReviewData(text));
       } catch {
@@ -2009,8 +2334,18 @@
       }
       return null;
     }
+
+    if (role === "tool") {
+      return appendToolToGroup(text, index);
+    }
+
+    sealToolGroups();
+
     const el = document.createElement("div");
     el.className = `msg ${role}`;
+    if (typeof index === "number") {
+      el.dataset.index = String(index);
+    }
 
     const body = document.createElement("div");
     body.className = "msg-body";
@@ -2018,17 +2353,53 @@
     setMessageContent(el, role, text);
 
     if (role === "user") {
+      const isEditing = index === editingUserIndex;
+      if (isEditing) {
+        el.classList.add("is-editing");
+        const editModelLabel = modelDisplayName(
+          editingModelId || selectedModelId
+        );
+        body.innerHTML =
+          `<div class="msg-edit-composer">` +
+          `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="Редактирование сообщения"></textarea>` +
+          `<div class="msg-edit-footer">` +
+          `<div class="msg-edit-footer-left">` +
+          `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
+          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">` +
+          `<span class="model-label msg-edit-model-label">${escapeHtml(
+            editModelLabel
+          )}</span>` +
+          `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+          `</button>` +
+          `<div class="model-menu msg-edit-model-menu" role="listbox" hidden></div>` +
+          `</div>` +
+          `</div>` +
+          `<div class="msg-edit-footer-right">` +
+          `<button type="button" class="primary msg-edit-save" data-index="${index}" title="Сохранить и переотправить" aria-label="Сохранить и переотправить">` +
+          `<span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>` +
+          `</button>` +
+          `</div>` +
+          `</div>` +
+          `</div>`;
+        const input = body.querySelector(".msg-edit-input");
+        if (input) {
+          input.value = editingUserText;
+        }
+      }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
-      const actions = document.createElement("div");
-      actions.className = "msg-actions";
-      actions.innerHTML =
-        `<button type="button" class="icon-btn msg-copy" title="Копировать" aria-label="Копировать">` +
-        COPY_ICON +
-        `</button>`;
-      wrap.appendChild(actions);
+      if (!isEditing) {
+        const actions = document.createElement("div");
+        actions.className = "msg-actions";
+        actions.innerHTML =
+          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="Копировать" aria-label="Копировать">` +
+          COPY_ICON +
+          `</button>`;
+        wrap.appendChild(actions);
+      }
       wrap.appendChild(el);
       messagesEl.appendChild(wrap);
+      keepStatusAtEnd();
       scrollToBottom();
       return el;
     }
@@ -2051,11 +2422,13 @@
       wrap.appendChild(actions);
       wrap.appendChild(el);
       messagesEl.appendChild(wrap);
+      keepStatusAtEnd();
       scrollToBottom();
       return el;
     }
 
     messagesEl.appendChild(el);
+    keepStatusAtEnd();
     scrollToBottom();
     return el;
   }
@@ -2085,6 +2458,8 @@
       const item = list[i];
       appendMessage(item.role, item.text, i, regenAssistantIndex);
     }
+    restoreAgentStatus();
+    focusEditingInput();
   }
 
   function getSelectedModel() {
@@ -2250,17 +2625,29 @@
   });
 
   document.addEventListener("mousedown", (event) => {
-    if (!menuOpen) {
-      return;
-    }
-    if (!modelPicker.contains(event.target)) {
+    if (menuOpen && !modelPicker.contains(event.target)) {
       closeMenu();
+    }
+    if (editModelMenuOpen) {
+      const picker = getEditModelPicker();
+      if (!picker || !picker.contains(event.target)) {
+        closeEditModelMenu();
+      }
+    }
+    if (Number.isInteger(editingUserIndex) && !busy) {
+      const composer = messagesEl.querySelector(".msg-edit-composer");
+      if (composer && !composer.contains(event.target)) {
+        cancelEditingUserMessage();
+      }
     }
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && menuOpen) {
       closeMenu();
+    }
+    if (event.key === "Escape" && editModelMenuOpen) {
+      closeEditModelMenu();
     }
   });
 
@@ -2270,6 +2657,10 @@
     if (!text || busy) {
       return;
     }
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    uiMessagesCache.push({ role: "user", text });
     appendMessage("user", text);
     promptEl.value = "";
     setBusy(true);
@@ -2752,6 +3143,44 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const toolToggle = event.target.closest(".tool-group-toggle");
+    if (toolToggle && messagesEl.contains(toolToggle)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const group = toolToggle.closest(".tool-group");
+      if (!group) {
+        return;
+      }
+      const collapsed = group.classList.toggle("is-collapsed");
+      toolToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      updateToolGroupSummary(group);
+      return;
+    }
+    const editModelTrigger = event.target.closest(".msg-edit-model-trigger");
+    if (editModelTrigger && messagesEl.contains(editModelTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleEditModelMenu();
+      return;
+    }
+    const editModelOption = event.target.closest(
+      ".msg-edit-model-menu .model-option"
+    );
+    if (editModelOption && messagesEl.contains(editModelOption)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!editModelOption.classList.contains("is-empty")) {
+        selectEditingModel(editModelOption.dataset.id);
+      }
+      return;
+    }
+    const saveEditBtn = event.target.closest(".msg-edit-save");
+    if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      submitEditedUserMessage();
+      return;
+    }
     const regenBtn = event.target.closest(".msg-regenerate");
     if (regenBtn && messagesEl.contains(regenBtn)) {
       event.preventDefault();
@@ -2785,6 +3214,28 @@
       requestCopyText(text);
       return;
     }
+    const userMsg = event.target.closest(".msg.user");
+    if (
+      userMsg &&
+      messagesEl.contains(userMsg) &&
+      !userMsg.classList.contains("is-editing") &&
+      !busy
+    ) {
+      const selection = window.getSelection();
+      if (
+        selection &&
+        !selection.isCollapsed &&
+        userMsg.contains(selection.anchorNode)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const editIndex = Number(userMsg.dataset.index);
+      if (Number.isInteger(editIndex) && editIndex >= 0) {
+        startEditingUserMessage(editIndex);
+      }
+      return;
+    }
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
@@ -2805,6 +3256,30 @@
     }
   });
 
+  messagesEl.addEventListener("input", (event) => {
+    const input = event.target.closest(".msg-edit-input");
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    editingUserText = input.value;
+  });
+
+  messagesEl.addEventListener("keydown", (event) => {
+    const input = event.target.closest(".msg-edit-input");
+    if (!(input instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submitEditedUserMessage();
+      return;
+    }
+    if (event.key === "Escape" && editModelMenuOpen) {
+      event.preventDefault();
+      closeEditModelMenu();
+    }
+  });
+
   promptEl.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -2817,6 +3292,9 @@
     switch (msg.type) {
       case "init":
         fillModels(msg.models, msg.selectedModel);
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         if (msg.agentId) {
@@ -2874,6 +3352,9 @@
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages);
@@ -2930,6 +3411,9 @@
         if (msg.selectedModel) {
           fillModels(models, msg.selectedModel);
         }
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;
@@ -2937,12 +3421,17 @@
         showCopyToast("Скопировано");
         break;
       case "append":
+        uiMessagesCache.push({ role: msg.role, text: msg.text });
         appendMessage(msg.role, msg.text);
         break;
       case "status":
-        setAgentStatus(msg.text || "", Boolean(msg.hidden));
+        setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
         break;
       case "review":
+        uiMessagesCache.push({
+          role: "review",
+          text: JSON.stringify({ files: msg.files || [], showScm: msg.showScm }),
+        });
         appendReview(msg.files || [], msg.showScm);
         break;
       case "scmButtons":
@@ -2959,12 +3448,17 @@
         break;
       case "assistantDone":
         if (!streamingEl && msg.text) {
+          uiMessagesCache.push({ role: "assistant", text: msg.text });
           appendMessage("assistant", msg.text);
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
           setMessageContent(streamingEl, "assistant", raw);
+          uiMessagesCache.push({ role: "assistant", text: raw });
         }
         streamingEl = null;
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         setBusy(false);
         ensureRegenerateButton();
         break;
@@ -2980,6 +3474,10 @@
         break;
       case "cleared":
         messagesEl.innerHTML = "";
+        uiMessagesCache = [];
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
         streamingEl = null;
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
