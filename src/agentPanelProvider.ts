@@ -52,6 +52,7 @@ type SettingsPayload = {
 type WebviewToHost =
   | { type: "ready" }
   | { type: "send"; text: string; model: string }
+  | { type: "regenerate" }
   | { type: "stop" }
   | { type: "newChat" }
   | { type: "newAgent" }
@@ -82,6 +83,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private history: ChatMessage[] = [];
   private uiMessages: UiMessage[] = [];
   private selectedModel = "";
+  private lastTurnModel = "";
   private contextTokens = 0;
   private abort?: AbortController;
   private readonly disposables: vscode.Disposable[] = [];
@@ -278,12 +280,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.history = [];
       this.uiMessages = [];
       this.selectedModel = getConfig().defaultModel || "";
+      this.lastTurnModel = "";
       this.contextTokens = 0;
       return;
     }
     this.history = chat.history || [];
     this.uiMessages = chat.uiMessages || [];
     this.selectedModel = chat.selectedModel || "";
+    this.lastTurnModel = chat.lastTurnModel || "";
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
         ? chat.contextTokens
@@ -297,9 +301,85 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     touchChat(this.store, chatId, {
       selectedModel: this.selectedModel,
+      lastTurnModel: this.lastTurnModel,
       history: this.history,
       uiMessages: this.uiMessages.slice(-200),
       contextTokens: this.contextTokens,
+    });
+  }
+
+  private getRegenerateState():
+    | {
+        userText: string;
+        model: string;
+        history: ChatMessage[];
+        uiMessages: UiMessage[];
+      }
+    | undefined {
+    const model = (this.lastTurnModel || this.selectedModel || "").trim();
+    if (!model || this.history.length < 2) {
+      return undefined;
+    }
+
+    const lastAssistant = this.history[this.history.length - 1];
+    const lastUser = this.history[this.history.length - 2];
+    if (
+      lastUser?.role !== "user" ||
+      !String(lastUser.content || "").trim() ||
+      lastAssistant?.role !== "assistant" ||
+      !String(lastAssistant.content || "").trim()
+    ) {
+      return undefined;
+    }
+
+    let assistantIndex = -1;
+    for (let i = this.uiMessages.length - 1; i >= 0; i--) {
+      const msg = this.uiMessages[i];
+      if (msg.role === "assistant" && String(msg.text || "").trim()) {
+        assistantIndex = i;
+        break;
+      }
+    }
+    if (assistantIndex < 0) {
+      return undefined;
+    }
+
+    for (let i = assistantIndex + 1; i < this.uiMessages.length; i++) {
+      const msg = this.uiMessages[i];
+      if (msg.role === "user" && String(msg.text || "").trim()) {
+        return undefined;
+      }
+    }
+
+    let userIndex = -1;
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      const msg = this.uiMessages[i];
+      if (msg.role === "user" && String(msg.text || "").trim()) {
+        userIndex = i;
+        break;
+      }
+    }
+    if (userIndex < 0) {
+      return undefined;
+    }
+
+    return {
+      userText: String(lastUser.content || "").trim(),
+      model,
+      history: this.history.slice(0, -2),
+      uiMessages: this.uiMessages.slice(0, userIndex + 1),
+    };
+  }
+
+  private canRegenerate(): boolean {
+    return Boolean(this.getRegenerateState());
+  }
+
+  private postRegenerateState(): void {
+    this.view?.webview.postMessage({
+      type: "regenerateState",
+      canRegenerate: this.canRegenerate(),
+      selectedModel: this.selectedModel,
     });
   }
 
@@ -399,6 +479,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
+      canRegenerate: this.canRegenerate(),
       agentId: agent?.id || "",
       agentName: agent?.name || "Агент",
       chatTitle: agent?.name || "Агент",
@@ -417,6 +498,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.selectedModel = message.model;
         this.saveSession();
         this.postContextUsage();
+        this.postRegenerateState();
         break;
       case "newChat":
         this.newChat();
@@ -485,7 +567,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.abort?.abort();
         this.abort = undefined;
         this.setStatus("", true);
+        this.postRegenerateState();
         this.view?.webview.postMessage({ type: "stopped" });
+        break;
+      case "regenerate":
+        await this.handleRegenerate();
         break;
       case "openFile":
         await this.openWorkspaceFile(message.path);
@@ -712,7 +798,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async handleSend(text: string, model: string): Promise<void> {
+  private async handleSend(
+    text: string,
+    model: string,
+    options?: { appendUser?: boolean }
+  ): Promise<void> {
     const config = getConfig();
     const enabledModels = getEnabledModels();
     if (!enabledModels.length) {
@@ -748,8 +838,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.uiMessages.push({ role: "user", text });
-    this.saveSession();
+    if (options?.appendUser !== false) {
+      this.uiMessages.push({ role: "user", text });
+      this.saveSession();
+    }
 
     this.abort?.abort();
     this.abort = new AbortController();
@@ -778,12 +870,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             turnEdits.push(edit);
           },
           onAssistant: (assistantText) => {
+            this.lastTurnModel = chosen;
             this.uiMessages.push({ role: "assistant", text: assistantText });
             this.saveSession();
             this.view?.webview.postMessage({
               type: "assistantDone",
               text: assistantText,
             });
+            this.postRegenerateState();
           },
           onReview: (edits) => {
             void this.publishReview(edits.length ? edits : turnEdits);
@@ -803,16 +897,40 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.abort.signal.aborted ||
         (error instanceof Error && error.message === "aborted")
       ) {
+        this.postRegenerateState();
         this.view?.webview.postMessage({ type: "stopped" });
         return;
       }
       const messageText =
         error instanceof Error ? error.message : String(error);
       this.pushUi("error", messageText);
+      this.postRegenerateState();
       this.view?.webview.postMessage({ type: "idle" });
     } finally {
       this.abort = undefined;
     }
+  }
+
+  private async handleRegenerate(): Promise<void> {
+    const state = this.getRegenerateState();
+    if (!state) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({ type: "idle" });
+      return;
+    }
+
+    this.abort?.abort();
+    this.history = state.history;
+    this.uiMessages = state.uiMessages;
+    this.selectedModel = state.model;
+    this.saveSession();
+    this.view?.webview.postMessage({
+      type: "messagesReplaced",
+      uiMessages: this.uiMessages,
+      selectedModel: this.selectedModel,
+      canRegenerate: false,
+    });
+    await this.handleSend(state.userText, state.model, { appendUser: false });
   }
 
   private async publishReview(edits: FileEditStat[]): Promise<void> {
@@ -1178,6 +1296,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       uiMessages: this.uiMessages,
+      canRegenerate: this.canRegenerate(),
       screen: this.store.screen,
       agentId: this.store.activeAgentId || "",
       agentName:
