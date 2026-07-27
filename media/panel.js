@@ -28,6 +28,7 @@
   const archiveScreen = document.getElementById("archiveScreen");
   const settingsScreen = document.getElementById("settingsScreen");
   const chatScreen = document.getElementById("chatScreen");
+  const chatBranchesEl = document.getElementById("chatBranches");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
   const settingsModelsList = document.getElementById("settingsModelsList");
@@ -109,6 +110,8 @@
   let agentsData = [];
   let archiveAgentsData = [];
   let activeAgentId = "";
+  let activeChatId = "";
+  let chatBranches = [];
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
@@ -157,6 +160,9 @@
 
   const REGENERATE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">refresh</span>';
+
+  const BRANCH_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">fork_right</span>';
 
   const SCM_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
@@ -1095,6 +1101,14 @@
     btns.forEach((b) => b.remove());
   }
 
+  function branchButtonHtml(index) {
+    return (
+      `<button type="button" class="icon-btn msg-branch" data-index="${index}" title="Ответвить" aria-label="Ответвить">` +
+      BRANCH_ICON +
+      `</button>`
+    );
+  }
+
   function ensureRegenerateButton() {
     removeRegenerateButtons();
     if (!canRegenerate) {
@@ -1105,6 +1119,12 @@
     if (!last) {
       return;
     }
+    const index = Number(last.dataset.index);
+    const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
+    const regenHtml =
+      `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+      REGENERATE_ICON +
+      `</button>`;
 
     const parent = last.parentElement;
     if (parent && parent.classList.contains("msg-wrap-assistant")) {
@@ -1114,25 +1134,55 @@
         actions.className = "msg-actions";
         parent.insertBefore(actions, last);
       }
-      actions.innerHTML =
-        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
-        REGENERATE_ICON +
-        `</button>`;
+      actions.innerHTML = branchHtml + regenHtml;
       return;
     }
 
     const actions = document.createElement("div");
     actions.className = "msg-actions";
-    actions.innerHTML =
-      `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
-      REGENERATE_ICON +
-      `</button>`;
+    actions.innerHTML = branchHtml + regenHtml;
 
     const wrap = document.createElement("div");
     wrap.className = "msg-wrap msg-wrap-assistant";
     (parent || messagesEl).insertBefore(wrap, last);
     wrap.appendChild(actions);
     wrap.appendChild(last);
+  }
+
+  function renderChatBranches(list) {
+    chatBranches = Array.isArray(list) ? list : [];
+    if (!chatBranchesEl) {
+      return;
+    }
+    if (chatBranches.length < 2) {
+      chatBranchesEl.hidden = true;
+      chatBranchesEl.innerHTML = "";
+      return;
+    }
+    chatBranchesEl.hidden = false;
+    chatBranchesEl.innerHTML = chatBranches
+      .map((b) => {
+        const active = b.active ? " is-active" : "";
+        const selected = b.active ? "true" : "false";
+        const closeBtn = b.canDelete
+          ? `<button type="button" class="chat-branch-close" data-chat-id="${escapeHtml(
+              b.id || ""
+            )}" title="Удалить ветку" aria-label="Удалить ветку">` +
+            `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+            `</button>`
+          : "";
+        return (
+          `<div class="chat-branch-item${active}" role="presentation">` +
+          `<button type="button" class="chat-branch-pill${active}" role="tab" aria-selected="${selected}" data-chat-id="${escapeHtml(
+            b.id || ""
+          )}" title="${escapeHtml(b.label || "Ветка")}">` +
+          escapeHtml(b.label || "Ветка") +
+          `</button>` +
+          closeBtn +
+          `</div>`
+        );
+      })
+      .join("");
   }
 
   function formatTokenCount(n) {
@@ -1679,16 +1729,25 @@
       return;
     }
     closeChatSearch();
-    if (hit.agentId === activeAgentId && chatScreen && !chatScreen.hidden) {
+    if (
+      hit.agentId === activeAgentId &&
+      (!hit.chatId || hit.chatId === activeChatId) &&
+      chatScreen &&
+      !chatScreen.hidden
+    ) {
       highlightMessageByIndex(messageIndex);
       return;
     }
     pendingHighlightIndex = messageIndex;
-    vscode.postMessage({
+    const payload = {
       type: "openSearchHit",
       agentId: hit.agentId,
       messageIndex,
-    });
+    };
+    if (hit.chatId) {
+      payload.chatId = hit.chatId;
+    }
+    vscode.postMessage(payload);
   }
 
   function openChatSearch(opts) {
@@ -3932,7 +3991,8 @@
         actions.innerHTML =
           `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="Копировать" aria-label="Копировать">` +
           COPY_ICON +
-          `</button>`;
+          `</button>` +
+          branchButtonHtml(index);
         wrap.appendChild(actions);
       }
       wrap.appendChild(el);
@@ -3942,21 +4002,22 @@
       return el;
     }
 
-    if (
-      role === "assistant" &&
-      typeof index === "number" &&
-      regenAssistantIndex >= 0 &&
-      index === regenAssistantIndex &&
-      canRegenerate
-    ) {
+    if (role === "assistant" && typeof index === "number") {
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-assistant";
       const actions = document.createElement("div");
       actions.className = "msg-actions";
+      const showRegen =
+        regenAssistantIndex >= 0 &&
+        index === regenAssistantIndex &&
+        canRegenerate;
       actions.innerHTML =
-        `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
-        REGENERATE_ICON +
-        `</button>`;
+        branchButtonHtml(index) +
+        (showRegen
+          ? `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+            REGENERATE_ICON +
+            `</button>`
+          : "");
       wrap.appendChild(actions);
       wrap.appendChild(el);
       messagesEl.appendChild(wrap);
@@ -5151,6 +5212,35 @@
     });
   }
 
+  if (chatBranchesEl) {
+    chatBranchesEl.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest(".chat-branch-close");
+      if (closeBtn && chatBranchesEl.contains(closeBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (busy) {
+          return;
+        }
+        const chatId = closeBtn.getAttribute("data-chat-id") || "";
+        if (!chatId) {
+          return;
+        }
+        vscode.postMessage({ type: "deleteBranch", chatId });
+        return;
+      }
+      const pill = event.target.closest(".chat-branch-pill");
+      if (!pill || !chatBranchesEl.contains(pill)) {
+        return;
+      }
+      event.preventDefault();
+      const chatId = pill.getAttribute("data-chat-id") || "";
+      if (!chatId || chatId === activeChatId || busy) {
+        return;
+      }
+      vscode.postMessage({ type: "switchBranch", chatId });
+    });
+  }
+
   if (openChatSearchBtn) {
     openChatSearchBtn.addEventListener("click", () => {
       openChatSearch({ fromAgents: false });
@@ -5452,6 +5542,20 @@
       vscode.postMessage({ type: "regenerate", agentMode });
       return;
     }
+    const branchBtn = event.target.closest(".msg-branch");
+    if (branchBtn && messagesEl.contains(branchBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy) {
+        return;
+      }
+      const index = Number(branchBtn.dataset.index);
+      if (!Number.isInteger(index) || index < 0) {
+        return;
+      }
+      vscode.postMessage({ type: "branchFromMessage", messageIndex: index });
+      return;
+    }
     const copyCodeBtn = event.target.closest(".md-pre-copy");
     if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
       event.preventDefault();
@@ -5682,6 +5786,10 @@
         if (msg.agentId) {
           activeAgentId = msg.agentId;
         }
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
+        renderChatBranches(msg.branches);
         if (
           chatAgentNameEl &&
           msg.agentName &&
@@ -5799,11 +5907,17 @@
       case "assistantDone":
         if (!streamingEl && msg.text) {
           uiMessagesCache.push({ role: "assistant", text: msg.text });
-          appendMessage("assistant", msg.text);
+          appendMessage(
+            "assistant",
+            msg.text,
+            uiMessagesCache.length - 1,
+            canRegenerate ? uiMessagesCache.length - 1 : -1
+          );
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
           setMessageContent(streamingEl, "assistant", raw);
           uiMessagesCache.push({ role: "assistant", text: raw });
+          streamingEl.dataset.index = String(uiMessagesCache.length - 1);
         }
         streamingEl = null;
         editingUserIndex = null;

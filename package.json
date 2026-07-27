@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "Harbor Agents",
   "description": "Harbor Agents: local agent panel for VS Code. Свой API, чаты и настройки локально — без чужого бэкенда.",
-  "version": "0.7.5",
+  "version": "0.7.9",
   "publisher": "local",
   "icon": "media/icon-marketplace.png",
   "galleryBanner": {
