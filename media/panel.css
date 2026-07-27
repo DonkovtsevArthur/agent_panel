@@ -1119,6 +1119,46 @@ body {
   flex: 1;
 }
 
+.composer-footer-left > .mode-picker {
+  flex: 0 1 auto;
+  max-width: 38%;
+}
+
+.mode-picker .model-option {
+  align-items: flex-start;
+}
+
+.mode-option-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mode-picker .model-option-label {
+  flex: 0 1 auto;
+}
+
+.mode-option-desc {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--vscode-descriptionForeground, #888);
+  white-space: normal;
+}
+
+.mode-picker .model-check {
+  margin-top: 1px;
+}
+
+.mode-option-add .model-option-label {
+  color: var(--vscode-textLink-foreground, #006ab1);
+}
+
+.mode-picker .model-menu {
+  min-width: 240px;
+}
+
 .mention-menu {
   position: absolute;
   left: 0;
@@ -1943,7 +1983,7 @@ button.primary:disabled {
 .settings-modal {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 1200;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2416,6 +2456,170 @@ button.primary:disabled {
   white-space: nowrap;
 }
 
-.chat-screen #messages {
+.chat-search-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.25));
+  background: var(--vscode-sideBar-background, transparent);
+}
+
+.chat-search-panel[hidden] {
+  display: none !important;
+}
+
+.chat-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+
+.chat-search-input {
   flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 6px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.chat-search-input:focus {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.chat-search-results {
+  flex: 0 1 40%;
+  max-height: 40%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.25));
+}
+
+.chat-search-results[hidden] {
+  display: none !important;
+}
+
+.chat-search-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.chat-search-hit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 4px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-search-hit:hover,
+.chat-search-hit.is-active {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.chat-search-hit-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.chat-search-hit-role {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  color: var(--vscode-foreground);
+  font-size: 10px;
+}
+
+.chat-search-hit-agent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.chat-search-hit-time {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.chat-search-hit-snippet {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.chat-search-mark {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: #5a5a5a;
+  color: #f3f3f3;
+}
+
+.msg.has-search-match .chat-search-mark,
+.msg.is-search-current .chat-search-mark {
+  background: #5a5a5a;
+  color: #f3f3f3;
+}
+
+.msg-body.has-search-match-fallback {
+  background: transparent;
+}
+
+.msg.is-search-current,
+.msg.is-search-hit,
+.msg-wrap.is-search-hit > .msg {
+  outline: none;
+}
+
+.msg.user.is-search-current,
+.msg.user.is-search-hit,
+.msg-wrap.is-search-hit > .msg.user {
+  border-color: #8a8a8a;
+}
+
+.msg.assistant.is-search-current,
+.msg.assistant.is-search-hit,
+.msg-wrap.is-search-hit > .msg.assistant {
+  border: 1px solid #8a8a8a;
+  border-radius: var(--radius-msg);
+  padding: 10px 12px;
+}
+
+.msg.is-search-current .chat-search-mark {
+  background: #727272;
+  color: #fff;
+}
+
+#chatSearchInput::selection {
+  background: #5a5a5a;
+  color: #f3f3f3;
 }

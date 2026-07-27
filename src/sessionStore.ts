@@ -525,3 +525,142 @@ export function formatListTime(ts: number): string {
   }
   return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
 }
+
+export type ChatSearchScope = "current" | "all";
+export type ChatSearchRole = "all" | "user" | "assistant";
+export type ChatSearchDate = "any" | "today" | "week" | "month";
+
+export interface ChatSearchHit {
+  agentId: string;
+  agentName: string;
+  chatId: string;
+  messageIndex: number;
+  role: "user" | "assistant";
+  snippet: string;
+  updatedAt: number;
+}
+
+export interface ChatSearchOptions {
+  query: string;
+  scope?: ChatSearchScope;
+  role?: ChatSearchRole;
+  date?: ChatSearchDate;
+  /** Для scope=current */
+  activeAgentId?: string;
+  limit?: number;
+}
+
+function dateFilterSinceMs(date: ChatSearchDate, now = Date.now()): number | undefined {
+  if (date === "any") {
+    return undefined;
+  }
+  const start = new Date(now);
+  if (date === "today") {
+    start.setHours(0, 0, 0, 0);
+    return start.getTime();
+  }
+  if (date === "week") {
+    return now - 7 * 24 * 60 * 60 * 1000;
+  }
+  return now - 30 * 24 * 60 * 60 * 1000;
+}
+
+function makeSearchSnippet(text: string, query: string, radius = 48): string {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) {
+    return "";
+  }
+  const lower = flat.toLowerCase();
+  const q = query.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx < 0) {
+    return flat.length > radius * 2 ? `${flat.slice(0, radius * 2)}…` : flat;
+  }
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(flat.length, idx + q.length + radius);
+  let snip = flat.slice(start, end);
+  if (start > 0) {
+    snip = `…${snip}`;
+  }
+  if (end < flat.length) {
+    snip = `${snip}…`;
+  }
+  return snip;
+}
+
+/**
+ * Поиск по тексту сообщений агентов workspace.
+ * Фильтр по дате опирается на updatedAt чата (у сообщений нет своей метки времени).
+ */
+export function searchChatMessages(
+  store: AgentsStoreV2,
+  options: ChatSearchOptions
+): ChatSearchHit[] {
+  const query = String(options.query || "").trim();
+  if (query.length < 2) {
+    return [];
+  }
+
+  const scope: ChatSearchScope = options.scope === "current" ? "current" : "all";
+  const roleFilter: ChatSearchRole =
+    options.role === "user" || options.role === "assistant"
+      ? options.role
+      : "all";
+  const date: ChatSearchDate =
+    options.date === "today" ||
+    options.date === "week" ||
+    options.date === "month"
+      ? options.date
+      : "any";
+  const sinceMs = dateFilterSinceMs(date);
+  const limit = Math.max(1, Math.min(100, options.limit ?? 50));
+  const qLower = query.toLowerCase();
+  const hits: ChatSearchHit[] = [];
+
+  const agents =
+    scope === "current" && options.activeAgentId
+      ? store.agents.filter((a) => a.id === options.activeAgentId)
+      : store.agents;
+
+  for (const agent of agents) {
+    if (agent.archivedAt) {
+      continue;
+    }
+    const chat = store.chats[agent.chatId];
+    if (!chat || chat.archivedAt) {
+      continue;
+    }
+    if (typeof sinceMs === "number" && chat.updatedAt < sinceMs) {
+      continue;
+    }
+
+    const messages = Array.isArray(chat.uiMessages) ? chat.uiMessages : [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg || (msg.role !== "user" && msg.role !== "assistant")) {
+        continue;
+      }
+      if (roleFilter !== "all" && msg.role !== roleFilter) {
+        continue;
+      }
+      const text = String(msg.text || "");
+      if (!text.toLowerCase().includes(qLower)) {
+        continue;
+      }
+      hits.push({
+        agentId: agent.id,
+        agentName: agent.name || "Агент",
+        chatId: chat.id,
+        messageIndex: i,
+        role: msg.role,
+        snippet: makeSearchSnippet(text, query),
+        updatedAt: chat.updatedAt,
+      });
+      if (hits.length >= limit) {
+        return hits;
+      }
+    }
+  }
+
+  return hits;
+}

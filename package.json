@@ -1,9 +1,14 @@
 {
   "name": "vscode-agent-panel",
-  "displayName": "Agent Panel",
-  "description": "Агентская панель с подключением своей ИИ и выбором модели из настроек",
-  "version": "0.6.86",
+  "displayName": "Harbor Agents",
+  "description": "Harbor Agents: local agent panel for VS Code. Свой API, чаты и настройки локально — без чужого бэкенда.",
+  "version": "0.7.5",
   "publisher": "local",
+  "icon": "media/icon-marketplace.png",
+  "galleryBanner": {
+    "color": "#0B3A4A",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -22,7 +27,7 @@
       "activitybar": [
         {
           "id": "agentPanel",
-          "title": "Agent Panel",
+          "title": "Гавань агентов",
           "icon": "media/icon.svg"
         }
       ]
@@ -40,23 +45,23 @@
     "commands": [
       {
         "command": "agentPanel.open",
-        "title": "Agent Panel: Open",
-        "category": "Agent Panel"
+        "title": "Открыть",
+        "category": "Гавань агентов"
       },
       {
         "command": "agentPanel.newChat",
         "title": "Новый агент",
-        "category": "Agent Panel"
+        "category": "Гавань агентов"
       },
       {
         "command": "agentPanel.clearChat",
         "title": "Новый агент",
-        "category": "Agent Panel"
+        "category": "Гавань агентов"
       },
       {
         "command": "agentPanel.pickAttachments",
         "title": "Прикрепить файл",
-        "category": "Agent Panel"
+        "category": "Гавань агентов"
       }
     ],
     "menus": {
@@ -70,7 +75,7 @@
       ]
     },
     "configuration": {
-      "title": "Agent Panel",
+      "title": "Гавань агентов",
       "properties": {
         "agentPanel.baseUrl": {
           "type": "string",
@@ -201,6 +206,47 @@
           "type": "string",
           "default": "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.",
           "description": "Системный промпт агента"
+        },
+        "agentPanel.modes": {
+          "type": "array",
+          "default": [],
+          "description": "Пользовательские режимы composer (Агент/План/Спросить встроены). Каждый: { id, label, description?, tools: \"agent\"|\"readonly\", prompt?, enabled? }",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "readonly"
+                ],
+                "default": "agent"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
         },
         "agentPanel.maxToolRounds": {
           "type": "number",

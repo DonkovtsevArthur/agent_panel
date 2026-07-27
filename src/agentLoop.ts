@@ -4,9 +4,17 @@ import {
   stripAttachmentPayload,
   userContentForHistory,
 } from "./attachments";
-import { getConfig, resolveModelEndpoint } from "./config";
+import { getConfig, getModeById, resolveModelEndpoint } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import { buildEditorContextMessage } from "./editorContext";
+import {
+  modeCollectLabel,
+  modeDoneLabel,
+  modeFinalNudge,
+  modeThinkingLabel,
+  isReadonlyPolicy,
+  toolsForPolicy,
+} from "./modes";
 import {
   ChatCompletionUsage,
   ChatMessage,
@@ -15,7 +23,7 @@ import {
   ToolCall,
 } from "./openaiClient";
 import { sanitizeAssistantText } from "./sanitize";
-import { agentTools, runTool } from "./tools";
+import { READONLY_TOOL_NAMES, runTool } from "./tools";
 import type * as vscode from "vscode";
 
 function contentCharLength(content: ChatMessage["content"]): number {
@@ -278,9 +286,16 @@ export async function runAgentTurn(options: {
   attachments?: MessageAttachment[];
   storageUri?: vscode.Uri;
   signal?: AbortSignal;
+  agentMode?: string;
+  /** @deprecated используй agentMode */
+  planMode?: boolean;
   callbacks: AgentRunCallbacks;
 }): Promise<ChatMessage[]> {
   const config = getConfig();
+  const mode = getModeById(
+    options.agentMode ?? (options.planMode ? "plan" : "agent")
+  );
+  const readonly = isReadonlyPolicy(mode.tools);
   const endpoint = resolveModelEndpoint(options.model);
   if (!endpoint.baseUrl) {
     throw new Error(
@@ -308,13 +323,18 @@ export async function runAgentTurn(options: {
     options.attachments,
     options.storageUri
   );
+  const modePrompt = mode.prompt?.trim();
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
+    ...(modePrompt
+      ? [{ role: "system" as const, content: modePrompt }]
+      : []),
     ...priorApi,
     toApiMessage({ role: "user", content: userApiContent }),
   ];
 
+  const activeTools = toolsForPolicy(mode.tools);
   const editsByPath = new Map<string, FileEditStat>();
   const toolRounds = Math.max(1, config.maxToolRounds);
   const seenToolCalls = new Set<string>();
@@ -351,14 +371,14 @@ export async function runAgentTurn(options: {
       throw new Error("aborted");
     }
 
-    options.callbacks.onPhase("thinking", "Думает…");
+    options.callbacks.onPhase("thinking", modeThinkingLabel(mode));
 
     const requestMessages = messages.slice();
     const { message: assistant, usage } = await client.chatCompletions(
       {
         model: options.model,
         messages,
-        tools: agentTools,
+        tools: activeTools,
         tool_choice: "auto",
         temperature: 0.2,
         max_tokens: config.maxTokens,
@@ -378,7 +398,7 @@ export async function runAgentTurn(options: {
     });
 
     if (toolCalls.length === 0) {
-      options.callbacks.onPhase("done", "Надумал");
+      options.callbacks.onPhase("done", modeDoneLabel(mode));
       const text = sanitizeAssistantText(
         contentAsString(assistant.content).trim() || "(пустой ответ)",
         { maxChars: config.maxResponseChars }
@@ -407,10 +427,16 @@ export async function runAgentTurn(options: {
       options.callbacks.onTool(
         `⚙ ${call.function.name}(${call.function.arguments})`
       );
-      const result = await runTool(
-        call.function.name,
-        call.function.arguments
-      );
+
+      let result: string;
+      if (readonly && !READONLY_TOOL_NAMES.has(call.function.name)) {
+        result = JSON.stringify({
+          error:
+            "В этом режиме инструмент недоступен. Используй list_files / read_file.",
+        });
+      } else {
+        result = await runTool(call.function.name, call.function.arguments);
+      }
       messages.push({
         role: "tool",
         tool_call_id: call.id,
@@ -451,14 +477,13 @@ export async function runAgentTurn(options: {
       throw new Error("aborted");
     }
 
-    options.callbacks.onPhase("thinking", "Собирает ответ…");
+    options.callbacks.onPhase("thinking", modeCollectLabel(mode));
 
     const finalRequest = [
       ...messages,
       {
         role: "user" as const,
-        content:
-          "Инструменты больше недоступны. Кратко ответь пользователю по уже полученным данным. Не вызывай инструменты.",
+        content: modeFinalNudge(mode),
       },
     ];
     const { message: finalMessage, usage: finalUsage } =
@@ -478,16 +503,11 @@ export async function runAgentTurn(options: {
       text =
         "Модель продолжила вызывать инструменты. Попробуйте другую модель (например DeepSeek-V4-Flash) или уточните задачу.";
     }
-    if (!text) {
-      text = "Не удалось получить финальный ответ.";
-    }
-    text = sanitizeAssistantText(text, { maxChars: config.maxResponseChars });
-
-    options.callbacks.onPhase("done", "Надумал");
-    messages.push({
-      role: "assistant",
-      content: text,
+    text = sanitizeAssistantText(text || "(пустой ответ)", {
+      maxChars: config.maxResponseChars,
     });
+    messages.push({ role: "assistant", content: text });
+    options.callbacks.onPhase("done", modeDoneLabel(mode));
     options.callbacks.onAssistant(text);
     options.callbacks.onReview([...editsByPath.values()]);
   }
