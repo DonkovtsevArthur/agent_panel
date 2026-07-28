@@ -21,6 +21,7 @@ import {
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
+import { getEditorSelectionPayload } from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
 import { hasUncommittedChanges } from "./gitStatus";
 import {
@@ -157,6 +158,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private scmRefreshTimer?: ReturnType<typeof setTimeout>;
   private gitApiBound = false;
   private pendingScmReturnRefresh = false;
+  private pendingComposerInsert = "";
+  private pendingComposerSelection:
+    | {
+        path: string;
+        startLine: number;
+        endLine: number;
+        text: string;
+        language: string;
+      }
+    | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -219,6 +230,53 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.html = this.getHtml(webviewView.webview);
     void this.postInit();
+  }
+
+  /** Вставить выделенный в редакторе код в composer (чип, не сырой markdown). */
+  async addSelectionToChat(): Promise<void> {
+    const selection = getEditorSelectionPayload();
+    if (!selection) {
+      void vscode.window.showInformationMessage(
+        "Выделите фрагмент кода в редакторе."
+      );
+      return;
+    }
+
+    this.pendingComposerSelection = selection;
+    this.pendingComposerInsert = "";
+    this.setScreen("chat");
+    this.saveStore();
+    const wasVisible = Boolean(this.view?.visible);
+    await vscode.commands.executeCommand("agentPanel.chat.focus");
+    // Если панель уже была открыта — HTML не перезагрузится, вставляем сразу.
+    if (wasVisible) {
+      this.flushPendingComposerInsert();
+    }
+  }
+
+  private flushPendingComposerInsert(): void {
+    if (!this.view) {
+      return;
+    }
+    if (this.pendingComposerSelection) {
+      const selection = this.pendingComposerSelection;
+      this.pendingComposerSelection = undefined;
+      this.pendingComposerInsert = "";
+      this.view.webview.postMessage({
+        type: "insertComposerSelection",
+        selection,
+      });
+      return;
+    }
+    const text = this.pendingComposerInsert;
+    if (!text) {
+      return;
+    }
+    this.pendingComposerInsert = "";
+    this.view.webview.postMessage({
+      type: "insertComposerText",
+      text,
+    });
   }
 
   /** Новый чат теперь всегда создаёт нового агента. */
@@ -1975,6 +2033,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     } else {
       this.view?.webview.postMessage({ type: "showAgents" });
     }
+    // После reload webview (focus панели) — доставить отложенную вставку.
+    if (this.pendingComposerInsert || this.pendingComposerSelection) {
+      setTimeout(() => this.flushPendingComposerInsert(), 80);
+    }
   }
 
   private getHtml(webview: vscode.Webview): string {
@@ -2281,6 +2343,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     <div class="composer-wrap" id="composerWrap">
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
       <div class="composer" id="composer">
+        <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
         <textarea id="prompt" placeholder="Задача для агента... (@ — файл)" rows="3"></textarea>
         <div class="composer-footer">

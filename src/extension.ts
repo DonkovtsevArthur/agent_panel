@@ -28,6 +28,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.pickAttachments", () =>
       provider.pickAttachmentsFromUi()
     ),
+    vscode.commands.registerCommand("agentPanel.addSelectionToChat", () =>
+      provider.addSelectionToChat()
+    ),
     { dispose: () => provider.dispose() }
   );
 }

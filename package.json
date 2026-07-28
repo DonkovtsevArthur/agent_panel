@@ -1,25 +1,36 @@
 {
   "name": "vscode-agent-panel",
   "displayName": "Harbor Agents",
-  "description": "Harbor Agents: local agent panel for VS Code. Свой API, чаты и настройки локально — без чужого бэкенда.",
-  "version": "0.7.9",
-  "publisher": "local",
+  "description": "Локальная агентская панель для VS Code. Свой OpenAI-compatible API — чаты у вас, без бэкенда Harbor.",
+  "version": "0.7.17",
+  "publisher": "DonkovtsevArthur",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonkovtsevArthur/agent_panel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DonkovtsevArthur/agent_panel/issues"
+  },
+  "homepage": "https://github.com/DonkovtsevArthur/agent_panel#readme",
   "icon": "media/icon-marketplace.png",
   "galleryBanner": {
-    "color": "#0B3A4A",
+    "color": "#1E1E1E",
     "theme": "dark"
   },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Machine Learning",
     "Other"
   ],
   "activationEvents": [
     "onView:agentPanel.chat",
     "onCommand:agentPanel.open",
     "onCommand:agentPanel.newChat",
-    "onCommand:agentPanel.clearChat"
+    "onCommand:agentPanel.clearChat",
+    "onCommand:agentPanel.addSelectionToChat"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -62,6 +73,11 @@
         "command": "agentPanel.pickAttachments",
         "title": "Прикрепить файл",
         "category": "Гавань агентов"
+      },
+      {
+        "command": "agentPanel.addSelectionToChat",
+        "title": "Добавить выделение в чат",
+        "category": "Гавань агентов"
       }
     ],
     "menus": {
@@ -71,9 +87,28 @@
         },
         {
           "command": "agentPanel.newChat"
+        },
+        {
+          "command": "agentPanel.addSelectionToChat",
+          "when": "editorHasSelection"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "agentPanel.addSelectionToChat",
+          "when": "editorHasSelection",
+          "group": "navigation@9"
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "agentPanel.addSelectionToChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ],
     "configuration": {
       "title": "Гавань агентов",
       "properties": {
@@ -287,7 +322,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
-    "package": "vsce package --allow-missing-repository --skip-license"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
