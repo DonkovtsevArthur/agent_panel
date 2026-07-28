@@ -15,13 +15,14 @@
 ## Возможности
 
 - **Режимы:** Agent · Plan · Ask (плюс кастомные режимы)
-- **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command` (`Plan`/`Ask` работают только на чтение)
+- **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url`, `open_external` (`Plan`/`Ask` работают только на чтение)
 - **MCP tools** — tools с подключённых MCP-серверов доступны агенту в том же loop (`mcp__<id>__…`)
 - **Стриминг** с остановкой, edit & resend, regenerate
 - **@file**, вложения и картинки (vision, если модель поддерживает)
 - **Контекст редактора** и индикатор использования context window
 - **Карточка diff review** с переходом в Source Control
 - **Генерация commit message** в Source Control (по вашему API); промпт и язык — для всех workspace или для текущего
+- **Figma MCP** — Personal Access Token в Settings → MCP Servers; агент читает дизайн по ссылке figma.com
 - **Ветки ответов** без потери основной нити диалога
 - **Поиск** по агентам в текущем workspace
 - Сессии хранятся **локально для каждого workspace**
@@ -30,7 +31,7 @@
 
 В панели: **Settings → MCP Servers**.
 
-- **Figma** — встроенное подключение. Кнопка Connect (remote OAuth) или **Personal Access Token** (если remote отвечает 403 — Harbor Agents не в каталоге клиентов Figma). После подключения можно вставлять ссылки `figma.com/design/…` в чат.
+- **Figma** — встроенное подключение через **Personal Access Token** (Settings → MCP Servers). Remote OAuth у Figma обычно недоступен Harbor Agents (клиент не в каталоге Figma MCP). После подключения можно вставлять ссылки `figma.com/design/…` в чат.
 - **Свои серверы** — кнопка **+**:
   - **stdio** — `command` + args (например `npx` / `-y some-mcp --stdio`) и env `KEY=value`
   - **HTTP** — URL MCP endpoint и опциональный Bearer token
@@ -120,13 +121,14 @@ Marketplace and UI name: **Harbor Agents**.
 ### Features
 
 - **Modes:** Agent · Plan · Ask (plus custom modes)
-- **Tools:** `list_files`, `read_file`, `write_file`, `run_command` (Plan/Ask are read-only)
+- **Tools:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url`, `open_external` (Plan/Ask are read-only)
 - **MCP tools** — tools from connected MCP servers are available in the same agent loop (`mcp__<id>__…`)
 - **Streaming** with stop; edit & resend; regenerate
 - **@file** mentions, attachments and images (vision when the model supports it)
 - **Editor context** and context-window usage indicator
 - **Diff review** card with jump to Source Control
 - **Generate commit messages** in Source Control via your API; prompt and language can be saved for all workspaces or the current one
+- **Figma MCP** — Personal Access Token in Settings → MCP Servers; the agent reads designs from figma.com links
 - **Branches** without losing the main thread
 - **Search** across agents in the workspace
 - Sessions stored **locally per workspace**
@@ -135,7 +137,7 @@ Marketplace and UI name: **Harbor Agents**.
 
 In the panel: **Settings → MCP Servers**.
 
-- **Figma** — built-in connection. Use Connect (remote OAuth) or a **Personal Access Token** (if remote returns 403 — Harbor Agents is not in Figma’s MCP client catalog). After connecting, paste `figma.com/design/…` links in chat.
+- **Figma** — built-in connection via **Personal Access Token** (Settings → MCP Servers). Remote OAuth from Figma is usually unavailable to Harbor Agents (not in the Figma MCP client catalog). After connecting, paste `figma.com/design/…` links in chat.
 - **Custom servers** — **+** button:
   - **stdio** — `command` + args (e.g. `npx` / `-y some-mcp --stdio`) and `KEY=value` env lines
   - **HTTP** — MCP endpoint URL and optional Bearer token

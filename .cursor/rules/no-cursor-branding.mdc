@@ -1,0 +1,12 @@
+---
+description: Не упоминать продукт Cursor в пользовательских описаниях Harbor Agents
+alwaysApply: true
+---
+
+# Без бренда Cursor в описаниях
+
+Harbor Agents — расширение для **VS Code**, не для Cursor.
+
+- В README, Marketplace, UI-копирайте, nls, тостах и подсказках **не** сравнивать с Cursor и **не** писать «как в Cursor» / «like in Cursor» / Cursor-like.
+- Описывать функции сами по себе (например: «Connect в Settings, OAuth в браузере»).
+- Исключения: пути файлов вроде `.cursor/rules` в коде чтения правил проекта; CSS `cursor:`; «cursor» как позиция каретки в редакторе.

@@ -1723,7 +1723,7 @@ button.secondary {
   display: none;
 }
 
-/* Cursor-like send: filled circle + thin arrow; becomes stop while busy */
+/* Send button: filled circle + thin arrow; becomes stop while busy */
 button.primary {
   width: 28px;
   height: 28px;

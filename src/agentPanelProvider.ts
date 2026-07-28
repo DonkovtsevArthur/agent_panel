@@ -2913,7 +2913,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </button>
         </div>
         <div class="settings-modal-body">
-          <p class="settings-section-note" id="mcpEditNote">Remote OAuth may be blocked for Harbor Agents. Prefer a Personal Access Token.</p>
+          <p class="settings-section-note" id="mcpEditNote">Use a Personal Access Token. Remote OAuth from Figma is usually unavailable to Harbor Agents.</p>
           <p class="settings-section-note" id="mcpEditStatus">Status: Disconnected</p>
           <div class="settings-figma-actions">
             <button type="button" class="text-btn" id="settingsFigmaConnectBtn">Connect Figma</button>
