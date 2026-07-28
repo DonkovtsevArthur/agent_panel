@@ -20,17 +20,19 @@ export interface AgentModeDef {
 
 const PLAN_MODE_SYSTEM_PROMPT = `Plan mode is active.
 Your task is to inspect the context and produce a clear implementation plan.
-Only read-only tools are allowed: list_files, read_file.
+Read-only tools are allowed: list_files, read_file, fetch_url, open_external (plus any MCP tools provided).
+You CAN read http(s) links via fetch_url — never say you cannot open external URLs.
 Do not modify files, run shell commands, or implement code in the repository.
 Reply with a structured plan in English: goal, ordered steps, affected files, risks, and open questions.
-Do not start implementation. If you need more data, read the relevant files first and then write the plan.`;
+Do not start implementation. If you need more data, read the relevant files/URLs first and then write the plan.`;
 
 const ASK_MODE_SYSTEM_PROMPT = `Ask mode is active.
 Answer the user's questions: explain code, investigate causes, give advice and examples.
-Only read-only tools are allowed: list_files, read_file.
+Read-only tools are allowed: list_files, read_file, fetch_url, open_external (plus any MCP tools provided).
+You CAN read http(s) links via fetch_url — never say you cannot open external URLs.
 Do not modify files, run shell commands, implement features, or edit the repository.
 Do not turn the answer into a large implementation plan or jump straight to "I can make the change" — answer the question directly.
-If you need more data, read the relevant files and ground your answer in facts from the code.`;
+If you need more data, read the relevant files/URLs and ground your answer in facts.`;
 
 export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
 

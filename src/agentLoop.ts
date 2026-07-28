@@ -141,12 +141,27 @@ function formatToolStatus(
         detail: path ? `Пишет · ${truncateStatus(path)}` : "Редактирует…",
       };
     }
+    case "open_external": {
+      const url = String(args.url || "").trim();
+      return {
+        phase: "running",
+        detail: url ? `Открывает · ${truncateStatus(url)}` : "Открывает URL…",
+      };
+    }
+    case "fetch_url": {
+      const url = String(args.url || "").trim();
+      return {
+        phase: "reading",
+        detail: url ? `Читает URL · ${truncateStatus(url)}` : "Читает URL…",
+      };
+    }
     default: {
       if (name.startsWith("mcp__")) {
         const short = name.replace(/^mcp__[^_]+__/, "") || name;
+        const label = name.startsWith("mcp__figma__") ? "Figma" : "MCP";
         return {
           phase: "reading",
-          detail: `Figma · ${truncateStatus(short)}`,
+          detail: `${label} · ${truncateStatus(short)}`,
         };
       }
       return {
@@ -336,15 +351,12 @@ export async function runAgentTurn(options: {
   );
   const mcp = getMcpManager();
   const figmaEnabled = config.figma.enabled;
-  if (mcp && figmaEnabled) {
-    await mcp.tryQuietReconnect();
-  }
-  const mcpTools =
-    mcp && figmaEnabled
-      ? await mcp.listOpenAiTools(isReadonlyPolicy(mode.tools))
-      : [];
+  const mcpTools = mcp
+    ? await mcp.listOpenAiTools(isReadonlyPolicy(mode.tools))
+    : [];
   const figmaConnected = Boolean(
-    mcp?.getStatus().state === "connected" &&
+    figmaEnabled &&
+      mcp?.getStatus().state === "connected" &&
       mcpTools.some((t) => t.function.name.startsWith("mcp__figma__"))
   );
   if (
@@ -359,7 +371,20 @@ export async function runAgentTurn(options: {
   const toolNames = mcpTools.map((t) => t.function.name);
   const mcpHint =
     mcp?.buildSystemHint(toolNames) ||
-    "No MCP tools are currently connected.";
+    [
+      "No MCP tools are currently connected.",
+      "You CAN access http(s) URLs via fetch_url / open_external — never claim you cannot open external URLs.",
+    ].join(" ");
+  const activeTools = toolsForPolicy(mode.tools, mcpTools);
+  const toolsCapabilityHint = [
+    `Built-in tools available this turn: ${activeTools
+      .filter((t) => !t.function.name.startsWith("mcp__"))
+      .map((t) => t.function.name)
+      .join(", ")}.`,
+    "If the user shares an http(s) link and you need its content, call fetch_url immediately.",
+    "If they ask to open a link in the browser, call open_external.",
+    "Never reply that you cannot open or access external URLs.",
+  ].join(" ");
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
@@ -370,11 +395,11 @@ export async function runAgentTurn(options: {
     ...(modePrompt
       ? [{ role: "system" as const, content: modePrompt }]
       : []),
+    { role: "system", content: toolsCapabilityHint },
     ...priorApi,
     toApiMessage({ role: "user", content: userApiContent }),
   ];
 
-  const activeTools = toolsForPolicy(mode.tools, mcpTools);
   const allowedToolNames = new Set(activeTools.map((t) => t.function.name));
   const editsByPath = new Map<string, FileEditStat>();
   const toolRounds = Math.max(1, config.maxToolRounds);

@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.59",
+  "version": "0.7.63",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -271,7 +271,7 @@
         },
         "agentPanel.systemPrompt": {
           "type": "string",
-          "default": "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually.",
+          "default": "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command, fetch_url, open_external. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually. To read an http(s) link, call fetch_url; to open it in the user's browser, call open_external. Never claim you cannot open external URLs.",
           "description": "%config.systemPrompt.description%"
         },
         "agentPanel.modes": {

@@ -1,5 +1,8 @@
 import { execFile } from "child_process";
+import * as http from "http";
+import * as https from "https";
 import * as path from "path";
+import { URL } from "url";
 import { promisify } from "util";
 import * as vscode from "vscode";
 import { lineDiffStats } from "./diffStats";
@@ -7,7 +10,12 @@ import type { ChatTool } from "./openaiClient";
 
 const execFileAsync = promisify(execFile);
 
-export const READONLY_TOOL_NAMES = new Set(["list_files", "read_file"]);
+export const READONLY_TOOL_NAMES = new Set([
+  "list_files",
+  "read_file",
+  "open_external",
+  "fetch_url",
+]);
 
 export const agentTools: ChatTool[] = [
   {
@@ -87,6 +95,42 @@ export const agentTools: ChatTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "fetch_url",
+      description:
+        "Скачать содержимое http(s) URL и вернуть текст (для чтения страницы/документации). Не говори, что не можешь открывать внешние URL — вызывай этот tool. Для figma.com используй MCP Figma tools, если они доступны.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_external",
+      description:
+        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому прочитать содержимое ссылки — используй fetch_url. Для Figma — MCP tools.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
 ];
 
 function getWorkspaceRoot(): vscode.Uri {
@@ -120,6 +164,110 @@ function truncate(text: string, max = 40_000): string {
     return text;
   }
   return text.slice(0, max) + "\n\n[truncated]";
+}
+
+function htmlToReadableText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseHttpUrl(raw: string): URL {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("Пустой URL");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("Некорректный URL");
+  }
+  const scheme = parsed.protocol.replace(":", "").toLowerCase();
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error("Разрешены только http и https");
+  }
+  return parsed;
+}
+
+async function fetchUrl(rawUrl: string): Promise<string> {
+  const parsed = parseHttpUrl(rawUrl);
+  const lib = parsed.protocol === "https:" ? https : http;
+
+  const { status, contentType, body } = await new Promise<{
+    status: number;
+    contentType: string;
+    body: string;
+  }>((resolve, reject) => {
+    const req = lib.request(
+      {
+        protocol: parsed.protocol,
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+        path: `${parsed.pathname}${parsed.search}`,
+        method: "GET",
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+          "User-Agent": "HarborAgents/1.0 (+VS Code extension)",
+        },
+        timeout: 20_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        const maxBytes = 512_000;
+        res.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total <= maxBytes) {
+            chunks.push(chunk);
+          }
+        });
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            contentType: String(res.headers["content-type"] || ""),
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error("Таймаут запроса URL"));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+
+  if (status < 200 || status >= 400) {
+    return JSON.stringify({
+      ok: false,
+      url: parsed.toString(),
+      status,
+      error: `HTTP ${status}`,
+      preview: truncate(body, 2_000),
+    });
+  }
+
+  const isHtml = /html|xml/i.test(contentType) || /^\s*</.test(body);
+  const text = isHtml ? htmlToReadableText(body) : body;
+  return JSON.stringify({
+    ok: true,
+    url: parsed.toString(),
+    status,
+    contentType,
+    content: truncate(text, 60_000),
+  });
 }
 
 async function runCommand(command: string, cwdRelative = ""): Promise<string> {
@@ -242,6 +390,23 @@ export async function runTool(
           String(args.command ?? ""),
           String(args.cwd ?? "")
         );
+      }
+      case "open_external": {
+        const raw = String(args.url ?? "").trim();
+        let parsed: URL;
+        try {
+          parsed = parseHttpUrl(raw);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return JSON.stringify({ error: message });
+        }
+        const opened = await vscode.env.openExternal(
+          vscode.Uri.parse(parsed.toString())
+        );
+        return JSON.stringify({ ok: opened, url: parsed.toString() });
+      }
+      case "fetch_url": {
+        return await fetchUrl(String(args.url ?? ""));
       }
       default:
         return JSON.stringify({ error: `Неизвестный инструмент: ${name}` });

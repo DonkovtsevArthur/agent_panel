@@ -40,7 +40,7 @@
       mcpBadgeUser: "User",
       mcpBadgeTools: (n) => `${n} tools`,
       mcpEditNote:
-        "Remote OAuth may be blocked for Harbor Agents. Prefer a Personal Access Token.",
+        "Use a Personal Access Token. Remote OAuth from Figma is usually unavailable to Harbor Agents.",
       mcpCustomTitleNew: "Add MCP server",
       mcpCustomTitleEdit: "Edit MCP server",
       mcpCustomName: "Name",
@@ -226,7 +226,7 @@
       mcpBadgeUser: "User",
       mcpBadgeTools: (n) => `${n} tools`,
       mcpEditNote:
-        "Remote OAuth может быть недоступен Harbor Agents. Лучше Personal Access Token.",
+        "Подключайте через Personal Access Token. Remote OAuth у Figma для Harbor Agents обычно недоступен.",
       mcpCustomTitleNew: "Добавить MCP-сервер",
       mcpCustomTitleEdit: "Редактировать MCP-сервер",
       mcpCustomName: "Имя",
