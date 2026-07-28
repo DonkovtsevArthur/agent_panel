@@ -10,11 +10,13 @@
 - **Приватность по умолчанию** — никаких Harbor-серверов, аналитики или телеметрии
 - **Панель в sidebar** — несколько агентов (чатов), архив, поиск, ветки диалога
 - **Работа с проектом** — tools, `@file`-упоминания, выделение из редактора, вложения
+- **MCP** — подключайте Figma и свои MCP-серверы (stdio / HTTP) прямо в панели
 
 ## Возможности
 
 - **Режимы:** Agent · Plan · Ask (плюс кастомные режимы)
 - **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command` (`Plan`/`Ask` работают только на чтение)
+- **MCP tools** — tools с подключённых MCP-серверов доступны агенту в том же loop (`mcp__<id>__…`)
 - **Стриминг** с остановкой, edit & resend, regenerate
 - **@file**, вложения и картинки (vision, если модель поддерживает)
 - **Контекст редактора** и индикатор использования context window
@@ -23,6 +25,18 @@
 - **Ветки ответов** без потери основной нити диалога
 - **Поиск** по агентам в текущем workspace
 - Сессии хранятся **локально для каждого workspace**
+
+## MCP Servers
+
+В панели: **Settings → MCP Servers**.
+
+- **Figma** — встроенное подключение. Кнопка Connect (remote OAuth) или **Personal Access Token** (если remote отвечает 403 — Harbor Agents не в каталоге клиентов Figma). После подключения можно вставлять ссылки `figma.com/design/…` в чат.
+- **Свои серверы** — кнопка **+**:
+  - **stdio** — `command` + args (например `npx` / `-y some-mcp --stdio`) и env `KEY=value`
+  - **HTTP** — URL MCP endpoint и опциональный Bearer token
+- Toggle / Edit / Delete на карточке сервера; статус и ошибки видны в списке.
+
+Конфиг своих серверов: `agentPanel.mcp.servers`. Figma: `agentPanel.figma.enabled`.
 
 ## Требования
 
@@ -47,6 +61,8 @@
 - `agentPanel.modes` — встроенные и пользовательские режимы composer
 - `agentPanel.commitMessage.prompt` — правило/промпт для генерации сообщений коммита (пусто = правила проекта, затем дефолт)
 - `agentPanel.commitMessage.language` — язык сообщения коммита (`auto` / `en` / `ru`); область сохранения выбирается в настройках панели: все workspace или текущий
+- `agentPanel.figma.enabled` — включить Figma MCP; подключение — Settings → MCP Servers
+- `agentPanel.mcp.servers` — свои MCP-серверы (stdio / HTTP); UI: Settings → MCP Servers → +
 
 Старые `agentPanel.baseUrl` / `agentPanel.apiKey` тоже работают, но предпочтительнее `providers`.
 
@@ -74,8 +90,8 @@
 
 - История чатов, агенты и ключи хранятся в **вашем** VS Code storage / settings
 - Harbor Agents **не** отправляет код или чаты в какой-либо Harbor service
-- Сетевые запросы идут **только** в те endpoint, которые вы сами настроили
-- Что логирует или хранит ваш API, зависит уже от него, поэтому используйте доверенный endpoint
+- Сетевые запросы идут **только** в те endpoint, которые вы сами настроили (LLM API и MCP-серверы)
+- Что логирует или хранит ваш API / MCP, зависит уже от него — используйте доверенные сервисы
 
 ## Команды
 
@@ -99,11 +115,13 @@ Marketplace and UI name: **Harbor Agents**.
 - **Private by design** — no Harbor servers, no analytics, no telemetry
 - **Sidebar agent panel** — multiple agents (chats), archive, search, conversation branches
 - **Works with your project** — tools, `@file` mentions, editor selection, attachments
+- **MCP** — connect Figma and your own MCP servers (stdio / HTTP) from the panel
 
 ### Features
 
 - **Modes:** Agent · Plan · Ask (plus custom modes)
 - **Tools:** `list_files`, `read_file`, `write_file`, `run_command` (Plan/Ask are read-only)
+- **MCP tools** — tools from connected MCP servers are available in the same agent loop (`mcp__<id>__…`)
 - **Streaming** with stop; edit & resend; regenerate
 - **@file** mentions, attachments and images (vision when the model supports it)
 - **Editor context** and context-window usage indicator
@@ -112,6 +130,18 @@ Marketplace and UI name: **Harbor Agents**.
 - **Branches** without losing the main thread
 - **Search** across agents in the workspace
 - Sessions stored **locally per workspace**
+
+### MCP Servers
+
+In the panel: **Settings → MCP Servers**.
+
+- **Figma** — built-in connection. Use Connect (remote OAuth) or a **Personal Access Token** (if remote returns 403 — Harbor Agents is not in Figma’s MCP client catalog). After connecting, paste `figma.com/design/…` links in chat.
+- **Custom servers** — **+** button:
+  - **stdio** — `command` + args (e.g. `npx` / `-y some-mcp --stdio`) and `KEY=value` env lines
+  - **HTTP** — MCP endpoint URL and optional Bearer token
+- Toggle / Edit / Delete on each card; status and errors show in the list.
+
+Custom servers config: `agentPanel.mcp.servers`. Figma: `agentPanel.figma.enabled`.
 
 ### Requirements
 
@@ -136,6 +166,8 @@ Tip: select code → **Harbor Agents: Add Selection to Chat** (`Cmd+Shift+L` / `
 - `agentPanel.modes` — built-in and custom composer modes
 - `agentPanel.commitMessage.prompt` — rule/prompt for commit message generation (empty = project rules, then built-in default)
 - `agentPanel.commitMessage.language` — commit message language (`auto` / `en` / `ru`); save scope is chosen in the panel settings: all workspaces or the current one
+- `agentPanel.figma.enabled` — enable Figma MCP; connect via Settings → MCP Servers
+- `agentPanel.mcp.servers` — custom MCP servers (stdio / HTTP); UI: Settings → MCP Servers → +
 
 Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`.
 
@@ -143,8 +175,8 @@ Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`
 
 - Chat history, agents, and keys live in **your** VS Code storage / settings
 - Harbor Agents does **not** upload code or chats to a Harbor service
-- Network calls go **only** to endpoints you configure
-- What that API logs or retains is outside this extension — use a trusted endpoint
+- Network calls go **only** to endpoints you configure (LLM API and MCP servers)
+- What those services log or retain is outside this extension — use trusted endpoints
 
 ### Commands
 

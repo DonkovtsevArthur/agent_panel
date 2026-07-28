@@ -31,6 +31,10 @@ import {
   type AgentModeDef,
 } from "./modes";
 import type { ChatMessage } from "./openaiClient";
+import { getMcpManager } from "./mcpBundle";
+import type { FigmaStatusPayload } from "./mcpBundle";
+import type { McpServerRuntimeStatus } from "./mcp/types";
+import { parseArgsInput, parseEnvLines } from "./mcp/serversStore";
 import {
   AgentsStoreV2,
   UiMessage,
@@ -90,6 +94,7 @@ type SettingsPayload = {
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
   commitMessageScope?: "global" | "workspace";
+  figmaEnabled?: boolean;
 };
 
 type WebviewToHost =
@@ -145,7 +150,31 @@ type WebviewToHost =
   | { type: "chatScroll"; chatId: string; scrollTop: number }
   | { type: "branchFromMessage"; messageIndex: number }
   | { type: "switchBranch"; chatId: string }
-  | { type: "deleteBranch"; chatId: string };
+  | { type: "deleteBranch"; chatId: string }
+  | { type: "figmaConnect" }
+  | { type: "figmaDisconnect" }
+  | { type: "figmaConnectPat"; token: string }
+  | { type: "figmaRefreshStatus" }
+  | { type: "mcpRefreshList" }
+  | {
+      type: "mcpUpsertServer";
+      server: {
+        id?: string;
+        name: string;
+        transport: "stdio" | "http";
+        command?: string;
+        argsText?: string;
+        envText?: string;
+        cwd?: string;
+        url?: string;
+        bearerToken?: string;
+        enabled?: boolean;
+        connect?: boolean;
+      };
+    }
+  | { type: "mcpDeleteServer"; id: string }
+  | { type: "mcpSetEnabled"; id: string; enabled: boolean }
+  | { type: "mcpConnectServer"; id: string };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -189,6 +218,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     private readonly context: vscode.ExtensionContext
   ) {
     this.loadStore();
+    const mcp = getMcpManager();
+    if (mcp) {
+      this.disposables.push(
+        mcp.onStatus((status) => {
+          this.postFigmaStatus(status);
+        }),
+        mcp.onServersChanged((servers) => {
+          this.postMcpServersList(servers);
+        })
+      );
+    }
   }
 
   private setScreen(screen: AgentsStoreV2["screen"]): void {
@@ -950,6 +990,33 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "saveModes":
         await this.saveModes(message.modes);
         break;
+      case "figmaConnect":
+        await this.handleFigmaConnect();
+        break;
+      case "figmaDisconnect":
+        await this.handleFigmaDisconnect();
+        break;
+      case "figmaConnectPat":
+        await this.handleFigmaConnectPat(message.token);
+        break;
+      case "figmaRefreshStatus":
+        await this.refreshFigmaStatus();
+        break;
+      case "mcpRefreshList":
+        this.postMcpServersList();
+        break;
+      case "mcpUpsertServer":
+        await this.handleMcpUpsert(message.server);
+        break;
+      case "mcpDeleteServer":
+        await this.handleMcpDelete(message.id);
+        break;
+      case "mcpSetEnabled":
+        await this.handleMcpSetEnabled(message.id, message.enabled);
+        break;
+      case "mcpConnectServer":
+        await this.handleMcpConnect(message.id);
+        break;
       case "openAgent":
         this.openAgent(message.agentId);
         break;
@@ -1640,6 +1707,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               this.postContextUsage();
             }
           },
+          onFigmaNeedsConnect: () => {
+            const lang = resolveUiLanguage(getConfig().language);
+            const text =
+              lang === "ru"
+                ? "Figma не подключён. Откройте Settings → MCP Servers и настройте подключение (Personal Access Token)."
+                : "Figma is not connected. Open Settings → MCP Servers and configure a connection (Personal Access Token).";
+            this.pushUiToChat(runChatId, "error", text);
+            this.view?.webview.postMessage({
+              type: "figmaNeedsConnect",
+              chatId: runChatId,
+            });
+          },
         },
       });
       syncRunChat();
@@ -2003,8 +2082,184 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           vscode.workspace.workspaceFolders?.[0]?.name ||
           vscode.workspace.name ||
           "",
+        figmaEnabled: config.figma.enabled,
+        figma: this.getFigmaStatusPayload(),
       },
     });
+  }
+
+  private getFigmaStatusPayload(): FigmaStatusPayload {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return {
+        state: "disconnected",
+        enabled: getConfig().figma.enabled,
+      };
+    }
+    return mcp.getStatus();
+  }
+
+  private postFigmaStatus(status?: FigmaStatusPayload): void {
+    const payload = status || this.getFigmaStatusPayload();
+    this.view?.webview.postMessage({ type: "figmaStatus", status: payload });
+    this.postMcpServersList();
+  }
+
+  private postMcpServersList(servers?: McpServerRuntimeStatus[]): void {
+    const mcp = getMcpManager();
+    const list = servers || mcp?.listServerStatuses() || [];
+    this.view?.webview.postMessage({
+      type: "mcpServers",
+      servers: list,
+    });
+  }
+
+  private async handleMcpUpsert(raw: {
+    id?: string;
+    name: string;
+    transport: "stdio" | "http";
+    command?: string;
+    argsText?: string;
+    envText?: string;
+    cwd?: string;
+    url?: string;
+    bearerToken?: string;
+    enabled?: boolean;
+    connect?: boolean;
+  }): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    try {
+      const status = await mcp.upsertCustomServer({
+        id: raw.id,
+        name: raw.name,
+        transport: raw.transport,
+        command: raw.command,
+        args: parseArgsInput(raw.argsText || ""),
+        env: parseEnvLines(raw.envText || ""),
+        cwd: raw.cwd,
+        url: raw.url,
+        bearerToken: raw.bearerToken,
+        enabled: raw.enabled,
+        connect: raw.connect !== false,
+      });
+      this.postMcpServersList();
+      if (status.state === "connected") {
+        void vscode.window.showInformationMessage(
+          `MCP «${status.name}» connected (${status.toolCount} tools).`
+        );
+      } else if (status.state === "error") {
+        void vscode.window.showWarningMessage(
+          status.message || `Could not connect «${status.name}».`
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(message);
+    }
+  }
+
+  private async handleMcpDelete(id: string): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    await mcp.deleteCustomServer(id);
+    this.postMcpServersList();
+    this.postFigmaStatus();
+  }
+
+  private async handleMcpSetEnabled(
+    id: string,
+    enabled: boolean
+  ): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    await mcp.setCustomEnabled(id, enabled);
+    this.postMcpServersList();
+    this.postFigmaStatus();
+  }
+
+  private async handleMcpConnect(id: string): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    if (id === "figma") {
+      await this.handleFigmaConnect();
+      return;
+    }
+    const status = await mcp.connectCustom(id);
+    this.postMcpServersList();
+    if (status.state === "error") {
+      void vscode.window.showWarningMessage(
+        status.message || `Could not connect «${status.name}».`
+      );
+    }
+  }
+
+  private async refreshFigmaStatus(): Promise<void> {
+    const mcp = getMcpManager();
+    if (mcp) {
+      await mcp.refreshSecretFlags();
+      await mcp.tryQuietReconnect();
+    }
+    this.postFigmaStatus();
+  }
+
+  private async handleFigmaConnect(): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    this.postFigmaStatus({
+      ...mcp.getStatus(),
+      state: "connecting",
+      message: "Opening Figma authorization…",
+    });
+    const status = await mcp.connectRemoteInteractive();
+    this.postFigmaStatus(status);
+    if (status.state === "connected") {
+      void vscode.window.showInformationMessage(
+        "Figma connected. You can paste figma.com links in chat."
+      );
+    } else if (status.state === "error") {
+      void vscode.window.showWarningMessage(
+        status.message ||
+          "Remote Figma MCP failed. Use a Personal Access Token in Settings → MCP Servers."
+      );
+    }
+  }
+
+  private async handleFigmaDisconnect(): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    const status = await mcp.disconnect();
+    this.postFigmaStatus(status);
+  }
+
+  private async handleFigmaConnectPat(token: string): Promise<void> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return;
+    }
+    const status = await mcp.connectWithPat(token);
+    this.postFigmaStatus(status);
+    if (status.state === "connected") {
+      void vscode.window.showInformationMessage(
+        "Figma connected via Personal Access Token."
+      );
+    } else if (status.state === "error") {
+      void vscode.window.showWarningMessage(
+        status.message || "Could not connect with this token."
+      );
+    }
   }
 
   private async saveSettings(raw: SettingsPayload): Promise<void> {
@@ -2188,6 +2443,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     );
 
     await this.saveCommitMessageSettings(raw);
+
+    const figmaEnabled = raw.figmaEnabled !== false;
+    await cfg.update("figma.enabled", figmaEnabled, target);
+    const mcp = getMcpManager();
+    if (mcp) {
+      await mcp.setEnabled(figmaEnabled);
+    }
 
     await this.writeModes(raw.modes);
 
@@ -2478,6 +2740,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </section>
 
       <section class="settings-section">
+        <h3 class="settings-section-title" id="settingsMcpTitle">MCP Servers</h3>
+        <p class="settings-section-note" id="settingsMcpNote">Manage MCP connections used by Harbor Agents (Figma and more).</p>
+        <button type="button" class="mcp-settings-entry" id="openMcpServersBtn">
+          <span class="mcp-settings-entry-icon" aria-hidden="true">
+            <span class="material-symbols-outlined">electrical_services</span>
+          </span>
+          <span class="mcp-settings-entry-text">
+            <span class="mcp-settings-entry-title" id="settingsMcpEntryTitle">MCP Servers</span>
+            <span class="mcp-settings-entry-sub" id="settingsMcpEntrySub">Open connection list</span>
+          </span>
+          <span class="material-symbols-outlined mcp-settings-entry-chevron" aria-hidden="true">chevron_right</span>
+        </button>
+      </section>
+
+      <section class="settings-section">
         <h3 class="settings-section-title">TLS</h3>
         <label class="settings-field settings-check">
           <input id="settingsRejectUnauthorized" type="checkbox" />
@@ -2596,6 +2873,118 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div class="settings-modal-foot">
           <button type="button" class="text-btn" id="providerEditCancelBtn">Cancel</button>
           <button type="button" class="text-btn settings-modal-done" id="providerEditDoneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="mcpScreen" class="screen" hidden>
+    <div class="agents-top">
+      <button type="button" class="icon-btn" id="backFromMcpBtn" title="Back to settings" aria-label="Back to settings">
+        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+      </button>
+      <div class="agents-title" id="mcpScreenTitle">MCP Servers</div>
+    </div>
+    <div class="mcp-body" id="mcpBody">
+      <p class="mcp-subtitle" id="mcpSubtitle">Manage MCP server configurations used by Harbor Agents.</p>
+      <div class="mcp-toolbar">
+        <label class="mcp-search">
+          <span class="material-symbols-outlined" aria-hidden="true">search</span>
+          <input id="mcpSearchInput" type="search" placeholder="Search MCP servers..." autocomplete="off" />
+        </label>
+        <button type="button" class="icon-btn" id="mcpAddBtn" title="Add MCP server" aria-label="Add MCP server">
+          <span class="material-symbols-outlined" aria-hidden="true">add</span>
+        </button>
+      </div>
+      <div class="mcp-section-head">
+        <h3 class="mcp-section-title" id="mcpConfiguredTitle">Configured MCP servers</h3>
+        <span class="mcp-section-count" id="mcpConfiguredCount">0</span>
+      </div>
+      <div id="mcpServersList" class="mcp-servers-list"></div>
+      <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
+    </div>
+    <div id="mcpEditModal" class="settings-modal" hidden>
+      <div class="settings-modal-backdrop" data-mcp-dismiss="1"></div>
+      <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="mcpEditTitle">
+        <div class="settings-modal-head">
+          <h3 id="mcpEditTitle" class="settings-modal-title">Figma</h3>
+          <button type="button" class="icon-btn" id="mcpEditCloseBtn" title="Close" aria-label="Close">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <div class="settings-modal-body">
+          <p class="settings-section-note" id="mcpEditNote">Remote OAuth may be blocked for Harbor Agents. Prefer a Personal Access Token.</p>
+          <p class="settings-section-note" id="mcpEditStatus">Status: Disconnected</p>
+          <div class="settings-figma-actions">
+            <button type="button" class="text-btn" id="settingsFigmaConnectBtn">Connect Figma</button>
+            <button type="button" class="text-btn" id="settingsFigmaDisconnectBtn" hidden>Disconnect</button>
+          </div>
+          <div id="settingsFigmaPatBlock" class="settings-figma-pat">
+            <p class="settings-section-note" id="settingsFigmaPatNote">Create a token in Figma → Settings → Security → Personal access tokens.</p>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsFigmaPatLabel">Personal Access Token</span>
+              <input id="settingsFigmaPat" class="settings-input" type="password" autocomplete="off" placeholder="figd_…" />
+            </label>
+            <button type="button" class="text-btn" id="settingsFigmaPatConnectBtn">Connect with token</button>
+            <button type="button" class="text-btn" id="settingsFigmaPatHelpBtn">Open token settings</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="mcpCustomEditModal" class="settings-modal" hidden>
+      <div class="settings-modal-backdrop" data-mcp-custom-dismiss="1"></div>
+      <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="mcpCustomEditTitle">
+        <div class="settings-modal-head">
+          <h3 id="mcpCustomEditTitle" class="settings-modal-title">MCP Server</h3>
+          <button type="button" class="icon-btn" id="mcpCustomEditCloseBtn" title="Close" aria-label="Close">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <div class="settings-modal-body">
+          <input id="mcpCustomEditId" type="hidden" value="" />
+          <label class="settings-field">
+            <span class="settings-label" id="mcpCustomNameLabel">Name</span>
+            <input id="mcpCustomName" class="settings-input" type="text" placeholder="My MCP server" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="mcpCustomTransportLabel">Transport</span>
+            <select id="mcpCustomTransport" class="settings-input">
+              <option value="stdio">stdio (command)</option>
+              <option value="http">HTTP</option>
+            </select>
+          </label>
+          <div id="mcpCustomStdioFields">
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomCommandLabel">Command</span>
+              <input id="mcpCustomCommand" class="settings-input" type="text" placeholder="npx" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomArgsLabel">Args</span>
+              <input id="mcpCustomArgs" class="settings-input" type="text" placeholder="-y some-mcp-server --stdio" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomEnvLabel">Env (KEY=value per line)</span>
+              <textarea id="mcpCustomEnv" class="settings-input settings-textarea" rows="3" placeholder="API_KEY=…"></textarea>
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomCwdLabel">Working directory (optional)</span>
+              <input id="mcpCustomCwd" class="settings-input" type="text" placeholder="/path/to/cwd" />
+            </label>
+          </div>
+          <div id="mcpCustomHttpFields" hidden>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomUrlLabel">URL</span>
+              <input id="mcpCustomUrl" class="settings-input" type="text" placeholder="https://example.com/mcp" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomTokenLabel">Bearer token (optional)</span>
+              <input id="mcpCustomToken" class="settings-input" type="password" autocomplete="off" placeholder="optional" />
+            </label>
+          </div>
+        </div>
+        <div class="settings-modal-foot">
+          <button type="button" class="text-btn" id="mcpCustomEditCancelBtn">Cancel</button>
+          <button type="button" class="text-btn settings-modal-done" id="mcpCustomEditSaveBtn">Save &amp; Connect</button>
         </div>
       </div>
     </div>

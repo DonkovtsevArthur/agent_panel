@@ -44,5 +44,7 @@
   "config.commitMessage.language.description": "Language for generated commit messages",
   "config.commitMessage.language.enum.auto": "Follow plugin UI language",
   "config.commitMessage.language.enum.en": "English",
-  "config.commitMessage.language.enum.ru": "Russian"
+  "config.commitMessage.language.enum.ru": "Russian",
+  "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
+  "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers."
 }

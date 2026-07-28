@@ -28,6 +28,52 @@
       commitScopeWorkspaceNamed: (name) => name || "This workspace",
       commitLanguage: "Commit message language",
       commitPrompt: "Commit prompt / rule",
+      figma: "Figma",
+      mcpServers: "MCP Servers",
+      mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
+      mcpServersOpen: "Open connection list",
+      mcpSubtitle: "Manage MCP server configurations used by Harbor Agents.",
+      mcpSearchPlaceholder: "Search MCP servers...",
+      mcpConfigured: "Configured MCP servers",
+      mcpConfiguredCount: (n) => (n === 1 ? "1 item" : `${n} items`),
+      mcpEmpty: "No MCP servers yet.",
+      mcpBadgeUser: "User",
+      mcpBadgeTools: (n) => `${n} tools`,
+      mcpEditNote:
+        "Remote OAuth may be blocked for Harbor Agents. Prefer a Personal Access Token.",
+      mcpCustomTitleNew: "Add MCP server",
+      mcpCustomTitleEdit: "Edit MCP server",
+      mcpCustomName: "Name",
+      mcpCustomTransport: "Transport",
+      mcpCustomCommand: "Command",
+      mcpCustomArgs: "Args",
+      mcpCustomEnv: "Env (KEY=value per line)",
+      mcpCustomCwd: "Working directory (optional)",
+      mcpCustomUrl: "URL",
+      mcpCustomToken: "Bearer token (optional)",
+      mcpCustomSave: "Save & Connect",
+      mcpNameRequired: "Enter a server name.",
+      mcpCommandRequired: "Enter a command for stdio.",
+      mcpUrlRequired: "Enter a URL for HTTP.",
+      mcpEnable: "Enable",
+      mcpReconnect: "Reconnect",
+      figmaEnable: "Enable Figma MCP",
+      figmaStatusDisconnected: "Status: Disconnected",
+      figmaStatusConnecting: "Status: Connecting…",
+      figmaStatusConnected: (mode, n) =>
+        `Status: Connected (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
+      figmaStatusError: (msg) =>
+        msg ? `Status: Error — ${msg}` : "Status: Error",
+      figmaConnect: "Connect Figma",
+      figmaDisconnect: "Disconnect",
+      figmaPatNote:
+        "Create a token in Figma → Settings → Security → Personal access tokens, paste it here, then Connect with token.",
+      figmaPatLabel: "Personal Access Token",
+      figmaPatConnect: "Connect with token",
+      figmaNeedsConnectToast:
+        "Figma is not connected — open Settings → MCP Servers",
+      figmaOpenTokenHelp: "Open token settings",
+      backToSettings: "Back to settings",
       systemPrompt: "System prompt",
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
@@ -166,6 +212,54 @@
       commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
       commitLanguage: "Язык сообщения коммита",
       commitPrompt: "Промпт / правило коммита",
+      figma: "Figma",
+      mcpServers: "MCP Servers",
+      mcpServersNote:
+        "Управление MCP-подключениями Harbor Agents (Figma и другие).",
+      mcpServersOpen: "Открыть список подключений",
+      mcpSubtitle: "Управление конфигурациями MCP-серверов для Harbor Agents.",
+      mcpSearchPlaceholder: "Поиск MCP-серверов...",
+      mcpConfigured: "Настроенные MCP-серверы",
+      mcpConfiguredCount: (n) =>
+        n === 1 ? "1 шт." : n < 5 ? `${n} шт.` : `${n} шт.`,
+      mcpEmpty: "Пока нет MCP-серверов.",
+      mcpBadgeUser: "User",
+      mcpBadgeTools: (n) => `${n} tools`,
+      mcpEditNote:
+        "Remote OAuth может быть недоступен Harbor Agents. Лучше Personal Access Token.",
+      mcpCustomTitleNew: "Добавить MCP-сервер",
+      mcpCustomTitleEdit: "Редактировать MCP-сервер",
+      mcpCustomName: "Имя",
+      mcpCustomTransport: "Транспорт",
+      mcpCustomCommand: "Команда",
+      mcpCustomArgs: "Аргументы",
+      mcpCustomEnv: "Env (KEY=value по строкам)",
+      mcpCustomCwd: "Рабочая папка (опционально)",
+      mcpCustomUrl: "URL",
+      mcpCustomToken: "Bearer token (опционально)",
+      mcpCustomSave: "Сохранить и подключить",
+      mcpNameRequired: "Укажите имя сервера.",
+      mcpCommandRequired: "Укажите команду для stdio.",
+      mcpUrlRequired: "Укажите URL для HTTP.",
+      mcpEnable: "Включить",
+      mcpReconnect: "Переподключить",
+      figmaEnable: "Включить Figma MCP",
+      figmaStatusDisconnected: "Статус: не подключено",
+      figmaStatusConnecting: "Статус: подключение…",
+      figmaStatusConnected: (mode, n) =>
+        `Статус: подключено (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
+      figmaStatusError: (msg) =>
+        msg ? `Статус: ошибка — ${msg}` : "Статус: ошибка",
+      figmaConnect: "Connect Figma",
+      figmaDisconnect: "Отключить",
+      figmaPatNote:
+        "Создайте токен в Figma → Settings → Security → Personal access tokens, вставьте сюда и нажмите «Подключить по токену».",
+      figmaPatLabel: "Personal Access Token",
+      figmaPatConnect: "Подключить по токену",
+      figmaNeedsConnectToast:
+        "Figma не подключён — откройте Settings → MCP Servers",
+      figmaOpenTokenHelp: "Открыть настройки токена",
+      backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
@@ -393,6 +487,89 @@
   const settingsCommitPromptLabel = document.getElementById(
     "settingsCommitPromptLabel"
   );
+  const settingsFigmaTitle = null;
+  const settingsMcpTitle = document.getElementById("settingsMcpTitle");
+  const settingsMcpNote = document.getElementById("settingsMcpNote");
+  const settingsMcpEntryTitle = document.getElementById(
+    "settingsMcpEntryTitle"
+  );
+  const settingsMcpEntrySub = document.getElementById("settingsMcpEntrySub");
+  const openMcpServersBtn = document.getElementById("openMcpServersBtn");
+  const mcpScreen = document.getElementById("mcpScreen");
+  const backFromMcpBtn = document.getElementById("backFromMcpBtn");
+  const mcpScreenTitle = document.getElementById("mcpScreenTitle");
+  const mcpSubtitle = document.getElementById("mcpSubtitle");
+  const mcpSearchInput = document.getElementById("mcpSearchInput");
+  const mcpAddBtn = document.getElementById("mcpAddBtn");
+  const mcpConfiguredTitle = document.getElementById("mcpConfiguredTitle");
+  const mcpConfiguredCount = document.getElementById("mcpConfiguredCount");
+  const mcpServersList = document.getElementById("mcpServersList");
+  const mcpEmpty = document.getElementById("mcpEmpty");
+  const mcpEditModal = document.getElementById("mcpEditModal");
+  const mcpEditTitle = document.getElementById("mcpEditTitle");
+  const mcpEditCloseBtn = document.getElementById("mcpEditCloseBtn");
+  const mcpEditNote = document.getElementById("mcpEditNote");
+  const mcpEditStatus = document.getElementById("mcpEditStatus");
+  const mcpCustomEditModal = document.getElementById("mcpCustomEditModal");
+  const mcpCustomEditTitle = document.getElementById("mcpCustomEditTitle");
+  const mcpCustomEditCloseBtn = document.getElementById(
+    "mcpCustomEditCloseBtn"
+  );
+  const mcpCustomEditCancelBtn = document.getElementById(
+    "mcpCustomEditCancelBtn"
+  );
+  const mcpCustomEditSaveBtn = document.getElementById("mcpCustomEditSaveBtn");
+  const mcpCustomEditId = document.getElementById("mcpCustomEditId");
+  const mcpCustomName = document.getElementById("mcpCustomName");
+  const mcpCustomTransport = document.getElementById("mcpCustomTransport");
+  const mcpCustomStdioFields = document.getElementById("mcpCustomStdioFields");
+  const mcpCustomHttpFields = document.getElementById("mcpCustomHttpFields");
+  const mcpCustomCommand = document.getElementById("mcpCustomCommand");
+  const mcpCustomArgs = document.getElementById("mcpCustomArgs");
+  const mcpCustomEnv = document.getElementById("mcpCustomEnv");
+  const mcpCustomCwd = document.getElementById("mcpCustomCwd");
+  const mcpCustomUrl = document.getElementById("mcpCustomUrl");
+  const mcpCustomToken = document.getElementById("mcpCustomToken");
+  const mcpCustomNameLabel = document.getElementById("mcpCustomNameLabel");
+  const mcpCustomTransportLabel = document.getElementById(
+    "mcpCustomTransportLabel"
+  );
+  const mcpCustomCommandLabel = document.getElementById(
+    "mcpCustomCommandLabel"
+  );
+  const mcpCustomArgsLabel = document.getElementById("mcpCustomArgsLabel");
+  const mcpCustomEnvLabel = document.getElementById("mcpCustomEnvLabel");
+  const mcpCustomCwdLabel = document.getElementById("mcpCustomCwdLabel");
+  const mcpCustomUrlLabel = document.getElementById("mcpCustomUrlLabel");
+  const mcpCustomTokenLabel = document.getElementById("mcpCustomTokenLabel");
+  let mcpServersCache = [];
+  const settingsFigmaEnabled = null;
+  const settingsFigmaEnabledLabel = null;
+  const settingsFigmaStatus = mcpEditStatus;
+  const settingsFigmaNote = null;
+  const settingsFigmaConnectBtn = document.getElementById(
+    "settingsFigmaConnectBtn"
+  );
+  const settingsFigmaDisconnectBtn = document.getElementById(
+    "settingsFigmaDisconnectBtn"
+  );
+  const settingsFigmaPatBlock = document.getElementById(
+    "settingsFigmaPatBlock"
+  );
+  const settingsFigmaPatNote = document.getElementById("settingsFigmaPatNote");
+  const settingsFigmaPatLabel = document.getElementById(
+    "settingsFigmaPatLabel"
+  );
+  const settingsFigmaPat = document.getElementById("settingsFigmaPat");
+  const settingsFigmaPatConnectBtn = document.getElementById(
+    "settingsFigmaPatConnectBtn"
+  );
+  const settingsFigmaPatHelpBtn = document.getElementById(
+    "settingsFigmaPatHelpBtn"
+  );
+  let figmaStatus = { state: "disconnected", enabled: true };
+  let mcpSearchQuery = "";
+  let mcpScreenOpen = false;
   const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
   const settingsMaxTokens = document.getElementById("settingsMaxTokens");
   const settingsMaxResponseChars = document.getElementById(
@@ -524,8 +701,50 @@
     if (sectionTitles[3]) sectionTitles[3].textContent =
       UI_LANG === "ru" ? "Язык" : "Language";
     if (sectionTitles[4]) sectionTitles[4].textContent = t("commitMessages");
-    if (sectionTitles[5]) sectionTitles[5].textContent = t("tls");
-    if (sectionTitles[6]) sectionTitles[6].textContent = t("agentBehavior");
+    if (settingsMcpTitle) settingsMcpTitle.textContent = t("mcpServers");
+    if (sectionTitles[6]) sectionTitles[6].textContent = t("tls");
+    if (sectionTitles[7]) sectionTitles[7].textContent = t("agentBehavior");
+    if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
+    if (settingsMcpEntryTitle) {
+      settingsMcpEntryTitle.textContent = t("mcpServers");
+    }
+    if (settingsMcpEntrySub) {
+      settingsMcpEntrySub.textContent = t("mcpServersOpen");
+    }
+    if (mcpScreenTitle) mcpScreenTitle.textContent = t("mcpServers");
+    if (mcpSubtitle) mcpSubtitle.textContent = t("mcpSubtitle");
+    if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
+    if (mcpSearchInput) {
+      mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
+    }
+    if (mcpAddBtn) {
+      mcpAddBtn.title = mcpAddBtn.setAttribute("aria-label", t("add")) || t("add");
+    }
+    if (backFromMcpBtn) {
+      backFromMcpBtn.title =
+        backFromMcpBtn.setAttribute("aria-label", t("backToSettings")) ||
+        t("backToSettings");
+    }
+    if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
+    if (settingsFigmaConnectBtn) {
+      settingsFigmaConnectBtn.textContent = t("figmaConnect");
+    }
+    if (settingsFigmaDisconnectBtn) {
+      settingsFigmaDisconnectBtn.textContent = t("figmaDisconnect");
+    }
+    if (settingsFigmaPatNote) {
+      settingsFigmaPatNote.textContent = t("figmaPatNote");
+    }
+    if (settingsFigmaPatLabel) {
+      settingsFigmaPatLabel.textContent = t("figmaPatLabel");
+    }
+    if (settingsFigmaPatConnectBtn) {
+      settingsFigmaPatConnectBtn.textContent = t("figmaPatConnect");
+    }
+    if (settingsFigmaPatHelpBtn) {
+      settingsFigmaPatHelpBtn.textContent = t("figmaOpenTokenHelp");
+    }
+    renderFigmaStatus(figmaStatus);
     if (settingsCommitNote) {
       settingsCommitNote.textContent = t("commitMessagesNote");
     }
@@ -2242,9 +2461,13 @@
 
   function showScreen(name) {
     const screen =
-      name === "chat" || name === "archive" || name === "settings"
+      name === "chat" ||
+      name === "archive" ||
+      name === "settings" ||
+      name === "mcp"
         ? name
         : "agents";
+    mcpScreenOpen = screen === "mcp";
     if (agentsScreen) {
       agentsScreen.hidden = screen !== "agents";
     }
@@ -2254,6 +2477,9 @@
     if (settingsScreen) {
       settingsScreen.hidden = screen !== "settings";
     }
+    if (mcpScreen) {
+      mcpScreen.hidden = screen !== "mcp";
+    }
     if (chatScreen) {
       chatScreen.hidden = screen !== "chat";
     }
@@ -2262,6 +2488,15 @@
       if (!chatSearchOpen) {
         focusPrompt();
       }
+    }
+    if (screen === "mcp") {
+      renderMcpServersList();
+      vscode.postMessage({ type: "figmaRefreshStatus" });
+      vscode.postMessage({ type: "mcpRefreshList" });
+    }
+    if (screen !== "mcp") {
+      closeMcpEditModal();
+      closeMcpCustomEditModal();
     }
     if (screen !== "chat" && chatSearchOpen) {
       closeChatSearch();
@@ -3673,6 +3908,360 @@
     }, 1200);
   }
 
+  function renderFigmaStatus(status) {
+    figmaStatus = status || figmaStatus || { state: "disconnected", enabled: true };
+    const state = figmaStatus.state || "disconnected";
+    const mode = figmaStatus.mode || "";
+    const toolCount = figmaStatus.toolCount;
+    if (settingsFigmaStatus) {
+      if (state === "connected") {
+        settingsFigmaStatus.textContent = t(
+          "figmaStatusConnected",
+          mode,
+          toolCount
+        );
+      } else if (state === "connecting") {
+        settingsFigmaStatus.textContent = t("figmaStatusConnecting");
+      } else if (state === "error") {
+        settingsFigmaStatus.textContent = t(
+          "figmaStatusError",
+          figmaStatus.message || ""
+        );
+      } else {
+        settingsFigmaStatus.textContent = t("figmaStatusDisconnected");
+      }
+    }
+    const connected = state === "connected";
+    const connecting = state === "connecting";
+    if (settingsFigmaConnectBtn) {
+      settingsFigmaConnectBtn.hidden = connected;
+      settingsFigmaConnectBtn.disabled =
+        connecting || figmaStatus.enabled === false;
+    }
+    if (settingsFigmaDisconnectBtn) {
+      settingsFigmaDisconnectBtn.hidden = !connected && state !== "error";
+      settingsFigmaDisconnectBtn.disabled = connecting;
+    }
+    if (settingsFigmaPatBlock) {
+      settingsFigmaPatBlock.hidden = false;
+    }
+    if (settingsFigmaPatConnectBtn) {
+      settingsFigmaPatConnectBtn.disabled =
+        connecting || figmaStatus.enabled === false;
+    }
+    if (settingsMcpEntrySub) {
+      if (state === "connected") {
+        settingsMcpEntrySub.textContent = t(
+          "figmaStatusConnected",
+          mode,
+          toolCount
+        );
+      } else if (state === "error") {
+        settingsMcpEntrySub.textContent = t("figmaStatusError", "");
+      } else {
+        settingsMcpEntrySub.textContent = t("mcpServersOpen");
+      }
+    }
+    renderMcpServersList();
+  }
+
+  function getMcpServers() {
+    if (Array.isArray(mcpServersCache) && mcpServersCache.length) {
+      return mcpServersCache.map((s) => ({
+        id: s.id,
+        name: s.name || s.id,
+        enabled: s.enabled !== false,
+        state: s.state || "disconnected",
+        mode: s.transport || "",
+        tools: Number(s.toolCount) || 0,
+        transport: s.detail || String(s.transport || ""),
+        error: s.state === "error" ? s.message || "" : "",
+        builtin: Boolean(s.builtin),
+      }));
+    }
+    const tools = Number(figmaStatus.toolCount) || 0;
+    const state = figmaStatus.state || "disconnected";
+    const mode = figmaStatus.mode || "remote";
+    const transport =
+      mode === "pat"
+        ? "stdio · figma-developer-mcp"
+        : "http · https://mcp.figma.com/mcp";
+    return [
+      {
+        id: "figma",
+        name: t("figma"),
+        enabled: figmaStatus.enabled !== false,
+        state,
+        mode,
+        tools,
+        transport,
+        error: state === "error" ? figmaStatus.message || "" : "",
+        builtin: true,
+      },
+    ];
+  }
+
+  function renderMcpServersList() {
+    if (!mcpServersList) {
+      return;
+    }
+    const q = String(mcpSearchQuery || "")
+      .trim()
+      .toLowerCase();
+    const servers = getMcpServers().filter((s) => {
+      if (!q) {
+        return true;
+      }
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.transport.toLowerCase().includes(q) ||
+        String(s.error || "")
+          .toLowerCase()
+          .includes(q)
+      );
+    });
+    if (mcpConfiguredCount) {
+      mcpConfiguredCount.textContent = t("mcpConfiguredCount", servers.length);
+    }
+    if (mcpEmpty) {
+      mcpEmpty.hidden = servers.length > 0;
+      mcpEmpty.textContent = t("mcpEmpty");
+    }
+    mcpServersList.innerHTML = "";
+    for (const server of servers) {
+      const card = document.createElement("article");
+      card.className = "mcp-server-card";
+      card.dataset.id = server.id;
+
+      const statusClass =
+        server.state === "connected"
+          ? "is-connected"
+          : server.state === "error"
+            ? "is-error"
+            : server.state === "connecting"
+              ? "is-connecting"
+              : "";
+
+      card.innerHTML =
+        `<div class="mcp-server-icon"><span class="material-symbols-outlined" aria-hidden="true">electrical_services</span></div>` +
+        `<div class="mcp-server-main">` +
+        `<div class="mcp-server-title-row">` +
+        `<span class="mcp-status-dot ${statusClass}" aria-hidden="true"></span>` +
+        `<span class="mcp-server-name"></span>` +
+        `<span class="mcp-badge"></span>` +
+        `<span class="mcp-badge mcp-badge-tools"></span>` +
+        `</div>` +
+        `<p class="mcp-server-meta"></p>` +
+        `<p class="mcp-server-error" hidden></p>` +
+        `</div>` +
+        `<div class="mcp-server-actions">` +
+        `<label class="mcp-switch" title="${escapeHtml(t("mcpEnable"))}">` +
+        `<input type="checkbox" class="mcp-enable-toggle" data-id="${escapeHtml(
+          server.id
+        )}" ${server.enabled ? "checked" : ""} />` +
+        `<span class="mcp-switch-track"></span>` +
+        `</label>` +
+        `<button type="button" class="icon-btn mcp-edit-btn" data-id="${escapeHtml(
+          server.id
+        )}" title="${escapeHtml(t("edit"))}" aria-label="${escapeHtml(
+          t("edit")
+        )}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">edit</span>` +
+        `</button>` +
+        `<button type="button" class="icon-btn mcp-delete-btn" data-id="${escapeHtml(
+          server.id
+        )}" title="${escapeHtml(t("delete"))}" aria-label="${escapeHtml(
+          t("delete")
+        )}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">delete</span>` +
+        `</button>` +
+        `</div>`;
+
+      card.querySelector(".mcp-server-name").textContent = server.name;
+      const badges = card.querySelectorAll(".mcp-badge");
+      if (badges[0]) badges[0].textContent = t("mcpBadgeUser");
+      if (badges[1]) badges[1].textContent = t("mcpBadgeTools", server.tools);
+      card.querySelector(".mcp-server-meta").textContent = server.transport;
+      const errEl = card.querySelector(".mcp-server-error");
+      if (server.error) {
+        errEl.hidden = false;
+        errEl.textContent = server.error;
+      }
+      mcpServersList.appendChild(card);
+    }
+  }
+
+  function openMcpEditModal(serverId) {
+    if (serverId && serverId !== "figma") {
+      openMcpCustomEditModal(serverId);
+      return;
+    }
+    if (!mcpEditModal) {
+      return;
+    }
+    if (mcpEditTitle) {
+      mcpEditTitle.textContent = t("figma");
+    }
+    renderFigmaStatus(figmaStatus);
+    mcpEditModal.hidden = false;
+  }
+
+  function closeMcpEditModal() {
+    if (mcpEditModal) {
+      mcpEditModal.hidden = true;
+    }
+  }
+
+  function syncMcpCustomTransportFields() {
+    const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    if (mcpCustomStdioFields) {
+      mcpCustomStdioFields.hidden = Boolean(isHttp);
+    }
+    if (mcpCustomHttpFields) {
+      mcpCustomHttpFields.hidden = !isHttp;
+    }
+  }
+
+  function openMcpCustomEditModal(serverId) {
+    if (!mcpCustomEditModal) {
+      return;
+    }
+    const existing = (mcpServersCache || []).find((s) => s.id === serverId);
+    if (mcpCustomEditTitle) {
+      mcpCustomEditTitle.textContent = existing
+        ? t("mcpCustomTitleEdit")
+        : t("mcpCustomTitleNew");
+    }
+    if (mcpCustomEditId) {
+      mcpCustomEditId.value = existing ? existing.id : "";
+    }
+    if (mcpCustomName) {
+      mcpCustomName.value = existing ? existing.name || "" : "";
+    }
+    if (mcpCustomTransport) {
+      mcpCustomTransport.value =
+        existing && existing.transport === "http" ? "http" : "stdio";
+    }
+    if (mcpCustomCommand) {
+      mcpCustomCommand.value = existing?.command || "";
+    }
+    if (mcpCustomArgs) {
+      mcpCustomArgs.value = Array.isArray(existing?.args)
+        ? existing.args.join(" ")
+        : "";
+    }
+    if (mcpCustomEnv) {
+      const env = existing?.env || {};
+      mcpCustomEnv.value = Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+    }
+    if (mcpCustomCwd) {
+      mcpCustomCwd.value = existing?.cwd || "";
+    }
+    if (mcpCustomUrl) {
+      mcpCustomUrl.value = existing?.url || "";
+    }
+    if (mcpCustomToken) {
+      mcpCustomToken.value = "";
+    }
+    if (existing) {
+      if (mcpCustomTransport) {
+        mcpCustomTransport.value =
+          existing.transport === "http" ? "http" : "stdio";
+      }
+    } else if (mcpCustomTransport) {
+      mcpCustomTransport.value = "stdio";
+    }
+    // Prefill from detail string when config fields are missing
+    if (existing?.detail && !existing.command && !existing.url) {
+      if (String(existing.transport) === "http" || existing.detail.startsWith("http")) {
+        const url = existing.detail.replace(/^http\s*·\s*/i, "").trim();
+        if (mcpCustomUrl) mcpCustomUrl.value = url;
+        if (mcpCustomTransport) mcpCustomTransport.value = "http";
+      } else {
+        const rest = existing.detail.replace(/^stdio\s*·\s*/i, "").trim();
+        const parts = rest.split(/\s+/).filter(Boolean);
+        if (mcpCustomCommand) mcpCustomCommand.value = parts[0] || "";
+        if (mcpCustomArgs) mcpCustomArgs.value = parts.slice(1).join(" ");
+        if (mcpCustomTransport) mcpCustomTransport.value = "stdio";
+      }
+    }
+    if (mcpCustomNameLabel) mcpCustomNameLabel.textContent = t("mcpCustomName");
+    if (mcpCustomTransportLabel) {
+      mcpCustomTransportLabel.textContent = t("mcpCustomTransport");
+    }
+    if (mcpCustomCommandLabel) {
+      mcpCustomCommandLabel.textContent = t("mcpCustomCommand");
+    }
+    if (mcpCustomArgsLabel) mcpCustomArgsLabel.textContent = t("mcpCustomArgs");
+    if (mcpCustomEnvLabel) mcpCustomEnvLabel.textContent = t("mcpCustomEnv");
+    if (mcpCustomCwdLabel) mcpCustomCwdLabel.textContent = t("mcpCustomCwd");
+    if (mcpCustomUrlLabel) mcpCustomUrlLabel.textContent = t("mcpCustomUrl");
+    if (mcpCustomTokenLabel) {
+      mcpCustomTokenLabel.textContent = t("mcpCustomToken");
+    }
+    if (mcpCustomEditSaveBtn) {
+      mcpCustomEditSaveBtn.textContent = t("mcpCustomSave");
+    }
+    if (mcpCustomEditCancelBtn) {
+      mcpCustomEditCancelBtn.textContent = t("cancel");
+    }
+    syncMcpCustomTransportFields();
+    mcpCustomEditModal.hidden = false;
+    if (mcpCustomName) {
+      mcpCustomName.focus();
+    }
+  }
+
+  function closeMcpCustomEditModal() {
+    if (mcpCustomEditModal) {
+      mcpCustomEditModal.hidden = true;
+    }
+  }
+
+  function saveMcpCustomServer() {
+    const name = mcpCustomName ? mcpCustomName.value.trim() : "";
+    if (!name) {
+      showCopyToast(t("mcpNameRequired"));
+      return;
+    }
+    const transport =
+      mcpCustomTransport && mcpCustomTransport.value === "http"
+        ? "http"
+        : "stdio";
+    if (transport === "stdio") {
+      const command = mcpCustomCommand ? mcpCustomCommand.value.trim() : "";
+      if (!command) {
+        showCopyToast(t("mcpCommandRequired"));
+        return;
+      }
+    } else {
+      const url = mcpCustomUrl ? mcpCustomUrl.value.trim() : "";
+      if (!url) {
+        showCopyToast(t("mcpUrlRequired"));
+        return;
+      }
+    }
+    vscode.postMessage({
+      type: "mcpUpsertServer",
+      server: {
+        id: mcpCustomEditId ? mcpCustomEditId.value.trim() : "",
+        name,
+        transport,
+        command: mcpCustomCommand ? mcpCustomCommand.value.trim() : "",
+        argsText: mcpCustomArgs ? mcpCustomArgs.value : "",
+        envText: mcpCustomEnv ? mcpCustomEnv.value : "",
+        cwd: mcpCustomCwd ? mcpCustomCwd.value.trim() : "",
+        url: mcpCustomUrl ? mcpCustomUrl.value.trim() : "",
+        bearerToken: mcpCustomToken ? mcpCustomToken.value : "",
+        enabled: true,
+        connect: true,
+      },
+    });
+    closeMcpCustomEditModal();
+  }
+
   function persistSettingsNow() {
     if (settingsHydrating) {
       return;
@@ -3796,6 +4385,17 @@
     if (settingsCommitPrompt) {
       settingsCommitPrompt.value = settings.commitMessagePrompt || "";
     }
+    if (typeof settings.figmaEnabled === "boolean") {
+      figmaStatus = {
+        ...figmaStatus,
+        enabled: settings.figmaEnabled !== false,
+      };
+    }
+    if (settings.figma) {
+      renderFigmaStatus({ ...figmaStatus, ...settings.figma });
+    } else {
+      vscode.postMessage({ type: "figmaRefreshStatus" });
+    }
     applyModes(settings.modes);
     if (settingsMaxToolRounds) {
       settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
@@ -3891,6 +4491,7 @@
           ? "workspace"
           : "global"
         : "global",
+      figmaEnabled: figmaStatus.enabled !== false,
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
@@ -6080,6 +6681,118 @@
     });
   }
 
+  if (openMcpServersBtn) {
+    openMcpServersBtn.addEventListener("click", () => {
+      showScreen("mcp");
+    });
+  }
+  if (backFromMcpBtn) {
+    backFromMcpBtn.addEventListener("click", () => {
+      closeMcpEditModal();
+      showScreen("settings");
+    });
+  }
+  if (mcpSearchInput) {
+    mcpSearchInput.addEventListener("input", () => {
+      mcpSearchQuery = mcpSearchInput.value || "";
+      renderMcpServersList();
+    });
+  }
+  if (mcpAddBtn) {
+    mcpAddBtn.addEventListener("click", () => {
+      openMcpCustomEditModal("");
+    });
+  }
+  if (mcpServersList) {
+    mcpServersList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".mcp-edit-btn");
+      if (editBtn) {
+        openMcpEditModal(editBtn.dataset.id || "figma");
+        return;
+      }
+      const deleteBtn = event.target.closest(".mcp-delete-btn");
+      if (deleteBtn) {
+        const id = deleteBtn.dataset.id || "";
+        vscode.postMessage({ type: "mcpDeleteServer", id });
+      }
+    });
+    mcpServersList.addEventListener("change", (event) => {
+      const toggle = event.target.closest(".mcp-enable-toggle");
+      if (!toggle) {
+        return;
+      }
+      const id = toggle.dataset.id || "";
+      const enabled = Boolean(toggle.checked);
+      if (id === "figma") {
+        figmaStatus = { ...figmaStatus, enabled };
+      }
+      vscode.postMessage({ type: "mcpSetEnabled", id, enabled });
+    });
+  }
+  if (mcpEditCloseBtn) {
+    mcpEditCloseBtn.addEventListener("click", () => closeMcpEditModal());
+  }
+  if (mcpEditModal) {
+    mcpEditModal.addEventListener("click", (event) => {
+      if (event.target?.dataset?.mcpDismiss === "1") {
+        closeMcpEditModal();
+      }
+    });
+  }
+  if (mcpCustomEditCloseBtn) {
+    mcpCustomEditCloseBtn.addEventListener("click", () =>
+      closeMcpCustomEditModal()
+    );
+  }
+  if (mcpCustomEditCancelBtn) {
+    mcpCustomEditCancelBtn.addEventListener("click", () =>
+      closeMcpCustomEditModal()
+    );
+  }
+  if (mcpCustomEditSaveBtn) {
+    mcpCustomEditSaveBtn.addEventListener("click", () => saveMcpCustomServer());
+  }
+  if (mcpCustomTransport) {
+    mcpCustomTransport.addEventListener("change", () =>
+      syncMcpCustomTransportFields()
+    );
+  }
+  if (mcpCustomEditModal) {
+    mcpCustomEditModal.addEventListener("click", (event) => {
+      if (event.target?.dataset?.mcpCustomDismiss === "1") {
+        closeMcpCustomEditModal();
+      }
+    });
+  }
+
+  if (settingsFigmaConnectBtn) {
+    settingsFigmaConnectBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "figmaConnect" });
+    });
+  }
+  if (settingsFigmaDisconnectBtn) {
+    settingsFigmaDisconnectBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "figmaDisconnect" });
+    });
+  }
+  if (settingsFigmaPatConnectBtn) {
+    settingsFigmaPatConnectBtn.addEventListener("click", () => {
+      const token = settingsFigmaPat ? settingsFigmaPat.value.trim() : "";
+      vscode.postMessage({ type: "figmaConnectPat", token });
+      if (settingsFigmaPat) {
+        settingsFigmaPat.value = "";
+      }
+    });
+  }
+  if (settingsFigmaPatHelpBtn) {
+    settingsFigmaPatHelpBtn.addEventListener("click", () => {
+      vscode.postMessage({
+        type: "openExternal",
+        url: "https://www.figma.com/settings",
+      });
+    });
+  }
+
   if (addModelBtn) {
     addModelBtn.addEventListener("click", () => {
       setModelsHint("");
@@ -7016,6 +7729,18 @@
       case "settings":
         fillSettings(msg.settings);
         showScreen("settings");
+        break;
+      case "figmaStatus":
+        renderFigmaStatus(msg.status || {});
+        break;
+      case "mcpServers":
+        mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
+        renderMcpServersList();
+        break;
+      case "figmaNeedsConnect":
+        showCopyToast(t("figmaNeedsConnectToast"));
+        showScreen("settings");
+        setTimeout(() => showScreen("mcp"), 0);
         break;
       case "showChat":
         if (msg.models) {

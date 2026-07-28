@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.54",
+  "version": "0.7.59",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -132,7 +132,11 @@
         "agentPanel.language": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "en", "ru"],
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
           "enumDescriptions": [
             "%config.language.enum.auto%",
             "%config.language.enum.en%",
@@ -350,20 +354,82 @@
         "agentPanel.commitMessage.language": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "en", "ru"],
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
           "enumDescriptions": [
             "%config.commitMessage.language.enum.auto%",
             "%config.commitMessage.language.enum.en%",
             "%config.commitMessage.language.enum.ru%"
           ],
           "description": "%config.commitMessage.language.description%"
+        },
+        "agentPanel.figma.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.figma.enabled.description%"
+        },
+        "agentPanel.mcp.servers": {
+          "type": "array",
+          "default": [],
+          "description": "%config.mcp.servers.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "transport"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http"
+                ]
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && node scripts/bundle-mcp.js",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
     "package": "vsce package"
@@ -372,9 +438,12 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "marked": "^15.0.12"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "marked": "^15.0.12",
+    "zod": "^4.4.3"
   }
 }
