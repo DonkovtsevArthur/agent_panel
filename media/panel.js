@@ -13,6 +13,7 @@
   const modeLabel = document.getElementById("modeLabel");
   const modeMenu = document.getElementById("modeMenu");
   const attachPreviewEl = document.getElementById("attachPreview");
+  const selectionPreviewEl = document.getElementById("selectionPreview");
   const mentionMenuEl = document.getElementById("mentionMenu");
   const composerEl = document.getElementById("composer");
   const composerWrapEl = document.getElementById("composerWrap");
@@ -270,6 +271,7 @@
   let canRegenerate = false;
   let uiMessagesCache = [];
   let pendingAttachments = [];
+  let pendingSelections = [];
   let mentionOpen = false;
   let mentionItems = [];
   let mentionActiveIndex = 0;
@@ -297,6 +299,7 @@
   let composerDragDepth = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
+  const MAX_PENDING_SELECTIONS = 8;
 
   function attachmentPayload(att) {
     return {
@@ -358,6 +361,123 @@
   function clearPendingAttachments() {
     pendingAttachments = [];
     renderAttachPreview();
+  }
+
+  function selectionChipId() {
+    return `sel_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+  }
+
+  function formatSelectionLabel(sel) {
+    const path = sel.path || "file";
+    const start = Number(sel.startLine) || 0;
+    const end = Number(sel.endLine) || start;
+    if (!start) {
+      return path;
+    }
+    return start === end ? `${path}:${start}` : `${path}:${start}–${end}`;
+  }
+
+  function selectionToFence(sel) {
+    const start = Number(sel.startLine) || 1;
+    const end = Number(sel.endLine) || start;
+    const path = sel.path || "file";
+    const body = String(sel.text || "").replace(/\n$/, "");
+    return `\`\`\`${start}:${end}:${path}\n${body}\n\`\`\``;
+  }
+
+  function addPendingSelection(sel) {
+    if (!sel || !String(sel.text || "").trim()) {
+      return;
+    }
+    if (pendingSelections.length >= MAX_PENDING_SELECTIONS) {
+      showCopyToast("Слишком много выделений");
+      return;
+    }
+    const path = String(sel.path || "").trim() || "file";
+    const startLine = Number(sel.startLine) || 1;
+    const endLine = Number(sel.endLine) || startLine;
+    const text = String(sel.text || "").replace(/\n$/, "");
+    const dup = pendingSelections.find(
+      (s) =>
+        s.path === path &&
+        s.startLine === startLine &&
+        s.endLine === endLine &&
+        s.text === text
+    );
+    if (dup) {
+      showScreen("chat");
+      focusPrompt();
+      return;
+    }
+    pendingSelections.push({
+      id: selectionChipId(),
+      path,
+      startLine,
+      endLine,
+      text,
+      language: sel.language || "",
+    });
+    renderSelectionPreview();
+    showScreen("chat");
+    focusPrompt();
+  }
+
+  function removePendingSelection(id) {
+    pendingSelections = pendingSelections.filter((s) => s.id !== id);
+    renderSelectionPreview();
+  }
+
+  function clearPendingSelections() {
+    pendingSelections = [];
+    renderSelectionPreview();
+  }
+
+  function renderSelectionPreview() {
+    if (!selectionPreviewEl) {
+      return;
+    }
+    if (!pendingSelections.length) {
+      selectionPreviewEl.hidden = true;
+      selectionPreviewEl.innerHTML = "";
+      return;
+    }
+    selectionPreviewEl.hidden = false;
+    selectionPreviewEl.innerHTML = pendingSelections
+      .map((sel) => {
+        const label = escapeHtml(formatSelectionLabel(sel));
+        const lines =
+          sel.startLine === sel.endLine
+            ? `стр. ${sel.startLine}`
+            : `стр. ${sel.startLine}–${sel.endLine}`;
+        return (
+          `<div class="selection-chip" data-id="${escapeHtml(sel.id)}" title="${label}">` +
+          `<span class="material-symbols-outlined selection-chip-icon" aria-hidden="true">code</span>` +
+          `<span class="selection-chip-body">` +
+          `<span class="selection-chip-path">${escapeHtml(sel.path || "file")}</span>` +
+          `<span class="selection-chip-lines">${escapeHtml(lines)}</span>` +
+          `</span>` +
+          `<button type="button" class="selection-chip-remove" data-id="${escapeHtml(
+            sel.id
+          )}" title="Убрать" aria-label="Убрать">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+          `</button></div>`
+        );
+      })
+      .join("");
+  }
+
+  function buildMessageWithSelections(userText) {
+    const fences = pendingSelections.map(selectionToFence);
+    const text = String(userText || "").trim();
+    if (!fences.length) {
+      return text;
+    }
+    if (!text) {
+      return fences.join("\n\n");
+    }
+    return `${fences.join("\n\n")}\n\n${text}`;
   }
 
   function renderAttachPreview() {
@@ -847,6 +967,33 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  let currentChatTurnEl = null;
+
+  function resetChatTurns() {
+    currentChatTurnEl = null;
+  }
+
+  function startChatTurn() {
+    currentChatTurnEl = document.createElement("div");
+    currentChatTurnEl.className = "chat-turn";
+    const status = messagesEl.querySelector(
+      "#agentStatus, .agent-status-in-messages"
+    );
+    if (status && status.parentElement === messagesEl) {
+      messagesEl.insertBefore(currentChatTurnEl, status);
+    } else {
+      messagesEl.appendChild(currentChatTurnEl);
+    }
+    return currentChatTurnEl;
+  }
+
+  function ensureChatTurn() {
+    if (currentChatTurnEl && messagesEl.contains(currentChatTurnEl)) {
+      return currentChatTurnEl;
+    }
+    return startChatTurn();
+  }
+
   function ensureAgentStatusEl() {
     if (agentStatusEl && messagesEl.contains(agentStatusEl)) {
       return agentStatusEl;
@@ -1314,7 +1461,12 @@
   }
 
   function getActiveToolGroup() {
-    let node = messagesEl.lastElementChild;
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    let node = scope.lastElementChild;
     while (
       node &&
       (node.id === "agentStatus" ||
@@ -1339,7 +1491,7 @@
       return existing;
     }
     const group = createToolGroup();
-    messagesEl.appendChild(group);
+    ensureChatTurn().appendChild(group);
     keepStatusAtEnd();
     return group;
   }
@@ -3475,6 +3627,42 @@
     });
   }
 
+  function insertComposerText(text) {
+    if (!promptEl) {
+      return;
+    }
+    const snippet = String(text || "");
+    if (!snippet) {
+      return;
+    }
+    showScreen("chat");
+    const cur = promptEl.value || "";
+    const start =
+      typeof promptEl.selectionStart === "number"
+        ? promptEl.selectionStart
+        : cur.length;
+    const end =
+      typeof promptEl.selectionEnd === "number"
+        ? promptEl.selectionEnd
+        : start;
+    const before = cur.slice(0, start);
+    const after = cur.slice(end);
+    let padBefore = "";
+    if (before.length && !/\n$/.test(before)) {
+      padBefore = "\n\n";
+    } else if (before.length && !/\n\n$/.test(before) && before.endsWith("\n")) {
+      padBefore = "\n";
+    }
+    const padAfter = after.length && !after.startsWith("\n") ? "\n" : "";
+    const next = before + padBefore + snippet + padAfter + after;
+    const caret = (before + padBefore + snippet).length;
+    promptEl.value = next;
+    promptEl.disabled = false;
+    promptEl.focus();
+    promptEl.setSelectionRange(caret, caret);
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
   function parseReviewData(raw) {
     if (Array.isArray(raw)) {
       return { files: raw, showScm: false };
@@ -3542,7 +3730,8 @@
     }
     card.appendChild(fileList);
     card.dataset.paths = list.map((f) => f.path).join("\n");
-    messagesEl.appendChild(card);
+    const mount = ensureChatTurn();
+    mount.appendChild(card);
 
     const actions = document.createElement("div");
     actions.className = "review-actions";
@@ -3558,7 +3747,7 @@
       vscode.postMessage({ type: "openScm" });
     });
     actions.appendChild(scmBtn);
-    messagesEl.appendChild(actions);
+    mount.appendChild(actions);
     keepStatusAtEnd();
     scrollToBottom();
   }
@@ -3631,6 +3820,16 @@
     const tokens = [];
     let text = String(raw || "");
 
+    text = text.replace(/@([^\s@]+)/g, (full, path) => {
+      const id = tokens.length;
+      tokens.push(
+        `<button type="button" class="msg-mention" data-path="${escapeHtml(
+          path
+        )}" title="${escapeHtml(path)}">@${escapeHtml(path)}</button>`
+      );
+      return `\u0001T${id}\u0001`;
+    });
+
     text = text.replace(/(https?:\/\/[^\s<>"'`]+)/g, (url) => {
       const { href, trailing } = splitTrailingPunctuation(url);
       if (!/^https?:\/\/\S+$/i.test(href)) {
@@ -3667,32 +3866,181 @@
     return html;
   }
 
+  function parseCodeFenceMeta(langRaw) {
+    const lang = String(langRaw || "").trim();
+    if (!lang) {
+      return { language: "", path: "", startLine: 0, endLine: 0 };
+    }
+    // language start:end:path  (напр. css 27:29:src/foo.module.css)
+    const langCite = lang.match(
+      /^([\w.+#-]+)\s+(\d+)(?::(\d+))?:(.+)$/
+    );
+    if (langCite) {
+      return {
+        language: langCite[1],
+        path: langCite[4].trim(),
+        startLine: Number(langCite[2]),
+        endLine: langCite[3] ? Number(langCite[3]) : Number(langCite[2]),
+      };
+    }
+    // start:end:path  или  start:path
+    const cite = lang.match(/^(\d+)(?::(\d+))?:(.+)$/);
+    if (cite) {
+      const startLine = Number(cite[1]);
+      const endLine = cite[2] ? Number(cite[2]) : startLine;
+      return {
+        language: "",
+        path: cite[3].trim(),
+        startLine,
+        endLine,
+      };
+    }
+    // language path:start-end  /  language path:start
+    const withPath = lang.match(
+      /^([\w.+#-]+)\s+(.+?):(\d+)(?:-(\d+))?$/
+    );
+    if (withPath) {
+      return {
+        language: withPath[1],
+        path: withPath[2].trim(),
+        startLine: Number(withPath[3]),
+        endLine: withPath[4] ? Number(withPath[4]) : Number(withPath[3]),
+      };
+    }
+    // language path
+    const langPath = lang.match(/^([\w.+#-]+)\s+(\S.+)$/);
+    if (langPath && (langPath[2].includes("/") || langPath[2].includes("."))) {
+      return {
+        language: langPath[1],
+        path: langPath[2].trim(),
+        startLine: 0,
+        endLine: 0,
+      };
+    }
+    return { language: lang, path: "", startLine: 0, endLine: 0 };
+  }
+
+  /**
+   * Citation-fence ```start:end:path ... ``` — вытаскиваем до marked,
+   * чтобы пути вроде foo.module.css и CSS с ~= не ломали разбор.
+   */
+  function replaceCitationFences(raw) {
+    const blocks = [];
+    // ```27:29:path/to/file.module.css ... ```
+    const re =
+      /(^|\n)[ \t]*(`{3,}|~{3,})[ \t]*(\d+:\d+:[^\n]+|\d+:[^\n]+)\r?\n([\s\S]*?)\r?\n?[ \t]*\2[ \t]*(?=\r?\n|$)/g;
+    const out = String(raw || "").replace(
+      re,
+      (full, lead, _fence, meta, body) => {
+        const id = blocks.length;
+        blocks.push(renderCodeBlockHtml(body.replace(/\r/g, ""), meta.trim()));
+        return `${lead}\n\n\u0002CITE${id}\u0002\n\n`;
+      }
+    );
+    return { text: out, blocks };
+  }
+
+  function restoreCitationFences(html, blocks) {
+    if (!blocks.length) {
+      return html;
+    }
+    return String(html || "").replace(/\u0002CITE(\d+)\u0002/g, (_, id) => {
+      return blocks[Number(id)] || "";
+    });
+  }
+
+  function getMarkedApi() {
+    if (typeof marked === "undefined") {
+      return null;
+    }
+    // UMD: window.marked = { marked, parse, Renderer, use, ... }
+    if (marked && typeof marked.parse === "function" && marked.Renderer) {
+      return marked;
+    }
+    if (marked && typeof marked.marked === "function") {
+      return {
+        parse: marked.marked.parse || marked.marked,
+        Renderer: marked.Renderer || marked.marked.Renderer,
+        use: marked.use || marked.marked.use,
+      };
+    }
+    return null;
+  }
+
+  function renderCodeBlockHtml(text, langRaw) {
+    const inner = String(text || "").replace(/\n$/, "");
+    if (isFilePath(inner.trim()) && !inner.includes("\n")) {
+      return fileLinkHtml(inner.trim());
+    }
+    const meta = parseCodeFenceMeta(langRaw);
+    const lines = inner.split("\n");
+    const showLines =
+      meta.startLine > 0 &&
+      Number.isFinite(meta.startLine) &&
+      lines.length > 0;
+    const codeHtml = showLines
+      ? lines
+          .map((line, i) => {
+            const n = meta.startLine + i;
+            return (
+              `<span class="md-line">` +
+              `<span class="md-ln" aria-hidden="true">${n}</span>` +
+              `<span class="md-line-text">${escapeHtml(line)}</span>` +
+              `</span>`
+            );
+          })
+          .join("\n")
+      : escapeHtml(inner);
+
+    let metaHtml = "";
+    if (meta.path || showLines) {
+      const pathPart = meta.path
+        ? isFilePath(meta.path) || meta.path.includes("/")
+          ? fileLinkHtml(meta.path)
+          : `<span class="md-pre-path">${escapeHtml(meta.path)}</span>`
+        : "";
+      const linesPart = showLines
+        ? `<span class="md-pre-lines">${
+            meta.startLine === meta.endLine
+              ? `стр. ${meta.startLine}`
+              : `стр. ${meta.startLine}–${meta.endLine}`
+          }</span>`
+        : "";
+      metaHtml =
+        `<div class="md-pre-meta">` +
+        pathPart +
+        (pathPart && linesPart ? `<span class="md-pre-meta-sep">·</span>` : "") +
+        linesPart +
+        `</div>`;
+    }
+
+    return (
+      `<div class="md-pre-wrap${showLines ? " has-lines" : ""}">` +
+      metaHtml +
+      `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
+      `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+      COPY_ICON +
+      `</button>` +
+      `</div>\n`
+    );
+  }
+
   let markdownReady = false;
 
   function ensureMarkdownRenderer() {
+    const api = getMarkedApi();
     if (markdownReady) {
-      return typeof marked !== "undefined";
+      return Boolean(api);
     }
-    if (typeof marked === "undefined" || !marked.Renderer) {
+    if (!api || !api.Renderer) {
       return false;
     }
     markdownReady = true;
 
-    const renderer = new marked.Renderer();
+    const renderer = new api.Renderer();
 
-    renderer.code = function ({ text }) {
-      const inner = String(text || "").replace(/\n$/, "");
-      if (isFilePath(inner.trim()) && !inner.includes("\n")) {
-        return fileLinkHtml(inner.trim());
-      }
-      return (
-        `<div class="md-pre-wrap">` +
-        `<pre class="md-pre"><code>${escapeHtml(inner)}</code></pre>` +
-        `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
-        COPY_ICON +
-        `</button>` +
-        `</div>\n`
-      );
+    renderer.code = function (token) {
+      return renderCodeBlockHtml(token.text, token.lang);
     };
 
     renderer.codespan = function ({ text }) {
@@ -3825,7 +4173,7 @@
       return linkifyPlainText(String(token.text || ""), !!token.escaped);
     };
 
-    marked.use({
+    api.use({
       renderer,
       gfm: true,
       breaks: true,
@@ -3840,12 +4188,24 @@
     if (!raw) {
       return "";
     }
-    if (ensureMarkdownRenderer()) {
+    const extracted = replaceCitationFences(raw);
+    const api = getMarkedApi();
+    if (ensureMarkdownRenderer() && api) {
       try {
-        return marked.parse(raw, { async: false });
+        const html = api.parse(extracted.text, { async: false });
+        return restoreCitationFences(html, extracted.blocks);
       } catch {
         // fallback below
       }
+    }
+    if (extracted.blocks.length) {
+      return restoreCitationFences(
+        `<div class="md-p">${linkifyPlainText(extracted.text, false).replace(
+          /\n/g,
+          "<br />"
+        )}</div>`,
+        extracted.blocks
+      );
     }
     return `<div class="md-p">${linkifyPlainText(raw, false).replace(
       /\n/g,
@@ -3897,12 +4257,8 @@
       body.className = "msg-body";
       el.insertBefore(body, el.firstChild);
     }
-    if (role === "assistant" || role === "error") {
+    if (role === "assistant" || role === "error" || role === "user") {
       body.innerHTML = renderInlineMarkdown(raw);
-      return;
-    }
-    if (role === "user") {
-      body.innerHTML = renderUserTextWithMentions(raw);
       return;
     }
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
@@ -3996,7 +4352,7 @@
         wrap.appendChild(actions);
       }
       wrap.appendChild(el);
-      messagesEl.appendChild(wrap);
+      startChatTurn().appendChild(wrap);
       keepStatusAtEnd();
       scrollToBottom();
       return el;
@@ -4020,13 +4376,13 @@
           : "");
       wrap.appendChild(actions);
       wrap.appendChild(el);
-      messagesEl.appendChild(wrap);
+      ensureChatTurn().appendChild(wrap);
       keepStatusAtEnd();
       scrollToBottom();
       return el;
     }
 
-    messagesEl.appendChild(el);
+    ensureChatTurn().appendChild(el);
     keepStatusAtEnd();
     scrollToBottom();
     return el;
@@ -4034,6 +4390,7 @@
 
   function renderMessages(list) {
     messagesEl.innerHTML = "";
+    resetChatTurns();
     uiMessagesCache = Array.isArray(list) ? list : [];
     if (!Array.isArray(list)) {
       return;
@@ -4500,7 +4857,8 @@
 
 
   function sendPrompt() {
-    const text = promptEl.value.trim();
+    const typed = promptEl.value.trim();
+    const text = buildMessageWithSelections(typed);
     const attachments = pendingAttachments.slice();
     if ((!text && !attachments.length) || busy) {
       return;
@@ -4513,6 +4871,7 @@
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
     clearPendingAttachments();
+    clearPendingSelections();
     closeMentionMenu();
     setBusy(true);
     vscode.postMessage({
@@ -4613,6 +4972,17 @@
       }
       event.preventDefault();
       removePendingAttachment(btn.getAttribute("data-id"));
+    });
+  }
+
+  if (selectionPreviewEl) {
+    selectionPreviewEl.addEventListener("click", (event) => {
+      const btn = event.target.closest(".selection-chip-remove");
+      if (!btn) {
+        return;
+      }
+      event.preventDefault();
+      removePendingSelection(btn.getAttribute("data-id"));
     });
   }
 
@@ -5561,8 +5931,15 @@
       event.preventDefault();
       event.stopPropagation();
       const wrap = copyCodeBtn.closest(".md-pre-wrap");
-      const code = wrap ? wrap.querySelector("code") : null;
-      const text = code ? code.textContent || "" : "";
+      let text = "";
+      if (wrap && wrap.classList.contains("has-lines")) {
+        text = Array.from(wrap.querySelectorAll(".md-line-text"))
+          .map((el) => el.textContent || "")
+          .join("\n");
+      } else {
+        const code = wrap ? wrap.querySelector("code") : null;
+        text = code ? code.textContent || "" : "";
+      }
       requestCopyText(text);
       return;
     }
@@ -5821,6 +6198,14 @@
             });
           }
         }
+        break;
+      case "insertComposerText":
+        insertComposerText(msg.text || "");
+        setBusy(false);
+        break;
+      case "insertComposerSelection":
+        addPendingSelection(msg.selection);
+        setBusy(false);
         break;
       case "agentRenamed":
         if (msg.agentId && msg.name) {
