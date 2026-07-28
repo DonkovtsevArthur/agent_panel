@@ -83,6 +83,7 @@ body {
 #messages {
   flex: 1;
   overflow-y: auto;
+  /* padding-top: 0 — иначе sticky user-сообщения оставляют щель и сквозь неё виден скролл */
   padding: 0 16px 28px 12px;
   scrollbar-gutter: stable;
   display: flex;
@@ -120,8 +121,13 @@ body {
 
 .msg-wrap.msg-wrap-assistant {
   align-self: stretch;
+  align-items: flex-end;
   max-width: 100%;
   margin-right: 0;
+}
+
+.msg-wrap.msg-wrap-assistant > .msg-actions {
+  margin-top: 2px;
 }
 
 .msg-wrap.msg-wrap-user {
@@ -135,17 +141,17 @@ body {
     --vscode-sideBar-background,
     var(--vscode-editor-background, #1e1e1e)
   );
-  padding-top: 10px;
+  padding-top: 8px;
   padding-bottom: 4px;
   /* перекрывает субпиксельный просвет при sticky */
-  box-shadow: 0 -1px 0 var(
+  box-shadow: 0 -2px 0 1px var(
     --vscode-sideBar-background,
     var(--vscode-editor-background, #1e1e1e)
   );
 }
 
 .chat-turn:first-child .msg-wrap.msg-wrap-user {
-  padding-top: 12px;
+  padding-top: 10px;
 }
 
 .msg-wrap .msg.user {
@@ -207,7 +213,6 @@ body {
   pointer-events: auto;
 }
 
-.msg-actions .icon-btn.msg-copy,
 .msg-actions .icon-btn.msg-regenerate,
 .msg-actions .icon-btn.msg-branch {
   width: 18px;
@@ -221,8 +226,6 @@ body {
   transition: color 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
 
-.msg-actions .icon-btn.msg-copy:hover,
-.msg-actions .icon-btn.msg-copy:focus-visible,
 .msg-actions .icon-btn.msg-regenerate:hover,
 .msg-actions .icon-btn.msg-regenerate:focus-visible,
 .msg-actions .icon-btn.msg-branch:hover,
@@ -232,7 +235,6 @@ body {
   color: var(--vscode-foreground);
 }
 
-.msg-actions .icon-btn.msg-copy .material-symbols-outlined,
 .msg-actions .icon-btn.msg-regenerate .material-symbols-outlined,
 .msg-actions .icon-btn.msg-branch .material-symbols-outlined {
   font-size: 13px;
@@ -337,7 +339,6 @@ body {
 .msg.user .md-pre {
   margin: 0;
   padding: 8px 10px;
-  padding-right: 34px;
   border-radius: 6px;
   overflow-x: auto;
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
@@ -350,7 +351,6 @@ body {
 .md-pre-wrap.has-lines .md-pre {
   white-space: normal;
   padding-left: 0;
-  padding-right: 34px;
 }
 
 .md-pre-wrap.has-lines code {
@@ -393,32 +393,6 @@ body {
 
 .msg.user .md-p:last-child {
   margin-bottom: 0;
-}
-
-.md-pre-copy {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  opacity: 0;
-  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 75%, transparent);
-  transition: opacity 0.12s ease;
-}
-
-.md-pre-wrap:hover .md-pre-copy,
-.md-pre-wrap:focus-within .md-pre-copy {
-  opacity: 0.85;
-}
-
-.md-pre-copy:hover,
-.md-pre-copy:focus-visible {
-  opacity: 1 !important;
-  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-}
-
-.md-pre-copy .material-symbols-outlined {
-  font-size: 14px;
 }
 
 .copy-toast {
@@ -1767,6 +1741,78 @@ button.primary:disabled {
   cursor: default;
 }
 
+/* —— Shell: список агентов + чат —— */
+.workspace-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.workspace-shell[hidden] {
+  display: none !important;
+}
+
+.agents-rail-backdrop {
+  display: none;
+}
+
+.agents-rail {
+  flex: 0 0 280px;
+  width: 280px;
+  min-width: 0;
+  max-width: 320px;
+  border-right: 1px solid
+    color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: var(--vscode-sideBar-background);
+}
+
+.agents-rail .agents-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.agents-rail .agent-time {
+  display: none;
+}
+
+.agents-rail .agent-meta {
+  gap: 4px;
+}
+
+.workspace-shell.is-narrow.is-rail-open .agents-rail-backdrop {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: color-mix(in srgb, var(--vscode-widget-shadow, #000) 35%, transparent);
+  cursor: pointer;
+}
+
+.workspace-shell.is-narrow.is-rail-open .agents-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 16;
+  width: min(300px, 85%);
+  max-width: none;
+  flex: none;
+  box-shadow: 4px 0 24px
+    color-mix(in srgb, var(--vscode-widget-shadow, #000) 28%, transparent);
+}
+
+.workspace-shell > .chat-screen {
+  flex: 1;
+  min-width: 0;
+}
+
 /* —— Экраны: список агентов / чат —— */
 .screen {
   flex: 1;
@@ -1779,12 +1825,150 @@ button.primary:disabled {
   display: none !important;
 }
 
+.workspace-shell > .agents-rail {
+  flex: 0 0 280px;
+}
+
+.workspace-shell > .chat-screen {
+  flex: 1 1 auto;
+}
+
+html[data-surface="settings"] #workspaceShell,
+html[data-surface="settings"] #agentsScreen,
+html[data-surface="settings"] #archiveScreen,
+html[data-surface="settings"] #chatScreen {
+  display: none !important;
+}
+
+html[data-surface="settings"] body {
+  min-height: 100vh;
+}
+
+html[data-surface="settings"] #settingsScreen:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding-top: 48px;
+  box-sizing: border-box;
+}
+
+html[data-surface="settings"] .settings-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.settings-nav {
+  flex: 0 0 220px;
+  width: 220px;
+  padding: 8px 8px 16px;
+  border-right: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-item .material-symbols-outlined {
+  font-size: 18px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.settings-nav-label {
+  line-height: 1.25;
+}
+
+.settings-nav-item:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.settings-nav-item.is-active {
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 22%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.settings-nav-item.is-active .material-symbols-outlined {
+  opacity: 1;
+}
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px 24px;
+  min-height: 0;
+  max-width: 760px;
+  box-sizing: border-box;
+}
+
+.settings-panel[hidden] {
+  display: none !important;
+}
+
+.settings-panel .settings-section-title {
+  margin-top: 0;
+}
+
+.settings-panel .mcp-body {
+  margin: 0;
+  padding: 0;
+  max-width: none;
+}
+
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+
+  .settings-nav {
+    flex: 0 0 auto;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+    padding-bottom: 8px;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
+
 .agents-top,
 .chat-top {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px 8px;
+  gap: 6px;
+  padding: 10px 10px 12px;
+  flex-shrink: 0;
+}
+
+.chat-top .icon-btn {
   flex-shrink: 0;
 }
 
@@ -1792,7 +1976,7 @@ button.primary:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 12px 8px;
+  padding: 4px 12px 14px;
   flex-shrink: 0;
 }
 
@@ -1876,23 +2060,20 @@ button.primary:disabled {
 }
 
 .settings-save-status {
-  flex-shrink: 0;
+  position: fixed;
+  top: 10px;
+  right: 14px;
+  z-index: 20;
   font-size: 11px;
   opacity: 0.8;
   color: var(--vscode-descriptionForeground);
+  pointer-events: none;
 }
 
 .agents-list {
   flex: 1;
   overflow-y: auto;
   padding: 4px 6px 12px;
-  min-height: 0;
-}
-
-.settings-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 12px 16px;
   min-height: 0;
 }
 
@@ -2719,12 +2900,25 @@ button.primary:disabled {
   background: transparent;
 }
 
+.agent-block.is-active > .agent-row-wrap {
+  background: color-mix(
+    in srgb,
+    var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder, #007fd4))
+      28%,
+    transparent
+  );
+}
+
 .agent-block.is-active > .agent-row-wrap > .agent-row {
   background: transparent;
 }
 
 .agent-block.is-active .agent-name {
   font-weight: 650;
+}
+
+.agent-block.is-active:not(:hover) > .agent-row-wrap .row-action {
+  opacity: 0.7;
 }
 
 .agent-chevron {

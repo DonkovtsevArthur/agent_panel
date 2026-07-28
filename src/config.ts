@@ -386,7 +386,8 @@ export function getConfig(): AgentPanelConfig {
     providers,
     models,
     modes,
-    defaultModel: cfg.get<string>("defaultModel") ?? models[0]?.id ?? "",
+    defaultModel:
+      models.find((m) => m.enabled !== false)?.id || models[0]?.id || "",
     defaultContextWindow,
     systemPrompt: (() => {
       const stored = String(cfg.get<string>("systemPrompt") || "").trim();

@@ -22,6 +22,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.open", async () => {
       await vscode.commands.executeCommand("agentPanel.chat.focus");
     }),
+    vscode.commands.registerCommand("agentPanel.openSettings", () => {
+      provider.openSettingsEditor();
+    }),
     vscode.commands.registerCommand("agentPanel.newChat", () => {
       provider.newChat();
     }),

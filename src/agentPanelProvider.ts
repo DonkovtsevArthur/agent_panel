@@ -98,7 +98,7 @@ type SettingsPayload = {
 };
 
 type WebviewToHost =
-  | { type: "ready" }
+  | { type: "ready"; surface?: "panel" | "settings" }
   | {
       type: "send";
       text: string;
@@ -122,6 +122,7 @@ type WebviewToHost =
   | { type: "showAgents" }
   | { type: "showArchive" }
   | { type: "showSettings" }
+  | { type: "closeSettings" }
   | { type: "saveSettings"; settings: SettingsPayload }
   | { type: "saveModes"; modes: SettingsPayload["modes"] }
   | { type: "renameAgent"; agentId: string; name: string }
@@ -183,6 +184,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
 
   private view?: vscode.WebviewView;
+  private settingsPanel?: vscode.WebviewPanel;
+  private pendingSettingsOpenMcp = false;
   private store!: AgentsStoreV2;
   private history: ChatMessage[] = [];
   private uiMessages: UiMessage[] = [];
@@ -255,9 +258,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }),
       webviewView.onDidChangeVisibility(() => {
         if (webviewView.visible) {
-          // Принудительно обновляем HTML — иначе retainContextWhenHidden
-          // может держать старую разметку без индикатора контекста.
-          webviewView.webview.html = this.getHtml(webviewView.webview);
+          // Не пересобираем HTML: иначе очищается черновик в composer
+          // и теряется UI-состояние. retainContextWhenHidden уже держит DOM.
           void this.postInit();
           this.scheduleScmRefresh();
           if (this.pendingScmReturnRefresh) {
@@ -370,9 +372,60 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.persistActiveChat();
     this.saveStore();
+    this.settingsPanel?.dispose();
+    this.settingsPanel = undefined;
     for (const d of this.disposables) {
       d.dispose();
     }
+  }
+
+  /** Открыть настройки во вкладке редактора (не в сайдбаре). */
+  openSettingsEditor(options?: { mcp?: boolean }): void {
+    const lang = resolveUiLanguage(getConfig().language);
+    const title =
+      lang === "ru" ? "Настройки — Harbor Agents" : "Settings — Harbor Agents";
+    this.pendingSettingsOpenMcp = Boolean(options?.mcp);
+
+    if (this.settingsPanel) {
+      this.settingsPanel.title = title;
+      this.settingsPanel.reveal(vscode.ViewColumn.Active);
+      this.postSettings();
+      this.settingsPanel.webview.postMessage({
+        type: "showSettings",
+        openMcp: this.pendingSettingsOpenMcp,
+      });
+      this.pendingSettingsOpenMcp = false;
+      return;
+    }
+
+    const panel = vscode.window.createWebviewPanel(
+      "agentPanel.settings",
+      title,
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.extensionUri, "media"),
+        ],
+      }
+    );
+    this.settingsPanel = panel;
+    panel.iconPath = vscode.Uri.joinPath(this.extensionUri, "media", "icon.svg");
+    panel.webview.html = this.getHtml(panel.webview, "settings");
+    panel.webview.onDidReceiveMessage(async (raw) => {
+      await this.onMessage(raw as WebviewToHost);
+    });
+    panel.onDidDispose(() => {
+      if (this.settingsPanel === panel) {
+        this.settingsPanel = undefined;
+      }
+    });
+  }
+
+  private closeSettingsEditor(): void {
+    this.settingsPanel?.dispose();
+    this.settingsPanel = undefined;
   }
 
   private loadStore(): void {
@@ -906,6 +959,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         models.find((m) => m.id === config.defaultModel)?.id ??
         models[0]?.id ??
         "";
+      if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+        touchChat(this.store, this.store.activeChatId, {
+          selectedModel: this.selectedModel,
+        });
+        this.writeStoreOnly();
+      }
     }
     const agent = this.store.agents.find((a) => a.id === this.store.activeAgentId);
     const branches = agent ? buildBranchesList(this.store, agent.id) : [];
@@ -940,10 +999,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async onMessage(message: WebviewToHost): Promise<void> {
     switch (message.type) {
       case "ready":
-        void this.postInit();
+        if (message.surface === "settings") {
+          this.postSettings();
+          this.settingsPanel?.webview.postMessage({
+            type: "showSettings",
+            openMcp: this.pendingSettingsOpenMcp,
+          });
+          this.pendingSettingsOpenMcp = false;
+        } else {
+          void this.postInit();
+        }
         break;
       case "modelChanged":
         this.selectedModel = message.model;
+        if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedModel: this.selectedModel,
+          });
+        }
         this.saveSession();
         this.postContextUsage();
         this.postRegenerateState();
@@ -956,9 +1029,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "showAgents":
         this.persistActiveChat();
-        this.setScreen("agents");
+        this.ensureChatReady();
+        this.hydrateActiveChat();
+        this.setScreen("chat");
         this.saveStore();
         this.postAgentsList();
+        await this.postChatScreen();
         this.view?.webview.postMessage({
           type: "showAgents",
           busy: this.isChatRunning(this.store.activeChatId),
@@ -975,14 +1051,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         });
         break;
       case "showSettings":
-        this.persistActiveChat();
-        this.setScreen("settings");
-        this.saveStore();
-        this.postSettings();
-        this.view?.webview.postMessage({
-          type: "showSettings",
-          busy: this.isChatRunning(this.store.activeChatId),
-        });
+        this.openSettingsEditor();
+        break;
+      case "closeSettings":
+        this.closeSettingsEditor();
         break;
       case "saveSettings":
         await this.saveSettings(message.settings);
@@ -1232,6 +1304,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
+    this.postAgentsList();
     void this.postChatScreen(
       Number.isInteger(highlightMessageIndex) &&
         (highlightMessageIndex as number) >= 0
@@ -1350,7 +1423,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
-    this.postChatScreen();
+    this.postAgentsList();
+    void this.postChatScreen();
   }
 
   private async confirmArchiveAgent(agentId: string): Promise<void> {
@@ -1377,10 +1451,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!archiveAgentInStore(this.store, agentId)) {
       return;
     }
-    this.setScreen("agents");
+    this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
     this.postAgentsList();
+    void this.postChatScreen();
     this.view?.webview.postMessage({ type: "showAgents" });
   }
 
@@ -1432,8 +1507,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.postArchiveList();
       this.postAgentsList();
     } else {
-      this.setScreen("agents");
+      this.setScreen("chat");
       this.postAgentsList();
+      void this.postChatScreen();
       this.view?.webview.postMessage({ type: "showAgents" });
     }
   }
@@ -1718,6 +1794,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               type: "figmaNeedsConnect",
               chatId: runChatId,
             });
+            this.openSettingsEditor({ mcp: true });
           },
         },
       });
@@ -2034,6 +2111,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         models.find((m) => m.id === config.defaultModel)?.id ??
         models[0]?.id ??
         "";
+      if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+        touchChat(this.store, this.store.activeChatId, {
+          selectedModel: this.selectedModel,
+        });
+        this.writeStoreOnly();
+      }
     }
     this.view?.webview.postMessage({
       type: "modelsUpdated",
@@ -2044,8 +2127,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postSettings(): void {
     const config = getConfig();
-    this.view?.webview.postMessage({
-      type: "settings",
+    const payload = {
+      type: "settings" as const,
       settings: {
         providers: config.providers.map((p) => ({
           id: p.id,
@@ -2085,7 +2168,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         figmaEnabled: config.figma.enabled,
         figma: this.getFigmaStatusPayload(),
       },
-    });
+    };
+    this.settingsPanel?.webview.postMessage(payload);
   }
 
   private getFigmaStatusPayload(): FigmaStatusPayload {
@@ -2101,14 +2185,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postFigmaStatus(status?: FigmaStatusPayload): void {
     const payload = status || this.getFigmaStatusPayload();
-    this.view?.webview.postMessage({ type: "figmaStatus", status: payload });
+    this.settingsPanel?.webview.postMessage({
+      type: "figmaStatus",
+      status: payload,
+    });
     this.postMcpServersList();
   }
 
   private postMcpServersList(servers?: McpServerRuntimeStatus[]): void {
     const mcp = getMcpManager();
     const list = servers || mcp?.listServerStatuses() || [];
-    this.view?.webview.postMessage({
+    this.settingsPanel?.webview.postMessage({
       type: "mcpServers",
       servers: list,
     });
@@ -2389,10 +2476,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const enabledModels = models.filter((m) => m.enabled !== false);
-    const defaultModel = String(raw.defaultModel || "").trim();
-    const resolvedDefault = enabledModels.some((m) => m.id === defaultModel)
-      ? defaultModel
-      : enabledModels[0]?.id || models[0].id;
+    const resolvedDefault = enabledModels[0]?.id || models[0].id;
 
     const clamp = (value: unknown, min: number, max: number, fallback: number) => {
       const n = typeof value === "number" ? value : Number(value);
@@ -2556,10 +2640,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private postModes(): void {
-    this.view?.webview.postMessage({
-      type: "modesUpdated",
+    const payload = {
+      type: "modesUpdated" as const,
       modes: this.serializeModesForUi(),
-    });
+    };
+    this.view?.webview.postMessage(payload);
+    this.settingsPanel?.webview.postMessage(payload);
   }
 
   private async postInit(): Promise<void> {
@@ -2570,6 +2656,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         models.find((m) => m.id === config.defaultModel)?.id ??
         models[0]?.id ??
         "";
+    }
+
+    // Settings / legacy agents screen — sidebar always opens on chat.
+    if (this.store.screen === "settings" || this.store.screen === "agents") {
+      this.setScreen("chat");
+      this.saveStore();
     }
 
     this.view?.webview.postMessage({
@@ -2594,16 +2686,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
 
     this.postAgentsList();
-    if (this.store.screen === "chat") {
-      await this.postChatScreen();
-    } else if (this.store.screen === "archive") {
+    if (this.store.screen === "archive") {
       this.postArchiveList();
       this.view?.webview.postMessage({ type: "showArchive" });
-    } else if (this.store.screen === "settings") {
-      this.postSettings();
-      this.view?.webview.postMessage({ type: "showSettings" });
     } else {
-      this.view?.webview.postMessage({ type: "showAgents" });
+      await this.postChatScreen();
     }
     // После reload webview (focus панели) — доставить отложенную вставку.
     if (this.pendingComposerInsert || this.pendingComposerSelection) {
@@ -2611,7 +2698,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private getHtml(webview: vscode.Webview): string {
+  private getHtml(
+    webview: vscode.Webview,
+    surface: "panel" | "settings" = "panel"
+  ): string {
     const lang = resolveUiLanguage(getConfig().language);
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
@@ -2635,9 +2725,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       )
     );
     const nonce = getNonce();
+    const pageTitle =
+      surface === "settings"
+        ? lang === "ru"
+          ? "Настройки — Harbor Agents"
+          : "Settings — Harbor Agents"
+        : "Harbor Agents";
 
     return `<!DOCTYPE html>
-<html lang="${lang}">
+<html lang="${lang}" data-surface="${surface}">
 <head>
   <meta charset="UTF-8" />
   <meta
@@ -2655,15 +2751,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       src: url("${materialIconsUri}") format("truetype");
     }
   </style>
-  <title>Harbor Agents</title>
+  <title>${pageTitle}</title>
 </head>
 <body>
-  <section id="agentsScreen" class="screen" hidden>
+  <div id="workspaceShell" class="workspace-shell">
+  <div id="agentsRailBackdrop" class="agents-rail-backdrop" hidden></div>
+  <section id="agentsScreen" class="screen agents-rail" hidden>
     <div class="agents-top">
       <div class="agents-title">Agents</div>
-      <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
-        <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-      </button>
       <button type="button" class="icon-btn" id="openArchiveBtn" title="Archive" aria-label="Archive">
         <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
       </button>
@@ -2673,6 +2768,103 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     </div>
     <div id="agentsList" class="agents-list"></div>
   </section>
+
+  <section id="chatScreen" class="screen chat-screen" hidden>
+    <div class="chat-top">
+      <button type="button" class="icon-btn" id="toggleAgentsRailBtn" title="Agents" aria-label="Agents" aria-pressed="false">
+        <span class="material-symbols-outlined" aria-hidden="true">menu</span>
+      </button>
+      <div class="chat-top-text">
+        <div id="chatAgentName" class="chat-agent-name">Agent</div>
+        <div id="chatTitle" class="chat-title" hidden></div>
+      </div>
+      <button type="button" class="icon-btn" id="chatNewAgentBtn" title="New Agent" aria-label="New Agent">
+        <span class="material-symbols-outlined" aria-hidden="true">add</span>
+      </button>
+      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Search chat" aria-label="Search chat">
+        <span class="material-symbols-outlined" aria-hidden="true">search</span>
+      </button>
+      <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
+        <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+      </button>
+    </div>
+    <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Conversation branches"></div>
+    <div id="chatSearchPanel" class="chat-search-panel" hidden>
+      <div class="chat-search-bar">
+        <input
+          id="chatSearchInput"
+          class="chat-search-input"
+          type="search"
+          placeholder="Search"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Search chat"
+        />
+        <button type="button" class="icon-btn" id="closeChatSearchBtn" title="Close search" aria-label="Close search">
+          <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
+      </div>
+    </div>
+    <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Search results" hidden></div>
+    <div id="messages"></div>
+    <div class="composer-wrap" id="composerWrap">
+      <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
+      <div class="composer" id="composer">
+        <div id="selectionPreview" class="selection-preview" hidden></div>
+        <div id="attachPreview" class="attach-preview" hidden></div>
+        <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
+        <div class="composer-footer">
+          <div class="composer-footer-left">
+            <div class="composer-plus" id="composerPlus">
+              <button type="button" class="icon-btn" id="composerPlusBtn" title="Add" aria-label="Add" aria-haspopup="menu" aria-expanded="false">
+                <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              </button>
+              <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
+                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
+                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
+                  <span>Image</span>
+                </button>
+              </div>
+            </div>
+            <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
+              <button type="button" class="model-trigger" id="modeTrigger" aria-haspopup="listbox" aria-expanded="false" title="Mode">
+                <span class="model-label" id="modeLabel">Agent</span>
+                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+              </button>
+              <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
+            </div>
+            <div class="model-picker" id="modelPicker">
+              <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Model">
+                <span class="model-label" id="modelLabel">Model</span>
+                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+              </button>
+              <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
+            </div>
+          </div>
+          <div class="composer-footer-right">
+            <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
+              <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
+              <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
+            </button>
+          </div>
+        </div>
+        <div id="composerDropHint" class="composer-drop-hint" hidden>
+          <span class="composer-drop-hint-text">Drop file to attach</span>
+        </div>
+      </div>
+      <div class="composer-meta">
+        <button type="button" class="context-meter" id="contextRing" aria-label="Context usage">
+          <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
+            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
+              stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
+          </svg>
+          <span class="context-tip" id="contextTip" role="tooltip">0 / 128k</span>
+        </button>
+      </div>
+    </div>
+  </section>
+  </div>
 
   <section id="archiveScreen" class="screen" hidden>
     <div class="agents-top">
@@ -2685,119 +2877,148 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   </section>
 
   <section id="settingsScreen" class="screen" hidden>
-    <div class="agents-top">
-      <button type="button" class="icon-btn" id="backFromSettingsBtn" title="Back to agents" aria-label="Back to agents">
-        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-      </button>
-      <div class="agents-title">Settings</div>
-      <div id="settingsSaveStatus" class="settings-save-status" hidden>Saved</div>
-    </div>
-    <div class="settings-body" id="settingsBody">
-      <section class="settings-section">
-        <h3 class="settings-section-title" id="settingsModelsProvidersTitle">Models &amp; providers</h3>
-        <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.</p>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsDefaultModelLabel">Default model</span>
-          <select id="settingsDefaultModel" class="settings-input"></select>
-        </label>
-        <div id="settingsProvidersModelsList" class="settings-models"></div>
-        <div class="settings-add-actions">
-          <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
-          <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
-        </div>
-        <div id="settingsModelsHint" class="settings-hint" hidden></div>
-        <div id="settingsProvidersHint" class="settings-hint" hidden></div>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="settings-section-title">Modes</h3>
-        <p class="settings-section-note" id="settingsModesNote">Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.</p>
-        <div id="settingsModesList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Mode</button>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="settings-section-title">Language</h3>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsLanguageLabel">Plugin UI language</span>
-          <select id="settingsLanguage" class="settings-input">
-            <option value="auto">Auto (follow VS Code)</option>
-            <option value="en">English</option>
-            <option value="ru">Русский</option>
-          </select>
-        </label>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="settings-section-title">Commit messages</h3>
-        <p class="settings-section-note" id="settingsCommitNote">Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.</p>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsCommitScopeLabel">Apply to</span>
-          <select id="settingsCommitScope" class="settings-input">
-            <option value="global">All workspaces</option>
-            <option value="workspace">Workspace</option>
-          </select>
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
-          <select id="settingsCommitLanguage" class="settings-input">
-            <option value="auto">Auto (follow UI language)</option>
-            <option value="en">English</option>
-            <option value="ru">Русский</option>
-          </select>
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsCommitPromptLabel">Commit prompt / rule</span>
-          <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short Russian commit messages focused on why."></textarea>
-        </label>
-      </section>
-
-      <section class="settings-section">
-        <h3 class="settings-section-title" id="settingsMcpTitle">MCP Servers</h3>
-        <p class="settings-section-note" id="settingsMcpNote">Manage MCP connections used by Harbor Agents (Figma and more).</p>
-        <button type="button" class="mcp-settings-entry" id="openMcpServersBtn">
-          <span class="mcp-settings-entry-icon" aria-hidden="true">
-            <span class="material-symbols-outlined">electrical_services</span>
-          </span>
-          <span class="mcp-settings-entry-text">
-            <span class="mcp-settings-entry-title" id="settingsMcpEntryTitle">MCP Servers</span>
-            <span class="mcp-settings-entry-sub" id="settingsMcpEntrySub">Open connection list</span>
-          </span>
-          <span class="material-symbols-outlined mcp-settings-entry-chevron" aria-hidden="true">chevron_right</span>
+    <div id="settingsSaveStatus" class="settings-save-status" hidden>Saved</div>
+    <div class="settings-layout">
+      <nav class="settings-nav" id="settingsNav" aria-label="Settings categories">
+        <button type="button" class="settings-nav-item is-active" data-settings-cat="models">
+          <span class="material-symbols-outlined" aria-hidden="true">dns</span>
+          <span class="settings-nav-label" data-i18n-nav="modelsProviders">Models &amp; providers</span>
         </button>
-      </section>
+        <button type="button" class="settings-nav-item" data-settings-cat="modes">
+          <span class="material-symbols-outlined" aria-hidden="true">tune</span>
+          <span class="settings-nav-label" data-i18n-nav="modes">Modes</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="language">
+          <span class="material-symbols-outlined" aria-hidden="true">language</span>
+          <span class="settings-nav-label" data-i18n-nav="languageSection">Language</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="commit">
+          <span class="material-symbols-outlined" aria-hidden="true">commit</span>
+          <span class="settings-nav-label" data-i18n-nav="commitMessages">Commit messages</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="mcp">
+          <span class="material-symbols-outlined" aria-hidden="true">electrical_services</span>
+          <span class="settings-nav-label" data-i18n-nav="mcpServers">MCP Servers</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="agent">
+          <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
+          <span class="settings-nav-label" data-i18n-nav="agentBehavior">Agent behavior</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="advanced">
+          <span class="material-symbols-outlined" aria-hidden="true">construction</span>
+          <span class="settings-nav-label" data-i18n-nav="advancedSettings">Advanced</span>
+        </button>
+      </nav>
+      <div class="settings-body" id="settingsBody">
+        <section class="settings-panel" data-settings-panel="models">
+          <h3 class="settings-section-title" id="settingsModelsProvidersTitle">Models &amp; providers</h3>
+          <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.</p>
+          <div id="settingsProvidersModelsList" class="settings-models"></div>
+          <div class="settings-add-actions">
+            <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
+            <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+          </div>
+          <div id="settingsModelsHint" class="settings-hint" hidden></div>
+          <div id="settingsProvidersHint" class="settings-hint" hidden></div>
+        </section>
 
-      <section class="settings-section">
-        <h3 class="settings-section-title">TLS</h3>
-        <label class="settings-field settings-check">
-          <input id="settingsRejectUnauthorized" type="checkbox" />
-          <span class="settings-label" id="settingsTlsValidateLabel">Validate TLS certificate</span>
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsCaBundleLabel">CA bundle path</span>
-          <input id="settingsCaBundle" class="settings-input" type="text" autocomplete="off" />
-        </label>
-      </section>
+        <section class="settings-panel" data-settings-panel="modes" hidden>
+          <h3 class="settings-section-title" id="settingsModesTitle">Modes</h3>
+          <p class="settings-section-note" id="settingsModesNote">Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.</p>
+          <div id="settingsModesList" class="settings-models"></div>
+          <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Mode</button>
+        </section>
 
-      <section class="settings-section">
-        <h3 class="settings-section-title">Agent behavior</h3>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsSystemPromptLabel">System prompt</span>
-          <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsMaxToolRoundsLabel">Max tool rounds</span>
-          <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
-          <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
-        </label>
-        <label class="settings-field">
-          <span class="settings-label" id="settingsMaxResponseCharsLabel">Max response length (chars)</span>
-          <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
-        </label>
-      </section>
+        <section class="settings-panel" data-settings-panel="language" hidden>
+          <h3 class="settings-section-title" id="settingsLanguageTitle">Language</h3>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsLanguageLabel">Plugin UI language</span>
+            <select id="settingsLanguage" class="settings-input">
+              <option value="auto">Auto (follow VS Code)</option>
+              <option value="en">English</option>
+              <option value="ru">Русский</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="commit" hidden>
+          <h3 class="settings-section-title" id="settingsCommitTitle">Commit messages</h3>
+          <p class="settings-section-note" id="settingsCommitNote">Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsCommitScopeLabel">Apply to</span>
+            <select id="settingsCommitScope" class="settings-input">
+              <option value="global">All workspaces</option>
+              <option value="workspace">Workspace</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
+            <select id="settingsCommitLanguage" class="settings-input">
+              <option value="auto">Auto (follow UI language)</option>
+              <option value="en">English</option>
+              <option value="ru">Русский</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsCommitPromptLabel">Commit prompt / rule</span>
+            <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short Russian commit messages focused on why."></textarea>
+          </label>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="mcp" hidden>
+          <h3 class="settings-section-title" id="settingsMcpTitle">MCP Servers</h3>
+          <p class="settings-section-note" id="settingsMcpNote">Manage MCP connections used by Harbor Agents (Figma and more).</p>
+          <div class="mcp-body" id="mcpBody">
+            <div class="mcp-toolbar">
+              <label class="mcp-search">
+                <span class="material-symbols-outlined" aria-hidden="true">search</span>
+                <input id="mcpSearchInput" type="search" placeholder="Search MCP servers..." autocomplete="off" />
+              </label>
+              <button type="button" class="icon-btn" id="mcpAddBtn" title="Add MCP server" aria-label="Add MCP server">
+                <span class="material-symbols-outlined" aria-hidden="true">add</span>
+              </button>
+            </div>
+            <div class="mcp-section-head">
+              <h3 class="mcp-section-title" id="mcpConfiguredTitle">Configured MCP servers</h3>
+              <span class="mcp-section-count" id="mcpConfiguredCount">0</span>
+            </div>
+            <div id="mcpServersList" class="mcp-servers-list"></div>
+            <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
+          </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="agent" hidden>
+          <h3 class="settings-section-title" id="settingsAgentTitle">Agent behavior</h3>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsSystemPromptLabel">System prompt</span>
+            <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsMaxToolRoundsLabel">Max tool rounds</span>
+            <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
+            <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsMaxResponseCharsLabel">Max response length (chars)</span>
+            <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
+          </label>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="advanced" hidden>
+          <h3 class="settings-section-title" id="settingsAdvancedTitle">Advanced</h3>
+          <label class="settings-field settings-check">
+            <input id="settingsRejectUnauthorized" type="checkbox" />
+            <span class="settings-label" id="settingsTlsValidateLabel">Validate TLS certificate</span>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsCaBundleLabel">CA bundle path</span>
+            <input id="settingsCaBundle" class="settings-input" type="text" autocomplete="off" />
+          </label>
+        </section>
+      </div>
     </div>
     <div id="modelEditModal" class="settings-modal" hidden>
       <div class="settings-modal-backdrop" data-modal-dismiss="1"></div>
@@ -2912,30 +3133,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   </section>
 
   <section id="mcpScreen" class="screen" hidden>
-    <div class="agents-top">
-      <button type="button" class="icon-btn" id="backFromMcpBtn" title="Back to settings" aria-label="Back to settings">
-        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-      </button>
-      <div class="agents-title" id="mcpScreenTitle">MCP Servers</div>
-    </div>
-    <div class="mcp-body" id="mcpBody">
-      <p class="mcp-subtitle" id="mcpSubtitle">Manage MCP server configurations used by Harbor Agents.</p>
-      <div class="mcp-toolbar">
-        <label class="mcp-search">
-          <span class="material-symbols-outlined" aria-hidden="true">search</span>
-          <input id="mcpSearchInput" type="search" placeholder="Search MCP servers..." autocomplete="off" />
-        </label>
-        <button type="button" class="icon-btn" id="mcpAddBtn" title="Add MCP server" aria-label="Add MCP server">
-          <span class="material-symbols-outlined" aria-hidden="true">add</span>
-        </button>
-      </div>
-      <div class="mcp-section-head">
-        <h3 class="mcp-section-title" id="mcpConfiguredTitle">Configured MCP servers</h3>
-        <span class="mcp-section-count" id="mcpConfiguredCount">0</span>
-      </div>
-      <div id="mcpServersList" class="mcp-servers-list"></div>
-      <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
-    </div>
     <div id="mcpEditModal" class="settings-modal" hidden>
       <div class="settings-modal-backdrop" data-mcp-dismiss="1"></div>
       <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="mcpEditTitle">
@@ -3059,96 +3256,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
     </div>
   </div>
-
-  <section id="chatScreen" class="screen chat-screen" hidden>
-    <div class="chat-top">
-      <button type="button" class="icon-btn" id="backToAgentsBtn" title="Back to agents" aria-label="Back to agents">
-        <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-      </button>
-      <div class="chat-top-text">
-        <div id="chatAgentName" class="chat-agent-name">Agent</div>
-        <div id="chatTitle" class="chat-title" hidden></div>
-      </div>
-      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Search chat" aria-label="Search chat">
-        <span class="material-symbols-outlined" aria-hidden="true">search</span>
-      </button>
-    </div>
-    <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Conversation branches"></div>
-    <div id="chatSearchPanel" class="chat-search-panel" hidden>
-      <div class="chat-search-bar">
-        <input
-          id="chatSearchInput"
-          class="chat-search-input"
-          type="search"
-          placeholder="Search"
-          autocomplete="off"
-          spellcheck="false"
-          aria-label="Search chat"
-        />
-        <button type="button" class="icon-btn" id="closeChatSearchBtn" title="Close search" aria-label="Close search">
-          <span class="material-symbols-outlined" aria-hidden="true">close</span>
-        </button>
-      </div>
-    </div>
-    <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Search results" hidden></div>
-    <div id="messages"></div>
-    <div class="composer-wrap" id="composerWrap">
-      <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
-      <div class="composer" id="composer">
-        <div id="selectionPreview" class="selection-preview" hidden></div>
-        <div id="attachPreview" class="attach-preview" hidden></div>
-        <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
-        <div class="composer-footer">
-          <div class="composer-footer-left">
-            <div class="composer-plus" id="composerPlus">
-              <button type="button" class="icon-btn" id="composerPlusBtn" title="Add" aria-label="Add" aria-haspopup="menu" aria-expanded="false">
-                <span class="material-symbols-outlined" aria-hidden="true">add</span>
-              </button>
-              <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
-                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
-                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
-                  <span>Image</span>
-                </button>
-              </div>
-            </div>
-            <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
-              <button type="button" class="model-trigger" id="modeTrigger" aria-haspopup="listbox" aria-expanded="false" title="Mode">
-                <span class="model-label" id="modeLabel">Agent</span>
-                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
-              </button>
-              <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
-            </div>
-            <div class="model-picker" id="modelPicker">
-              <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Model">
-                <span class="model-label" id="modelLabel">Model</span>
-                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
-              </button>
-              <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
-            </div>
-          </div>
-          <div class="composer-footer-right">
-            <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
-              <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
-              <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
-            </button>
-          </div>
-        </div>
-        <div id="composerDropHint" class="composer-drop-hint" hidden>
-          <span class="composer-drop-hint-text">Drop file to attach</span>
-        </div>
-      </div>
-      <div class="composer-meta">
-        <button type="button" class="context-meter" id="contextRing" aria-label="Context usage">
-          <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-            <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
-            <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
-              stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
-          </svg>
-          <span class="context-tip" id="contextTip" role="tooltip">0 / 128k</span>
-        </button>
-      </div>
-    </div>
-  </section>
 
   <script nonce="${nonce}" src="${markedUri}"></script>
   <script nonce="${nonce}" src="${jsUri}"></script>
