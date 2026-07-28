@@ -764,6 +764,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "append", role, text });
   }
 
+  private pushUiToChat(
+    chatId: string | undefined,
+    role: UiMessage["role"],
+    text: string
+  ): void {
+    if (!chatId) {
+      this.pushUi(role, text);
+      return;
+    }
+    const chat = this.store.chats[chatId];
+    if (!chat) {
+      this.pushUi(role, text);
+      return;
+    }
+    const nextUiMessages = [...chat.uiMessages, { role, text }].slice(-200);
+    touchChat(this.store, chatId, { uiMessages: nextUiMessages });
+    if (this.isViewingChat(chatId)) {
+      this.uiMessages = nextUiMessages;
+      this.writeStoreOnly();
+      this.view?.webview.postMessage({ type: "append", role, text, chatId });
+      return;
+    }
+    this.writeStoreOnly();
+  }
+
   private setStatusForChat(
     chatId: string | undefined,
     text: string,
@@ -1409,14 +1434,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     const config = getConfig();
     const enabledModels = getEnabledModels();
+    const runChatId = this.store.activeChatId;
     if (!enabledModels.length) {
-      this.pushUi(
+      this.pushUiToChat(
+        runChatId,
         "error",
         "No models are enabled. Enable models in Harbor Agents settings."
       );
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
@@ -1430,10 +1457,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : String(error);
-      this.pushUi("error", messageText);
+      this.pushUiToChat(runChatId, "error", messageText);
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
@@ -1442,7 +1469,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!trimmed && !attachments.length) {
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
@@ -1458,7 +1485,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? config.defaultModel
         : "") ||
       enabledModels[0].id;
-    const runChatId = this.store.activeChatId;
     if (!runChatId || !this.store.chats[runChatId]) {
       this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
       return;
@@ -1495,7 +1521,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!resolveModelSupportsVision(chosen)) {
       const withoutImages = attachments.filter((a) => a.kind !== "image");
       if (withoutImages.length < attachments.length) {
-        this.pushUi(
+        this.pushUiToChat(
+          runChatId,
           "error",
           "This model does not support images, so image attachments were removed from the message."
         );
@@ -1509,7 +1536,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const endpoint = resolveModelEndpoint(chosen);
     if (!endpoint.baseUrl) {
-      this.pushUi(
+      this.pushUiToChat(
+        runChatId,
         "error",
         `No base URL is configured for "${endpoint.providerName}". Add a provider in settings.`
       );
@@ -1711,7 +1739,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : String(error);
-      this.pushUi("error", messageText);
+      this.pushUiToChat(this.store.activeChatId, "error", messageText);
       this.view?.webview.postMessage({
         type: "idle",
         chatId: this.store.activeChatId,
