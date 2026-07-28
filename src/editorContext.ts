@@ -157,3 +157,53 @@ function appendCursorAndSelection(
     lines.push("```");
   }
 }
+
+/**
+ * Выделение редактора для чипа в composer.
+ * Без выделения / редактора — undefined.
+ */
+export function getEditorSelectionPayload():
+  | {
+      path: string;
+      startLine: number;
+      endLine: number;
+      text: string;
+      language: string;
+    }
+  | undefined {
+  const editor = resolveEditor();
+  if (!editor || editor.document.isClosed) {
+    return undefined;
+  }
+  const { document, selection } = editor;
+  if (selection.isEmpty) {
+    return undefined;
+  }
+  const text = document.getText(selection);
+  if (!String(text || "").trim()) {
+    return undefined;
+  }
+
+  const startLine = selection.start.line + 1;
+  const endLine = selection.end.line + 1;
+  const path =
+    document.uri.scheme === "untitled"
+      ? `untitled${document.languageId ? `.${document.languageId}` : ""}`
+      : relativeOrFsPath(document.uri);
+  return {
+    path,
+    startLine,
+    endLine,
+    text: text.replace(/\n$/, ""),
+    language: document.languageId || "",
+  };
+}
+
+/** @deprecated используйте getEditorSelectionPayload + чипы */
+export function getEditorSelectionSnippet(): string | undefined {
+  const payload = getEditorSelectionPayload();
+  if (!payload) {
+    return undefined;
+  }
+  return `\`\`\`${payload.startLine}:${payload.endLine}:${payload.path}\n${payload.text}\n\`\`\``;
+}
