@@ -18,7 +18,7 @@ import {
   resolveModelEndpoint,
   resolveModelSupportsVision,
 } from "./config";
-import { resolveUiLanguage } from "./i18n";
+import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
@@ -2407,14 +2407,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const cfg = vscode.workspace.getConfiguration("agentPanel");
     const target = vscode.ConfigurationTarget.Global;
+    const prevLanguage =
+      cfg.get<"auto" | "en" | "ru">("language") === "ru"
+        ? "ru"
+        : cfg.get<"auto" | "en" | "ru">("language") === "en"
+          ? "en"
+          : "auto";
+    const nextLanguage =
+      raw.language === "ru" ? "ru" : raw.language === "en" ? "en" : "auto";
+    const languageChanged = prevLanguage !== nextLanguage;
+
     await cfg.update("providers", providers, target);
     await cfg.update("models", models, target);
     await cfg.update("defaultModel", resolvedDefault, target);
-    await cfg.update(
-      "language",
-      raw.language === "ru" ? "ru" : raw.language === "en" ? "en" : "auto",
-      target
-    );
+    await cfg.update("language", nextLanguage, target);
     await cfg.update(
       "defaultContextWindow",
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
@@ -2429,10 +2435,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
     await cfg.update("caBundlePath", String(raw.caBundlePath || "").trim(), target);
-    await cfg.update("systemPrompt", String(raw.systemPrompt || ""), target);
+    const systemPromptRaw = String(raw.systemPrompt || "").trim();
+    await cfg.update(
+      "systemPrompt",
+      isBuiltinSystemPrompt(systemPromptRaw) ? "" : systemPromptRaw,
+      target
+    );
     await cfg.update(
       "maxToolRounds",
-      clamp(raw.maxToolRounds, 1, 50, 20),
+      clamp(raw.maxToolRounds, 1, 60, 20),
       target
     );
     await cfg.update("maxTokens", clamp(raw.maxTokens, 64, 128_000, 4096), target);
@@ -2462,6 +2473,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postModels();
     this.postModes();
+    this.postSettings();
+
+    if (languageChanged) {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    }
   }
 
   private async saveCommitMessageSettings(
@@ -2474,7 +2490,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       scope === "workspace"
         ? vscode.ConfigurationTarget.Workspace
         : vscode.ConfigurationTarget.Global;
-    const prompt = String(raw.commitMessagePrompt || "").trim();
+    const promptRaw = String(raw.commitMessagePrompt || "").trim();
+    const prompt = isBuiltinCommitMessagePrompt(promptRaw) ? "" : promptRaw;
     const language =
       raw.commitMessageLanguage === "ru"
         ? "ru"
@@ -2677,28 +2694,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="settings-body" id="settingsBody">
       <section class="settings-section">
-        <h3 class="settings-section-title">Providers</h3>
-        <p class="settings-section-note">Base URL and API key for each OpenAI-compatible API. Each model picks its provider in the model card.</p>
-        <div id="settingsProvidersList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+        <h3 class="settings-section-title" id="settingsModelsProvidersTitle">Models &amp; providers</h3>
+        <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.</p>
+        <label class="settings-field">
+          <span class="settings-label" id="settingsDefaultModelLabel">Default model</span>
+          <select id="settingsDefaultModel" class="settings-input"></select>
+        </label>
+        <div id="settingsProvidersModelsList" class="settings-models"></div>
+        <div class="settings-add-actions">
+          <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
+          <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+        </div>
+        <div id="settingsModelsHint" class="settings-hint" hidden></div>
         <div id="settingsProvidersHint" class="settings-hint" hidden></div>
       </section>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Models</h3>
-        <label class="settings-field">
-          <span class="settings-label">Default model</span>
-          <select id="settingsDefaultModel" class="settings-input"></select>
-        </label>
-
-        <div id="settingsModelsList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Add</button>
-        <div id="settingsModelsHint" class="settings-hint" hidden></div>
-      </section>
-
-      <section class="settings-section">
         <h3 class="settings-section-title">Modes</h3>
-        <p class="settings-section-note">Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.</p>
+        <p class="settings-section-note" id="settingsModesNote">Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.</p>
         <div id="settingsModesList" class="settings-models"></div>
         <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Mode</button>
       </section>
@@ -2706,7 +2719,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <section class="settings-section">
         <h3 class="settings-section-title">Language</h3>
         <label class="settings-field">
-          <span class="settings-label">Plugin UI language</span>
+          <span class="settings-label" id="settingsLanguageLabel">Plugin UI language</span>
           <select id="settingsLanguage" class="settings-input">
             <option value="auto">Auto (follow VS Code)</option>
             <option value="en">English</option>
@@ -2758,10 +2771,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <h3 class="settings-section-title">TLS</h3>
         <label class="settings-field settings-check">
           <input id="settingsRejectUnauthorized" type="checkbox" />
-          <span class="settings-label">Validate TLS certificate</span>
+          <span class="settings-label" id="settingsTlsValidateLabel">Validate TLS certificate</span>
         </label>
         <label class="settings-field">
-          <span class="settings-label">CA bundle path</span>
+          <span class="settings-label" id="settingsCaBundleLabel">CA bundle path</span>
           <input id="settingsCaBundle" class="settings-input" type="text" autocomplete="off" />
         </label>
       </section>
@@ -2769,19 +2782,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <section class="settings-section">
         <h3 class="settings-section-title">Agent behavior</h3>
         <label class="settings-field">
-          <span class="settings-label">System prompt</span>
+          <span class="settings-label" id="settingsSystemPromptLabel">System prompt</span>
           <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
         </label>
         <label class="settings-field">
-          <span class="settings-label">Max tool rounds</span>
+          <span class="settings-label" id="settingsMaxToolRoundsLabel">Max tool rounds</span>
           <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">max_tokens</span>
+          <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
           <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Max response length (chars)</span>
+          <span class="settings-label" id="settingsMaxResponseCharsLabel">Max response length (chars)</span>
           <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
         </label>
       </section>
@@ -2799,6 +2812,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <button type="button" class="settings-modal-tab is-active" data-model-mode="manual">Manual</button>
           <button type="button" class="settings-modal-tab" data-model-mode="json">JSON</button>
         </div>
+        <div class="settings-modal-body" id="modelEditProviderBlock">
+          <label class="settings-field">
+            <span class="settings-label" id="modelEditProviderLabel">Provider</span>
+            <select id="modelEditProvider" class="settings-input"></select>
+          </label>
+          <div id="modelEditNewProvider" class="settings-new-provider" hidden>
+            <label class="settings-field">
+              <span class="settings-label" id="modelEditNewProviderIdLabel">Provider ID</span>
+              <input id="modelEditNewProviderId" class="settings-input" type="text" placeholder="zai, kimi, openai…" autocomplete="off" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="modelEditNewProviderNameLabel">Provider name</span>
+              <input id="modelEditNewProviderName" class="settings-input" type="text" placeholder="Z.AI" autocomplete="off" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="modelEditNewProviderUrlLabel">Base URL</span>
+              <input id="modelEditNewProviderUrl" class="settings-input" type="text" placeholder="https://api.z.ai/api/paas/v4" autocomplete="off" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="modelEditNewProviderKeyLabel">API Key</span>
+              <input id="modelEditNewProviderKey" class="settings-input" type="password" autocomplete="off" />
+            </label>
+          </div>
+        </div>
         <div class="settings-modal-body" id="modelEditManualPane">
           <label class="settings-field">
             <span class="settings-label">ID</span>
@@ -2807,10 +2844,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field">
             <span class="settings-label">Name</span>
             <input id="modelEditLabel" class="settings-input" type="text" placeholder="shown in the list" />
-          </label>
-          <label class="settings-field">
-            <span class="settings-label">Provider</span>
-            <select id="modelEditProvider" class="settings-input"></select>
           </label>
           <div class="settings-model-limits">
             <label class="settings-field">

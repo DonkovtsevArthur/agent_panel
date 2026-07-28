@@ -13,11 +13,32 @@
       backToAgents: "Back to agents",
       saved: "Saved",
       providers: "Providers",
+      providersNote:
+        "Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.",
+      addProvider: "+ Provider",
       models: "Models",
+      modelsProviders: "Models & providers",
       defaultModel: "Default model",
+      addModel: "+ Model",
+      newProviderOption: "+ New provider…",
+      providerIdLabel: "Provider ID",
+      providerNameLabel: "Provider name",
+      otherProvider: "Other",
+      noProvidersOrModels: "No providers yet — add a provider or a model.",
+      baseUrl: "Base URL",
+      apiKey: "API Key",
       modes: "Modes",
+      modesNote:
+        "Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.",
+      addModeShort: "+ Mode",
+      languageSection: "Language",
+      pluginUiLanguage: "Plugin UI language",
+      languageAuto: "Auto (follow VS Code)",
+      languageEn: "English",
+      languageRu: "Русский",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
+      caBundlePath: "CA bundle path",
       agentBehavior: "Agent behavior",
       commitMessages: "Commit messages",
       commitMessagesNote:
@@ -27,7 +48,11 @@
       commitScopeWorkspace: "This workspace",
       commitScopeWorkspaceNamed: (name) => name || "This workspace",
       commitLanguage: "Commit message language",
+      commitLanguageAuto: "Auto (follow UI language)",
       commitPrompt: "Commit prompt / rule",
+      commitPromptPlaceholder:
+        "Optional. Example: write short English commit messages focused on why.",
+      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
@@ -174,6 +199,23 @@
       hideSteps: "Hide steps",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
+      toolWorking: "Working…",
+      toolReading: "Reading…",
+      toolListing: "Listing…",
+      toolWriting: "Writing…",
+      toolRunning: "Running…",
+      toolFetching: "Fetching…",
+      toolOpening: "Opening…",
+      toolMcp: "MCP…",
+      toolKindRead: "read",
+      toolKindWrite: "write",
+      toolKindList: "list",
+      toolKindRun: "run",
+      toolKindFetch: "fetch",
+      toolKindOpen: "open",
+      toolKindMcp: "mcp",
+      toolKindTool: "tool",
+      toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
       taskForMode: (label) => `Task (${label})... (@ for file)`,
@@ -197,11 +239,32 @@
       backToAgents: "К списку агентов",
       saved: "Сохранено",
       providers: "Провайдеры",
+      providersNote:
+        "Base URL и API key для каждого OpenAI-compatible API. Модели сгруппированы по провайдеру.",
+      addProvider: "+ Провайдер",
       models: "Модели",
+      modelsProviders: "Модели и провайдеры",
       defaultModel: "Модель по умолчанию",
+      addModel: "+ Модель",
+      newProviderOption: "+ Новый провайдер…",
+      providerIdLabel: "ID провайдера",
+      providerNameLabel: "Имя провайдера",
+      otherProvider: "Другое",
+      noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
+      baseUrl: "Base URL",
+      apiKey: "API Key",
       modes: "Режимы",
+      modesNote:
+        "Agent, Plan и Ask встроены и тоже редактируются. Можно добавлять и удалять свои режимы.",
+      addModeShort: "+ Режим",
+      languageSection: "Язык",
+      pluginUiLanguage: "Язык интерфейса плагина",
+      languageAuto: "Авто (как в VS Code)",
+      languageEn: "English",
+      languageRu: "Русский",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
+      caBundlePath: "Путь к CA bundle",
       agentBehavior: "Поведение агента",
       commitMessages: "Сообщения коммитов",
       commitMessagesNote:
@@ -211,7 +274,11 @@
       commitScopeWorkspace: "Текущему workspace",
       commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
       commitLanguage: "Язык сообщения коммита",
+      commitLanguageAuto: "Авто (как язык интерфейса)",
       commitPrompt: "Промпт / правило коммита",
+      commitPromptPlaceholder:
+        "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
+      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote:
@@ -360,6 +427,23 @@
       hideSteps: "Скрыть шаги",
       stepsOne: "1 шаг",
       stepsMany: (n) => `${n} шагов`,
+      toolWorking: "Работаю…",
+      toolReading: "Читаю…",
+      toolListing: "Смотрю…",
+      toolWriting: "Пишу…",
+      toolRunning: "Запускаю…",
+      toolFetching: "Загружаю…",
+      toolOpening: "Открываю…",
+      toolMcp: "MCP…",
+      toolKindRead: "чтение",
+      toolKindWrite: "запись",
+      toolKindList: "список",
+      toolKindRun: "команда",
+      toolKindFetch: "загрузка",
+      toolKindOpen: "открытие",
+      toolKindMcp: "mcp",
+      toolKindTool: "tool",
+      toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
       taskForMode: (label) => `Задача (${label})… (@ — файл)`,
@@ -412,7 +496,10 @@
   const chatBranchesEl = document.getElementById("chatBranches");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
-  const settingsModelsList = document.getElementById("settingsModelsList");
+  const settingsModelsList = document.getElementById(
+    "settingsProvidersModelsList"
+  );
+  const settingsProvidersList = settingsModelsList;
   const newAgentBtn = document.getElementById("newAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
   const openSettingsBtn = document.getElementById("openSettingsBtn");
@@ -436,10 +523,23 @@
   const modelEditOutput = document.getElementById("modelEditOutput");
   const modelEditVision = document.getElementById("modelEditVision");
   const modelEditProvider = document.getElementById("modelEditProvider");
+  const modelEditNewProvider = document.getElementById("modelEditNewProvider");
+  const modelEditNewProviderId = document.getElementById(
+    "modelEditNewProviderId"
+  );
+  const modelEditNewProviderName = document.getElementById(
+    "modelEditNewProviderName"
+  );
+  const modelEditNewProviderUrl = document.getElementById(
+    "modelEditNewProviderUrl"
+  );
+  const modelEditNewProviderKey = document.getElementById(
+    "modelEditNewProviderKey"
+  );
+  const NEW_PROVIDER_VALUE = "__new__";
   const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
   const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
   const modelEditDoneBtn = document.getElementById("modelEditDoneBtn");
-  const settingsProvidersList = document.getElementById("settingsProvidersList");
   const settingsProvidersHint = document.getElementById("settingsProvidersHint");
   const addProviderBtn = document.getElementById("addProviderBtn");
   const providerEditModal = document.getElementById("providerEditModal");
@@ -695,15 +795,112 @@
     contextRingEl.setAttribute("aria-label", t("contextUsage"));
     chatAgentNameEl.textContent = t("agent");
     const sectionTitles = settingsScreen.querySelectorAll(".settings-section-title");
-    if (sectionTitles[0]) sectionTitles[0].textContent = t("providers");
-    if (sectionTitles[1]) sectionTitles[1].textContent = t("models");
-    if (sectionTitles[2]) sectionTitles[2].textContent = t("modes");
-    if (sectionTitles[3]) sectionTitles[3].textContent =
-      UI_LANG === "ru" ? "Язык" : "Language";
-    if (sectionTitles[4]) sectionTitles[4].textContent = t("commitMessages");
+    const settingsModelsProvidersTitle = document.getElementById(
+      "settingsModelsProvidersTitle"
+    );
+    if (settingsModelsProvidersTitle) {
+      settingsModelsProvidersTitle.textContent = t("modelsProviders");
+    } else if (sectionTitles[0]) {
+      sectionTitles[0].textContent = t("modelsProviders");
+    }
+    if (sectionTitles[1]) sectionTitles[1].textContent = t("modes");
+    if (sectionTitles[2]) sectionTitles[2].textContent = t("languageSection");
+    if (sectionTitles[3]) sectionTitles[3].textContent = t("commitMessages");
     if (settingsMcpTitle) settingsMcpTitle.textContent = t("mcpServers");
-    if (sectionTitles[6]) sectionTitles[6].textContent = t("tls");
-    if (sectionTitles[7]) sectionTitles[7].textContent = t("agentBehavior");
+    if (sectionTitles[5]) sectionTitles[5].textContent = t("tls");
+    if (sectionTitles[6]) sectionTitles[6].textContent = t("agentBehavior");
+    const settingsProvidersNote = document.getElementById(
+      "settingsProvidersNote"
+    );
+    if (settingsProvidersNote) {
+      settingsProvidersNote.textContent = t("providersNote");
+    }
+    if (addProviderBtn) addProviderBtn.textContent = t("addProvider");
+    if (addModelBtn) addModelBtn.textContent = t("addModel");
+    const newProviderIdLabel = document.getElementById(
+      "modelEditNewProviderIdLabel"
+    );
+    const newProviderNameLabel = document.getElementById(
+      "modelEditNewProviderNameLabel"
+    );
+    const newProviderUrlLabel = document.getElementById(
+      "modelEditNewProviderUrlLabel"
+    );
+    const newProviderKeyLabel = document.getElementById(
+      "modelEditNewProviderKeyLabel"
+    );
+    if (newProviderIdLabel) newProviderIdLabel.textContent = t("providerIdLabel");
+    if (newProviderNameLabel) {
+      newProviderNameLabel.textContent = t("providerNameLabel");
+    }
+    if (newProviderUrlLabel) newProviderUrlLabel.textContent = t("baseUrl");
+    if (newProviderKeyLabel) newProviderKeyLabel.textContent = t("apiKey");
+    const modelEditProviderLabel = document.getElementById(
+      "modelEditProviderLabel"
+    );
+    if (modelEditProviderLabel) {
+      modelEditProviderLabel.textContent = t("provider");
+    }
+    const settingsModesNote = document.getElementById("settingsModesNote");
+    if (settingsModesNote) settingsModesNote.textContent = t("modesNote");
+    const addModeBtnEl = document.getElementById("addModeBtn");
+    if (addModeBtnEl) addModeBtnEl.textContent = t("addModeShort");
+    const settingsDefaultModelLabel = document.getElementById(
+      "settingsDefaultModelLabel"
+    );
+    if (settingsDefaultModelLabel) {
+      settingsDefaultModelLabel.textContent = t("defaultModel");
+    }
+    const settingsLanguageLabel = document.getElementById(
+      "settingsLanguageLabel"
+    );
+    if (settingsLanguageLabel) {
+      settingsLanguageLabel.textContent = t("pluginUiLanguage");
+    }
+    if (settingsLanguage) {
+      const autoOpt = settingsLanguage.querySelector('option[value="auto"]');
+      const enOpt = settingsLanguage.querySelector('option[value="en"]');
+      const ruOpt = settingsLanguage.querySelector('option[value="ru"]');
+      if (autoOpt) autoOpt.textContent = t("languageAuto");
+      if (enOpt) enOpt.textContent = t("languageEn");
+      if (ruOpt) ruOpt.textContent = t("languageRu");
+    }
+    const settingsTlsValidateLabel = document.getElementById(
+      "settingsTlsValidateLabel"
+    );
+    if (settingsTlsValidateLabel) {
+      settingsTlsValidateLabel.textContent = t("validateTls");
+    }
+    const settingsCaBundleLabel = document.getElementById(
+      "settingsCaBundleLabel"
+    );
+    if (settingsCaBundleLabel) {
+      settingsCaBundleLabel.textContent = t("caBundlePath");
+    }
+    const settingsSystemPromptLabel = document.getElementById(
+      "settingsSystemPromptLabel"
+    );
+    if (settingsSystemPromptLabel) {
+      settingsSystemPromptLabel.textContent = t("systemPrompt");
+    }
+    const settingsMaxToolRoundsLabel = document.getElementById(
+      "settingsMaxToolRoundsLabel"
+    );
+    if (settingsMaxToolRoundsLabel) {
+      settingsMaxToolRoundsLabel.textContent = t("maxToolRounds");
+    }
+    const settingsMaxTokensLabel = document.getElementById(
+      "settingsMaxTokensLabel"
+    );
+    if (settingsMaxTokensLabel) {
+      settingsMaxTokensLabel.textContent = t("maxTokens");
+    }
+    const settingsMaxResponseCharsLabel = document.getElementById(
+      "settingsMaxResponseCharsLabel"
+    );
+    if (settingsMaxResponseCharsLabel) {
+      settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
+    }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     if (settingsMcpEntryTitle) {
       settingsMcpEntryTitle.textContent = t("mcpServers");
@@ -757,6 +954,9 @@
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
     }
+    if (settingsCommitPrompt) {
+      settingsCommitPrompt.placeholder = t("commitPromptPlaceholder");
+    }
     if (settingsCommitScope) {
       const globalOpt = settingsCommitScope.querySelector(
         'option[value="global"]'
@@ -772,10 +972,16 @@
         );
       }
     }
-    const labels = settingsScreen.querySelectorAll(".settings-label");
-    if (labels[0]) labels[0].textContent = t("defaultModel");
-    if (labels[1]) labels[1].textContent =
-      UI_LANG === "ru" ? "Язык интерфейса плагина" : "Plugin UI language";
+    if (settingsCommitLanguage) {
+      const autoOpt = settingsCommitLanguage.querySelector(
+        'option[value="auto"]'
+      );
+      const enOpt = settingsCommitLanguage.querySelector('option[value="en"]');
+      const ruOpt = settingsCommitLanguage.querySelector('option[value="ru"]');
+      if (autoOpt) autoOpt.textContent = t("commitLanguageAuto");
+      if (enOpt) enOpt.textContent = t("languageEn");
+      if (ruOpt) ruOpt.textContent = t("languageRu");
+    }
   }
 
   localizeStaticUi();
@@ -1643,10 +1849,11 @@
     while ((match = re.exec(raw))) {
       html += escapeHtml(raw.slice(last, match.index));
       const filePath = match[1];
+      const label = pathBasename(filePath);
       html +=
         `<button type="button" class="msg-mention" data-path="${escapeHtml(
           filePath
-        )}" title="${escapeHtml(filePath)}">@${escapeHtml(filePath)}</button>`;
+        )}" title="${escapeHtml(filePath)}">@${escapeHtml(label)}</button>`;
       last = match.index + match[0].length;
     }
     html += escapeHtml(raw.slice(last));
@@ -2338,36 +2545,183 @@
 
     switch (name) {
       case "run_command":
-        return args.command ? `run · ${args.command}` : "run_command";
+        return args.command
+          ? `${t("toolKindRun")} · ${args.command}`
+          : t("toolKindRun");
       case "read_file":
         return args.relativePath
-          ? `read · ${args.relativePath}`
-          : "read_file";
+          ? `${t("toolKindRead")} · ${args.relativePath}`
+          : t("toolKindRead");
       case "write_file":
         return args.relativePath
-          ? `write · ${args.relativePath}`
-          : "write_file";
+          ? `${t("toolKindWrite")} · ${args.relativePath}`
+          : t("toolKindWrite");
       case "list_files": {
         const path = args.relativePath || ".";
-        return `list · ${path}`;
+        return `${t("toolKindList")} · ${path}`;
       }
+      case "fetch_url":
+        return args.url
+          ? `${t("toolKindFetch")} · ${args.url}`
+          : t("toolKindFetch");
+      case "open_external":
+        return args.url
+          ? `${t("toolKindOpen")} · ${args.url}`
+          : t("toolKindOpen");
       default: {
+        if (String(name).startsWith("mcp__")) {
+          const short = name.replace(/^mcp__[^_]+__/, "") || name;
+          return `${t("toolKindMcp")} · ${short}`;
+        }
         const values = Object.values(args)
           .filter((v) => typeof v === "string" || typeof v === "number")
           .slice(0, 2);
-        return values.length ? `${name} · ${values.join(" · ")}` : name;
+        return values.length
+          ? `${t("toolKindTool")} · ${values.join(" · ")}`
+          : t("toolKindTool");
       }
     }
   }
 
-  function toolStepsLabel(count) {
-    if (count === 1) {
-      return t("stepsOne");
+  function parseToolName(text) {
+    const raw = String(text || "").replace(/^⚙\s*/, "").trim();
+    const match = raw.match(/^([a-zA-Z0-9_]+)\(/);
+    if (match) {
+      return match[1];
     }
-    if (count > 1 && count < 5) {
-    return t("stepsMany", count);
+    const line = String(text || "");
+    const prefix = line.split("·")[0].trim().toLowerCase();
+    if (
+      prefix === "read" ||
+      prefix === t("toolKindRead").toLowerCase()
+    ) {
+      return "read_file";
     }
-    return t("stepsMany", count);
+    if (
+      prefix === "write" ||
+      prefix === t("toolKindWrite").toLowerCase()
+    ) {
+      return "write_file";
+    }
+    if (
+      prefix === "list" ||
+      prefix === t("toolKindList").toLowerCase()
+    ) {
+      return "list_files";
+    }
+    if (
+      prefix === "run" ||
+      prefix === t("toolKindRun").toLowerCase()
+    ) {
+      return "run_command";
+    }
+    if (
+      prefix === "fetch" ||
+      prefix === t("toolKindFetch").toLowerCase()
+    ) {
+      return "fetch_url";
+    }
+    if (
+      prefix === "open" ||
+      prefix === t("toolKindOpen").toLowerCase()
+    ) {
+      return "open_external";
+    }
+    if (prefix === "mcp" || prefix === t("toolKindMcp").toLowerCase()) {
+      return "mcp__tool";
+    }
+    return "";
+  }
+
+  function toolKind(name) {
+    const n = String(name || "");
+    if (n === "read_file") {
+      return "read";
+    }
+    if (n === "write_file") {
+      return "write";
+    }
+    if (n === "list_files") {
+      return "list";
+    }
+    if (n === "run_command") {
+      return "run";
+    }
+    if (n === "fetch_url") {
+      return "fetch";
+    }
+    if (n === "open_external") {
+      return "open";
+    }
+    if (n.startsWith("mcp__")) {
+      return "mcp";
+    }
+    return n ? "tool" : "";
+  }
+
+  function toolKindLabel(kind) {
+    switch (kind) {
+      case "read":
+        return t("toolKindRead");
+      case "list":
+        return t("toolKindList");
+      case "write":
+        return t("toolKindWrite");
+      case "run":
+        return t("toolKindRun");
+      case "fetch":
+        return t("toolKindFetch");
+      case "open":
+        return t("toolKindOpen");
+      case "mcp":
+        return t("toolKindMcp");
+      default:
+        return t("toolKindTool");
+    }
+  }
+
+  function toolWorkingLabel(kind) {
+    switch (kind) {
+      case "read":
+        return t("toolReading");
+      case "list":
+        return t("toolListing");
+      case "write":
+        return t("toolWriting");
+      case "run":
+        return t("toolRunning");
+      case "fetch":
+        return t("toolFetching");
+      case "open":
+        return t("toolOpening");
+      case "mcp":
+        return t("toolMcp");
+      default:
+        return t("toolWorking");
+    }
+  }
+
+  function toolTypesSummary(group) {
+    const counts = new Map();
+    for (const el of group.querySelectorAll(".msg.tool")) {
+      const name = el.dataset.toolName || parseToolName(el.dataset.raw || "");
+      const kind = toolKind(name) || "tool";
+      counts.set(kind, (counts.get(kind) || 0) + 1);
+    }
+    const order = ["read", "list", "write", "run", "fetch", "open", "mcp", "tool"];
+    const parts = [];
+    for (const kind of order) {
+      const n = counts.get(kind);
+      if (n) {
+        parts.push(t("toolTypeCount", toolKindLabel(kind), n));
+      }
+    }
+    for (const [kind, n] of counts) {
+      if (!order.includes(kind) && n) {
+        parts.push(t("toolTypeCount", toolKindLabel(kind), n));
+      }
+    }
+    return parts.length ? parts.join(" · ") : t("stepsZero");
   }
 
   function sealToolGroups() {
@@ -2375,6 +2729,7 @@
       ".tool-group:not([data-sealed])"
     )) {
       group.dataset.sealed = "1";
+      updateToolGroupSummary(group);
     }
   }
 
@@ -2382,10 +2737,20 @@
     if (!group) {
       return;
     }
-    const count = group.querySelectorAll(".msg.tool").length;
+    const tools = group.querySelectorAll(".msg.tool");
+    const count = tools.length;
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
-      summary.textContent = toolStepsLabel(count);
+      if (!count) {
+        summary.textContent = t("toolWorking");
+      } else if (group.dataset.sealed === "1") {
+        summary.textContent = toolTypesSummary(group);
+      } else {
+        const last = tools[tools.length - 1];
+        const name =
+          last.dataset.toolName || parseToolName(last.dataset.raw || "");
+        summary.textContent = toolWorkingLabel(toolKind(name));
+      }
     }
     group.title = group.classList.contains("is-collapsed")
       ? t("showSteps")
@@ -2398,7 +2763,7 @@
     group.innerHTML =
       `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
-      `<span class="tool-group-summary">0 steps</span>` +
+      `<span class="tool-group-summary">${escapeHtml(t("toolWorking"))}</span>` +
       `</button>` +
       `<div class="tool-group-body"></div>`;
     return group;
@@ -2448,6 +2813,7 @@
     if (typeof index === "number") {
       el.dataset.index = String(index);
     }
+    el.dataset.toolName = parseToolName(text);
     const msgBody = document.createElement("div");
     msgBody.className = "msg-body";
     el.appendChild(msgBody);
@@ -2964,15 +3330,8 @@
       return;
     }
     const fallback = primaryProviderId();
-    const current = selectedId || fallback;
+    const current = selectedId || fallback || NEW_PROVIDER_VALUE;
     modelEditProvider.innerHTML = "";
-    if (!settingsProviders.length) {
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = t("addProviderFirst");
-      modelEditProvider.appendChild(empty);
-      return;
-    }
     for (const provider of settingsProviders) {
       const id = String(provider.id || "").trim();
       if (!id) {
@@ -2983,6 +3342,10 @@
       option.textContent = provider.name ? `${provider.name} (${id})` : id;
       modelEditProvider.appendChild(option);
     }
+    const createOpt = document.createElement("option");
+    createOpt.value = NEW_PROVIDER_VALUE;
+    createOpt.textContent = t("newProviderOption");
+    modelEditProvider.appendChild(createOpt);
     if (
       current &&
       Array.from(modelEditProvider.options).some((o) => o.value === current)
@@ -2991,6 +3354,61 @@
     } else if (modelEditProvider.options.length) {
       modelEditProvider.selectedIndex = 0;
     }
+    syncModelNewProviderFields();
+  }
+
+  function syncModelNewProviderFields() {
+    const show =
+      Boolean(modelEditNewProvider) &&
+      modelEditProvider &&
+      modelEditProvider.value === NEW_PROVIDER_VALUE;
+    if (modelEditNewProvider) {
+      modelEditNewProvider.hidden = !show;
+    }
+  }
+
+  function clearModelNewProviderFields() {
+    if (modelEditNewProviderId) modelEditNewProviderId.value = "";
+    if (modelEditNewProviderName) modelEditNewProviderName.value = "";
+    if (modelEditNewProviderUrl) modelEditNewProviderUrl.value = "";
+    if (modelEditNewProviderKey) modelEditNewProviderKey.value = "";
+  }
+
+  function createProviderFromModelForm() {
+    const id = modelEditNewProviderId
+      ? modelEditNewProviderId.value.trim()
+      : "";
+    const baseUrl = modelEditNewProviderUrl
+      ? modelEditNewProviderUrl.value.trim().replace(/\/$/, "")
+      : "";
+    const fail = (msg) => {
+      setModelsHint(msg, true);
+      setJsonHint(msg, true);
+    };
+    if (!id) {
+      fail(t("providerIdRequired"));
+      modelEditNewProviderId?.focus();
+      return null;
+    }
+    if (!baseUrl) {
+      fail(t("providerBaseUrlRequired"));
+      modelEditNewProviderUrl?.focus();
+      return null;
+    }
+    if (settingsProviders.some((p) => p.id === id)) {
+      fail(t("providerExists", id));
+      modelEditNewProviderId?.focus();
+      return null;
+    }
+    const name = modelEditNewProviderName
+      ? modelEditNewProviderName.value.trim()
+      : "";
+    const apiKey = modelEditNewProviderKey
+      ? modelEditNewProviderKey.value
+      : "";
+    const next = { id, name: name || id, baseUrl, apiKey };
+    settingsProviders.push(next);
+    return id;
   }
 
   function openProviderEditModal(index, preset) {
@@ -3076,36 +3494,142 @@
   }
 
   function renderSettingsProviders() {
-    if (!settingsProvidersList) {
+    renderSettingsCatalog();
+  }
+
+  function appendProviderHead(listEl, provider, index) {
+    const row = document.createElement("div");
+    row.className = "settings-provider-head";
+    row.dataset.providerIndex = String(index);
+    const title = provider.name || provider.id || t("providerTitle");
+    row.innerHTML =
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-name"></div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
+      SETTINGS_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
+      DELETE_ICON +
+      `</button>`;
+    row.querySelector(".settings-model-name").textContent = title;
+    row.querySelector(".settings-model-id").textContent =
+      provider.baseUrl || provider.id || "";
+    listEl.appendChild(row);
+  }
+
+  function appendModelRow(listEl, model, index, nested) {
+    const row = document.createElement("div");
+    const enabled = model.enabled !== false;
+    const favorite = model.favorite === true;
+    row.className =
+      "settings-model-row" +
+      (enabled ? "" : " is-disabled") +
+      (nested ? " is-under-provider" : "");
+    row.dataset.index = String(index);
+    const title = model.label || model.id || t("noId");
+    const parts = [];
+    if (model.label && model.id && model.label !== model.id) {
+      parts.push(model.id);
+    }
+    if (!nested) {
+      parts.push(providerLabel(model.providerId));
+    }
+    const subtitle = parts.join(" · ");
+    row.innerHTML =
+      `<label class="settings-model-switch" title="${enabled ? t("disable") : t("enable")}">` +
+      `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
+        enabled ? "checked" : ""
+      } />` +
+      `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+      `</label>` +
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-title">` +
+      `<div class="settings-model-name"></div>` +
+      `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="${t("modelParameters")}" aria-label="${t("modelParameters")}">` +
+      INFO_ICON +
+      `</button>` +
+      `</div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<button type="button" class="icon-btn settings-model-fav${
+        favorite ? " is-on" : ""
+      }" data-index="${index}" title="${
+        favorite ? t("removeFromFavorites") : t("addToFavorites")
+      }" aria-label="${
+        favorite ? t("removeFromFavorites") : t("addToFavorites")
+      }" aria-pressed="${favorite ? "true" : "false"}">` +
+      HEART_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
+      SETTINGS_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
+      DELETE_ICON +
+      `</button>`;
+    row.querySelector(".settings-model-name").textContent = title;
+    row.querySelector(".settings-model-id").textContent = subtitle;
+    listEl.appendChild(row);
+  }
+
+  function renderSettingsCatalog() {
+    if (!settingsModelsList) {
       return;
     }
-    settingsProvidersList.innerHTML = "";
-    if (!settingsProviders.length) {
-      settingsProvidersList.innerHTML =
-        `<div class="settings-models-empty">${t("noProvidersYet")}</div>`;
+    hideSettingsModelTip();
+    sortSettingsModels();
+    settingsModelsList.innerHTML = "";
+    if (!settingsProviders.length && !settingsModels.length) {
+      settingsModelsList.innerHTML =
+        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      syncDefaultModelSelect();
       return;
     }
-    settingsProviders.forEach((provider, index) => {
-      const row = document.createElement("div");
-      row.className = "settings-model-row";
-      row.dataset.index = String(index);
-      const title = provider.name || provider.id || t("providerTitle");
-      row.innerHTML =
-        `<div class="settings-model-info">` +
-        `<div class="settings-model-name"></div>` +
-        `<div class="settings-model-id"></div>` +
-        `</div>` +
-        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
-        SETTINGS_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
-        DELETE_ICON +
-        `</button>`;
-      row.querySelector(".settings-model-name").textContent = title;
-      row.querySelector(".settings-model-id").textContent =
-        provider.baseUrl || provider.id || "";
-      settingsProvidersList.appendChild(row);
+
+    const used = new Set();
+    settingsProviders.forEach((provider, providerIndex) => {
+      appendProviderHead(settingsModelsList, provider, providerIndex);
+      const pid = String(provider.id || "").trim();
+      settingsModels.forEach((model, index) => {
+        if (String(model.providerId || "").trim() !== pid) {
+          return;
+        }
+        used.add(index);
+        appendModelRow(settingsModelsList, model, index, true);
+      });
     });
+
+    const orphans = settingsModels
+      .map((model, index) => ({ model, index }))
+      .filter(({ index }) => !used.has(index));
+    if (orphans.length) {
+      if (settingsProviders.length) {
+        const orphanHead = document.createElement("div");
+        orphanHead.className = "settings-provider-head";
+        orphanHead.innerHTML =
+          `<div class="settings-model-info">` +
+          `<div class="settings-model-name"></div>` +
+          `<div class="settings-model-id"></div>` +
+          `</div>`;
+        orphanHead.querySelector(".settings-model-name").textContent =
+          t("otherProvider");
+        settingsModelsList.appendChild(orphanHead);
+      }
+      for (const { model, index } of orphans) {
+        appendModelRow(
+          settingsModelsList,
+          model,
+          index,
+          Boolean(settingsProviders.length)
+        );
+      }
+    }
+    syncDefaultModelSelect();
+  }
+
+  function renderSettingsModels() {
+    renderSettingsCatalog();
   }
 
   function setJsonHint(text, isError) {
@@ -3253,7 +3777,18 @@
       "vision",
       "multimodal",
     ]);
+    const providerId = String(
+      pickField(raw, [
+        "providerId",
+        "provider_id",
+        "provider",
+        "providerID",
+      ]) || ""
+    ).trim();
     const model = { id, label, enabled: true };
+    if (providerId) {
+      model.providerId = providerId;
+    }
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       model.contextWindow = Math.floor(contextWindow);
     }
@@ -3311,7 +3846,8 @@
     });
   }
 
-  function upsertModels(incoming) {
+  function upsertModels(incoming, defaultProviderId) {
+    const fallbackProvider = String(defaultProviderId || "").trim();
     const byId = new Map();
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
@@ -3326,12 +3862,14 @@
       if (!model) {
         continue;
       }
+      const providerId =
+        String(model.providerId || "").trim() || fallbackProvider;
       if (byId.has(model.id)) {
         const prev = byId.get(model.id);
         byId.set(model.id, {
           id: model.id,
           label: model.label || prev.label || model.id,
-          providerId: prev.providerId || "",
+          providerId: providerId || prev.providerId || "",
           contextWindow:
             model.contextWindow || prev.contextWindow || undefined,
           maxOutputTokens:
@@ -3347,7 +3885,9 @@
         });
         updated += 1;
       } else {
-        byId.set(model.id, cloneModel(model));
+        const next = cloneModel(model);
+        next.providerId = providerId || next.providerId || "";
+        byId.set(model.id, next);
         added += 1;
       }
     }
@@ -3454,8 +3994,32 @@
     return items;
   }
 
+  function resolveProviderFromModelForm() {
+    let providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    if (providerId === NEW_PROVIDER_VALUE) {
+      const createdId = createProviderFromModelForm();
+      if (!createdId) {
+        return null;
+      }
+      providerId = createdId;
+      clearModelNewProviderFields();
+      fillModelProviderSelect(providerId);
+    }
+    if (!providerId) {
+      return null;
+    }
+    return providerId;
+  }
+
   function importModelsFromJson() {
     try {
+      const providerId = resolveProviderFromModelForm();
+      if (!providerId) {
+        if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+          return false;
+        }
+        throw new Error(t("providerRequired"));
+      }
       const items = parseModelsJson(settingsModelsJson?.value || "");
       const normalized = items
         .map((item) => normalizeModelEntry(item))
@@ -3463,10 +4027,8 @@
       if (!normalized.length) {
         throw new Error(t("noModelsWithId"));
       }
-      const result = upsertModels(normalized);
-      setJsonHint(
-        `Done: +${result.added}, updated ${result.updated}, total ${result.total}.`
-      );
+      const result = upsertModels(normalized, providerId);
+      setJsonHint(t("doneImport", result.added, result.updated, result.total));
       return true;
     } catch (error) {
       setJsonHint(error.message || t("importFailed"), true);
@@ -3581,13 +4143,18 @@
     }
     setModelEditMode("manual");
     setJsonHint("");
+    clearModelNewProviderFields();
     if (modelEditId) {
       modelEditId.value = model.id || "";
     }
     if (modelEditLabel) {
       modelEditLabel.value = model.label || "";
     }
-    fillModelProviderSelect(model.providerId || primaryProviderId());
+    const preferredProvider = isNew
+      ? primaryProviderId() || NEW_PROVIDER_VALUE
+      : model.providerId || primaryProviderId() || NEW_PROVIDER_VALUE;
+    fillModelProviderSelect(preferredProvider);
+    syncModelNewProviderFields();
     if (modelEditContext) {
       modelEditContext.value =
         model.contextWindow && Number(model.contextWindow) > 0
@@ -3610,8 +4177,8 @@
       settingsModelsJson.value = "";
     }
     modelEditModal.hidden = false;
-    if (isNew) {
-      modelEditId?.focus();
+    if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+      modelEditNewProviderId?.focus();
     } else {
       modelEditId?.focus();
     }
@@ -3625,6 +4192,10 @@
     modelEditIndex = null;
     setModelEditMode("manual");
     setJsonHint("");
+    clearModelNewProviderFields();
+    if (modelEditNewProvider) {
+      modelEditNewProvider.hidden = true;
+    }
   }
 
   function applyModelEditModal() {
@@ -3644,14 +4215,18 @@
       modelEditId?.focus();
       return;
     }
-    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
-    const providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    const providerId = resolveProviderFromModelForm();
     if (!providerId) {
       setModelsHint(t("providerRequired"), true);
       setModelEditMode("manual");
-      modelEditProvider?.focus();
+      if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+        modelEditNewProviderId?.focus();
+      } else {
+        modelEditProvider?.focus();
+      }
       return;
     }
+    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
     const contextWindow = Number(modelEditContext?.value);
     const maxOutputTokens = Number(modelEditOutput?.value);
     const next = {
@@ -3701,8 +4276,9 @@
     }
     closeModelEditModal();
     setModelsHint("");
+    setProvidersHint("");
     sortSettingsModels();
-    renderSettingsModels();
+    renderSettingsCatalog();
     schedulePersistSettings(0);
   }
 
@@ -3822,71 +4398,6 @@
       settingsModelTipHideTimer = null;
       hideSettingsModelTip();
     }, 40);
-  }
-
-  function renderSettingsModels() {
-    if (!settingsModelsList) {
-      return;
-    }
-    hideSettingsModelTip();
-    sortSettingsModels();
-    settingsModelsList.innerHTML = "";
-    if (!settingsModels.length) {
-      settingsModelsList.innerHTML =
-        `<div class="settings-models-empty">${t("listEmptyAddModel")}</div>`;
-      syncDefaultModelSelect();
-      return;
-    }
-    settingsModels.forEach((model, index) => {
-      const row = document.createElement("div");
-      const enabled = model.enabled !== false;
-      const favorite = model.favorite === true;
-      row.className =
-        "settings-model-row" + (enabled ? "" : " is-disabled");
-      row.dataset.index = String(index);
-      const title = model.label || model.id || t("noId");
-      const parts = [];
-      if (model.label && model.id && model.label !== model.id) {
-        parts.push(model.id);
-      }
-      parts.push(providerLabel(model.providerId));
-      const subtitle = parts.join(" · ");
-      row.innerHTML =
-        `<label class="settings-model-switch" title="${enabled ? t("disable") : t("enable")}">` +
-        `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
-          enabled ? "checked" : ""
-        } />` +
-        `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
-        `</label>` +
-        `<div class="settings-model-info">` +
-        `<div class="settings-model-title">` +
-        `<div class="settings-model-name"></div>` +
-        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="${t("modelParameters")}" aria-label="${t("modelParameters")}">` +
-        INFO_ICON +
-        `</button>` +
-        `</div>` +
-        `<div class="settings-model-id"></div>` +
-        `</div>` +
-        `<button type="button" class="icon-btn settings-model-fav${
-          favorite ? " is-on" : ""
-        }" data-index="${index}" title="${
-          favorite ? t("removeFromFavorites") : t("addToFavorites")
-        }" aria-label="${
-          favorite ? t("removeFromFavorites") : t("addToFavorites")
-        }" aria-pressed="${favorite ? "true" : "false"}">` +
-        HEART_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
-        SETTINGS_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
-        DELETE_ICON +
-        `</button>`;
-      row.querySelector(".settings-model-name").textContent = title;
-      row.querySelector(".settings-model-id").textContent = subtitle;
-      settingsModelsList.appendChild(row);
-    });
-    syncDefaultModelSelect();
   }
 
   function readModelsFromDom() {
@@ -5190,8 +5701,10 @@
   }
 
   function fileLinkHtml(path) {
-    const safe = escapeHtml(path);
-    return `<a class="md-file" href="#" data-path="${safe}">${safe}</a>`;
+    const full = String(path || "");
+    const safePath = escapeHtml(full);
+    const label = escapeHtml(pathBasename(full));
+    return `<a class="md-file" href="#" data-path="${safePath}" title="${safePath}">${label}</a>`;
   }
 
   function splitTrailingPunctuation(url) {
@@ -5210,10 +5723,11 @@
 
     text = text.replace(/@([^\s@]+)/g, (full, path) => {
       const id = tokens.length;
+      const label = pathBasename(path);
       tokens.push(
         `<button type="button" class="msg-mention" data-path="${escapeHtml(
           path
-        )}" title="${escapeHtml(path)}">@${escapeHtml(path)}</button>`
+        )}" title="${escapeHtml(path)}">@${escapeHtml(label)}</button>`
       );
       return `\u0001T${id}\u0001`;
     });
@@ -6862,6 +7376,15 @@
     });
   }
 
+  if (modelEditProvider) {
+    modelEditProvider.addEventListener("change", () => {
+      syncModelNewProviderFields();
+      if (modelEditProvider.value === NEW_PROVIDER_VALUE) {
+        modelEditNewProviderId?.focus();
+      }
+    });
+  }
+
   if (settingsProvidersList) {
     settingsProvidersList.addEventListener("click", (event) => {
       const editBtn = event.target.closest(".settings-provider-edit");
@@ -7125,9 +7648,7 @@
       settingsLanguageValue = settingsLanguage.value || "auto";
       schedulePersistSettings(0);
       showCopyToast(
-        UI_LANG === "ru"
-          ? "Перезагрузите окно VS Code, чтобы язык панели обновился"
-          : "Reload the VS Code window to apply the panel language"
+        UI_LANG === "ru" ? "Перезагрузка окна…" : "Reloading window…"
       );
     });
   }

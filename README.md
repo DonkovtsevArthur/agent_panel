@@ -15,7 +15,7 @@
 ## Возможности
 
 - **Режимы:** Agent · Plan · Ask (плюс кастомные режимы)
-- **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url`, `open_external` (`Plan`/`Ask` работают только на чтение)
+- **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (страница по ссылке: title/текст/цвета), `open_external` (`Plan`/`Ask` работают только на чтение)
 - **MCP tools** — tools с подключённых MCP-серверов доступны агенту в том же loop (`mcp__<id>__…`)
 - **Стриминг** с остановкой, edit & resend, regenerate
 - **@file**, вложения и картинки (vision, если модель поддерживает)
@@ -121,7 +121,7 @@ Marketplace and UI name: **Harbor Agents**.
 ### Features
 
 - **Modes:** Agent · Plan · Ask (plus custom modes)
-- **Tools:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url`, `open_external` (Plan/Ask are read-only)
+- **Tools:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (page by URL: title/text/colors), `open_external` (Plan/Ask are read-only)
 - **MCP tools** — tools from connected MCP servers are available in the same agent loop (`mcp__<id>__…`)
 - **Streaming** with stop; edit & resend; regenerate
 - **@file** mentions, attachments and images (vision when the model supports it)

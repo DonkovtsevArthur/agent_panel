@@ -25,6 +25,7 @@ import {
 import { sanitizeAssistantText } from "./sanitize";
 import { messageHasFigmaUrl } from "./mcp/figma";
 import { getMcpManager } from "./mcpBundle";
+import { parseTextToolCalls } from "./parseTextToolCalls";
 import { runTool } from "./tools";
 import type * as vscode from "vscode";
 
@@ -376,15 +377,24 @@ export async function runAgentTurn(options: {
       "You CAN access http(s) URLs via fetch_url / open_external — never claim you cannot open external URLs.",
     ].join(" ");
   const activeTools = toolsForPolicy(mode.tools, mcpTools);
+  const urlInMessage = /https?:\/\/[^\s)\]>'"]+/i.test(options.userText || "");
   const toolsCapabilityHint = [
     `Built-in tools available this turn: ${activeTools
       .filter((t) => !t.function.name.startsWith("mcp__"))
       .map((t) => t.function.name)
       .join(", ")}.`,
-    "If the user shares an http(s) link and you need its content, call fetch_url immediately.",
-    "If they ask to open a link in the browser, call open_external.",
-    "Never reply that you cannot open or access external URLs.",
-  ].join(" ");
+    "Whenever the user shares an http(s) link and asks ANYTHING about that page (facts, summary, colors, price, author, version, features, text), IMMEDIATELY call fetch_url on the URL before answering.",
+    "Answer only from the tool result (title, description, headings, content, colors, links, jsonLd). Never say you cannot open/load/access external URLs.",
+    "Do not invent login/authorization requirements unless the tool result clearly shows HTTP 401/403 or an explicit auth page.",
+    "If spaShell is true or content is sparse, report what was found and what is missing; do not refuse. Use open_external only if the user wants the browser opened.",
+    "Questions about Harbor Agents / this extension branding: also read package.json (galleryBanner) and media/icon-marketplace.png via read_file.",
+    "Never print tool calls as XML/DSML/text. Use native function/tool calling only.",
+    urlInMessage
+      ? "This user message contains at least one URL — call fetch_url for it if the question refers to that link."
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
@@ -402,7 +412,10 @@ export async function runAgentTurn(options: {
 
   const allowedToolNames = new Set(activeTools.map((t) => t.function.name));
   const editsByPath = new Map<string, FileEditStat>();
-  const toolRounds = Math.max(1, config.maxToolRounds);
+  /** Base limit from settings; auto-extends by +10 while model still needs tools. */
+  let roundLimit = Math.max(1, config.maxToolRounds);
+  const hardCap = Math.max(roundLimit, 60);
+  const extendStep = 10;
   const seenToolCalls = new Set<string>();
   let answered = false;
 
@@ -432,7 +445,7 @@ export async function runAgentTurn(options: {
     );
   };
 
-  for (let round = 0; round < toolRounds; round++) {
+  for (let round = 0; round < roundLimit; round++) {
     if (options.signal?.aborted) {
       throw new Error("aborted");
     }
@@ -453,20 +466,30 @@ export async function runAgentTurn(options: {
     );
     reportUsage(usage, requestMessages);
 
-    const toolCalls = (assistant.tool_calls ?? []).filter(
+    let toolCalls = (assistant.tool_calls ?? []).filter(
       (call) => call?.function?.name
     );
+    let assistantContent = contentAsString(assistant.content);
+
+    if (toolCalls.length === 0 && assistantContent.trim()) {
+      const recovered = parseTextToolCalls(assistantContent);
+      if (recovered.calls.length > 0) {
+        toolCalls = recovered.calls;
+        assistantContent = recovered.cleanedContent;
+      }
+    }
 
     messages.push({
       role: "assistant",
-      content: assistant.content ?? null,
+      content: assistantContent || null,
       tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     });
 
     if (toolCalls.length === 0) {
       options.callbacks.onPhase("done", modeDoneLabel(mode));
       const text = sanitizeAssistantText(
-        contentAsString(assistant.content).trim() || "(пустой ответ)",
+        parseTextToolCalls(assistantContent.trim() || "(пустой ответ)")
+          .cleanedContent || "(пустой ответ)",
         { maxChars: config.maxResponseChars }
       );
       messages[messages.length - 1] = { role: "assistant", content: text };
@@ -546,6 +569,18 @@ export async function runAgentTurn(options: {
     if (repeatedOnly) {
       break;
     }
+
+    // Still needs tools and hit the current limit — extend by +10 up to hardCap.
+    if (round >= roundLimit - 1 && roundLimit < hardCap) {
+      const nextLimit = Math.min(hardCap, roundLimit + extendStep);
+      if (nextLimit > roundLimit) {
+        roundLimit = nextLimit;
+        options.callbacks.onPhase(
+          "thinking",
+          `Продлеваю tools · до ${roundLimit}…`
+        );
+      }
+    }
   }
 
   if (!answered) {
@@ -578,6 +613,11 @@ export async function runAgentTurn(options: {
     if (!text && finalMessage.tool_calls?.length) {
       text =
         "Модель продолжила вызывать инструменты. Попробуйте другую модель (например DeepSeek-V4-Flash) или уточните задачу.";
+    }
+    const recoveredFinal = parseTextToolCalls(text || "");
+    if (recoveredFinal.calls.length > 0) {
+      // Late textual tool dump without another round — strip markup from UI text.
+      text = recoveredFinal.cleanedContent;
     }
     text = sanitizeAssistantText(text || "(пустой ответ)", {
       maxChars: config.maxResponseChars,

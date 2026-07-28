@@ -8,7 +8,11 @@ import {
   getEnabledModels,
   resolveModelEndpoint,
 } from "./config";
-import { resolveUiLanguage } from "./i18n";
+import {
+  defaultCommitMessagePromptForLanguage,
+  isBuiltinCommitMessagePrompt,
+  resolveUiLanguage,
+} from "./i18n";
 import { OpenAICompatibleClient } from "./openaiClient";
 
 const execFileAsync = promisify(execFile);
@@ -397,15 +401,24 @@ export async function generateCommitMessage(
     commitLangSetting === "ru" || commitLangSetting === "en"
       ? commitLangSetting
       : uiLang;
-  const settingsPrompt = config.commitMessage.prompt.trim();
-  const projectRule = settingsPrompt
+  const storedPrompt = String(
+    vscode.workspace
+      .getConfiguration("agentPanel")
+      .get<string>("commitMessage.prompt") || ""
+  ).trim();
+  const hasCustomPrompt =
+    Boolean(storedPrompt) && !isBuiltinCommitMessagePrompt(storedPrompt);
+  const projectRule = hasCustomPrompt
     ? undefined
     : await loadProjectCommitRule(cwd);
+  const instruction = hasCustomPrompt
+    ? storedPrompt
+    : projectRule || defaultCommitMessagePromptForLanguage(lang);
   const prompts = buildPrompts(
     lang,
     collected.diff,
     collected.source,
-    settingsPrompt || projectRule
+    instruction
   );
   const client = new OpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
     rejectUnauthorized: config.rejectUnauthorized,
