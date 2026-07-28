@@ -128,6 +128,12 @@ export interface AgentPanelConfig {
   maxResponseChars: number;
   rejectUnauthorized: boolean;
   caBundlePath: string;
+  commitMessage: {
+    prompt: string;
+    language: "auto" | "en" | "ru";
+    /** Откуда сейчас действуют настройки commit message. */
+    scope: "global" | "workspace";
+  };
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -313,6 +319,30 @@ function compareModelsByFavoriteThenLabel(a: AgentModel, b: AgentModel): number 
   });
 }
 
+function readCommitMessageLanguage(
+  value: unknown
+): "auto" | "en" | "ru" {
+  if (value === "ru" || value === "en" || value === "auto") {
+    return value;
+  }
+  return "auto";
+}
+
+function resolveCommitMessageScope(
+  cfg: vscode.WorkspaceConfiguration
+): "global" | "workspace" {
+  for (const key of ["commitMessage.prompt", "commitMessage.language"]) {
+    const info = cfg.inspect(key);
+    if (
+      info?.workspaceValue !== undefined ||
+      info?.workspaceFolderValue !== undefined
+    ) {
+      return "workspace";
+    }
+  }
+  return "global";
+}
+
 export function getConfig(): AgentPanelConfig {
   const cfg = vscode.workspace.getConfiguration("agentPanel");
   const legacyBaseUrl = normalizeBaseUrl(
@@ -362,6 +392,11 @@ export function getConfig(): AgentPanelConfig {
     caBundlePath:
       cfg.get<string>("caBundlePath") ??
       "~/Documents/Cline/severstal-ca-bundle.pem",
+    commitMessage: {
+      prompt: String(cfg.get<string>("commitMessage.prompt") || "").trim(),
+      language: readCommitMessageLanguage(cfg.get("commitMessage.language")),
+      scope: resolveCommitMessageScope(cfg),
+    },
   };
 }
 

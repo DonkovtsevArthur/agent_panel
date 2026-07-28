@@ -87,6 +87,9 @@ type SettingsPayload = {
   maxTokens: number;
   maxResponseChars: number;
   modes: AgentModeDef[];
+  commitMessagePrompt?: string;
+  commitMessageLanguage?: string;
+  commitMessageScope?: "global" | "workspace";
 };
 
 type WebviewToHost =
@@ -1993,6 +1996,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxTokens: config.maxTokens,
         maxResponseChars: config.maxResponseChars,
         modes: this.serializeModesForUi(),
+        commitMessagePrompt: config.commitMessage.prompt,
+        commitMessageLanguage: config.commitMessage.language,
+        commitMessageScope: config.commitMessage.scope,
+        workspaceName:
+          vscode.workspace.workspaceFolders?.[0]?.name ||
+          vscode.workspace.name ||
+          "",
       },
     });
   }
@@ -2177,6 +2187,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
 
+    await this.saveCommitMessageSettings(raw);
+
     await this.writeModes(raw.modes);
 
     if (
@@ -2188,6 +2200,42 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     this.postModels();
     this.postModes();
+  }
+
+  private async saveCommitMessageSettings(
+    raw: SettingsPayload
+  ): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration("agentPanel");
+    const scope =
+      raw.commitMessageScope === "workspace" ? "workspace" : "global";
+    const target =
+      scope === "workspace"
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+    const prompt = String(raw.commitMessagePrompt || "").trim();
+    const language =
+      raw.commitMessageLanguage === "ru"
+        ? "ru"
+        : raw.commitMessageLanguage === "en"
+          ? "en"
+          : "auto";
+
+    if (scope === "global") {
+      // Сбросить workspace-override, чтобы снова действовали глобальные значения.
+      await cfg.update(
+        "commitMessage.prompt",
+        undefined,
+        vscode.ConfigurationTarget.Workspace
+      );
+      await cfg.update(
+        "commitMessage.language",
+        undefined,
+        vscode.ConfigurationTarget.Workspace
+      );
+    }
+
+    await cfg.update("commitMessage.prompt", prompt, target);
+    await cfg.update("commitMessage.language", language, target);
   }
 
   private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
@@ -2402,6 +2450,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <option value="en">English</option>
             <option value="ru">Русский</option>
           </select>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Commit messages</h3>
+        <p class="settings-section-note" id="settingsCommitNote">Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.</p>
+        <label class="settings-field">
+          <span class="settings-label" id="settingsCommitScopeLabel">Apply to</span>
+          <select id="settingsCommitScope" class="settings-input">
+            <option value="global">All workspaces</option>
+            <option value="workspace">Workspace</option>
+          </select>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
+          <select id="settingsCommitLanguage" class="settings-input">
+            <option value="auto">Auto (follow UI language)</option>
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+          </select>
+        </label>
+        <label class="settings-field">
+          <span class="settings-label" id="settingsCommitPromptLabel">Commit prompt / rule</span>
+          <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short Russian commit messages focused on why."></textarea>
         </label>
       </section>
 
