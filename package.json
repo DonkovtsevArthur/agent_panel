@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.77",
+  "version": "0.7.97",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -28,6 +28,7 @@
   "activationEvents": [
     "onView:agentPanel.chat",
     "onCommand:agentPanel.open",
+    "onCommand:agentPanel.openSettings",
     "onCommand:agentPanel.newChat",
     "onCommand:agentPanel.clearChat",
     "onCommand:agentPanel.addSelectionToChat",
@@ -61,6 +62,11 @@
         "category": "%command.category%"
       },
       {
+        "command": "agentPanel.openSettings",
+        "title": "%command.openSettings.title%",
+        "category": "%command.category%"
+      },
+      {
         "command": "agentPanel.newChat",
         "title": "%command.newAgent.title%",
         "category": "%command.category%"
@@ -91,6 +97,9 @@
       "commandPalette": [
         {
           "command": "agentPanel.open"
+        },
+        {
+          "command": "agentPanel.openSettings"
         },
         {
           "command": "agentPanel.newChat"

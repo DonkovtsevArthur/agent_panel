@@ -5,6 +5,7 @@
   "view.name": "Агенты",
   "command.category": "Гавань агентов",
   "command.open.title": "Открыть",
+  "command.openSettings.title": "Открыть настройки",
   "command.newAgent.title": "Новый агент",
   "command.clearChat.title": "Новый агент",
   "command.attachFile.title": "Прикрепить файл",

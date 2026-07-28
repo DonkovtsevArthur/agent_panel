@@ -2,8 +2,24 @@
   const vscode = acquireVsCodeApi();
   const state = vscode.getState() || {
     selectedModel: null,
+    draftPrompt: "",
+    modelByChat: {},
+    agentsRailOpen: false,
   };
+  if (typeof state.draftPrompt !== "string") {
+    state.draftPrompt = "";
+  }
+  if (!state.modelByChat || typeof state.modelByChat !== "object") {
+    state.modelByChat = {};
+  }
+  if (typeof state.agentsRailOpen !== "boolean") {
+    state.agentsRailOpen = false;
+  }
   const UI_LANG = document.documentElement.lang.startsWith("ru") ? "ru" : "en";
+  const UI_SURFACE =
+    document.documentElement.getAttribute("data-surface") === "settings"
+      ? "settings"
+      : "panel";
   const UI_STRINGS = {
     en: {
       agents: "Agents",
@@ -11,6 +27,9 @@
       archive: "Archive",
       newAgent: "New Agent",
       backToAgents: "Back to agents",
+      showAgentsList: "Show agents",
+      hideAgentsList: "Hide agents",
+      closeSettings: "Close settings",
       saved: "Saved",
       providers: "Providers",
       providersNote:
@@ -40,6 +59,7 @@
       validateTls: "Validate TLS certificate",
       caBundlePath: "CA bundle path",
       agentBehavior: "Agent behavior",
+      advancedSettings: "Advanced",
       commitMessages: "Commit messages",
       commitMessagesNote:
         "Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.",
@@ -181,10 +201,8 @@
       rename: "Rename",
       openFile: "Open file",
       openSourceControl: "Open Source Control",
-      copyCode: "Copy code",
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
-      copy: "Copy",
       attachImage: "Attach image",
       currentModelNoImages: "Current model does not support images",
       addMode: "+ Add mode",
@@ -237,6 +255,9 @@
       archive: "Архив",
       newAgent: "Новый агент",
       backToAgents: "К списку агентов",
+      showAgentsList: "Показать агентов",
+      hideAgentsList: "Скрыть агентов",
+      closeSettings: "Закрыть настройки",
       saved: "Сохранено",
       providers: "Провайдеры",
       providersNote:
@@ -266,6 +287,7 @@
       validateTls: "Проверять TLS-сертификат",
       caBundlePath: "Путь к CA bundle",
       agentBehavior: "Поведение агента",
+      advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
       commitMessagesNote:
         "Промпт для генерации сообщений коммита в SCM. Пусто — правила проекта, затем встроенный дефолт.",
@@ -409,10 +431,8 @@
       rename: "Переименовать",
       openFile: "Открыть файл",
       openSourceControl: "Открыть Source Control",
-      copyCode: "Копировать код",
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
-      copy: "Копировать",
       attachImage: "Прикрепить изображение",
       currentModelNoImages: "Текущая модель не поддерживает изображения",
       addMode: "+ Добавить режим",
@@ -489,6 +509,8 @@
 
   let agentStatusEl = null;
   let agentStatusState = { text: "", hidden: true, phase: "" };
+  const workspaceShell = document.getElementById("workspaceShell");
+  const agentsRailBackdrop = document.getElementById("agentsRailBackdrop");
   const agentsScreen = document.getElementById("agentsScreen");
   const archiveScreen = document.getElementById("archiveScreen");
   const settingsScreen = document.getElementById("settingsScreen");
@@ -501,10 +523,10 @@
   );
   const settingsProvidersList = settingsModelsList;
   const newAgentBtn = document.getElementById("newAgentBtn");
+  const chatNewAgentBtn = document.getElementById("chatNewAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
   const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
-  const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
   const settingsSaveStatus = document.getElementById("settingsSaveStatus");
   const addModelBtn = document.getElementById("addModelBtn");
   const settingsModelsHint = document.getElementById("settingsModelsHint");
@@ -551,7 +573,7 @@
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
   const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
-  const backToAgentsBtn = document.getElementById("backToAgentsBtn");
+  const toggleAgentsRailBtn = document.getElementById("toggleAgentsRailBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
   const openChatSearchBtn = document.getElementById("openChatSearchBtn");
@@ -564,6 +586,10 @@
     ? contextRingEl.querySelector(".context-ring-value")
     : null;
   const contextTipEl = document.getElementById("contextTip");
+
+  let agentsRailOpen = Boolean(state.agentsRailOpen);
+  let workspaceNarrow = false;
+  let currentScreen = "chat";
 
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
   const settingsLanguage = document.getElementById("settingsLanguage");
@@ -737,9 +763,6 @@
   const HEART_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
 
-  const COPY_ICON =
-    '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
-
   const REGENERATE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">refresh</span>';
 
@@ -766,16 +789,34 @@
 
   function localizeStaticUi() {
     document.title = "Harbor Agents";
-    document.querySelectorAll(".agents-title")[0].textContent = t("agents");
-    document.querySelectorAll(".agents-title")[1].textContent = t("archive");
-    document.querySelectorAll(".agents-title")[2].textContent = t("settings");
-    openSettingsBtn.title = openSettingsBtn.setAttribute("aria-label", t("settings")) || t("settings");
-    openArchiveBtn.title = openArchiveBtn.setAttribute("aria-label", t("archive")) || t("archive");
-    newAgentBtn.title = newAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
-    backFromArchiveBtn.title = backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    backFromSettingsBtn.title = backFromSettingsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    backToAgentsBtn.title = backToAgentsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    settingsSaveStatus.textContent = t("saved");
+    const agentTitles = document.querySelectorAll(".agents-title");
+    if (agentTitles[0]) agentTitles[0].textContent = t("agents");
+    if (agentTitles[1]) agentTitles[1].textContent = t("archive");
+    if (openSettingsBtn) {
+      openSettingsBtn.title =
+        openSettingsBtn.setAttribute("aria-label", t("settings")) || t("settings");
+    }
+    if (openArchiveBtn) {
+      openArchiveBtn.title =
+        openArchiveBtn.setAttribute("aria-label", t("archive")) || t("archive");
+    }
+    if (newAgentBtn) {
+      newAgentBtn.title =
+        newAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
+    }
+    if (chatNewAgentBtn) {
+      chatNewAgentBtn.title =
+        chatNewAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
+    }
+    if (backFromArchiveBtn) {
+      backFromArchiveBtn.title =
+        backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) ||
+        t("backToAgents");
+    }
+    syncAgentsRailToggleUi();
+    if (settingsSaveStatus) {
+      settingsSaveStatus.textContent = t("saved");
+    }
     openChatSearchBtn.title = openChatSearchBtn.setAttribute("aria-label", t("searchChat")) || t("searchChat");
     closeChatSearchBtn.title = closeChatSearchBtn.setAttribute("aria-label", t("close")) || t("close");
     chatBranchesEl.setAttribute("aria-label", UI_LANG === "ru" ? "Ветки диалога" : "Conversation branches");
@@ -794,21 +835,21 @@
       UI_LANG === "ru" ? "Отпустите файл, чтобы прикрепить" : "Drop file to attach";
     contextRingEl.setAttribute("aria-label", t("contextUsage"));
     chatAgentNameEl.textContent = t("agent");
-    const sectionTitles = settingsScreen.querySelectorAll(".settings-section-title");
-    const settingsModelsProvidersTitle = document.getElementById(
-      "settingsModelsProvidersTitle"
-    );
-    if (settingsModelsProvidersTitle) {
-      settingsModelsProvidersTitle.textContent = t("modelsProviders");
-    } else if (sectionTitles[0]) {
-      sectionTitles[0].textContent = t("modelsProviders");
-    }
-    if (sectionTitles[1]) sectionTitles[1].textContent = t("modes");
-    if (sectionTitles[2]) sectionTitles[2].textContent = t("languageSection");
-    if (sectionTitles[3]) sectionTitles[3].textContent = t("commitMessages");
-    if (settingsMcpTitle) settingsMcpTitle.textContent = t("mcpServers");
-    if (sectionTitles[5]) sectionTitles[5].textContent = t("tls");
-    if (sectionTitles[6]) sectionTitles[6].textContent = t("agentBehavior");
+    const setText = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = t(key);
+    };
+    setText("settingsModelsProvidersTitle", "modelsProviders");
+    setText("settingsModesTitle", "modes");
+    setText("settingsLanguageTitle", "languageSection");
+    setText("settingsCommitTitle", "commitMessages");
+    setText("settingsMcpTitle", "mcpServers");
+    setText("settingsAgentTitle", "agentBehavior");
+    setText("settingsAdvancedTitle", "advancedSettings");
+    document.querySelectorAll("[data-i18n-nav]").forEach((el) => {
+      const key = el.getAttribute("data-i18n-nav");
+      if (key && t(key)) el.textContent = t(key);
+    });
     const settingsProvidersNote = document.getElementById(
       "settingsProvidersNote"
     );
@@ -845,12 +886,6 @@
     if (settingsModesNote) settingsModesNote.textContent = t("modesNote");
     const addModeBtnEl = document.getElementById("addModeBtn");
     if (addModeBtnEl) addModeBtnEl.textContent = t("addModeShort");
-    const settingsDefaultModelLabel = document.getElementById(
-      "settingsDefaultModelLabel"
-    );
-    if (settingsDefaultModelLabel) {
-      settingsDefaultModelLabel.textContent = t("defaultModel");
-    }
     const settingsLanguageLabel = document.getElementById(
       "settingsLanguageLabel"
     );
@@ -902,25 +937,12 @@
       settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
-    if (settingsMcpEntryTitle) {
-      settingsMcpEntryTitle.textContent = t("mcpServers");
-    }
-    if (settingsMcpEntrySub) {
-      settingsMcpEntrySub.textContent = t("mcpServersOpen");
-    }
-    if (mcpScreenTitle) mcpScreenTitle.textContent = t("mcpServers");
-    if (mcpSubtitle) mcpSubtitle.textContent = t("mcpSubtitle");
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
     if (mcpSearchInput) {
       mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
     }
     if (mcpAddBtn) {
       mcpAddBtn.title = mcpAddBtn.setAttribute("aria-label", t("add")) || t("add");
-    }
-    if (backFromMcpBtn) {
-      backFromMcpBtn.title =
-        backFromMcpBtn.setAttribute("aria-label", t("backToSettings")) ||
-        t("backToSettings");
     }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {
@@ -1134,7 +1156,7 @@
   let editingAttachments = [];
   let editModelMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
-  let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
+  let selectedModelId = "";
   let menuOpen = false;
   let plusMenuOpen = false;
   let modeMenuOpen = false;
@@ -2091,6 +2113,29 @@
     vscode.setState(state);
   }
 
+  function persistDraftPrompt() {
+    if (!promptEl) {
+      return;
+    }
+    state.draftPrompt = promptEl.value || "";
+    persistUiState();
+  }
+
+  function restoreDraftPrompt() {
+    if (!promptEl || UI_SURFACE !== "panel") {
+      return;
+    }
+    const draft = typeof state.draftPrompt === "string" ? state.draftPrompt : "";
+    if (draft && !promptEl.value) {
+      promptEl.value = draft;
+    }
+  }
+
+  function clearDraftPrompt() {
+    state.draftPrompt = "";
+    persistUiState();
+  }
+
   function syncChatScroll(chatId) {
     if (!chatId || !messagesEl || restoringChatScroll) {
       return;
@@ -2407,6 +2452,16 @@
     );
   }
 
+  function assistantActionsHtml(index, showRegen) {
+    const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
+    const regenHtml = showRegen
+      ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
+        REGENERATE_ICON +
+        `</button>`
+      : "";
+    return branchHtml + regenHtml;
+  }
+
   function ensureRegenerateButton() {
     removeRegenerateButtons();
     if (!canRegenerate) {
@@ -2418,11 +2473,7 @@
       return;
     }
     const index = Number(last.dataset.index);
-    const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
-    const regenHtml =
-      `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
-      REGENERATE_ICON +
-      `</button>`;
+    const actionsHtml = assistantActionsHtml(index, true);
 
     const parent = last.parentElement;
     if (parent && parent.classList.contains("msg-wrap-assistant")) {
@@ -2430,21 +2481,21 @@
       if (!actions) {
         actions = document.createElement("div");
         actions.className = "msg-actions";
-        parent.insertBefore(actions, last);
+        parent.appendChild(actions);
       }
-      actions.innerHTML = branchHtml + regenHtml;
+      actions.innerHTML = actionsHtml;
       return;
     }
 
     const actions = document.createElement("div");
     actions.className = "msg-actions";
-    actions.innerHTML = branchHtml + regenHtml;
+    actions.innerHTML = actionsHtml;
 
     const wrap = document.createElement("div");
     wrap.className = "msg-wrap msg-wrap-assistant";
     (parent || messagesEl).insertBefore(wrap, last);
-    wrap.appendChild(actions);
     wrap.appendChild(last);
+    wrap.appendChild(actions);
   }
 
   function renderChatBranches(list) {
@@ -2825,42 +2876,149 @@
     return el;
   }
 
+  function showSettingsCategory(category) {
+    const allowed = [
+      "models",
+      "modes",
+      "language",
+      "commit",
+      "mcp",
+      "agent",
+      "advanced",
+    ];
+    const cat = allowed.includes(category) ? category : "models";
+    const nav = document.getElementById("settingsNav");
+    if (nav) {
+      nav.querySelectorAll(".settings-nav-item").forEach((btn) => {
+        btn.classList.toggle(
+          "is-active",
+          btn.getAttribute("data-settings-cat") === cat
+        );
+      });
+    }
+    document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+      panel.hidden = panel.getAttribute("data-settings-panel") !== cat;
+    });
+    mcpScreenOpen = cat === "mcp";
+    if (cat === "mcp") {
+      renderMcpServersList();
+      vscode.postMessage({ type: "figmaRefreshStatus" });
+      vscode.postMessage({ type: "mcpRefreshList" });
+    } else {
+      closeMcpEditModal();
+      closeMcpCustomEditModal();
+    }
+    if (settingsBody) {
+      settingsBody.scrollTop = 0;
+    }
+  }
+
+  function syncAgentsRailToggleUi() {
+    if (!toggleAgentsRailBtn) {
+      return;
+    }
+    const label = agentsRailOpen ? t("hideAgentsList") : t("showAgentsList");
+    toggleAgentsRailBtn.title = label;
+    toggleAgentsRailBtn.setAttribute("aria-label", label);
+    toggleAgentsRailBtn.setAttribute(
+      "aria-pressed",
+      agentsRailOpen ? "true" : "false"
+    );
+    const icon = toggleAgentsRailBtn.querySelector(".material-symbols-outlined");
+    if (icon) {
+      icon.textContent = agentsRailOpen ? "menu_open" : "menu";
+    }
+  }
+
+  function persistAgentsRailOpen() {
+    state.agentsRailOpen = agentsRailOpen;
+    vscode.setState(state);
+  }
+
+  function applyAgentsRailVisibility() {
+    if (workspaceShell) {
+      workspaceShell.classList.toggle("is-rail-open", agentsRailOpen);
+      workspaceShell.classList.toggle("is-narrow", workspaceNarrow);
+    }
+    if (agentsScreen) {
+      agentsScreen.hidden = !(currentScreen === "chat" && agentsRailOpen);
+    }
+    if (agentsRailBackdrop) {
+      agentsRailBackdrop.hidden = !(
+        currentScreen === "chat" &&
+        agentsRailOpen &&
+        workspaceNarrow
+      );
+    }
+    syncAgentsRailToggleUi();
+  }
+
+  function setAgentsRailOpen(open, opts) {
+    const next = Boolean(open);
+    if (agentsRailOpen === next && !(opts && opts.force)) {
+      applyAgentsRailVisibility();
+      return;
+    }
+    agentsRailOpen = next;
+    persistAgentsRailOpen();
+    applyAgentsRailVisibility();
+  }
+
+  function updateWorkspaceNarrow() {
+    if (!workspaceShell) {
+      return;
+    }
+    const width = workspaceShell.getBoundingClientRect().width;
+    const nextNarrow = width > 0 && width < 600;
+    if (nextNarrow === workspaceNarrow) {
+      return;
+    }
+    workspaceNarrow = nextNarrow;
+    applyAgentsRailVisibility();
+  }
+
   function showScreen(name) {
-    const screen =
+    let screen =
       name === "chat" ||
       name === "archive" ||
       name === "settings" ||
       name === "mcp"
         ? name
         : "agents";
+    if (screen === "agents") {
+      setAgentsRailOpen(true);
+      screen = "chat";
+    }
+    currentScreen = screen;
+    const settingsVisible = screen === "settings" || screen === "mcp";
     mcpScreenOpen = screen === "mcp";
-    if (agentsScreen) {
-      agentsScreen.hidden = screen !== "agents";
+    if (workspaceShell) {
+      workspaceShell.hidden = screen !== "chat";
     }
     if (archiveScreen) {
       archiveScreen.hidden = screen !== "archive";
     }
     if (settingsScreen) {
-      settingsScreen.hidden = screen !== "settings";
+      settingsScreen.hidden = !settingsVisible;
     }
     if (mcpScreen) {
-      mcpScreen.hidden = screen !== "mcp";
+      // Modals only — never show as a full screen.
+      mcpScreen.hidden = true;
     }
     if (chatScreen) {
       chatScreen.hidden = screen !== "chat";
     }
+    applyAgentsRailVisibility();
     if (screen === "chat") {
       setContextUsage(contextUsed, contextMax);
       if (!chatSearchOpen) {
         focusPrompt();
       }
+      updateWorkspaceNarrow();
     }
-    if (screen === "mcp") {
-      renderMcpServersList();
-      vscode.postMessage({ type: "figmaRefreshStatus" });
-      vscode.postMessage({ type: "mcpRefreshList" });
-    }
-    if (screen !== "mcp") {
+    if (settingsVisible) {
+      showSettingsCategory(screen === "mcp" ? "mcp" : "models");
+    } else {
       closeMcpEditModal();
       closeMcpCustomEditModal();
     }
@@ -3588,16 +3746,23 @@
     }
 
     const used = new Set();
+
+    const appendModels = (entries, nested) => {
+      for (const { model, index } of entries) {
+        used.add(index);
+        appendModelRow(settingsModelsList, model, index, nested);
+      }
+    };
+
     settingsProviders.forEach((provider, providerIndex) => {
       appendProviderHead(settingsModelsList, provider, providerIndex);
       const pid = String(provider.id || "").trim();
-      settingsModels.forEach((model, index) => {
-        if (String(model.providerId || "").trim() !== pid) {
-          return;
-        }
-        used.add(index);
-        appendModelRow(settingsModelsList, model, index, true);
-      });
+      const entries = settingsModels
+        .map((model, index) => ({ model, index }))
+        .filter(
+          ({ model }) => String(model.providerId || "").trim() === pid
+        );
+      appendModels(entries, true);
     });
 
     const orphans = settingsModels
@@ -3616,15 +3781,9 @@
           t("otherProvider");
         settingsModelsList.appendChild(orphanHead);
       }
-      for (const { model, index } of orphans) {
-        appendModelRow(
-          settingsModelsList,
-          model,
-          index,
-          Boolean(settingsProviders.length)
-        );
-      }
+      appendModels(orphans, Boolean(settingsProviders.length));
     }
+
     syncDefaultModelSelect();
   }
 
@@ -4069,33 +4228,15 @@
     }
   }
 
+  function firstEnabledSettingsModelId() {
+    const model = settingsModels.find(
+      (m) => String(m.id || "").trim() && m.enabled !== false
+    );
+    return model ? String(model.id).trim() : "";
+  }
+
   function syncDefaultModelSelect() {
-    if (!settingsDefaultModel) {
-      return;
-    }
-    const current = settingsDefaultModelId;
-    settingsDefaultModel.innerHTML = "";
-    for (const model of settingsModels) {
-      const id = String(model.id || "").trim();
-      if (!id || model.enabled === false) {
-        continue;
-      }
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = model.label ? `${model.label} (${id})` : id;
-      settingsDefaultModel.appendChild(option);
-    }
-    if (
-      current &&
-      Array.from(settingsDefaultModel.options).some((o) => o.value === current)
-    ) {
-      settingsDefaultModel.value = current;
-    } else if (settingsDefaultModel.options.length) {
-      settingsDefaultModel.selectedIndex = 0;
-      settingsDefaultModelId = settingsDefaultModel.value;
-    } else {
-      settingsDefaultModelId = "";
-    }
+    settingsDefaultModelId = firstEnabledSettingsModelId();
   }
 
   function setModelEditMode(mode) {
@@ -4459,19 +4600,6 @@
     if (settingsFigmaPatConnectBtn) {
       settingsFigmaPatConnectBtn.disabled =
         connecting || figmaStatus.enabled === false;
-    }
-    if (settingsMcpEntrySub) {
-      if (state === "connected") {
-        settingsMcpEntrySub.textContent = t(
-          "figmaStatusConnected",
-          mode,
-          toolCount
-        );
-      } else if (state === "error") {
-        settingsMcpEntrySub.textContent = t("figmaStatusError", "");
-      } else {
-        settingsMcpEntrySub.textContent = t("mcpServersOpen");
-      }
     }
     renderMcpServersList();
   }
@@ -4980,9 +5108,7 @@
       providers,
       models,
       language: settingsLanguage ? settingsLanguage.value : settingsLanguageValue,
-      defaultModel: settingsDefaultModel
-        ? settingsDefaultModel.value
-        : settingsDefaultModelId,
+      defaultModel: firstEnabledSettingsModelId() || settingsDefaultModelId,
       defaultContextWindow: settingsDefaultContextWindow,
       baseUrl: primary ? String(primary.baseUrl || "").replace(/\/$/, "") : "",
       apiKey: primary ? primary.apiKey || "" : "",
@@ -5359,6 +5485,7 @@
       return;
     }
     if (renamingAgentId) {
+      syncActiveAgentHighlight();
       return;
     }
     const list = agentsData;
@@ -5415,6 +5542,21 @@
       block.querySelector(".agent-chip").textContent = a.model || "—";
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
+    });
+  }
+
+  function syncActiveAgentHighlight() {
+    if (!agentsListEl) {
+      return;
+    }
+    for (const a of agentsData) {
+      a.active = Boolean(activeAgentId) && a.id === activeAgentId;
+    }
+    agentsListEl.querySelectorAll(".agent-block[data-agent]").forEach((el) => {
+      el.classList.toggle(
+        "is-active",
+        Boolean(activeAgentId) && el.getAttribute("data-agent") === activeAgentId
+      );
     });
   }
 
@@ -5920,9 +6062,6 @@
       `<div class="md-pre-wrap${showLines ? " has-lines" : ""}">` +
       metaHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
-      `<button type="button" class="icon-btn md-pre-copy" title="${t("copyCode")}" aria-label="${t("copyCode")}">` +
-      COPY_ICON +
-      `</button>` +
       `</div>\n`
     );
   }
@@ -6142,13 +6281,6 @@
     }, 1200);
   }
 
-  function requestCopyText(text) {
-    const value = String(text || "");
-    if (!value) {
-      return;
-    }
-    vscode.postMessage({ type: "copyText", text: value });
-  }
 
   function setMessageContent(el, role, text) {
     const raw = text || "";
@@ -6250,16 +6382,6 @@
       }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
-      if (!isEditing) {
-        const actions = document.createElement("div");
-        actions.className = "msg-actions";
-        actions.innerHTML =
-          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="${t("copy")}" aria-label="${t("copy")}">` +
-          COPY_ICON +
-          `</button>` +
-          branchButtonHtml(index);
-        wrap.appendChild(actions);
-      }
       wrap.appendChild(el);
       startChatTurn().appendChild(wrap);
       keepStatusAtEnd();
@@ -6278,15 +6400,9 @@
         regenAssistantIndex >= 0 &&
         index === regenAssistantIndex &&
         canRegenerate;
-      actions.innerHTML =
-        branchButtonHtml(index) +
-        (showRegen
-          ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
-            REGENERATE_ICON +
-            `</button>`
-          : "");
-      wrap.appendChild(actions);
+      actions.innerHTML = assistantActionsHtml(index, showRegen);
       wrap.appendChild(el);
+      wrap.appendChild(actions);
       ensureChatTurn().appendChild(wrap);
       keepStatusAtEnd();
       if (shouldScroll) {
@@ -6401,6 +6517,9 @@
   function setSelectedModel(id, notify) {
     selectedModelId = id || "";
     state.selectedModel = selectedModelId;
+    if (activeChatId) {
+      state.modelByChat[activeChatId] = selectedModelId;
+    }
     vscode.setState(state);
     updateTriggerLabel();
     updateVisionUi();
@@ -6410,6 +6529,30 @@
     if (notify && selectedModelId) {
       vscode.postMessage({ type: "modelChanged", model: selectedModelId });
     }
+  }
+
+  function resolvePreferredModelId(preferredId) {
+    const fromHost = String(preferredId || "").trim();
+    if (fromHost && models.some((m) => m.id === fromHost)) {
+      return fromHost;
+    }
+    if (activeChatId && state.modelByChat[activeChatId]) {
+      const fromChat = String(state.modelByChat[activeChatId] || "").trim();
+      if (fromChat && models.some((m) => m.id === fromChat)) {
+        return fromChat;
+      }
+    }
+    if (fromHost) {
+      return models[0]?.id || "";
+    }
+    return models[0]?.id || "";
+  }
+
+  function fillModels(nextModels, preferredId) {
+    const incoming = Array.isArray(nextModels) ? nextModels : [];
+    models = incoming.length ? incoming : DEFAULT_MODELS.slice();
+    const preferred = resolvePreferredModelId(preferredId);
+    setSelectedModel(preferred, false);
   }
 
   function renderMenu() {
@@ -6674,21 +6817,8 @@
     }
   }
 
-  function fillModels(nextModels, preferredId) {
-    const incoming = Array.isArray(nextModels) ? nextModels : [];
-    models = incoming.length ? incoming : DEFAULT_MODELS.slice();
-    const preferred =
-      preferredId ||
-      selectedModelId ||
-      state.selectedModel ||
-      models[0]?.id ||
-      "";
-    const exists = models.some((m) => m.id === preferred);
-    setSelectedModel(exists ? preferred : models[0]?.id || "", false);
-  }
-
   // сразу показать модель, не дожидаясь init
-  fillModels(DEFAULT_MODELS, selectedModelId);
+  fillModels(DEFAULT_MODELS, "");
 
   function selectModelById(id) {
     if (!id || busy) {
@@ -6796,6 +6926,7 @@
       modeForSend = normalizeAgentModeUi(command.mode);
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
+        clearDraftPrompt();
         closeMentionMenu();
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
         focusPrompt();
@@ -6815,6 +6946,7 @@
     uiMessagesCache.push({ role: "user", text, attachments });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
+    clearDraftPrompt();
     clearPendingAttachments();
     clearPendingSelections();
     closeSlashMenu();
@@ -7140,6 +7272,12 @@
     });
   }
 
+  if (chatNewAgentBtn) {
+    chatNewAgentBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "newAgent" });
+    });
+  }
+
   if (openArchiveBtn) {
     openArchiveBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "showArchive" });
@@ -7154,12 +7292,6 @@
 
   if (backFromArchiveBtn) {
     backFromArchiveBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showAgents" });
-    });
-  }
-
-  if (backFromSettingsBtn) {
-    backFromSettingsBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "showAgents" });
     });
   }
@@ -7197,13 +7329,27 @@
 
   if (openMcpServersBtn) {
     openMcpServersBtn.addEventListener("click", () => {
-      showScreen("mcp");
+      showScreen("settings");
+      showSettingsCategory("mcp");
+    });
+  }
+  const settingsNav = document.getElementById("settingsNav");
+  if (settingsNav) {
+    settingsNav.addEventListener("click", (event) => {
+      const btn = event.target.closest(".settings-nav-item");
+      if (!btn) {
+        return;
+      }
+      const cat = btn.getAttribute("data-settings-cat");
+      if (cat) {
+        showSettingsCategory(cat);
+      }
     });
   }
   if (backFromMcpBtn) {
     backFromMcpBtn.addEventListener("click", () => {
       closeMcpEditModal();
-      showScreen("settings");
+      showSettingsCategory("models");
     });
   }
   if (mcpSearchInput) {
@@ -7637,12 +7783,6 @@
     });
   }
 
-  if (settingsDefaultModel) {
-    settingsDefaultModel.addEventListener("change", () => {
-      settingsDefaultModelId = settingsDefaultModel.value;
-      schedulePersistSettings(0);
-    });
-  }
   if (settingsLanguage) {
     settingsLanguage.addEventListener("change", () => {
       settingsLanguageValue = settingsLanguage.value || "auto";
@@ -7653,11 +7793,26 @@
     });
   }
 
-  if (backToAgentsBtn) {
-    backToAgentsBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showAgents" });
+  if (toggleAgentsRailBtn) {
+    toggleAgentsRailBtn.addEventListener("click", () => {
+      setAgentsRailOpen(!agentsRailOpen);
     });
   }
+
+  if (agentsRailBackdrop) {
+    agentsRailBackdrop.addEventListener("click", () => {
+      setAgentsRailOpen(false);
+    });
+  }
+
+  if (workspaceShell && typeof ResizeObserver === "function") {
+    const shellRo = new ResizeObserver(() => {
+      updateWorkspaceNarrow();
+    });
+    shellRo.observe(workspaceShell);
+  }
+  updateWorkspaceNarrow();
+  applyAgentsRailVisibility();
 
   if (chatBranchesEl) {
     chatBranchesEl.addEventListener("click", (event) => {
@@ -7891,6 +8046,9 @@
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
+        if (workspaceNarrow) {
+          setAgentsRailOpen(false);
+        }
         vscode.postMessage({
           type: "openAgent",
           agentId: agentRow.dataset.agent,
@@ -7909,6 +8067,9 @@
         return;
       }
       event.preventDefault();
+      if (workspaceNarrow) {
+        setAgentsRailOpen(false);
+      }
       vscode.postMessage({
         type: "openAgent",
         agentId: agentRow.dataset.agent,
@@ -8003,35 +8164,6 @@
       vscode.postMessage({ type: "branchFromMessage", messageIndex: index });
       return;
     }
-    const copyCodeBtn = event.target.closest(".md-pre-copy");
-    if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const wrap = copyCodeBtn.closest(".md-pre-wrap");
-      let text = "";
-      if (wrap && wrap.classList.contains("has-lines")) {
-        text = Array.from(wrap.querySelectorAll(".md-line-text"))
-          .map((el) => el.textContent || "")
-          .join("\n");
-      } else {
-        const code = wrap ? wrap.querySelector("code") : null;
-        text = code ? code.textContent || "" : "";
-      }
-      requestCopyText(text);
-      return;
-    }
-    const copyMsgBtn = event.target.closest(".msg-copy");
-    if (copyMsgBtn && messagesEl.contains(copyMsgBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const wrap = copyMsgBtn.closest(".msg-wrap");
-      const msg = wrap
-        ? wrap.querySelector(".msg")
-        : copyMsgBtn.closest(".msg");
-      const text = msg ? msg.dataset.raw || "" : "";
-      requestCopyText(text);
-      return;
-    }
     const mentionBtn = event.target.closest(".msg-mention");
     if (mentionBtn && messagesEl.contains(mentionBtn)) {
       event.preventDefault();
@@ -8113,6 +8245,7 @@
   });
 
   promptEl.addEventListener("input", () => {
+    persistDraftPrompt();
     if (!onSlashInput(promptEl)) {
       onMentionInput(promptEl);
     }
@@ -8167,6 +8300,9 @@
     const msg = event.data;
     switch (msg.type) {
       case "init":
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
         fillModels(msg.models, msg.selectedModel);
         if (msg.modes) {
           applyModes(msg.modes);
@@ -8177,9 +8313,6 @@
         editingAttachments = [];
         clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
-        if (msg.chatId) {
-          activeChatId = msg.chatId;
-        }
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
         renderMessages(msg.uiMessages || [], "restore", msg.scrollTop);
         if (msg.agentId) {
@@ -8245,11 +8378,14 @@
         break;
       case "showSettings":
         showScreen("settings");
+        showSettingsCategory(msg.openMcp ? "mcp" : "models");
         setBusy(Boolean(msg.busy));
         break;
       case "settings":
         fillSettings(msg.settings);
-        showScreen("settings");
+        if (UI_SURFACE === "settings" && settingsScreen && settingsScreen.hidden) {
+          showScreen("settings");
+        }
         break;
       case "figmaStatus":
         renderFigmaStatus(msg.status || {});
@@ -8260,10 +8396,11 @@
         break;
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
-        showScreen("settings");
-        setTimeout(() => showScreen("mcp"), 0);
         break;
       case "showChat":
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
@@ -8271,9 +8408,6 @@
         editingUserText = "";
         editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
-        if (msg.chatId) {
-          activeChatId = msg.chatId;
-        }
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages, "restore", msg.scrollTop);
@@ -8281,6 +8415,7 @@
         if (msg.agentId) {
           activeAgentId = msg.agentId;
         }
+        syncActiveAgentHighlight();
         renderChatBranches(msg.branches);
         if (
           chatAgentNameEl &&
@@ -8342,7 +8477,7 @@
         setContextUsage(msg.used || 0, msg.max || contextMax);
         break;
       case "modelsUpdated":
-        fillModels(msg.models, getSelectedModel() || msg.selectedModel);
+        fillModels(msg.models, msg.selectedModel);
         break;
       case "modesUpdated":
         applyModes(msg.modes);
@@ -8458,13 +8593,14 @@
     }
   });
 
-  vscode.postMessage({ type: "ready" });
+  vscode.postMessage({ type: "ready", surface: UI_SURFACE });
   setContextUsage(0, contextMax);
+  restoreDraftPrompt();
 
   // если init потерялся — перезапросим модели
   setTimeout(() => {
-    if (!models.length) {
-      vscode.postMessage({ type: "ready" });
+    if (UI_SURFACE === "panel" && !models.length) {
+      vscode.postMessage({ type: "ready", surface: UI_SURFACE });
     }
   }, 400);
 })();

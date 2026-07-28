@@ -5,6 +5,7 @@
   "view.name": "Agents",
   "command.category": "Harbor Agents",
   "command.open.title": "Open",
+  "command.openSettings.title": "Open Settings",
   "command.newAgent.title": "New Agent",
   "command.clearChat.title": "New Agent",
   "command.attachFile.title": "Attach File",
