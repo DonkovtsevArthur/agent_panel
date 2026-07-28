@@ -1,8 +1,8 @@
 {
   "name": "vscode-agent-panel",
-  "displayName": "Harbor Agents",
-  "description": "Локальная агентская панель для VS Code. Свой OpenAI-compatible API — чаты у вас, без бэкенда Harbor.",
-  "version": "0.7.17",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.7.46",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -38,7 +38,7 @@
       "activitybar": [
         {
           "id": "agentPanel",
-          "title": "Гавань агентов",
+          "title": "%viewsContainer.title%",
           "icon": "media/icon.svg"
         }
       ]
@@ -48,7 +48,7 @@
         {
           "type": "webview",
           "id": "agentPanel.chat",
-          "name": "Агенты",
+          "name": "%view.name%",
           "visibility": "visible"
         }
       ]
@@ -56,28 +56,28 @@
     "commands": [
       {
         "command": "agentPanel.open",
-        "title": "Открыть",
-        "category": "Гавань агентов"
+        "title": "%command.open.title%",
+        "category": "%command.category%"
       },
       {
         "command": "agentPanel.newChat",
-        "title": "Новый агент",
-        "category": "Гавань агентов"
+        "title": "%command.newAgent.title%",
+        "category": "%command.category%"
       },
       {
         "command": "agentPanel.clearChat",
-        "title": "Новый агент",
-        "category": "Гавань агентов"
+        "title": "%command.clearChat.title%",
+        "category": "%command.category%"
       },
       {
         "command": "agentPanel.pickAttachments",
-        "title": "Прикрепить файл",
-        "category": "Гавань агентов"
+        "title": "%command.attachFile.title%",
+        "category": "%command.category%"
       },
       {
         "command": "agentPanel.addSelectionToChat",
-        "title": "Добавить выделение в чат",
-        "category": "Гавань агентов"
+        "title": "%command.addSelection.title%",
+        "category": "%command.category%"
       }
     ],
     "menus": {
@@ -110,22 +110,33 @@
       }
     ],
     "configuration": {
-      "title": "Гавань агентов",
+      "title": "%config.title%",
       "properties": {
+        "agentPanel.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "en", "ru"],
+          "enumDescriptions": [
+            "%config.language.enum.auto%",
+            "%config.language.enum.en%",
+            "%config.language.enum.ru%"
+          ],
+          "description": "%config.language.description%"
+        },
         "agentPanel.baseUrl": {
           "type": "string",
           "default": "https://ai-platform.kube.severstal.severstalgroup.com/openai",
-          "description": "Legacy: зеркало baseUrl основного провайдера (лучше задавать в agentPanel.providers)"
+          "description": "%config.baseUrl.description%"
         },
         "agentPanel.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Legacy: зеркало apiKey основного провайдера (лучше задавать в agentPanel.providers). Не коммитьте ключ в git."
+          "description": "%config.apiKey.description%"
         },
         "agentPanel.providers": {
           "type": "array",
           "default": [],
-          "description": "OpenAI-compatible провайдеры (base URL + API key). Если пусто — создаётся из legacy baseUrl/apiKey.",
+          "description": "%config.providers.description%",
           "items": {
             "type": "object",
             "required": [
@@ -135,19 +146,19 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "Стабильный id провайдера (например default, zai, kimi)"
+                "description": "%config.providers.id.description%"
               },
               "name": {
                 "type": "string",
-                "description": "Отображаемое имя"
+                "description": "%config.providers.name.description%"
               },
               "baseUrl": {
                 "type": "string",
-                "description": "Base URL без завершающего слэша"
+                "description": "%config.providers.baseUrl.description%"
               },
               "apiKey": {
                 "type": "string",
-                "description": "API key этого провайдера"
+                "description": "%config.providers.apiKey.description%"
               }
             }
           }
@@ -180,7 +191,7 @@
               "label": "Gemini 2.5 Flash"
             }
           ],
-          "description": "Список моделей, доступных в панели агента (id как в /openai/models)",
+          "description": "%config.models.description%",
           "items": {
             "type": "object",
             "required": [
@@ -189,39 +200,39 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "ID модели, который уходит в API"
+                "description": "%config.models.id.description%"
               },
               "label": {
                 "type": "string",
-                "description": "Отображаемое имя в селекторе"
+                "description": "%config.models.label.description%"
               },
               "providerId": {
                 "type": "string",
-                "description": "id провайдера из agentPanel.providers"
+                "description": "%config.models.providerId.description%"
               },
               "contextWindow": {
                 "type": "number",
                 "minimum": 1024,
-                "description": "Размер контекстного окна модели в токенах (max input, для индикатора)"
+                "description": "%config.models.contextWindow.description%"
               },
               "maxOutputTokens": {
                 "type": "number",
                 "minimum": 1,
-                "description": "Лимит выходных токенов модели (max_output_tokens)"
+                "description": "%config.models.maxOutputTokens.description%"
               },
               "enabled": {
                 "type": "boolean",
                 "default": true,
-                "description": "Показывать модель в селекторе чата"
+                "description": "%config.models.enabled.description%"
               },
               "favorite": {
                 "type": "boolean",
                 "default": false,
-                "description": "Избранная модель — выше в селекторе чата"
+                "description": "%config.models.favorite.description%"
               },
               "supportsVision": {
                 "type": "boolean",
-                "description": "Модель принимает изображения (vision). Если не задано — определяется по id"
+                "description": "%config.models.supportsVision.description%"
               }
             }
           }
@@ -229,23 +240,23 @@
         "agentPanel.defaultModel": {
           "type": "string",
           "default": "DeepSeek-V4-Flash",
-          "description": "Модель по умолчанию (должна совпадать с id из agentPanel.models)"
+          "description": "%config.defaultModel.description%"
         },
         "agentPanel.defaultContextWindow": {
           "type": "number",
           "default": 128000,
           "minimum": 1024,
-          "description": "Контекстное окно по умолчанию (токены), если у модели не задан contextWindow"
+          "description": "%config.defaultContextWindow.description%"
         },
         "agentPanel.systemPrompt": {
           "type": "string",
-          "default": "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.",
-          "description": "Системный промпт агента"
+          "default": "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually.",
+          "description": "%config.systemPrompt.description%"
         },
         "agentPanel.modes": {
           "type": "array",
           "default": [],
-          "description": "Пользовательские режимы composer (Агент/План/Спросить встроены). Каждый: { id, label, description?, tools: \"agent\"|\"readonly\", prompt?, enabled? }",
+          "description": "%config.modes.description%",
           "items": {
             "type": "object",
             "required": [
@@ -288,31 +299,31 @@
           "default": 20,
           "minimum": 1,
           "maximum": 50,
-          "description": "Максимум раундов tool-calling за один запрос (после лимита запрашивается финальный ответ без tools)"
+          "description": "%config.maxToolRounds.description%"
         },
         "agentPanel.maxTokens": {
           "type": "number",
           "default": 4096,
           "minimum": 64,
           "maximum": 128000,
-          "description": "max_tokens для chat/completions"
+          "description": "%config.maxTokens.description%"
         },
         "agentPanel.maxResponseChars": {
           "type": "number",
           "default": 12000,
           "minimum": 1000,
           "maximum": 200000,
-          "description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы."
+          "description": "%config.maxResponseChars.description%"
         },
         "agentPanel.rejectUnauthorized": {
           "type": "boolean",
           "default": false,
-          "description": "Проверять TLS-сертификат. Для Severstal обычно false (корпоративный CA), либо true + caBundlePath"
+          "description": "%config.rejectUnauthorized.description%"
         },
         "agentPanel.caBundlePath": {
           "type": "string",
           "default": "~/Documents/Cline/severstal-ca-bundle.pem",
-          "description": "Путь к CA bundle (как в Continue requestOptions.caBundlePath)"
+          "description": "%config.caBundlePath.description%"
         }
       }
     }

@@ -1,5 +1,10 @@
 import * as vscode from "vscode";
 import {
+  defaultProviderNameForLanguage,
+  defaultSystemPromptForLanguage,
+  resolveUiLanguage,
+} from "./i18n";
+import {
   AgentModeDef,
   mergeModes,
   parseCustomModes,
@@ -106,6 +111,7 @@ const DEFAULT_MODELS: AgentModel[] = [
 ];
 
 export interface AgentPanelConfig {
+  language: "auto" | "en" | "ru";
   /** @deprecated legacy mirror of primary provider.baseUrl */
   baseUrl: string;
   /** @deprecated legacy mirror of primary provider.apiKey */
@@ -167,7 +173,8 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
 export function ensureProviders(
   providers: AgentProvider[],
   legacyBaseUrl: string,
-  legacyApiKey: string
+  legacyApiKey: string,
+  language: "auto" | "en" | "ru" = "auto"
 ): AgentProvider[] {
   if (providers.length > 0) {
     return providers;
@@ -178,7 +185,7 @@ export function ensureProviders(
   }
   const provider: AgentProvider = {
     id: DEFAULT_PROVIDER_ID,
-    name: "Основной",
+    name: defaultProviderNameForLanguage(resolveUiLanguage(language)),
     baseUrl,
   };
   if (legacyApiKey) {
@@ -313,10 +320,17 @@ export function getConfig(): AgentPanelConfig {
       "https://ai-platform.kube.severstal.severstalgroup.com/openai"
   );
   const legacyApiKey = cfg.get<string>("apiKey") ?? "";
+  const language =
+    cfg.get<"auto" | "en" | "ru">("language") === "ru"
+      ? "ru"
+      : cfg.get<"auto" | "en" | "ru">("language") === "en"
+        ? "en"
+        : "auto";
   const providers = ensureProviders(
     readProviders(cfg),
     legacyBaseUrl,
-    legacyApiKey
+    legacyApiKey,
+    language
   );
   const models = assignMissingProviderIds(readModels(cfg), providers);
   const modes = parseCustomModes(cfg.get<unknown>("modes"));
@@ -330,6 +344,7 @@ export function getConfig(): AgentPanelConfig {
       : DEFAULT_CONTEXT_WINDOW;
 
   return {
+    language,
     baseUrl: primary?.baseUrl || legacyBaseUrl,
     apiKey: primary?.apiKey || legacyApiKey,
     providers,
@@ -339,7 +354,7 @@ export function getConfig(): AgentPanelConfig {
     defaultContextWindow,
     systemPrompt:
       cfg.get<string>("systemPrompt") ??
-      "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.",
+      defaultSystemPromptForLanguage(resolveUiLanguage(language)),
     maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
     maxTokens: cfg.get<number>("maxTokens") ?? 4096,
     maxResponseChars: cfg.get<number>("maxResponseChars") ?? 12_000,

@@ -2408,6 +2408,32 @@ button.primary:disabled {
 
 .agent-main {
   min-width: 0;
+  position: relative;
+  padding-left: 18px;
+}
+
+.agent-run-status {
+  width: 12px;
+  height: 12px;
+  position: absolute;
+  left: 0;
+  top: 44%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.agent-run-status-empty {
+  opacity: 0;
+}
+
+.agent-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .agent-name {
@@ -2425,6 +2451,114 @@ button.primary:disabled {
   padding: 0;
   margin: 0;
   vertical-align: top;
+}
+
+.agent-run-status-running {
+  width: 12px;
+  height: 12px;
+  opacity: 0.95;
+}
+
+.agent-run-status-running .cube-bit {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  box-sizing: border-box;
+  animation: cube-build 0.95s ease-in-out infinite;
+}
+
+.agent-run-status-running .cube-bit-1 {
+  left: 0;
+  top: 0;
+  animation-delay: 0s;
+}
+
+.agent-run-status-running .cube-bit-2 {
+  left: 7px;
+  top: 0;
+  animation-delay: 0.18s;
+}
+
+.agent-run-status-running .cube-bit-3 {
+  left: 0;
+  top: 7px;
+  animation-delay: 0.36s;
+}
+
+.agent-run-status-running .cube-bit-4 {
+  left: 7px;
+  top: 7px;
+  animation-delay: 0.54s;
+}
+
+.agent-run-status-success .cube-bit,
+.agent-run-status-error .cube-bit {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  box-sizing: border-box;
+}
+
+.agent-run-status-success .cube-bit-1,
+.agent-run-status-error .cube-bit-1 {
+  left: 0;
+  top: 0;
+}
+
+.agent-run-status-success .cube-bit-2,
+.agent-run-status-error .cube-bit-2 {
+  left: 7px;
+  top: 0;
+}
+
+.agent-run-status-success .cube-bit-3,
+.agent-run-status-error .cube-bit-3 {
+  left: 0;
+  top: 7px;
+}
+
+.agent-run-status-success .cube-bit-4,
+.agent-run-status-error .cube-bit-4 {
+  left: 7px;
+  top: 7px;
+}
+
+.agent-run-status-success .cube-bit {
+  border: 1px solid var(--vscode-testing-iconPassed, #73c991);
+  background: color-mix(
+    in srgb,
+    var(--vscode-testing-iconPassed, #73c991) 55%,
+    transparent
+  );
+}
+
+.agent-run-status-error .cube-bit {
+  border: 1px solid var(--vscode-errorForeground, #f14c4c);
+  background: color-mix(
+    in srgb,
+    var(--vscode-errorForeground, #f14c4c) 55%,
+    transparent
+  );
+}
+
+@keyframes cube-build {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+    border-color: color-mix(in srgb, var(--vscode-foreground) 24%, transparent);
+    background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+    border-color: var(--vscode-charts-blue, #3794ff);
+    background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 30%, transparent);
+  }
 }
 
 .agent-name:hover {
