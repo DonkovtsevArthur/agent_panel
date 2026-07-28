@@ -1909,6 +1909,301 @@ button.primary:disabled {
   letter-spacing: 0.03em;
 }
 
+.settings-section-note {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  opacity: 0.7;
+  line-height: 1.35;
+}
+
+.settings-figma-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.settings-figma-pat {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+}
+
+#settingsFigmaStatus,
+#mcpEditStatus {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.mcp-settings-entry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.mcp-settings-entry:hover {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 45%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.mcp-settings-entry-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.mcp-settings-entry-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-settings-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-settings-entry-sub {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.mcp-settings-entry-chevron {
+  opacity: 0.55;
+}
+
+.mcp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 12px 16px;
+}
+
+.mcp-subtitle {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.mcp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mcp-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+}
+
+.mcp-search .material-symbols-outlined {
+  opacity: 0.6;
+  font-size: 18px;
+}
+
+.mcp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mcp-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.mcp-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.mcp-section-count {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.mcp-servers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-server-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.mcp-server-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.mcp-server-main {
+  min-width: 0;
+}
+
+.mcp-server-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.mcp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vscode-descriptionForeground, #888);
+  flex-shrink: 0;
+}
+
+.mcp-status-dot.is-connected {
+  background: #3fb950;
+}
+
+.mcp-status-dot.is-error {
+  background: var(--vscode-errorForeground, #f44747);
+}
+
+.mcp-status-dot.is-connecting {
+  background: #d29922;
+}
+
+.mcp-server-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground, #888);
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.mcp-server-meta,
+.mcp-server-error,
+.mcp-server-path {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground, #888);
+  word-break: break-word;
+}
+
+.mcp-server-error {
+  color: var(--vscode-errorForeground, #f44747);
+}
+
+.mcp-server-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mcp-switch {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.mcp-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.mcp-switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.mcp-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  transition: transform 0.12s ease;
+}
+
+.mcp-switch input:checked + .mcp-switch-track {
+  background: var(--vscode-button-background, #0e639c);
+}
+
+.mcp-switch input:checked + .mcp-switch-track::after {
+  transform: translateX(16px);
+}
+
+.mcp-empty {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
 .settings-field {
   display: flex;
   flex-direction: column;
@@ -2007,13 +2302,6 @@ button.primary:disabled {
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-foreground);
   border-color: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
-}
-
-.settings-section-note {
-  margin: -4px 0 10px;
-  font-size: 12px;
-  opacity: 0.7;
-  line-height: 1.35;
 }
 
 .settings-model-row {

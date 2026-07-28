@@ -134,6 +134,9 @@ export interface AgentPanelConfig {
     /** Откуда сейчас действуют настройки commit message. */
     scope: "global" | "workspace";
   };
+  figma: {
+    enabled: boolean;
+  };
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -396,6 +399,9 @@ export function getConfig(): AgentPanelConfig {
       prompt: String(cfg.get<string>("commitMessage.prompt") || "").trim(),
       language: readCommitMessageLanguage(cfg.get("commitMessage.language")),
       scope: resolveCommitMessageScope(cfg),
+    },
+    figma: {
+      enabled: cfg.get<boolean>("figma.enabled") !== false,
     },
   };
 }

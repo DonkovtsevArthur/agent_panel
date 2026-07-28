@@ -23,7 +23,9 @@ import {
   ToolCall,
 } from "./openaiClient";
 import { sanitizeAssistantText } from "./sanitize";
-import { READONLY_TOOL_NAMES, runTool } from "./tools";
+import { messageHasFigmaUrl } from "./mcp/figma";
+import { getMcpManager } from "./mcpBundle";
+import { runTool } from "./tools";
 import type * as vscode from "vscode";
 
 function contentCharLength(content: ChatMessage["content"]): number {
@@ -71,6 +73,8 @@ export interface AgentRunCallbacks {
   onAssistant: (text: string) => void;
   onReview: (edits: FileEditStat[]) => void;
   onUsage?: (usage: ContextUsageInfo) => void;
+  /** User pasted a Figma URL but MCP is not connected. */
+  onFigmaNeedsConnect?: () => void;
 }
 
 function toolSignature(call: ToolCall): string {
@@ -137,11 +141,19 @@ function formatToolStatus(
         detail: path ? `Пишет · ${truncateStatus(path)}` : "Редактирует…",
       };
     }
-    default:
+    default: {
+      if (name.startsWith("mcp__")) {
+        const short = name.replace(/^mcp__[^_]+__/, "") || name;
+        return {
+          phase: "reading",
+          detail: `Figma · ${truncateStatus(short)}`,
+        };
+      }
       return {
         phase: "thinking",
         detail: name ? `Tool · ${truncateStatus(name)}` : "Думает…",
       };
+    }
   }
 }
 
@@ -295,7 +307,6 @@ export async function runAgentTurn(options: {
   const mode = getModeById(
     options.agentMode ?? (options.planMode ? "plan" : "agent")
   );
-  const readonly = isReadonlyPolicy(mode.tools);
   const endpoint = resolveModelEndpoint(options.model);
   if (!endpoint.baseUrl) {
     throw new Error(
@@ -323,10 +334,39 @@ export async function runAgentTurn(options: {
     options.attachments,
     options.storageUri
   );
+  const mcp = getMcpManager();
+  const figmaEnabled = config.figma.enabled;
+  if (mcp && figmaEnabled) {
+    await mcp.tryQuietReconnect();
+  }
+  const mcpTools =
+    mcp && figmaEnabled
+      ? await mcp.listOpenAiTools(isReadonlyPolicy(mode.tools))
+      : [];
+  const figmaConnected = Boolean(
+    mcp?.getStatus().state === "connected" &&
+      mcpTools.some((t) => t.function.name.startsWith("mcp__figma__"))
+  );
+  if (
+    options.callbacks.onFigmaNeedsConnect &&
+    messageHasFigmaUrl(options.userText) &&
+    !figmaConnected
+  ) {
+    options.callbacks.onFigmaNeedsConnect();
+  }
+
   const modePrompt = mode.prompt?.trim();
+  const toolNames = mcpTools.map((t) => t.function.name);
+  const mcpHint =
+    mcp?.buildSystemHint(toolNames) ||
+    "No MCP tools are currently connected.";
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
+    {
+      role: "system",
+      content: mcpHint,
+    },
     ...(modePrompt
       ? [{ role: "system" as const, content: modePrompt }]
       : []),
@@ -334,7 +374,8 @@ export async function runAgentTurn(options: {
     toApiMessage({ role: "user", content: userApiContent }),
   ];
 
-  const activeTools = toolsForPolicy(mode.tools);
+  const activeTools = toolsForPolicy(mode.tools, mcpTools);
+  const allowedToolNames = new Set(activeTools.map((t) => t.function.name));
   const editsByPath = new Map<string, FileEditStat>();
   const toolRounds = Math.max(1, config.maxToolRounds);
   const seenToolCalls = new Set<string>();
@@ -429,13 +470,23 @@ export async function runAgentTurn(options: {
       );
 
       let result: string;
-      if (readonly && !READONLY_TOOL_NAMES.has(call.function.name)) {
+      if (!allowedToolNames.has(call.function.name)) {
         result = JSON.stringify({
           error:
-            "В этом режиме инструмент недоступен. Используй list_files / read_file.",
+            "This tool is not available in the current mode. Use the allowed tools only.",
         });
+      } else if (call.function.name.startsWith("mcp__")) {
+        result = mcp
+          ? await mcp.callTool(
+              call.function.name,
+              call.function.arguments || ""
+            )
+          : JSON.stringify({ error: "Figma MCP is not available" });
       } else {
-        result = await runTool(call.function.name, call.function.arguments);
+        result = await runTool(
+          call.function.name,
+          call.function.arguments || ""
+        );
       }
       messages.push({
         role: "tool",

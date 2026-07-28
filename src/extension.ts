@@ -2,8 +2,10 @@ import * as vscode from "vscode";
 import { AgentPanelProvider } from "./agentPanelProvider";
 import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
+import { initMcpManager } from "./mcpBundle";
 
 export function activate(context: vscode.ExtensionContext): void {
+  const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);
 
@@ -36,8 +38,13 @@ export function activate(context: vscode.ExtensionContext): void {
       "agentPanel.generateCommitMessage",
       (...args: unknown[]) => generateCommitMessage(args[0])
     ),
+    { dispose: () => mcpManager.dispose() },
     { dispose: () => provider.dispose() }
   );
+
+  void mcpManager.refreshSecretFlags().then(() => {
+    void mcpManager.tryQuietReconnect();
+  });
 }
 
 export function deactivate(): void {}

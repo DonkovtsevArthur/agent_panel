@@ -235,13 +235,19 @@ export function isReadonlyPolicy(tools: ModeToolsPolicy): boolean {
   return tools === "readonly";
 }
 
-export function toolsForPolicy(tools: ModeToolsPolicy): ChatTool[] {
-  if (!isReadonlyPolicy(tools)) {
-    return agentTools;
+export function toolsForPolicy(
+  tools: ModeToolsPolicy,
+  extraTools: ChatTool[] = []
+): ChatTool[] {
+  const base = !isReadonlyPolicy(tools)
+    ? agentTools
+    : agentTools.filter((tool) =>
+        READONLY_TOOL_NAMES.has(tool.function.name)
+      );
+  if (!extraTools.length) {
+    return base;
   }
-  return agentTools.filter((tool) =>
-    READONLY_TOOL_NAMES.has(tool.function.name)
-  );
+  return [...base, ...extraTools];
 }
 
 export function modeThinkingLabel(mode: AgentModeDef): string {
