@@ -19,6 +19,15 @@
       tls: "TLS",
       validateTls: "Validate TLS certificate",
       agentBehavior: "Agent behavior",
+      commitMessages: "Commit messages",
+      commitMessagesNote:
+        "Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.",
+      commitScope: "Apply to",
+      commitScopeGlobal: "All workspaces",
+      commitScopeWorkspace: "This workspace",
+      commitScopeWorkspaceNamed: (name) => name || "This workspace",
+      commitLanguage: "Commit message language",
+      commitPrompt: "Commit prompt / rule",
       systemPrompt: "System prompt",
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
@@ -148,6 +157,15 @@
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
       agentBehavior: "Поведение агента",
+      commitMessages: "Сообщения коммитов",
+      commitMessagesNote:
+        "Промпт для генерации сообщений коммита в SCM. Пусто — правила проекта, затем встроенный дефолт.",
+      commitScope: "Применить к",
+      commitScopeGlobal: "Всем workspace",
+      commitScopeWorkspace: "Текущему workspace",
+      commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
+      commitLanguage: "Язык сообщения коммита",
+      commitPrompt: "Промпт / правило коммита",
       systemPrompt: "Системный промпт",
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
@@ -360,6 +378,21 @@
   );
   const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
+  const settingsCommitScope = document.getElementById("settingsCommitScope");
+  const settingsCommitLanguage = document.getElementById(
+    "settingsCommitLanguage"
+  );
+  const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
+  const settingsCommitNote = document.getElementById("settingsCommitNote");
+  const settingsCommitScopeLabel = document.getElementById(
+    "settingsCommitScopeLabel"
+  );
+  const settingsCommitLanguageLabel = document.getElementById(
+    "settingsCommitLanguageLabel"
+  );
+  const settingsCommitPromptLabel = document.getElementById(
+    "settingsCommitPromptLabel"
+  );
   const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
   const settingsMaxTokens = document.getElementById("settingsMaxTokens");
   const settingsMaxResponseChars = document.getElementById(
@@ -388,6 +421,7 @@
   let settingsModes = [];
   let settingsDefaultModelId = "";
   let settingsLanguageValue = "auto";
+  let settingsWorkspaceName = "";
   let settingsDefaultContextWindow = 128000;
   let modelEditIndex = null;
   let modelEditMode = "manual";
@@ -489,8 +523,36 @@
     if (sectionTitles[2]) sectionTitles[2].textContent = t("modes");
     if (sectionTitles[3]) sectionTitles[3].textContent =
       UI_LANG === "ru" ? "Язык" : "Language";
-    if (sectionTitles[4]) sectionTitles[4].textContent = t("tls");
-    if (sectionTitles[5]) sectionTitles[5].textContent = t("agentBehavior");
+    if (sectionTitles[4]) sectionTitles[4].textContent = t("commitMessages");
+    if (sectionTitles[5]) sectionTitles[5].textContent = t("tls");
+    if (sectionTitles[6]) sectionTitles[6].textContent = t("agentBehavior");
+    if (settingsCommitNote) {
+      settingsCommitNote.textContent = t("commitMessagesNote");
+    }
+    if (settingsCommitScopeLabel) {
+      settingsCommitScopeLabel.textContent = t("commitScope");
+    }
+    if (settingsCommitLanguageLabel) {
+      settingsCommitLanguageLabel.textContent = t("commitLanguage");
+    }
+    if (settingsCommitPromptLabel) {
+      settingsCommitPromptLabel.textContent = t("commitPrompt");
+    }
+    if (settingsCommitScope) {
+      const globalOpt = settingsCommitScope.querySelector(
+        'option[value="global"]'
+      );
+      const workspaceOpt = settingsCommitScope.querySelector(
+        'option[value="workspace"]'
+      );
+      if (globalOpt) globalOpt.textContent = t("commitScopeGlobal");
+      if (workspaceOpt) {
+        workspaceOpt.textContent = t(
+          "commitScopeWorkspaceNamed",
+          settingsWorkspaceName
+        );
+      }
+    }
     const labels = settingsScreen.querySelectorAll(".settings-label");
     if (labels[0]) labels[0].textContent = t("defaultModel");
     if (labels[1]) labels[1].textContent =
@@ -3687,6 +3749,7 @@
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
+    settingsWorkspaceName = String(settings.workspaceName || "").trim();
     settingsLanguageValue =
       settings.language === "ru"
         ? "ru"
@@ -3695,6 +3758,19 @@
           : "auto";
     if (settingsLanguage) {
       settingsLanguage.value = settingsLanguageValue;
+    }
+    if (settingsCommitScope) {
+      settingsCommitScope.value =
+        settings.commitMessageScope === "workspace" ? "workspace" : "global";
+      const workspaceOpt = settingsCommitScope.querySelector(
+        'option[value="workspace"]'
+      );
+      if (workspaceOpt) {
+        workspaceOpt.textContent = t(
+          "commitScopeWorkspaceNamed",
+          settingsWorkspaceName
+        );
+      }
     }
     settingsDefaultContextWindow =
       Number(settings.defaultContextWindow) > 0
@@ -3708,6 +3784,17 @@
     }
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
+    }
+    if (settingsCommitLanguage) {
+      settingsCommitLanguage.value =
+        settings.commitMessageLanguage === "ru"
+          ? "ru"
+          : settings.commitMessageLanguage === "en"
+            ? "en"
+            : "auto";
+    }
+    if (settingsCommitPrompt) {
+      settingsCommitPrompt.value = settings.commitMessagePrompt || "";
     }
     applyModes(settings.modes);
     if (settingsMaxToolRounds) {
@@ -3793,6 +3880,17 @@
         : false,
       caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
       systemPrompt: settingsSystemPrompt ? settingsSystemPrompt.value : "",
+      commitMessagePrompt: settingsCommitPrompt
+        ? settingsCommitPrompt.value
+        : "",
+      commitMessageLanguage: settingsCommitLanguage
+        ? settingsCommitLanguage.value
+        : "auto",
+      commitMessageScope: settingsCommitScope
+        ? settingsCommitScope.value === "workspace"
+          ? "workspace"
+          : "global"
+        : "global",
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
@@ -5961,7 +6059,7 @@
       }
       if (
         target.closest(
-          "#settingsCaBundle, #settingsSystemPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
+          "#settingsCaBundle, #settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
         )
       ) {
         schedulePersistSettings();
@@ -5972,7 +6070,11 @@
       if (!(target instanceof HTMLElement)) {
         return;
       }
-      if (target.closest("#settingsRejectUnauthorized")) {
+      if (
+        target.closest(
+          "#settingsRejectUnauthorized, #settingsCommitScope, #settingsCommitLanguage"
+        )
+      ) {
         persistSettingsNow();
       }
     });

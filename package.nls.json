@@ -1,6 +1,6 @@
 {
   "displayName": "Harbor Agents",
-  "description": "Local agent panel for VS Code. Bring your own OpenAI-compatible API — chats stay on your machine, no Harbor backend.",
+  "description": "Local agent panel for VS Code. Bring your own OpenAI-compatible API — chats stay on your machine, no Harbor backend. Generate SCM commit messages from your model.",
   "viewsContainer.title": "Harbor Agents",
   "view.name": "Agents",
   "command.category": "Harbor Agents",
@@ -9,6 +9,7 @@
   "command.clearChat.title": "New Agent",
   "command.attachFile.title": "Attach File",
   "command.addSelection.title": "Add Selection to Chat",
+  "command.generateCommitMessage.title": "Generate Commit Message",
   "config.title": "Harbor Agents",
   "config.language.description": "Plugin UI language. Auto follows the VS Code display language.",
   "config.language.enum.auto": "Follow VS Code language",
@@ -38,5 +39,10 @@
   "config.maxTokens.description": "max_tokens for chat/completions",
   "config.maxResponseChars.description": "Maximum chat response length; longer output is truncated. Repetitive loops are also trimmed.",
   "config.rejectUnauthorized.description": "Validate the TLS certificate. For corporate CAs, use false or true with caBundlePath.",
-  "config.caBundlePath.description": "Path to the CA bundle (similar to Continue requestOptions.caBundlePath)"
+  "config.caBundlePath.description": "Path to the CA bundle (similar to Continue requestOptions.caBundlePath)",
+  "config.commitMessage.prompt.description": "Custom rule/prompt for SCM commit message generation. Empty = use project rules, then the built-in default.",
+  "config.commitMessage.language.description": "Language for generated commit messages",
+  "config.commitMessage.language.enum.auto": "Follow plugin UI language",
+  "config.commitMessage.language.enum.en": "English",
+  "config.commitMessage.language.enum.ru": "Russian"
 }

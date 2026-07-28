@@ -1,6 +1,6 @@
 {
   "displayName": "Harbor Agents",
-  "description": "Локальная агентская панель для VS Code. Свой OpenAI-compatible API — чаты у вас, без бэкенда Harbor.",
+  "description": "Локальная агентская панель для VS Code. Свой OpenAI-compatible API — чаты у вас, без бэкенда Harbor. Генерация сообщений коммита в Source Control.",
   "viewsContainer.title": "Гавань агентов",
   "view.name": "Агенты",
   "command.category": "Гавань агентов",
@@ -9,6 +9,7 @@
   "command.clearChat.title": "Новый агент",
   "command.attachFile.title": "Прикрепить файл",
   "command.addSelection.title": "Добавить выделение в чат",
+  "command.generateCommitMessage.title": "Сгенерировать сообщение коммита",
   "config.title": "Гавань агентов",
   "config.language.description": "Язык интерфейса плагина. Auto берёт язык отображения VS Code.",
   "config.language.enum.auto": "Как в VS Code",
@@ -38,5 +39,10 @@
   "config.maxTokens.description": "max_tokens для chat/completions",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.rejectUnauthorized.description": "Проверять TLS-сертификат. Для корпоративных CA можно использовать false или true вместе с caBundlePath.",
-  "config.caBundlePath.description": "Путь к CA bundle (аналогично Continue requestOptions.caBundlePath)"
+  "config.caBundlePath.description": "Путь к CA bundle (аналогично Continue requestOptions.caBundlePath)",
+  "config.commitMessage.prompt.description": "Своё правило/промпт для генерации сообщений коммита в SCM. Пусто = правила проекта, затем встроенный дефолт.",
+  "config.commitMessage.language.description": "Язык сгенерированных сообщений коммита",
+  "config.commitMessage.language.enum.auto": "Как язык интерфейса плагина",
+  "config.commitMessage.language.enum.en": "Английский",
+  "config.commitMessage.language.enum.ru": "Русский"
 }

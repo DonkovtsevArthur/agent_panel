@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { AgentPanelProvider } from "./agentPanelProvider";
+import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -30,6 +31,10 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("agentPanel.addSelectionToChat", () =>
       provider.addSelectionToChat()
+    ),
+    vscode.commands.registerCommand(
+      "agentPanel.generateCommitMessage",
+      (...args: unknown[]) => generateCommitMessage(args[0])
     ),
     { dispose: () => provider.dispose() }
   );

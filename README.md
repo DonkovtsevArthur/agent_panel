@@ -19,6 +19,7 @@
 - **@file**, вложения и картинки (vision, если модель поддерживает)
 - **Контекст редактора** и индикатор использования context window
 - **Карточка diff review** с переходом в Source Control
+- **Генерация commit message** в Source Control (по вашему API); промпт и язык — для всех workspace или для текущего
 - **Ветки ответов** без потери основной нити диалога
 - **Поиск** по агентам в текущем workspace
 - Сессии хранятся **локально для каждого workspace**
@@ -44,6 +45,8 @@
 - `agentPanel.defaultModel` — модель по умолчанию
 - `agentPanel.systemPrompt` — дополнительный system prompt
 - `agentPanel.modes` — встроенные и пользовательские режимы composer
+- `agentPanel.commitMessage.prompt` — правило/промпт для генерации сообщений коммита (пусто = правила проекта, затем дефолт)
+- `agentPanel.commitMessage.language` — язык сообщения коммита (`auto` / `en` / `ru`); область сохранения выбирается в настройках панели: все workspace или текущий
 
 Старые `agentPanel.baseUrl` / `agentPanel.apiKey` тоже работают, но предпочтительнее `providers`.
 
@@ -80,6 +83,7 @@
 - **Harbor Agents: New Agent**
 - **Harbor Agents: Add Selection to Chat**
 - **Harbor Agents: Attach File**
+- **Harbor Agents: Generate Commit Message**
 
 ---
 
@@ -104,6 +108,7 @@ Marketplace and UI name: **Harbor Agents**.
 - **@file** mentions, attachments and images (vision when the model supports it)
 - **Editor context** and context-window usage indicator
 - **Diff review** card with jump to Source Control
+- **Generate commit messages** in Source Control via your API; prompt and language can be saved for all workspaces or the current one
 - **Branches** without losing the main thread
 - **Search** across agents in the workspace
 - Sessions stored **locally per workspace**
@@ -129,6 +134,8 @@ Tip: select code → **Harbor Agents: Add Selection to Chat** (`Cmd+Shift+L` / `
 - `agentPanel.defaultModel` — default model id
 - `agentPanel.systemPrompt` — optional system prompt
 - `agentPanel.modes` — built-in and custom composer modes
+- `agentPanel.commitMessage.prompt` — rule/prompt for commit message generation (empty = project rules, then built-in default)
+- `agentPanel.commitMessage.language` — commit message language (`auto` / `en` / `ru`); save scope is chosen in the panel settings: all workspaces or the current one
 
 Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`.
 
@@ -145,6 +152,7 @@ Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`
 - **Harbor Agents: New Agent**
 - **Harbor Agents: Add Selection to Chat**
 - **Harbor Agents: Attach File**
+- **Harbor Agents: Generate Commit Message**
 
 ## Feedback
 
