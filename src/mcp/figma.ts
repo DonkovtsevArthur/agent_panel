@@ -66,8 +66,8 @@ export function mcpSystemHint(toolNames: string[]): string {
   if (!toolNames.length) {
     return [
       "No MCP tools are currently connected. The user can add servers in Settings → MCP Servers.",
-      "You CAN access http(s) URLs: call fetch_url to read page content, or open_external to open in the browser.",
-      "Never claim you cannot open external URLs.",
+      "You CAN access http(s) URLs via fetch_url for any question about a linked page (facts, summary, colors, metadata).",
+      "Never claim you cannot open external URLs. Never invent auth requirements.",
     ].join(" ");
   }
   const listed = toolNames.slice(0, 40).join(", ");
@@ -75,7 +75,7 @@ export function mcpSystemHint(toolNames: string[]): string {
     "MCP tools are available.",
     "Prefer MCP tools when they match the user request (Figma links, external data sources, etc.).",
     `Available MCP tools: ${listed}.`,
-    "For other http(s) links: fetch_url to read content, open_external to open in the browser.",
-    "Never claim you cannot open external URLs.",
+    "For other http(s) links and any question about a page: call fetch_url, then answer from the structured fields.",
+    "Never claim you cannot open external URLs. Never invent auth requirements.",
   ].join(" ");
 }

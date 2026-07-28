@@ -35,7 +35,7 @@
   "config.defaultContextWindow.description": "Контекстное окно по умолчанию (токены), если у модели не задан contextWindow",
   "config.systemPrompt.description": "Системный промпт агента",
   "config.modes.description": "Пользовательские режимы composer (Агент/План/Спросить встроены). Каждый: { id, label, description?, tools: \"agent\"|\"readonly\", prompt?, enabled? }",
-  "config.maxToolRounds.description": "Максимум раундов tool-calling за один запрос (после лимита запрашивается финальный ответ без tools)",
+  "config.maxToolRounds.description": "Базовый лимит раундов tool-calling за запрос (по умолчанию 20). Если модели всё ещё нужны tools, Harbor автоматически продлевает по +10 до 60, затем запрашивает финальный ответ без tools.",
   "config.maxTokens.description": "max_tokens для chat/completions",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.rejectUnauthorized.description": "Проверять TLS-сертификат. Для корпоративных CA можно использовать false или true вместе с caBundlePath.",

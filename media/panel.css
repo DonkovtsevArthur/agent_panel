@@ -2282,6 +2282,14 @@ button.primary:disabled {
   padding: 0 12px 4px;
 }
 
+#modelEditProviderBlock {
+  padding-bottom: 0;
+}
+
+#modelEditProviderBlock + .settings-modal-body {
+  padding-top: 4px;
+}
+
 .settings-modal-tab {
   border: 1px solid transparent;
   background: transparent;
@@ -2592,6 +2600,47 @@ button.primary:disabled {
 
 .settings-modal-done {
   font-weight: 600;
+}
+
+.settings-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 4px;
+}
+
+.settings-provider-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.settings-provider-head .settings-model-name {
+  font-weight: 600;
+}
+
+.settings-model-row.is-under-provider {
+  margin-left: 10px;
+  border-style: dashed;
+}
+
+.settings-new-provider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-new-provider[hidden] {
+  display: none;
 }
 
 .settings-add-model {

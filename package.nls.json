@@ -35,7 +35,7 @@
   "config.defaultContextWindow.description": "Default context window in tokens when a model has no contextWindow",
   "config.systemPrompt.description": "System prompt for the agent",
   "config.modes.description": "Custom composer modes (Agent/Plan/Ask are built in). Each item: { id, label, description?, tools: \"agent\"|\"readonly\", prompt?, enabled? }",
-  "config.maxToolRounds.description": "Maximum tool-calling rounds per request (after the limit, request a final answer without tools)",
+  "config.maxToolRounds.description": "Base tool-calling rounds per request (default 20). If the model still needs tools, Harbor auto-extends by +10 up to 60, then asks for a final answer without tools.",
   "config.maxTokens.description": "max_tokens for chat/completions",
   "config.maxResponseChars.description": "Maximum chat response length; longer output is truncated. Repetitive loops are also trimmed.",
   "config.rejectUnauthorized.description": "Validate the TLS certificate. For corporate CAs, use false or true with caBundlePath.",

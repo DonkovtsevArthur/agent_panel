@@ -100,7 +100,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "fetch_url",
       description:
-        "Скачать содержимое http(s) URL и вернуть текст (для чтения страницы/документации). Не говори, что не можешь открывать внешние URL — вызывай этот tool. Для figma.com используй MCP Figma tools, если они доступны.",
+        "Скачать http(s) URL и вернуть структурированные данные страницы: title, description, headings, content, colors, links. Используй для ЛЮБОГО вопроса по ссылке (факты, цвета, цены, текст, метаданные). Не говори, что не можешь открывать URL. Для figma.com — MCP Figma tools, если доступны.",
       parameters: {
         type: "object",
         properties: {
@@ -118,7 +118,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "open_external",
       description:
-        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому прочитать содержимое ссылки — используй fetch_url. Для Figma — MCP tools.",
+        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — сначала fetch_url. Для Figma — MCP tools.",
       parameters: {
         type: "object",
         properties: {
@@ -166,21 +166,234 @@ function truncate(text: string, max = 40_000): string {
   return text.slice(0, max) + "\n\n[truncated]";
 }
 
-function htmlToReadableText(html: string): string {
-  return html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<[^>]+>/g, " ")
+function decodeHtmlEntities(text: string): string {
+  return text
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    });
+}
+
+function stripTags(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function attrValue(tag: string, name: string): string | undefined {
+  const re = new RegExp(
+    `${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i"
+  );
+  const m = tag.match(re);
+  return m?.[1] ?? m?.[2] ?? m?.[3];
+}
+
+function extractMetaContent(html: string, key: string): string | undefined {
+  const metaRe = /<meta\b[^>]*>/gi;
+  for (const tag of html.match(metaRe) || []) {
+    const name = (
+      attrValue(tag, "name") ||
+      attrValue(tag, "property") ||
+      attrValue(tag, "itemprop") ||
+      ""
+    ).toLowerCase();
+    if (name === key.toLowerCase()) {
+      const content = attrValue(tag, "content");
+      if (content?.trim()) {
+        return decodeHtmlEntities(content.trim());
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractTitle(html: string): string | undefined {
+  const og = extractMetaContent(html, "og:title");
+  if (og) {
+    return og;
+  }
+  const m = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  if (m?.[1]) {
+    return stripTags(m[1]).trim() || undefined;
+  }
+  return undefined;
+}
+
+function extractHeadings(html: string, limit = 20): string[] {
+  const out: string[] = [];
+  const re = /<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const text = stripTags(m[2]);
+    if (text) {
+      out.push(`h${m[1]}: ${text}`);
+    }
+  }
+  return out;
+}
+
+function extractLinks(html: string, pageUrl: URL, limit = 30): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = /<a\b[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const hrefRaw = m[1] ?? m[2] ?? m[3] ?? "";
+    if (!hrefRaw || hrefRaw.startsWith("#") || hrefRaw.startsWith("javascript:")) {
+      continue;
+    }
+    let abs: string;
+    try {
+      abs = new URL(hrefRaw, pageUrl).toString();
+    } catch {
+      continue;
+    }
+    if (seen.has(abs)) {
+      continue;
+    }
+    seen.add(abs);
+    const label = stripTags(m[4] || "").slice(0, 80);
+    out.push(label ? `${label} → ${abs}` : abs);
+  }
+  return out;
+}
+
+function extractJsonLd(html: string, limitChars = 8_000): string[] {
+  const blocks: string[] = [];
+  const re =
+    /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  let used = 0;
+  while ((m = re.exec(html)) && used < limitChars) {
+    const raw = m[1].trim();
+    if (!raw) {
+      continue;
+    }
+    const slice = raw.slice(0, Math.min(raw.length, limitChars - used));
+    blocks.push(slice);
+    used += slice.length;
+  }
+  return blocks;
+}
+
+function htmlToReadableText(html: string): string {
+  const withBreaks = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<\/(p|div|section|article|li|tr|h[1-6]|br)\s*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<(p|div|section|article|li|h[1-6])\b[^>]*>/gi, "\n");
+  return decodeHtmlEntities(
+    withBreaks
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim()
+  );
+}
+
+function normalizeColorToken(raw: string): string {
+  const t = raw.trim().toLowerCase().replace(/\s+/g, "");
+  if (/^#[0-9a-f]{3}$/i.test(t)) {
+    return (
+      "#" +
+      t
+        .slice(1)
+        .split("")
+        .map((c) => c + c)
+        .join("")
+    );
+  }
+  if (/^#[0-9a-f]{4}$/i.test(t)) {
+    const r = t[1];
+    const g = t[2];
+    const b = t[3];
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  if (/^#[0-9a-f]{8}$/i.test(t)) {
+    return t.slice(0, 7);
+  }
+  return t;
+}
+
+function extractColorsFromText(source: string): string[] {
+  const counts = new Map<string, number>();
+  const bump = (token: string) => {
+    const n = normalizeColorToken(token);
+    if (!n) {
+      return;
+    }
+    counts.set(n, (counts.get(n) || 0) + 1);
+  };
+
+  const hexRe = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/gi;
+  const rgbRe =
+    /rgba?\(\s*[\d.]+\s*(?:,|\s)\s*[\d.]+\s*(?:,|\s)\s*[\d.]+(?:\s*(?:,|\/)\s*[\d.%]+)?\s*\)/gi;
+  const hslRe =
+    /hsla?\(\s*[\d.]+(?:deg|rad|turn)?\s*(?:,|\s)\s*[\d.%]+\s*(?:,|\s)\s*[\d.%]+(?:\s*(?:,|\/)\s*[\d.%]+)?\s*\)/gi;
+
+  for (const re of [hexRe, rgbRe, hslRe]) {
+    const matches = source.match(re) || [];
+    for (const m of matches) {
+      bump(m);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 24)
+    .map(([color]) => color);
+}
+
+function collectStylesheetHrefs(html: string, pageUrl: URL): string[] {
+  const hrefs: string[] = [];
+  const linkRe =
+    /<link\b[^>]*rel\s*=\s*["'][^"']*stylesheet[^"']*["'][^>]*>/gi;
+  const hrefAttr = /href\s*=\s*["']([^"']+)["']/i;
+  for (const tag of html.match(linkRe) || []) {
+    const m = tag.match(hrefAttr);
+    if (!m?.[1]) {
+      continue;
+    }
+    try {
+      hrefs.push(new URL(m[1], pageUrl).toString());
+    } catch {
+      // ignore bad href
+    }
+  }
+  return [...new Set(hrefs)].slice(0, 4);
+}
+
+function looksLikeSpaShell(text: string, html: string): boolean {
+  if (text.length >= 400) {
+    return false;
+  }
+  return (
+    /<div\s+id=["'](?:root|app|__next|__nuxt)["']/i.test(html) ||
+    /marketplace\.visualstudio\.com/i.test(html) ||
+    (/<script\b/i.test(html) && text.length < 200)
+  );
 }
 
 function parseHttpUrl(raw: string): URL {
@@ -201,25 +414,30 @@ function parseHttpUrl(raw: string): URL {
   return parsed;
 }
 
-async function fetchUrl(rawUrl: string): Promise<string> {
-  const parsed = parseHttpUrl(rawUrl);
-  const lib = parsed.protocol === "https:" ? https : http;
-
-  const { status, contentType, body } = await new Promise<{
+async function httpGet(
+  url: URL,
+  redirectsLeft = 5
+): Promise<{ status: number; contentType: string; body: string; finalUrl: string }> {
+  const lib = url.protocol === "https:" ? https : http;
+  const result = await new Promise<{
     status: number;
     contentType: string;
     body: string;
+    location?: string;
   }>((resolve, reject) => {
     const req = lib.request(
       {
-        protocol: parsed.protocol,
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-        path: `${parsed.pathname}${parsed.search}`,
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
         method: "GET",
         headers: {
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-          "User-Agent": "HarborAgents/1.0 (+VS Code extension)",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,text/css,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+          "User-Agent":
+            "Mozilla/5.0 (compatible; HarborAgents/1.0; +https://github.com/DonkovtsevArthur/agent_panel)",
         },
         timeout: 20_000,
       },
@@ -238,6 +456,9 @@ async function fetchUrl(rawUrl: string): Promise<string> {
             status: res.statusCode ?? 0,
             contentType: String(res.headers["content-type"] || ""),
             body: Buffer.concat(chunks).toString("utf8"),
+            location: res.headers.location
+              ? String(res.headers.location)
+              : undefined,
           });
         });
       }
@@ -249,24 +470,105 @@ async function fetchUrl(rawUrl: string): Promise<string> {
     req.end();
   });
 
+  if (
+    result.location &&
+    redirectsLeft > 0 &&
+    result.status >= 300 &&
+    result.status < 400
+  ) {
+    const next = new URL(result.location, url);
+    if (next.protocol === "http:" || next.protocol === "https:") {
+      return httpGet(next, redirectsLeft - 1);
+    }
+  }
+
+  return {
+    status: result.status,
+    contentType: result.contentType,
+    body: result.body,
+    finalUrl: url.toString(),
+  };
+}
+
+async function fetchUrl(rawUrl: string): Promise<string> {
+  const parsed = parseHttpUrl(rawUrl);
+  const { status, contentType, body, finalUrl } = await httpGet(parsed);
+
   if (status < 200 || status >= 400) {
     return JSON.stringify({
       ok: false,
-      url: parsed.toString(),
+      url: finalUrl,
       status,
       error: `HTTP ${status}`,
       preview: truncate(body, 2_000),
+      note: "Do not invent authorization requirements. Report the HTTP status. If the question is about this workspace/project, use read_file / list_files instead.",
     });
   }
 
   const isHtml = /html|xml/i.test(contentType) || /^\s*</.test(body);
+  const isCss = /css/i.test(contentType) || /\.css(\?|$)/i.test(finalUrl);
+  const isJson =
+    /json/i.test(contentType) || /^\s*[{[]/.test(body.trim());
+
+  if (!isHtml && !isCss) {
+    return JSON.stringify({
+      ok: true,
+      url: finalUrl,
+      status,
+      contentType,
+      note: "Non-HTML response. Answer from content. Do not claim you cannot open external URLs.",
+      content: truncate(body, 60_000),
+    });
+  }
+
   const text = isHtml ? htmlToReadableText(body) : body;
+  const title = isHtml ? extractTitle(body) : undefined;
+  const description =
+    (isHtml &&
+      (extractMetaContent(body, "description") ||
+        extractMetaContent(body, "og:description") ||
+        extractMetaContent(body, "twitter:description"))) ||
+    undefined;
+  const headings = isHtml ? extractHeadings(body) : [];
+  const links = isHtml ? extractLinks(body, new URL(finalUrl)) : [];
+  const jsonLd = isHtml ? extractJsonLd(body) : [];
+
+  let colorSource = body;
+  const stylesheetUrls: string[] = [];
+  if (isHtml) {
+    for (const href of collectStylesheetHrefs(body, new URL(finalUrl))) {
+      try {
+        const sheet = await httpGet(new URL(href));
+        if (sheet.status >= 200 && sheet.status < 400) {
+          stylesheetUrls.push(href);
+          colorSource += "\n" + sheet.body;
+        }
+      } catch {
+        // ignore stylesheet fetch errors
+      }
+    }
+  }
+
+  const colors = extractColorsFromText(colorSource);
+  const spa = isHtml && looksLikeSpaShell(text, body);
+
   return JSON.stringify({
     ok: true,
-    url: parsed.toString(),
+    url: finalUrl,
     status,
     contentType,
-    content: truncate(text, 60_000),
+    title,
+    description,
+    headings,
+    colors,
+    links,
+    jsonLd: jsonLd.length ? jsonLd : undefined,
+    stylesheetsFetched: stylesheetUrls,
+    spaShell: spa || undefined,
+    note: spa
+      ? "Page looks like a JS SPA shell: body text may be sparse. Still answer from whatever title/description/headings/colors/jsonLd/content you have. Do NOT invent login/authorization walls. Say what is missing honestly. For Harbor Agents branding use package.json / media via read_file."
+      : "Use title, description, headings, content, colors, links, and jsonLd to answer ANY user question about this URL. Do not claim you cannot open or load external URLs.",
+    content: truncate(isCss || isJson ? body : text, 60_000),
   });
 }
 

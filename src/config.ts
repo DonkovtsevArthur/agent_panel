@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import {
+  defaultCommitMessagePromptForLanguage,
   defaultProviderNameForLanguage,
   defaultSystemPromptForLanguage,
+  isBuiltinCommitMessagePrompt,
+  isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
 import {
@@ -385,9 +388,13 @@ export function getConfig(): AgentPanelConfig {
     modes,
     defaultModel: cfg.get<string>("defaultModel") ?? models[0]?.id ?? "",
     defaultContextWindow,
-    systemPrompt:
-      cfg.get<string>("systemPrompt") ??
-      defaultSystemPromptForLanguage(resolveUiLanguage(language)),
+    systemPrompt: (() => {
+      const stored = String(cfg.get<string>("systemPrompt") || "").trim();
+      if (isBuiltinSystemPrompt(stored)) {
+        return defaultSystemPromptForLanguage(resolveUiLanguage(language));
+      }
+      return stored;
+    })(),
     maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
     maxTokens: cfg.get<number>("maxTokens") ?? 4096,
     maxResponseChars: cfg.get<number>("maxResponseChars") ?? 12_000,
@@ -395,11 +402,25 @@ export function getConfig(): AgentPanelConfig {
     caBundlePath:
       cfg.get<string>("caBundlePath") ??
       "~/Documents/Cline/severstal-ca-bundle.pem",
-    commitMessage: {
-      prompt: String(cfg.get<string>("commitMessage.prompt") || "").trim(),
-      language: readCommitMessageLanguage(cfg.get("commitMessage.language")),
-      scope: resolveCommitMessageScope(cfg),
-    },
+    commitMessage: (() => {
+      const commitLanguage = readCommitMessageLanguage(
+        cfg.get("commitMessage.language")
+      );
+      const commitLangResolved =
+        commitLanguage === "ru" || commitLanguage === "en"
+          ? commitLanguage
+          : resolveUiLanguage(language);
+      const storedPrompt = String(
+        cfg.get<string>("commitMessage.prompt") || ""
+      ).trim();
+      return {
+        prompt: isBuiltinCommitMessagePrompt(storedPrompt)
+          ? defaultCommitMessagePromptForLanguage(commitLangResolved)
+          : storedPrompt,
+        language: commitLanguage,
+        scope: resolveCommitMessageScope(cfg),
+      };
+    })(),
     figma: {
       enabled: cfg.get<boolean>("figma.enabled") !== false,
     },
