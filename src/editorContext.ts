@@ -36,33 +36,33 @@ export function buildEditorContextMessage(): string {
   const now = new Date();
   const folder = vscode.workspace.workspaceFolders?.[0];
   const lines: string[] = [
-    "Контекст окружения (актуально на этот запрос):",
-    `- Текущие дата и время: ${formatLocalDateTime(now)}`,
-    `- Часовой пояс: ${formatTimeZone(now)}`,
+    "Environment context (for this request):",
+    `- Current date and time: ${formatLocalDateTime(now)}`,
+    `- Time zone: ${formatTimeZone(now)}`,
   ];
 
   if (folder) {
-    lines.push(`- Корень workspace: ${folder.uri.fsPath}`);
+    lines.push(`- Workspace root: ${folder.uri.fsPath}`);
   } else {
-    lines.push("- Корень workspace: не открыт");
+    lines.push("- Workspace root: not open");
   }
 
   const editor = resolveEditor();
   if (!editor) {
     lines.push(
-      "- Активный файл: нет (нет открытого текстового документа)"
+      "- Active file: none (no open text document)"
     );
   } else {
     const { document, selection } = editor;
     if (document.isClosed) {
-      lines.push("- Активный файл: нет (документ уже закрыт)");
+      lines.push("- Active file: none (document already closed)");
     } else if (document.uri.scheme === "untitled") {
-      lines.push(`- Активный файл: untitled (${document.languageId})`);
-      lines.push(`- Язык: ${document.languageId}`);
+      lines.push(`- Active file: untitled (${document.languageId})`);
+      lines.push(`- Language: ${document.languageId}`);
       appendCursorAndSelection(lines, document, selection);
     } else {
-      lines.push(`- Активный файл: ${relativeOrFsPath(document.uri)}`);
-      lines.push(`- Язык: ${document.languageId}`);
+      lines.push(`- Active file: ${relativeOrFsPath(document.uri)}`);
+      lines.push(`- Language: ${document.languageId}`);
       appendCursorAndSelection(lines, document, selection);
     }
   }
@@ -82,26 +82,26 @@ export function buildEditorContextMessage(): string {
     );
 
   if (visible.length > 0) {
-    lines.push(`- Открытые/видимые редакторы: ${visible.join(", ")}`);
+    lines.push(`- Open/visible editors: ${visible.join(", ")}`);
   }
 
   lines.push(
-    "Используй эти данные для текущего файла, времени и т.п. Не утверждай, что у тебя нет доступа к состоянию VS Code или к системному времени."
+    "Use this data for the current file, time, and editor state. Do not claim that you lack access to VS Code state or system time."
   );
 
   return lines.join("\n");
 }
 
 function formatLocalDateTime(date: Date): string {
-  const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "long" }).format(
+  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(
     date
   );
-  const datePart = new Intl.DateTimeFormat("ru-RU", {
+  const datePart = new Intl.DateTimeFormat("en-US", {
     day: "numeric",
     month: "long",
     year: "numeric",
   }).format(date);
-  const timePart = new Intl.DateTimeFormat("ru-RU", {
+  const timePart = new Intl.DateTimeFormat("en-US", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -132,7 +132,7 @@ function appendCursorAndSelection(
 ): void {
   const line = selection.active.line + 1;
   const col = selection.active.character + 1;
-  lines.push(`- Курсор: строка ${line}, колонка ${col}`);
+  lines.push(`- Cursor: line ${line}, column ${col}`);
 
   if (selection.isEmpty) {
     return;
@@ -143,15 +143,15 @@ function appendCursorAndSelection(
   const selected = document.getText(selection);
   const preview =
     selected.length > 800
-      ? `${selected.slice(0, 800)}\n… (обрезано)`
+      ? `${selected.slice(0, 800)}\n… (truncated)`
       : selected;
   lines.push(
     start === end
-      ? `- Выделение: строка ${start}`
-      : `- Выделение: строки ${start}–${end}`
+      ? `- Selection: line ${start}`
+      : `- Selection: lines ${start}–${end}`
   );
   if (preview.trim()) {
-    lines.push("- Текст выделения:");
+    lines.push("- Selected text:");
     lines.push("```");
     lines.push(preview);
     lines.push("```");

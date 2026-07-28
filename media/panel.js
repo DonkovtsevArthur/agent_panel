@@ -1,6 +1,274 @@
 (function () {
   const vscode = acquireVsCodeApi();
-  const state = vscode.getState() || { selectedModel: null };
+  const state = vscode.getState() || {
+    selectedModel: null,
+  };
+  const UI_LANG = document.documentElement.lang.startsWith("ru") ? "ru" : "en";
+  const UI_STRINGS = {
+    en: {
+      agents: "Agents",
+      settings: "Settings",
+      archive: "Archive",
+      newAgent: "New Agent",
+      backToAgents: "Back to agents",
+      saved: "Saved",
+      providers: "Providers",
+      models: "Models",
+      defaultModel: "Default model",
+      modes: "Modes",
+      tls: "TLS",
+      validateTls: "Validate TLS certificate",
+      agentBehavior: "Agent behavior",
+      systemPrompt: "System prompt",
+      maxToolRounds: "Max tool rounds",
+      maxResponseLength: "Max response length (chars)",
+      model: "Model",
+      provider: "Provider",
+      mode: "Mode",
+      close: "Close",
+      cancel: "Cancel",
+      done: "Done",
+      search: "Search",
+      searchChat: "Search chat",
+      searchResults: "Search results",
+      taskPlaceholder: "Task for the agent... (@ for file)",
+      add: "Add",
+      image: "Image",
+      send: "Send",
+      stop: "Stop",
+      contextUsage: "Context usage",
+      noModels: "No models",
+      noModelsInSettings: "No models in settings",
+      noFiles: "No files",
+      searching: "Searching...",
+      copied: "Copied",
+      agent: "Agent",
+      plan: "Plan",
+      ask: "Ask",
+      branch: "Branch",
+      branchDefault: "Branch",
+      regenerateLast: "Regenerate last answer",
+      deleteBranch: "Delete branch",
+      nothingFound: "Nothing found",
+      you: "You",
+      addProviderFirst: "Add a provider first",
+      newProvider: "New Provider",
+      providerTitle: "Provider",
+      providerIdRequired: "Enter a provider id.",
+      providerBaseUrlRequired: "Enter a base URL.",
+      noProvidersYet: "No providers yet — add at least one.",
+      providerExists: (id) => `Provider "${id}" already exists.`,
+      pasteModelJson: "Paste JSON with a model list.",
+      invalidJson: "Invalid JSON.",
+      noModelListInJson: "No model list found in the JSON.",
+      noModelsWithId: "The JSON does not contain any model with an id.",
+      importFailed: "Import failed.",
+      listCopied: "List copied to clipboard.",
+      jsonFilledBelow: "JSON filled into the field below.",
+      apply: "Apply",
+      addModels: "Add Models",
+      modelSettings: "Model Settings",
+      modelsAddedFromJson: "Models from JSON were added.",
+      modelIdRequired: "Enter a model id.",
+      providerRequired: "Choose a provider (or add one first).",
+      name: "Name",
+      contextInput: "Context (input)",
+      responseOutput: "Response (output)",
+      status: "Status",
+      favorite: "Favorite",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      yes: "Yes",
+      no: "No",
+      listEmptyAddModel: "List is empty — add a model.",
+      noId: "No id",
+      enable: "Enable",
+      disable: "Disable",
+      modelParameters: "Model parameters",
+      addToFavorites: "Add to favorites",
+      removeFromFavorites: "Remove from favorites",
+      defaultProviderName: "Default",
+      noModes: "No modes.",
+      readOnly: "read only",
+      builtIn: "built-in",
+      edit: "Edit",
+      newMode: "New Mode",
+      enterModeName: "Enter a mode name",
+      archiveEmpty: "Archive is empty.",
+      restore: "Restore",
+      delete: "Delete",
+      noAgentsYet: "No agents yet. Click + to create one.",
+      rename: "Rename",
+      openFile: "Open file",
+      openSourceControl: "Open Source Control",
+      copyCode: "Copy code",
+      editMessage: "Edit message",
+      saveAndResend: "Save and resend",
+      copy: "Copy",
+      attachImage: "Attach image",
+      currentModelNoImages: "Current model does not support images",
+      addMode: "+ Add mode",
+      modelNoImages: "This model does not support images",
+      tooManySelections: "Too many selections",
+      remove: "Remove",
+      contextLabel: (tip) => `Context: ${tip}`,
+      line: (n) => `line ${n}`,
+      lines: (a, b) => `lines ${a}–${b}`,
+      stepsZero: "0 steps",
+      showSteps: "Show steps",
+      hideSteps: "Hide steps",
+      stepsOne: "1 step",
+      stepsMany: (n) => `${n} steps`,
+      doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
+      changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
+      taskForMode: (label) => `Task (${label})... (@ for file)`,
+      modePlaceholder: (label) => `${label}... (@ for file)`,
+      failedReadFile: "Failed to read file",
+      slashModeSwitched: (label) => `Mode: ${label}`,
+      slashInitDefault:
+        "Inspect this repository and write a short onboarding summary: what the project does, the stack, how to build/run it, the main entry points, key folders/files, and the best next steps for working on it.",
+      slashInitWithTarget: (target) =>
+        `Inspect this repository with a focus on ${target}. Write a short onboarding summary: what this part does, the key files, how it fits into the project, important risks/constraints, and the best next steps for working on it.`,
+      slashCompactDefault:
+        "Compact this chat into a short working summary. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.",
+      slashCompactWithTarget: (target) =>
+        `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`
+    },
+    ru: {
+      agents: "Агенты",
+      settings: "Настройки",
+      archive: "Архив",
+      newAgent: "Новый агент",
+      backToAgents: "К списку агентов",
+      saved: "Сохранено",
+      providers: "Провайдеры",
+      models: "Модели",
+      defaultModel: "Модель по умолчанию",
+      modes: "Режимы",
+      tls: "TLS",
+      validateTls: "Проверять TLS-сертификат",
+      agentBehavior: "Поведение агента",
+      systemPrompt: "Системный промпт",
+      maxToolRounds: "Макс. раундов tools",
+      maxResponseLength: "Макс. длина ответа (символы)",
+      model: "Модель",
+      provider: "Провайдер",
+      mode: "Режим",
+      close: "Закрыть",
+      cancel: "Отмена",
+      done: "Готово",
+      search: "Поиск",
+      searchChat: "Поиск по чату",
+      searchResults: "Результаты поиска",
+      taskPlaceholder: "Задача для агента... (@ — файл)",
+      add: "Добавить",
+      image: "Изображение",
+      send: "Отправить",
+      stop: "Остановить",
+      contextUsage: "Использование контекста",
+      noModels: "Нет моделей",
+      noModelsInSettings: "Нет моделей в настройках",
+      noFiles: "Нет файлов",
+      searching: "Поиск…",
+      copied: "Скопировано",
+      agent: "Агент",
+      plan: "План",
+      ask: "Спросить",
+      branch: "Ответвить",
+      branchDefault: "Ветка",
+      regenerateLast: "Перегенерировать последний ответ",
+      deleteBranch: "Удалить ветку",
+      nothingFound: "Ничего не найдено",
+      you: "Вы",
+      addProviderFirst: "Сначала добавьте провайдера",
+      newProvider: "Новый провайдер",
+      providerTitle: "Провайдер",
+      providerIdRequired: "Укажите id провайдера.",
+      providerBaseUrlRequired: "Укажите base URL.",
+      noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",
+      providerExists: (id) => `Провайдер «${id}» уже есть.`,
+      pasteModelJson: "Вставьте JSON со списком моделей.",
+      invalidJson: "Некорректный JSON.",
+      noModelListInJson: "В JSON не найден список моделей.",
+      noModelsWithId: "В JSON нет ни одной модели с id.",
+      importFailed: "Не удалось импортировать.",
+      listCopied: "Список скопирован в буфер.",
+      jsonFilledBelow: "JSON заполнен в поле ниже.",
+      apply: "Применить",
+      addModels: "Добавить модели",
+      modelSettings: "Настройки модели",
+      modelsAddedFromJson: "Модели из JSON добавлены.",
+      modelIdRequired: "Укажите id модели.",
+      providerRequired: "Выберите провайдера (или сначала добавьте его).",
+      name: "Название",
+      contextInput: "Контекст (вход)",
+      responseOutput: "Ответ (выход)",
+      status: "Статус",
+      favorite: "Избранное",
+      enabled: "Включена",
+      disabled: "Выключена",
+      yes: "Да",
+      no: "Нет",
+      listEmptyAddModel: "Список пуст — добавьте модель.",
+      noId: "Без id",
+      enable: "Включить",
+      disable: "Выключить",
+      modelParameters: "Параметры модели",
+      addToFavorites: "В избранное",
+      removeFromFavorites: "Убрать из избранного",
+      defaultProviderName: "Основной",
+      noModes: "Нет режимов.",
+      readOnly: "только чтение",
+      builtIn: "встроенный",
+      edit: "Изменить",
+      newMode: "Новый режим",
+      enterModeName: "Укажите название режима",
+      archiveEmpty: "Архив пуст.",
+      restore: "Восстановить",
+      delete: "Удалить",
+      noAgentsYet: "Нет агентов. Нажмите +, чтобы создать.",
+      rename: "Переименовать",
+      openFile: "Открыть файл",
+      openSourceControl: "Открыть Source Control",
+      copyCode: "Копировать код",
+      editMessage: "Редактирование сообщения",
+      saveAndResend: "Сохранить и переотправить",
+      copy: "Копировать",
+      attachImage: "Прикрепить изображение",
+      currentModelNoImages: "Текущая модель не поддерживает изображения",
+      addMode: "+ Добавить режим",
+      modelNoImages: "Модель не поддерживает изображения",
+      tooManySelections: "Слишком много выделений",
+      remove: "Убрать",
+      contextLabel: (tip) => `Контекст: ${tip}`,
+      line: (n) => `стр. ${n}`,
+      lines: (a, b) => `стр. ${a}–${b}`,
+      stepsZero: "0 шагов",
+      showSteps: "Показать шаги",
+      hideSteps: "Скрыть шаги",
+      stepsOne: "1 шаг",
+      stepsMany: (n) => `${n} шагов`,
+      doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
+      changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
+      taskForMode: (label) => `Задача (${label})… (@ — файл)`,
+      modePlaceholder: (label) => `${label}… (@ — файл)`,
+      failedReadFile: "Не удалось прочитать файл",
+      slashModeSwitched: (label) => `Режим: ${label}`,
+      slashInitDefault:
+        "Изучи этот репозиторий и дай короткое onboarding-резюме: что делает проект, какой стек используется, как его собирать/запускать, где основные entry points, какие папки и файлы ключевые, и с чего лучше продолжать работу.",
+      slashInitWithTarget: (target) =>
+        `Изучи этот репозиторий с фокусом на ${target}. Дай короткое onboarding-резюме: что делает эта часть проекта, какие файлы здесь ключевые, как она связана с остальным кодом, какие есть ограничения/риски, и с чего лучше продолжать работу.`,
+      slashCompactDefault:
+        "Сожми текущий чат в короткое рабочее резюме. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.",
+      slashCompactWithTarget: (target) =>
+        `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`
+    }
+  };
+  const STR = UI_STRINGS[UI_LANG];
+  const t = (key, ...args) => {
+    const value = STR[key];
+    return typeof value === "function" ? value(...args) : value;
+  };
 
   const messagesEl = document.getElementById("messages");
   const promptEl = document.getElementById("prompt");
@@ -86,6 +354,7 @@
   const contextTipEl = document.getElementById("contextTip");
 
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
+  const settingsLanguage = document.getElementById("settingsLanguage");
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
@@ -118,6 +387,7 @@
   let settingsProviders = [];
   let settingsModes = [];
   let settingsDefaultModelId = "";
+  let settingsLanguageValue = "auto";
   let settingsDefaultContextWindow = 128000;
   let modelEditIndex = null;
   let modelEditMode = "manual";
@@ -180,6 +450,91 @@
   let pendingOpenSearch = null;
   let chatSearchMatchEls = [];
   let chatSearchMatchIndex = -1;
+  let restoringChatScroll = false;
+  let pendingScrollSync = 0;
+
+  function localizeStaticUi() {
+    document.title = "Harbor Agents";
+    document.querySelectorAll(".agents-title")[0].textContent = t("agents");
+    document.querySelectorAll(".agents-title")[1].textContent = t("archive");
+    document.querySelectorAll(".agents-title")[2].textContent = t("settings");
+    openSettingsBtn.title = openSettingsBtn.setAttribute("aria-label", t("settings")) || t("settings");
+    openArchiveBtn.title = openArchiveBtn.setAttribute("aria-label", t("archive")) || t("archive");
+    newAgentBtn.title = newAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
+    backFromArchiveBtn.title = backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
+    backFromSettingsBtn.title = backFromSettingsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
+    backToAgentsBtn.title = backToAgentsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
+    settingsSaveStatus.textContent = t("saved");
+    openChatSearchBtn.title = openChatSearchBtn.setAttribute("aria-label", t("searchChat")) || t("searchChat");
+    closeChatSearchBtn.title = closeChatSearchBtn.setAttribute("aria-label", t("close")) || t("close");
+    chatBranchesEl.setAttribute("aria-label", UI_LANG === "ru" ? "Ветки диалога" : "Conversation branches");
+    chatSearchInput.placeholder = t("search");
+    chatSearchInput.setAttribute("aria-label", t("searchChat"));
+    chatSearchResults.setAttribute("aria-label", t("searchResults"));
+    promptEl.placeholder = t("taskPlaceholder");
+    composerPlusBtn.title = composerPlusBtn.setAttribute("aria-label", t("add")) || t("add");
+    composerPlusMenu.querySelector("span:last-child").textContent = t("image");
+    modeTrigger.title = t("mode");
+    modelTrigger.title = t("model");
+    modeLabel.textContent = t("agent");
+    modelLabel.textContent = t("model");
+    sendBtn.title = sendBtn.setAttribute("aria-label", t("send")) || t("send");
+    composerDropHintEl.querySelector(".composer-drop-hint-text").textContent =
+      UI_LANG === "ru" ? "Отпустите файл, чтобы прикрепить" : "Drop file to attach";
+    contextRingEl.setAttribute("aria-label", t("contextUsage"));
+    chatAgentNameEl.textContent = t("agent");
+    const sectionTitles = settingsScreen.querySelectorAll(".settings-section-title");
+    if (sectionTitles[0]) sectionTitles[0].textContent = t("providers");
+    if (sectionTitles[1]) sectionTitles[1].textContent = t("models");
+    if (sectionTitles[2]) sectionTitles[2].textContent = t("modes");
+    if (sectionTitles[3]) sectionTitles[3].textContent =
+      UI_LANG === "ru" ? "Язык" : "Language";
+    if (sectionTitles[4]) sectionTitles[4].textContent = t("tls");
+    if (sectionTitles[5]) sectionTitles[5].textContent = t("agentBehavior");
+    const labels = settingsScreen.querySelectorAll(".settings-label");
+    if (labels[0]) labels[0].textContent = t("defaultModel");
+    if (labels[1]) labels[1].textContent =
+      UI_LANG === "ru" ? "Язык интерфейса плагина" : "Plugin UI language";
+  }
+
+  localizeStaticUi();
+
+  function localizeModeMeta(meta) {
+    if (!meta || typeof meta !== "object") {
+      return meta;
+    }
+    if (meta.id === "agent") {
+      return {
+        ...meta,
+        label: t("agent"),
+        description: UI_LANG === "ru" ? "Читает и правит код" : "Reads and edits code",
+        placeholder: t("taskPlaceholder"),
+      };
+    }
+    if (meta.id === "plan") {
+      return {
+        ...meta,
+        label: t("plan"),
+        description: UI_LANG === "ru" ? "Только план, без правок" : "Plan only, no edits",
+        placeholder:
+          UI_LANG === "ru"
+            ? "Опишите задачу — агент составит план без правок… (@ — файл)"
+            : "Describe the task — the agent will draft a plan without edits... (@ for file)",
+      };
+    }
+    if (meta.id === "ask") {
+      return {
+        ...meta,
+        label: t("ask"),
+        description: UI_LANG === "ru" ? "Ответы и объяснения" : "Answers and explanations",
+        placeholder:
+          UI_LANG === "ru"
+            ? "Спросите про код или задачу… (@ — файл)"
+            : "Ask about code or a task... (@ for file)",
+      };
+    }
+    return meta;
+  }
 
   const DEFAULT_MODELS = [
     {
@@ -281,6 +636,11 @@
   /** @type {HTMLTextAreaElement | null} */
   let mentionTarget = null;
   let mentionSearchTimer = null;
+  let slashOpen = false;
+  let slashItems = [];
+  let slashActiveIndex = 0;
+  let slashQuery = "";
+  let slashStart = -1;
   let editingUserIndex = null;
   let editingUserText = "";
   let editingModelId = "";
@@ -300,6 +660,101 @@
 
   const MAX_PENDING_ATTACHMENTS = 8;
   const MAX_PENDING_SELECTIONS = 8;
+
+  function buildSlashInitPrompt(args) {
+    const target = String(args || "").trim();
+    return target ? t("slashInitWithTarget", target) : t("slashInitDefault");
+  }
+
+  function buildSlashCompactPrompt(args) {
+    const target = String(args || "").trim();
+    return target ? t("slashCompactWithTarget", target) : t("slashCompactDefault");
+  }
+
+  function parseSlashCommand(raw) {
+    const text = String(raw || "").trim();
+    if (!text.startsWith("/")) {
+      return null;
+    }
+    const match = text.match(/^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i);
+    if (!match) {
+      return null;
+    }
+    const name = String(match[1] || "").toLowerCase();
+    const args = String(match[2] || "").trim();
+    switch (name) {
+      case "agent":
+        return { kind: "mode", mode: "agent", sendText: args };
+      case "plan":
+        return { kind: "mode", mode: "plan", sendText: args };
+      case "ask":
+        return { kind: "mode", mode: "ask", sendText: args };
+      case "init":
+        return {
+          kind: "prompt",
+          mode: "ask",
+          sendText: buildSlashInitPrompt(args),
+        };
+      case "compact":
+        return {
+          kind: "prompt",
+          mode: "ask",
+          sendText: buildSlashCompactPrompt(args),
+        };
+      default:
+        return null;
+    }
+  }
+
+  function getSlashCommands() {
+    return [
+      {
+        id: "agent",
+        label: "/agent",
+        description:
+          UI_LANG === "ru"
+            ? "Переключить в режим Agent"
+            : "Switch to Agent mode",
+        kind: "mode",
+      },
+      {
+        id: "plan",
+        label: "/plan",
+        description:
+          UI_LANG === "ru"
+            ? "Переключить в режим Plan"
+            : "Switch to Plan mode",
+        kind: "mode",
+      },
+      {
+        id: "ask",
+        label: "/ask",
+        description:
+          UI_LANG === "ru"
+            ? "Переключить в режим Ask"
+            : "Switch to Ask mode",
+        kind: "mode",
+      },
+      {
+        id: "init",
+        label: "/init",
+        description:
+          UI_LANG === "ru"
+            ? "Короткий обзор проекта"
+            : "Quick project onboarding",
+        kind: "prompt",
+      },
+      {
+        id: "compact",
+        label: "/compact",
+        description:
+          UI_LANG === "ru"
+            ? "Сжать текущий контекст чата"
+            : "Compact current chat context",
+        kind: "prompt",
+      },
+    ];
+  }
 
   function attachmentPayload(att) {
     return {
@@ -348,7 +803,7 @@
       });
     }
     if (skippedImages) {
-      showCopyToast("Модель не поддерживает изображения");
+      showCopyToast(t("modelNoImages"));
     }
     renderAttachPreview();
   }
@@ -392,7 +847,7 @@
       return;
     }
     if (pendingSelections.length >= MAX_PENDING_SELECTIONS) {
-      showCopyToast("Слишком много выделений");
+      showCopyToast(t("tooManySelections"));
       return;
     }
     const path = String(sel.path || "").trim() || "file";
@@ -449,8 +904,8 @@
         const label = escapeHtml(formatSelectionLabel(sel));
         const lines =
           sel.startLine === sel.endLine
-            ? `стр. ${sel.startLine}`
-            : `стр. ${sel.startLine}–${sel.endLine}`;
+            ? `line ${sel.startLine}`
+            : `lines ${sel.startLine}–${sel.endLine}`;
         return (
           `<div class="selection-chip" data-id="${escapeHtml(sel.id)}" title="${label}">` +
           `<span class="material-symbols-outlined selection-chip-icon" aria-hidden="true">code</span>` +
@@ -460,7 +915,7 @@
           `</span>` +
           `<button type="button" class="selection-chip-remove" data-id="${escapeHtml(
             sel.id
-          )}" title="Убрать" aria-label="Убрать">` +
+          )}" title="${t("remove")}" aria-label="${t("remove")}">` +
           `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
           `</button></div>`
         );
@@ -502,7 +957,7 @@
             `<img class="attach-thumb" src="${src}" alt="" />` +
             `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
               att.id
-            )}" title="Убрать" aria-label="Убрать">` +
+            )}" title="${t("remove")}" aria-label="${t("remove")}">` +
             `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
             `</button></div>`
           );
@@ -513,7 +968,7 @@
           `<span class="attach-chip-name" title="${label}">${label}</span>` +
           `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
             att.id
-          )}" title="Убрать" aria-label="Убрать">` +
+          )}" title="${t("remove")}" aria-label="${t("remove")}">` +
           `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
           `</button></div>`
         );
@@ -538,6 +993,60 @@
     }
   }
 
+  function closeSlashMenu() {
+    slashOpen = false;
+    slashItems = [];
+    slashActiveIndex = 0;
+    slashQuery = "";
+    slashStart = -1;
+    if (!mentionOpen && mentionMenuEl) {
+      mentionMenuEl.hidden = true;
+      mentionMenuEl.innerHTML = "";
+    }
+  }
+
+  function renderSlashMenu() {
+    if (!mentionMenuEl) {
+      return;
+    }
+    if (!slashOpen) {
+      if (!mentionOpen) {
+        mentionMenuEl.hidden = true;
+        mentionMenuEl.innerHTML = "";
+      }
+      return;
+    }
+    if (!slashItems.length) {
+      mentionMenuEl.hidden = false;
+      mentionMenuEl.innerHTML =
+        `<div class="mention-empty">${
+          UI_LANG === "ru" ? "Нет команд" : "No commands"
+        }</div>`;
+      return;
+    }
+    mentionMenuEl.hidden = false;
+    mentionMenuEl.innerHTML = slashItems
+      .map((item, index) => {
+        const active = index === slashActiveIndex ? " is-active" : "";
+        return (
+          `<button type="button" class="mention-option${active}" role="option" data-slash-index="${index}" data-command="${escapeHtml(
+            item.id
+          )}" aria-selected="${index === slashActiveIndex ? "true" : "false"}">` +
+          `<span class="mention-option-text">` +
+          `<span class="mention-option-name">${escapeHtml(item.label)}</span>` +
+          `<span class="mention-option-path">${escapeHtml(
+            item.description || ""
+          )}</span>` +
+          `</span></button>`
+        );
+      })
+      .join("");
+    const activeEl = mentionMenuEl.querySelector(".mention-option.is-active");
+    if (activeEl && typeof activeEl.scrollIntoView === "function") {
+      activeEl.scrollIntoView({ block: "nearest" });
+    }
+  }
+
   function renderMentionMenu() {
     if (!mentionMenuEl) {
       return;
@@ -550,7 +1059,7 @@
     if (!mentionItems.length) {
       mentionMenuEl.hidden = false;
       mentionMenuEl.innerHTML =
-        `<div class="mention-empty">Нет файлов</div>`;
+        `<div class="mention-empty">No files</div>`;
       return;
     }
     mentionMenuEl.hidden = false;
@@ -601,6 +1110,78 @@
     };
   }
 
+  function findSlashAtCursor(textarea) {
+    if (textarea !== promptEl) {
+      return null;
+    }
+    const value = textarea.value;
+    const cursor = textarea.selectionStart;
+    const before = value.slice(0, cursor);
+    const match = before.match(/^\s*\/([^\s]*)$/);
+    if (!match) {
+      return null;
+    }
+    const query = match[1] || "";
+    const slashIndex = before.lastIndexOf("/");
+    if (slashIndex < 0) {
+      return null;
+    }
+    return {
+      start: slashIndex,
+      query,
+      end: cursor,
+    };
+  }
+
+  function openSlashMenu(start, query) {
+    closeMentionMenu();
+    slashOpen = true;
+    slashStart = start;
+    slashQuery = String(query || "").toLowerCase();
+    slashItems = getSlashCommands().filter((item) =>
+      !slashQuery
+        ? true
+        : item.id.toLowerCase().includes(slashQuery) ||
+          item.label.toLowerCase().includes(slashQuery)
+    );
+    slashActiveIndex = 0;
+    closePlusMenu();
+    closeMenu();
+    closeEditModelMenu();
+    renderSlashMenu();
+  }
+
+  function applySlashSelection(index) {
+    const item = slashItems[index];
+    if (!item || !(promptEl instanceof HTMLTextAreaElement) || slashStart < 0) {
+      closeSlashMenu();
+      return;
+    }
+    if (item.kind === "mode") {
+      const nextMode = item.id === "compose" ? "agent" : item.id;
+      setAgentMode(nextMode, { focus: true, close: true });
+      promptEl.value = "";
+      promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+      closeSlashMenu();
+      showCopyToast(
+        t("slashModeSwitched", modeLabel ? modeLabel.textContent : item.label)
+      );
+      return;
+    }
+    const value = promptEl.value;
+    const cursor =
+      typeof promptEl.selectionStart === "number"
+        ? promptEl.selectionStart
+        : value.length;
+    const insert = `/${item.id} `;
+    const next = value.slice(0, slashStart) + insert + value.slice(cursor);
+    const caret = slashStart + insert.length;
+    promptEl.value = next;
+    promptEl.focus();
+    promptEl.setSelectionRange(caret, caret);
+    closeSlashMenu();
+  }
+
   function requestMentionSearch(query) {
     mentionRequestId += 1;
     const requestId = String(mentionRequestId);
@@ -624,7 +1205,7 @@
     if (mentionMenuEl) {
       mentionMenuEl.hidden = false;
       mentionMenuEl.innerHTML =
-        `<div class="mention-empty">Поиск…</div>`;
+        `<div class="mention-empty">Searching...</div>`;
     }
     if (mentionSearchTimer) {
       clearTimeout(mentionSearchTimer);
@@ -679,6 +1260,57 @@
       return;
     }
     openMentionMenu(textarea, mention.start, mention.query);
+  }
+
+  function onSlashInput(textarea) {
+    const slash = findSlashAtCursor(textarea);
+    if (!slash) {
+      if (slashOpen) {
+        closeSlashMenu();
+      }
+      return false;
+    }
+    openSlashMenu(slash.start, slash.query);
+    return true;
+  }
+
+  function onSlashKeydown(event, textarea) {
+    if (!slashOpen || textarea !== promptEl) {
+      return false;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSlashMenu();
+      return true;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!slashItems.length) {
+        return true;
+      }
+      slashActiveIndex = (slashActiveIndex + 1) % slashItems.length;
+      renderSlashMenu();
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!slashItems.length) {
+        return true;
+      }
+      slashActiveIndex = (slashActiveIndex - 1 + slashItems.length) % slashItems.length;
+      renderSlashMenu();
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      if (!slashItems.length) {
+        closeSlashMenu();
+        return false;
+      }
+      event.preventDefault();
+      applySlashSelection(slashActiveIndex);
+      return true;
+    }
+    return false;
   }
 
   function onMentionKeydown(event, textarea) {
@@ -967,6 +1599,33 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function persistUiState() {
+    vscode.setState(state);
+  }
+
+  function syncChatScroll(chatId) {
+    if (!chatId || !messagesEl || restoringChatScroll) {
+      return;
+    }
+    const scrollTop = messagesEl.scrollTop;
+    window.clearTimeout(pendingScrollSync);
+    pendingScrollSync = window.setTimeout(() => {
+      vscode.postMessage({
+        type: "chatScroll",
+        chatId,
+        scrollTop,
+      });
+    }, 120);
+  }
+
+  function restoreChatScroll(scrollTop) {
+    if (typeof scrollTop === "number" && Number.isFinite(scrollTop)) {
+      messagesEl.scrollTop = scrollTop;
+    } else {
+      scrollToBottom();
+    }
+  }
+
   let currentChatTurnEl = null;
 
   function resetChatTurns() {
@@ -1006,13 +1665,17 @@
     return agentStatusEl;
   }
 
-  function setAgentStatus(text, hidden, phase) {
+  function applyAgentStatusState(text, hidden, phase) {
     const nextHidden = Boolean(hidden || !text);
     agentStatusState = {
       text: nextHidden ? "" : text,
       hidden: nextHidden,
       phase: nextHidden ? "" : phase || "",
     };
+  }
+
+  function setAgentStatus(text, hidden, phase) {
+    applyAgentStatusState(text, hidden, phase);
 
     if (agentStatusState.hidden) {
       if (agentStatusEl) {
@@ -1133,7 +1796,7 @@
 
   function modelDisplayName(id) {
     const model = models.find((m) => m.id === id);
-    return model ? model.label || model.id : id || "Нет моделей";
+    return model ? model.label || model.id : id || t("noModels");
   }
 
   function renderEditModelMenu(menuEl) {
@@ -1144,7 +1807,7 @@
     if (!models.length) {
       const empty = document.createElement("div");
       empty.className = "model-option is-empty";
-      empty.textContent = "Нет моделей в настройках";
+      empty.textContent = t("noModelsInSettings");
       menuEl.appendChild(empty);
       return;
     }
@@ -1250,7 +1913,7 @@
 
   function branchButtonHtml(index) {
     return (
-      `<button type="button" class="icon-btn msg-branch" data-index="${index}" title="Ответвить" aria-label="Ответвить">` +
+      `<button type="button" class="icon-btn msg-branch" data-index="${index}" title="${t("branch")}" aria-label="${t("branch")}">` +
       BRANCH_ICON +
       `</button>`
     );
@@ -1269,7 +1932,7 @@
     const index = Number(last.dataset.index);
     const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
     const regenHtml =
-      `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+      `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
       REGENERATE_ICON +
       `</button>`;
 
@@ -1314,7 +1977,7 @@
         const closeBtn = b.canDelete
           ? `<button type="button" class="chat-branch-close" data-chat-id="${escapeHtml(
               b.id || ""
-            )}" title="Удалить ветку" aria-label="Удалить ветку">` +
+            )}" title="${t("deleteBranch")}" aria-label="${t("deleteBranch")}">` +
             `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
             `</button>`
           : "";
@@ -1322,8 +1985,8 @@
           `<div class="chat-branch-item${active}" role="presentation">` +
           `<button type="button" class="chat-branch-pill${active}" role="tab" aria-selected="${selected}" data-chat-id="${escapeHtml(
             b.id || ""
-          )}" title="${escapeHtml(b.label || "Ветка")}">` +
-          escapeHtml(b.label || "Ветка") +
+          )}" title="${escapeHtml(b.label || t("branchDefault"))}">` +
+          escapeHtml(b.label || t("branchDefault")) +
           `</button>` +
           closeBtn +
           `</div>`
@@ -1373,7 +2036,7 @@
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
-    contextRingEl.setAttribute("aria-label", `Контекст: ${tip}`);
+    contextRingEl.setAttribute("aria-label", `Context: ${tip}`);
     contextRingEl.hidden = false;
   }
 
@@ -1418,12 +2081,12 @@
 
   function toolStepsLabel(count) {
     if (count === 1) {
-      return "1 шаг";
+      return t("stepsOne");
     }
     if (count > 1 && count < 5) {
-      return `${count} шага`;
+    return t("stepsMany", count);
     }
-    return `${count} шагов`;
+    return t("stepsMany", count);
   }
 
   function sealToolGroups() {
@@ -1444,8 +2107,8 @@
       summary.textContent = toolStepsLabel(count);
     }
     group.title = group.classList.contains("is-collapsed")
-      ? "Показать шаги"
-      : "Скрыть шаги";
+      ? t("showSteps")
+      : t("hideSteps");
   }
 
   function createToolGroup() {
@@ -1454,7 +2117,7 @@
     group.innerHTML =
       `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
-      `<span class="tool-group-summary">0 шагов</span>` +
+      `<span class="tool-group-summary">0 steps</span>` +
       `</button>` +
       `<div class="tool-group-body"></div>`;
     return group;
@@ -1785,13 +2448,13 @@
     }
     if (!chatSearchHits.length) {
       chatSearchResults.innerHTML =
-        '<div class="chat-search-empty">Ничего не найдено</div>';
+        `<div class="chat-search-empty">${t("nothingFound")}</div>`;
       return;
     }
 
     chatSearchResults.innerHTML = chatSearchHits
       .map((hit, index) => {
-        const roleLabel = hit.role === "user" ? "Вы" : "Агент";
+        const roleLabel = hit.role === "user" ? t("you") : t("agent");
         return (
           `<button type="button" class="chat-search-hit${
             index === chatSearchActiveIndex ? " is-active" : ""
@@ -1799,7 +2462,7 @@
           `<div class="chat-search-hit-meta">` +
           `<span class="chat-search-hit-role">${escapeHtml(roleLabel)}</span>` +
           `<span class="chat-search-hit-agent">${escapeHtml(
-            hit.agentName || "Агент"
+            hit.agentName || t("agent")
           )}</span>` +
           `<span class="chat-search-hit-time">${escapeHtml(
             hit.time || ""
@@ -2009,7 +2672,7 @@
     if (!settingsProviders.length) {
       const empty = document.createElement("option");
       empty.value = "";
-      empty.textContent = "Сначала добавьте провайдера";
+      empty.textContent = t("addProviderFirst");
       modelEditProvider.appendChild(empty);
       return;
     }
@@ -2048,7 +2711,7 @@
           apiKey: "",
         };
     if (providerEditTitle) {
-      providerEditTitle.textContent = isNew ? "Новый провайдер" : "Провайдер";
+      providerEditTitle.textContent = isNew ? t("newProvider") : t("providerTitle");
     }
     if (providerEditId) {
       providerEditId.value = provider.id || "";
@@ -2081,12 +2744,12 @@
       ? providerEditBaseUrl.value.trim().replace(/\/$/, "")
       : "";
     if (!id) {
-      setProvidersHint("Укажите id провайдера.", true);
+      setProvidersHint(t("providerIdRequired"), true);
       providerEditId?.focus();
       return;
     }
     if (!baseUrl) {
-      setProvidersHint("Укажите base URL.", true);
+      setProvidersHint(t("providerBaseUrlRequired"), true);
       providerEditBaseUrl?.focus();
       return;
     }
@@ -2096,7 +2759,7 @@
 
     if (providerEditIndex === -1) {
       if (settingsProviders.some((p) => p.id === id)) {
-        setProvidersHint(`Провайдер «${id}» уже есть.`, true);
+        setProvidersHint(t("providerExists", id), true);
         return;
       }
       settingsProviders.push(next);
@@ -2122,23 +2785,23 @@
     settingsProvidersList.innerHTML = "";
     if (!settingsProviders.length) {
       settingsProvidersList.innerHTML =
-        '<div class="settings-models-empty">Нет провайдеров — добавьте хотя бы один.</div>';
+        `<div class="settings-models-empty">${t("noProvidersYet")}</div>`;
       return;
     }
     settingsProviders.forEach((provider, index) => {
       const row = document.createElement("div");
       row.className = "settings-model-row";
       row.dataset.index = String(index);
-      const title = provider.name || provider.id || "Провайдер";
+      const title = provider.name || provider.id || t("providerTitle");
       row.innerHTML =
         `<div class="settings-model-info">` +
         `<div class="settings-model-name"></div>` +
         `<div class="settings-model-id"></div>` +
         `</div>` +
-        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
         SETTINGS_ICON +
         `</button>` +
-        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
         DELETE_ICON +
         `</button>`;
       row.querySelector(".settings-model-name").textContent = title;
@@ -2479,17 +3142,17 @@
   function parseModelsJson(raw) {
     const text = String(raw || "").trim();
     if (!text) {
-      throw new Error("Вставьте JSON со списком моделей.");
+      throw new Error(t("pasteModelJson"));
     }
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error("Некорректный JSON.");
+      throw new Error(t("invalidJson"));
     }
     const items = extractModelsList(parsed);
     if (!items) {
-      throw new Error("В JSON не найден список моделей.");
+      throw new Error(t("noModelListInJson"));
     }
     return items;
   }
@@ -2501,15 +3164,15 @@
         .map((item) => normalizeModelEntry(item))
         .filter(Boolean);
       if (!normalized.length) {
-        throw new Error("В JSON нет ни одной модели с id.");
+        throw new Error(t("noModelsWithId"));
       }
       const result = upsertModels(normalized);
       setJsonHint(
-        `Готово: +${result.added}, обновлено ${result.updated}, всего ${result.total}.`
+        `Done: +${result.added}, updated ${result.updated}, total ${result.total}.`
       );
       return true;
     } catch (error) {
-      setJsonHint(error.message || "Не удалось импортировать.", true);
+      setJsonHint(error.message || t("importFailed"), true);
       return false;
     }
   }
@@ -2539,11 +3202,11 @@
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
-        () => setJsonHint("Список скопирован в буфер."),
-        () => setJsonHint("JSON заполнен в поле ниже.")
+        () => setJsonHint(t("listCopied")),
+        () => setJsonHint(t("jsonFilledBelow"))
       );
     } else {
-      setJsonHint("JSON заполнен в поле ниже.");
+      setJsonHint(t("jsonFilledBelow"));
     }
   }
 
@@ -2594,7 +3257,7 @@
     }
     if (modelEditDoneBtn) {
       modelEditDoneBtn.textContent =
-        modelEditMode === "json" ? "Применить" : "Готово";
+        modelEditMode === "json" ? t("apply") : t("done");
     }
   }
 
@@ -2614,7 +3277,7 @@
         }
       : settingsModels[index] || { id: "", label: "", providerId: "" };
     if (modelEditTitle) {
-      modelEditTitle.textContent = isNew ? "Добавить модели" : "Настройки модели";
+      modelEditTitle.textContent = isNew ? t("addModels") : t("modelSettings");
     }
     if (modelEditTabs) {
       modelEditTabs.hidden = !isNew;
@@ -2671,7 +3334,7 @@
     if (modelEditIndex === -1 && modelEditMode === "json") {
       if (importModelsFromJson()) {
         closeModelEditModal();
-        setModelsHint("Модели из JSON добавлены.");
+        setModelsHint(t("modelsAddedFromJson"));
         schedulePersistSettings(0);
       }
       return;
@@ -2679,7 +3342,7 @@
 
     const id = modelEditId ? modelEditId.value.trim() : "";
     if (!id) {
-      setModelsHint("Укажите id модели.", true);
+      setModelsHint(t("modelIdRequired"), true);
       setModelEditMode("manual");
       modelEditId?.focus();
       return;
@@ -2687,7 +3350,7 @@
     const label = modelEditLabel ? modelEditLabel.value.trim() : "";
     const providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
     if (!providerId) {
-      setModelsHint("Выберите провайдера (или сначала добавьте его).", true);
+      setModelsHint(t("providerRequired"), true);
       setModelEditMode("manual");
       modelEditProvider?.focus();
       return;
@@ -2730,7 +3393,7 @@
         (m, i) => i !== modelEditIndex && m.id === id
       );
       if (duplicate >= 0) {
-        setModelsHint(`Модель с id «${id}» уже есть.`, true);
+        setModelsHint(`A model with id "${id}" already exists.`, true);
         return;
       }
       settingsModels[modelEditIndex] = {
@@ -2764,12 +3427,12 @@
     settingsModelTipEl.setAttribute("role", "tooltip");
     const labels = [
       "ID",
-      "Название",
-      "Провайдер",
-      "Контекст (вход)",
-      "Ответ (выход)",
-      "Статус",
-      "Избранное",
+      t("name"),
+      t("provider"),
+      t("contextInput"),
+      t("responseOutput"),
+      t("status"),
+      t("favorite"),
       "Vision",
     ];
     settingsModelTipRows = labels.map((label) => {
@@ -2807,9 +3470,9 @@
       providerLabel(model.providerId),
       formatModelTokens(model.contextWindow),
       formatModelTokens(model.maxOutputTokens),
-      model.enabled !== false ? "Включена" : "Выключена",
-      model.favorite === true ? "Да" : "Нет",
-      resolveModelSupportsVision(model) ? "Да" : "Нет",
+      model.enabled !== false ? t("enabled") : t("disabled"),
+      model.favorite === true ? t("yes") : t("no"),
+      resolveModelSupportsVision(model) ? t("yes") : t("no"),
     ];
     ensureSettingsModelTip();
     for (let i = 0; i < settingsModelTipRows.length; i += 1) {
@@ -2873,7 +3536,7 @@
     settingsModelsList.innerHTML = "";
     if (!settingsModels.length) {
       settingsModelsList.innerHTML =
-        '<div class="settings-models-empty">Список пуст — добавьте модель.</div>';
+        `<div class="settings-models-empty">${t("listEmptyAddModel")}</div>`;
       syncDefaultModelSelect();
       return;
     }
@@ -2884,7 +3547,7 @@
       row.className =
         "settings-model-row" + (enabled ? "" : " is-disabled");
       row.dataset.index = String(index);
-      const title = model.label || model.id || "Без id";
+      const title = model.label || model.id || t("noId");
       const parts = [];
       if (model.label && model.id && model.label !== model.id) {
         parts.push(model.id);
@@ -2892,7 +3555,7 @@
       parts.push(providerLabel(model.providerId));
       const subtitle = parts.join(" · ");
       row.innerHTML =
-        `<label class="settings-model-switch" title="${enabled ? "Выключить" : "Включить"}">` +
+        `<label class="settings-model-switch" title="${enabled ? t("disable") : t("enable")}">` +
         `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
           enabled ? "checked" : ""
         } />` +
@@ -2901,7 +3564,7 @@
         `<div class="settings-model-info">` +
         `<div class="settings-model-title">` +
         `<div class="settings-model-name"></div>` +
-        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="Параметры модели" aria-label="Параметры модели">` +
+        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="${t("modelParameters")}" aria-label="${t("modelParameters")}">` +
         INFO_ICON +
         `</button>` +
         `</div>` +
@@ -2910,16 +3573,16 @@
         `<button type="button" class="icon-btn settings-model-fav${
           favorite ? " is-on" : ""
         }" data-index="${index}" title="${
-          favorite ? "Убрать из избранного" : "В избранное"
+          favorite ? t("removeFromFavorites") : t("addToFavorites")
         }" aria-label="${
-          favorite ? "Убрать из избранного" : "В избранное"
+          favorite ? t("removeFromFavorites") : t("addToFavorites")
         }" aria-pressed="${favorite ? "true" : "false"}">` +
         HEART_ICON +
         `</button>` +
-        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="Настройки" aria-label="Настройки">` +
+        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
         SETTINGS_ICON +
         `</button>` +
-        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
         DELETE_ICON +
         `</button>`;
       row.querySelector(".settings-model-name").textContent = title;
@@ -3002,7 +3665,7 @@
     ) {
       settingsProviders.push({
         id: "default",
-        name: "Основной",
+        name: t("defaultProviderName"),
         baseUrl: String(settings.baseUrl || "").replace(/\/$/, ""),
         apiKey: settings.apiKey || "",
       });
@@ -3024,6 +3687,15 @@
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
+    settingsLanguageValue =
+      settings.language === "ru"
+        ? "ru"
+        : settings.language === "en"
+          ? "en"
+          : "auto";
+    if (settingsLanguage) {
+      settingsLanguage.value = settingsLanguageValue;
+    }
     settingsDefaultContextWindow =
       Number(settings.defaultContextWindow) > 0
         ? Number(settings.defaultContextWindow)
@@ -3109,6 +3781,7 @@
     return {
       providers,
       models,
+      language: settingsLanguage ? settingsLanguage.value : settingsLanguageValue,
       defaultModel: settingsDefaultModel
         ? settingsDefaultModel.value
         : settingsDefaultModelId,
@@ -3161,28 +3834,33 @@
   const DEFAULT_CHAT_MODES = [
     {
       id: "agent",
-      label: "Агент",
-      description: "Читает и правит код",
+      label: t("agent"),
+      description: UI_LANG === "ru" ? "Читает и правит код" : "Reads and edits code",
       tools: "agent",
       builtin: true,
-      placeholder: "Задача для агента... (@ — файл)",
+      placeholder: t("taskPlaceholder"),
     },
     {
       id: "plan",
-      label: "План",
-      description: "Только план, без правок",
+      label: t("plan"),
+      description: UI_LANG === "ru" ? "Только план, без правок" : "Plan only, no edits",
       tools: "readonly",
       builtin: true,
       placeholder:
-        "Опишите задачу — агент составит план без правок… (@ — файл)",
+        UI_LANG === "ru"
+          ? "Опишите задачу — агент составит план без правок… (@ — файл)"
+          : "Describe the task — the agent will draft a plan without edits... (@ for file)",
     },
     {
       id: "ask",
-      label: "Спросить",
-      description: "Ответы и объяснения",
+      label: t("ask"),
+      description: UI_LANG === "ru" ? "Ответы и объяснения" : "Answers and explanations",
       tools: "readonly",
       builtin: true,
-      placeholder: "Спросите про код или задачу… (@ — файл)",
+      placeholder:
+        UI_LANG === "ru"
+          ? "Спросите про код или задачу… (@ — файл)"
+          : "Ask about code or a task... (@ for file)",
     },
   ];
   if (!chatModes.length) {
@@ -3260,8 +3938,10 @@
 
   function applyModes(list, { keepSelection = true } = {}) {
     const next = normalizeModesList(list);
-    settingsModes = next.map((m) => ({ ...m }));
-    chatModes = next.filter((m) => m.enabled !== false);
+    settingsModes = next.map((m) => localizeModeMeta({ ...m }));
+    chatModes = next
+      .filter((m) => m.enabled !== false)
+      .map((m) => localizeModeMeta({ ...m }));
     renderSettingsModes();
     if (typeof renderModeMenu === "function") {
       renderModeMenu();
@@ -3284,7 +3964,7 @@
     settingsModesList.innerHTML = "";
     if (!settingsModes.length) {
       settingsModesList.innerHTML =
-        '<div class="settings-models-empty">Нет режимов.</div>';
+        `<div class="settings-models-empty">${t("noModes")}</div>`;
       return;
     }
     settingsModes.forEach((mode, index) => {
@@ -3292,21 +3972,21 @@
       row.className = "settings-model-row";
       row.dataset.index = String(index);
       const toolsLabel =
-        mode.tools === "readonly" ? "только чтение" : "агент";
+        mode.tools === "readonly" ? t("readOnly") : t("agent").toLowerCase();
       const subtitle = mode.builtin
-        ? `встроенный · ${toolsLabel}`
+        ? `${t("builtIn")} · ${toolsLabel}`
         : toolsLabel;
       row.innerHTML =
         `<div class="settings-model-info">` +
         `<div class="settings-model-name"></div>` +
         `<div class="settings-model-id"></div>` +
         `</div>` +
-        `<button type="button" class="icon-btn settings-mode-edit" data-index="${index}" title="Изменить" aria-label="Изменить">` +
+        `<button type="button" class="icon-btn settings-mode-edit" data-index="${index}" title="${t("edit")}" aria-label="${t("edit")}">` +
         SETTINGS_ICON +
         `</button>` +
         (mode.builtin
           ? ""
-          : `<button type="button" class="icon-btn settings-mode-remove" data-index="${index}" title="Удалить" aria-label="Удалить">` +
+          : `<button type="button" class="icon-btn settings-mode-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
             DELETE_ICON +
             `</button>`);
       row.querySelector(".settings-model-name").textContent =
@@ -3336,7 +4016,7 @@
     const existing =
       modeEditIndex >= 0 ? settingsModes[modeEditIndex] : null;
     if (modeEditTitle) {
-      modeEditTitle.textContent = existing ? "Режим" : "Новый режим";
+      modeEditTitle.textContent = existing ? t("mode") : t("newMode");
     }
     if (modeEditLabel) {
       modeEditLabel.value = existing ? existing.label || "" : "";
@@ -3360,7 +4040,7 @@
   function commitModeEdit() {
     const label = modeEditLabel ? modeEditLabel.value.trim() : "";
     if (!label) {
-      showCopyToast("Укажите название режима");
+      showCopyToast(t("enterModeName"));
       return;
     }
     const description = modeEditDescription
@@ -3397,8 +4077,8 @@
       placeholder:
         existing?.placeholder ||
         (tools === "readonly"
-          ? `${label}… (@ — файл)`
-          : `Задача (${label})… (@ — файл)`),
+          ? `${label}... (@ for file)`
+          : `Task (${label})... (@ for file)`),
     };
     if (existing && modeEditIndex >= 0) {
       settingsModes[modeEditIndex] = next;
@@ -3424,7 +4104,7 @@
     const agents = archiveAgentsData || [];
     if (!agents.length) {
       archiveListEl.innerHTML =
-        '<div class="agents-empty">Архив пуст.</div>';
+        `<div class="agents-empty">${t("archiveEmpty")}</div>`;
       return;
     }
 
@@ -3440,10 +4120,10 @@
           `</span>` +
           `</div>` +
           `<div class="row-actions">` +
-          `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="Восстановить" aria-label="Восстановить">` +
+          `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="${t("restore")}" aria-label="${t("restore")}">` +
           RESTORE_ICON +
           `</button>` +
-          `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить" aria-label="Удалить">` +
+          `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="${t("delete")}" aria-label="${t("delete")}">` +
           DELETE_ICON +
           `</button>` +
           `</div>` +
@@ -3458,7 +4138,7 @@
       if (!block) {
         return;
       }
-      block.querySelector(".agent-name").textContent = a.name || "Агент";
+      block.querySelector(".agent-name").textContent = a.name || t("agent");
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
     });
@@ -3475,25 +4155,34 @@
 
     if (!list.length) {
       agentsListEl.innerHTML =
-        '<div class="agents-empty">Нет агентов. Нажмите +, чтобы создать.</div>';
+        `<div class="agents-empty">${t("noAgentsYet")}</div>`;
       return;
     }
 
     agentsListEl.innerHTML = list
       .map((a) => {
         const action = a.empty
-          ? `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="Удалить" aria-label="Удалить">` +
+          ? `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="${t("delete")}" aria-label="${t("delete")}">` +
             DELETE_ICON +
             `</button>`
-          : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="В архив" aria-label="В архив">` +
+          : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="${t("archive")}" aria-label="${t("archive")}">` +
             ARCHIVE_ICON +
             `</button>`;
+        const statusHtml =
+          a.runState === "running"
+            ? '<span class="agent-run-status agent-run-status-running" aria-label="Running"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
+            : a.runState === "success"
+              ? '<span class="agent-run-status agent-run-status-success" aria-label="Done"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
+              : a.runState === "error"
+                ? '<span class="agent-run-status agent-run-status-error" aria-label="Error"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
+                : '<span class="agent-run-status agent-run-status-empty" aria-hidden="true"></span>';
         return (
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
           `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
           `<span class="agent-main">` +
-          `<div class="agent-name" title="Переименовать"></div>` +
+          statusHtml +
+          `<div class="agent-name-row"><div class="agent-name" title="${t("rename")}"></div></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
           `</div>` +
@@ -3512,7 +4201,7 @@
       if (!block) {
         return;
       }
-      block.querySelector(".agent-name").textContent = a.name || "Агент";
+      block.querySelector(".agent-name").textContent = a.name || t("agent");
       block.querySelector(".agent-chip").textContent = a.model || "—";
       block.querySelector(".agent-preview").textContent = a.preview || "";
       block.querySelector(".agent-time").textContent = a.time || "";
@@ -3521,7 +4210,7 @@
 
   function getAgentNameById(agentId) {
     const row = agentsData.find((a) => a.id === agentId);
-    return (row && row.name) || "Агент";
+    return (row && row.name) || t("agent");
   }
 
   function startAgentRename(agentId, nameEl) {
@@ -3540,7 +4229,7 @@
     input.className = "agent-name-input";
     input.value = previous;
     input.maxLength = 80;
-    input.setAttribute("aria-label", "Название агента");
+    input.setAttribute("aria-label", UI_LANG === "ru" ? "Название агента" : "Agent name");
     input.spellcheck = false;
 
     const isChat = nameEl === chatAgentNameEl;
@@ -3706,7 +4395,7 @@
     title.className = "review-title";
     const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
     const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
-    title.textContent = `Изменено файлов: ${list.length} · +${totalAdd} −${totalDel}`;
+    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
     card.appendChild(title);
 
     const fileList = document.createElement("div");
@@ -3715,7 +4404,7 @@
       const row = document.createElement("button");
       row.type = "button";
       row.className = "review-file";
-      row.title = "Открыть файл";
+      row.title = t("openFile");
       row.innerHTML =
         `<span class="review-file-path"></span>` +
         `<span class="review-file-stats">` +
@@ -3740,8 +4429,8 @@
     const scmBtn = document.createElement("button");
     scmBtn.type = "button";
     scmBtn.className = "review-scm";
-    scmBtn.title = "Открыть Source Control";
-    scmBtn.setAttribute("aria-label", "Открыть Source Control");
+    scmBtn.title = t("openSourceControl");
+    scmBtn.setAttribute("aria-label", t("openSourceControl"));
     scmBtn.innerHTML = SCM_ICON;
     scmBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "openScm" });
@@ -4002,8 +4691,8 @@
       const linesPart = showLines
         ? `<span class="md-pre-lines">${
             meta.startLine === meta.endLine
-              ? `стр. ${meta.startLine}`
-              : `стр. ${meta.startLine}–${meta.endLine}`
+              ? `line ${meta.startLine}`
+              : `lines ${meta.startLine}–${meta.endLine}`
           }</span>`
         : "";
       metaHtml =
@@ -4018,7 +4707,7 @@
       `<div class="md-pre-wrap${showLines ? " has-lines" : ""}">` +
       metaHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
-      `<button type="button" class="icon-btn md-pre-copy" title="Копировать код" aria-label="Копировать код">` +
+      `<button type="button" class="icon-btn md-pre-copy" title="${t("copyCode")}" aria-label="${t("copyCode")}">` +
       COPY_ICON +
       `</button>` +
       `</div>\n`
@@ -4229,7 +4918,7 @@
 
   function showCopyToast(text) {
     const toast = ensureCopyToast();
-    toast.textContent = text || "Скопировано";
+    toast.textContent = text || t("copied");
     toast.hidden = false;
     if (copyToastTimer) {
       clearTimeout(copyToastTimer);
@@ -4264,7 +4953,14 @@
     body.textContent = role === "tool" ? formatToolLine(raw) : raw;
   }
 
-  function appendMessage(role, text, index, regenAssistantIndex, attachments) {
+  function appendMessage(
+    role,
+    text,
+    index,
+    regenAssistantIndex,
+    attachments,
+    shouldScroll = true
+  ) {
     if (role === "review") {
       sealToolGroups();
       try {
@@ -4309,11 +5005,11 @@
           (msgAttachments.length
             ? renderMessageAttachments(msgAttachments)
             : "") +
-          `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="Редактирование сообщения"></textarea>` +
+          `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="${t("editMessage")}"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
           `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
-          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">` +
+          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("model")}">` +
           `<span class="model-label msg-edit-model-label">${escapeHtml(
             editModelLabel
           )}</span>` +
@@ -4323,7 +5019,7 @@
           `</div>` +
           `</div>` +
           `<div class="msg-edit-footer-right">` +
-          `<button type="button" class="primary msg-edit-save" data-index="${index}" title="Сохранить и переотправить" aria-label="Сохранить и переотправить">` +
+          `<button type="button" class="primary msg-edit-save" data-index="${index}" title="${t("saveAndResend")}" aria-label="${t("saveAndResend")}">` +
           `<span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>` +
           `</button>` +
           `</div>` +
@@ -4345,7 +5041,7 @@
         const actions = document.createElement("div");
         actions.className = "msg-actions";
         actions.innerHTML =
-          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="Копировать" aria-label="Копировать">` +
+          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="${t("copy")}" aria-label="${t("copy")}">` +
           COPY_ICON +
           `</button>` +
           branchButtonHtml(index);
@@ -4354,7 +5050,9 @@
       wrap.appendChild(el);
       startChatTurn().appendChild(wrap);
       keepStatusAtEnd();
-      scrollToBottom();
+      if (shouldScroll) {
+        scrollToBottom();
+      }
       return el;
     }
 
@@ -4370,7 +5068,7 @@
       actions.innerHTML =
         branchButtonHtml(index) +
         (showRegen
-          ? `<button type="button" class="icon-btn msg-regenerate" title="Перегенерировать последний ответ" aria-label="Перегенерировать последний ответ">` +
+          ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
             REGENERATE_ICON +
             `</button>`
           : "");
@@ -4378,21 +5076,27 @@
       wrap.appendChild(el);
       ensureChatTurn().appendChild(wrap);
       keepStatusAtEnd();
-      scrollToBottom();
+      if (shouldScroll) {
+        scrollToBottom();
+      }
       return el;
     }
 
     ensureChatTurn().appendChild(el);
     keepStatusAtEnd();
-    scrollToBottom();
+    if (shouldScroll) {
+      scrollToBottom();
+    }
     return el;
   }
 
-  function renderMessages(list) {
+  function renderMessages(list, scrollMode = "bottom", restoredScrollTop) {
+    restoringChatScroll = true;
     messagesEl.innerHTML = "";
     resetChatTurns();
     uiMessagesCache = Array.isArray(list) ? list : [];
     if (!Array.isArray(list)) {
+      restoringChatScroll = false;
       return;
     }
 
@@ -4417,11 +5121,20 @@
         item.text,
         i,
         regenAssistantIndex,
-        item.attachments
+        item.attachments,
+        false
       );
     }
     restoreAgentStatus();
     focusEditingInput();
+    requestAnimationFrame(() => {
+      if (scrollMode === "restore") {
+        restoreChatScroll(restoredScrollTop);
+      } else {
+        scrollToBottom();
+      }
+      restoringChatScroll = false;
+    });
     if (chatSearchOpen && chatSearchInput) {
       applyInChatSearchHighlights(chatSearchInput.value);
     }
@@ -4435,7 +5148,7 @@
     const model = models.find((m) => m.id === selectedModelId);
     modelLabel.textContent = model
       ? model.label || model.id
-      : selectedModelId || "Нет моделей";
+      : selectedModelId || t("noModels");
   }
 
   function stripPendingImagesIfNeeded(notify) {
@@ -4447,7 +5160,7 @@
     if (pendingAttachments.length < before) {
       renderAttachPreview();
       if (notify) {
-        showCopyToast("Модель не поддерживает изображения");
+        showCopyToast(t("modelNoImages"));
       }
     }
   }
@@ -4468,8 +5181,8 @@
     imageItem.classList.toggle("is-disabled", !visionOk);
     imageItem.setAttribute("aria-disabled", visionOk ? "false" : "true");
     imageItem.title = visionOk
-      ? "Прикрепить изображение"
-      : "Текущая модель не поддерживает изображения";
+      ? t("attachImage")
+      : t("currentModelNoImages");
   }
 
   function setSelectedModel(id, notify) {
@@ -4491,7 +5204,7 @@
     if (!models.length) {
       const empty = document.createElement("div");
       empty.className = "model-option is-empty";
-      empty.textContent = "Нет моделей в настройках";
+      empty.textContent = t("noModelsInSettings");
       modelMenu.appendChild(empty);
       return;
     }
@@ -4600,7 +5313,8 @@
     }
     modeMenu.innerHTML = "";
     const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
-    for (const mode of modes) {
+    for (const sourceMode of modes) {
+      const mode = localizeModeMeta(sourceMode);
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className =
@@ -4635,7 +5349,7 @@
     addBtn.setAttribute("role", "option");
     const addLabel = document.createElement("span");
     addLabel.className = "model-option-label";
-    addLabel.textContent = "+ Добавить режим";
+    addLabel.textContent = t("addMode");
     addBtn.appendChild(addLabel);
     modeMenu.appendChild(addBtn);
   }
@@ -4688,11 +5402,13 @@
   function setAgentMode(next, { focus = false, close = true } = {}) {
     agentMode = normalizeAgentModeUi(next);
     const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
-    const meta = modes.find((m) => m.id === agentMode) || modes[0] || {
+    const meta = localizeModeMeta(
+      modes.find((m) => m.id === agentMode) || modes[0] || {
       id: "agent",
-      label: "Агент",
-      placeholder: "Задача для агента... (@ — файл)",
-    };
+      label: t("agent"),
+      placeholder: t("taskPlaceholder"),
+      }
+    );
     if (modePicker) {
       modePicker.dataset.mode = agentMode;
     }
@@ -4702,14 +5418,14 @@
     if (modeTrigger) {
       modeTrigger.title = meta.description
         ? `${meta.label}: ${meta.description}`
-        : meta.label || "Режим";
+        : meta.label || t("mode");
     }
     if (modeMenu && !modeMenu.hidden) {
       renderModeMenu();
     }
     if (promptEl) {
       promptEl.placeholder =
-        meta.placeholder || "Задача для агента... (@ — файл)";
+        meta.placeholder || t("taskPlaceholder");
     }
     if (close) {
       closeModeMenu();
@@ -4733,11 +5449,12 @@
       closeMenu();
       closePlusMenu();
       closeModeMenu();
+      closeSlashMenu();
       closeMentionMenu();
     }
     sendBtn.dataset.mode = busy ? "stop" : "send";
-    sendBtn.title = busy ? "Остановить" : "Отправить";
-    sendBtn.setAttribute("aria-label", busy ? "Остановить" : "Отправить");
+    sendBtn.title = busy ? t("stop") : t("send");
+    sendBtn.setAttribute("aria-label", busy ? t("stop") : t("send"));
     sendBtn.classList.toggle("is-stop", busy);
     if (!busy) {
       focusPrompt();
@@ -4857,7 +5574,22 @@
 
 
   function sendPrompt() {
-    const typed = promptEl.value.trim();
+    const rawInput = promptEl.value || "";
+    const command = parseSlashCommand(rawInput);
+    let typed = rawInput.trim();
+    let modeForSend = agentMode;
+    if (command) {
+      setAgentMode(command.mode, { close: true });
+      modeForSend = normalizeAgentModeUi(command.mode);
+      if (command.kind === "mode" && !command.sendText) {
+        promptEl.value = "";
+        closeMentionMenu();
+        showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
+        focusPrompt();
+        return;
+      }
+      typed = command.sendText;
+    }
     const text = buildMessageWithSelections(typed);
     const attachments = pendingAttachments.slice();
     if ((!text && !attachments.length) || busy) {
@@ -4872,13 +5604,14 @@
     promptEl.value = "";
     clearPendingAttachments();
     clearPendingSelections();
+    closeSlashMenu();
     closeMentionMenu();
     setBusy(true);
     vscode.postMessage({
       type: "send",
       text,
       model: getSelectedModel(),
-      agentMode,
+      agentMode: modeForSend,
       attachments: attachments.map(attachmentPayload),
     });
   }
@@ -4956,7 +5689,7 @@
       closePlusMenu();
       if (action === "image") {
         if (!currentModelSupportsVision()) {
-          showCopyToast("Модель не поддерживает изображения");
+          showCopyToast(t("modelNoImages"));
           return;
         }
         vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
@@ -5054,7 +5787,7 @@
         void ingestDroppedFiles(event.dataTransfer.files);
         return;
       }
-      showCopyToast("Не удалось прочитать файл");
+      showCopyToast(t("failedReadFile"));
     });
   }
 
@@ -5137,7 +5870,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (!currentModelSupportsVision()) {
-      showCopyToast("Модель не поддерживает изображения");
+      showCopyToast(t("modelNoImages"));
       return;
     }
     await ingestDroppedFiles(imageFiles);
@@ -5177,7 +5910,7 @@
         return;
       }
       if (!currentModelSupportsVision()) {
-        showCopyToast("Модель не поддерживает изображения");
+        showCopyToast(t("modelNoImages"));
         return;
       }
       event.preventDefault();
@@ -5572,12 +6305,20 @@
       schedulePersistSettings(0);
     });
   }
+  if (settingsLanguage) {
+    settingsLanguage.addEventListener("change", () => {
+      settingsLanguageValue = settingsLanguage.value || "auto";
+      schedulePersistSettings(0);
+      showCopyToast(
+        UI_LANG === "ru"
+          ? "Перезагрузите окно VS Code, чтобы язык панели обновился"
+          : "Reload the VS Code window to apply the panel language"
+      );
+    });
+  }
 
   if (backToAgentsBtn) {
     backToAgentsBtn.addEventListener("click", () => {
-      if (busy) {
-        return;
-      }
       vscode.postMessage({ type: "showAgents" });
     });
   }
@@ -5604,7 +6345,7 @@
       }
       event.preventDefault();
       const chatId = pill.getAttribute("data-chat-id") || "";
-      if (!chatId || chatId === activeChatId || busy) {
+      if (!chatId || chatId === activeChatId) {
         return;
       }
       vscode.postMessage({ type: "switchBranch", chatId });
@@ -5840,7 +6581,7 @@
   }
 
   if (chatAgentNameEl) {
-    chatAgentNameEl.title = "Переименовать";
+    chatAgentNameEl.title = t("rename");
     chatAgentNameEl.setAttribute("role", "button");
     chatAgentNameEl.tabIndex = 0;
     chatAgentNameEl.addEventListener("click", () => {
@@ -6036,10 +6777,15 @@
   });
 
   promptEl.addEventListener("input", () => {
-    onMentionInput(promptEl);
+    if (!onSlashInput(promptEl)) {
+      onMentionInput(promptEl);
+    }
   });
 
   promptEl.addEventListener("keydown", (event) => {
+    if (onSlashKeydown(event, promptEl)) {
+      return;
+    }
     if (onMentionKeydown(event, promptEl)) {
       return;
     }
@@ -6049,9 +6795,27 @@
     }
   });
 
+  messagesEl.addEventListener(
+    "scroll",
+    () => {
+      if (!restoringChatScroll && chatScreen && !chatScreen.hidden && activeChatId) {
+        syncChatScroll(activeChatId);
+      }
+    },
+    { passive: true }
+  );
+
   if (mentionMenuEl) {
     mentionMenuEl.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      const slashOption = event.target.closest("[data-slash-index]");
+      if (slashOption) {
+        const index = Number(slashOption.getAttribute("data-slash-index"));
+        if (Number.isInteger(index)) {
+          applySlashSelection(index);
+        }
+        return;
+      }
       const option = event.target.closest(".mention-option");
       if (!option) {
         return;
@@ -6077,7 +6841,11 @@
         editingAttachments = [];
         clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
-        renderMessages(msg.uiMessages || []);
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
+        applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
+        renderMessages(msg.uiMessages || [], "restore", msg.scrollTop);
         if (msg.agentId) {
           activeAgentId = msg.agentId;
         }
@@ -6091,7 +6859,7 @@
           setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
         }
         showScreen(msg.screen || "agents");
-        setBusy(false);
+        setBusy(Boolean(msg.busy));
         break;
       case "attachmentsAdded":
         mergePendingAttachments(msg.attachments || []);
@@ -6130,24 +6898,22 @@
         archiveAgentsData = Array.isArray(msg.agents) ? msg.agents : [];
         renderArchiveList();
         showScreen("archive");
-        setBusy(false);
         break;
       case "showAgents":
         showScreen("agents");
-        setBusy(false);
+        setBusy(Boolean(msg.busy));
         break;
       case "showArchive":
         showScreen("archive");
-        setBusy(false);
+        setBusy(Boolean(msg.busy));
         break;
       case "showSettings":
         showScreen("settings");
-        setBusy(false);
+        setBusy(Boolean(msg.busy));
         break;
       case "settings":
         fillSettings(msg.settings);
         showScreen("settings");
-        setBusy(false);
         break;
       case "showChat":
         if (msg.models) {
@@ -6157,14 +6923,15 @@
         editingUserText = "";
         editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
+        applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
         if (msg.uiMessages) {
-          renderMessages(msg.uiMessages);
+          renderMessages(msg.uiMessages, "restore", msg.scrollTop);
         }
         if (msg.agentId) {
           activeAgentId = msg.agentId;
-        }
-        if (msg.chatId) {
-          activeChatId = msg.chatId;
         }
         renderChatBranches(msg.branches);
         if (
@@ -6181,7 +6948,7 @@
           setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
         }
         showScreen("chat");
-        setBusy(false);
+        setBusy(Boolean(msg.busy));
         {
           const highlight =
             typeof msg.highlightMessageIndex === "number"
@@ -6251,7 +7018,7 @@
         renderMessages(msg.uiMessages || []);
         break;
       case "copied":
-        showCopyToast("Скопировано");
+        showCopyToast(t("copied"));
         break;
       case "append":
         uiMessagesCache.push({
@@ -6268,7 +7035,9 @@
         );
         break;
       case "status":
-        setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
+        if (!msg.chatId || msg.chatId === activeChatId) {
+          setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
+        }
         break;
       case "review":
         uiMessagesCache.push({
@@ -6312,11 +7081,17 @@
         ensureRegenerateButton();
         break;
       case "idle":
+        if (msg.chatId && msg.chatId !== activeChatId) {
+          break;
+        }
         streamingEl = null;
         setAgentStatus("", true);
         setBusy(false);
         break;
       case "stopped":
+        if (msg.chatId && msg.chatId !== activeChatId) {
+          break;
+        }
         streamingEl = null;
         setAgentStatus("", true);
         setBusy(false);

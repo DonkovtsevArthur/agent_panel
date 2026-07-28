@@ -33,6 +33,8 @@ export interface ChatSession {
   parentChatId?: string;
   /** Индекс ui-сообщения в родителе, от которого создана ветка. */
   branchedFromUiIndex?: number;
+  /** Последняя позиция скролла в окне чата. */
+  scrollTop?: number;
 }
 
 export interface AgentRecord {
@@ -107,22 +109,22 @@ function previewFromMessages(uiMessages: UiMessage[]): string {
       }
     }
   }
-  return "Пустой чат";
+  return "Empty chat";
 }
 
 function isDefaultTitle(value: string | undefined): boolean {
   const title = String(value || "").trim();
-  return !title || title === "Новый агент" || title === "Новый чат";
+  return !title || title === "New Agent" || title === "New Chat";
 }
 
 function isMeaningfulTitle(value: string | undefined): boolean {
-  return !isDefaultTitle(value) && String(value || "").trim() !== "Чат";
+  return !isDefaultTitle(value) && String(value || "").trim() !== "Chat";
 }
 
 function titleFromMessages(uiMessages: UiMessage[]): string {
   const firstUser = uiMessages.find((m) => m.role === "user" && m.text.trim());
   if (!firstUser) {
-    return "Новый агент";
+    return "New Agent";
   }
   const text = firstUser.text.replace(/\s+/g, " ").trim();
   return text.length > 48 ? `${text.slice(0, 48)}…` : text;
@@ -132,7 +134,7 @@ function createEmptyChat(selectedModel = ""): ChatSession {
   const now = Date.now();
   return {
     id: uid("chat"),
-    title: "Новый агент",
+    title: "New Agent",
     selectedModel,
     history: [],
     uiMessages: [],
@@ -181,7 +183,7 @@ export function createEmptyAgent(selectedModel = ""): {
   return {
     agent: {
       id: uid("agent"),
-      name: "Новый агент",
+      name: "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
       updatedAt: now,
@@ -218,6 +220,9 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
   }
   if (typeof chat.branchedFromUiIndex === "number") {
     next.branchedFromUiIndex = chat.branchedFromUiIndex;
+  }
+  if (typeof chat.scrollTop === "number" && Number.isFinite(chat.scrollTop)) {
+    next.scrollTop = chat.scrollTop;
   }
   return next;
 }
@@ -268,7 +273,7 @@ function normalizeAgents(
     );
     agents.push({
       id,
-      name: rawAgent.name || "Новый агент",
+      name: rawAgent.name || "New Agent",
       chatId,
       chatIds,
       updatedAt: Math.max(rawAgent.updatedAt || 0, latestChatUpdated),
@@ -286,7 +291,7 @@ function normalizeAgents(
     }
     agents.push({
       id,
-      name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
+      name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId,
       chatIds: [chatId],
       updatedAt: chat.updatedAt || Date.now(),
@@ -347,7 +352,7 @@ export function migrateToStoreV2(
     };
     const agent: AgentRecord = {
       id: uid("agent"),
-      name: isMeaningfulTitle(chat.title) ? chat.title : "Новый агент",
+      name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
       updatedAt: chat.updatedAt,
@@ -424,7 +429,6 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
       const chat = store.chats[agent.chatId];
       return Boolean(chat) && !agent.archivedAt && !chat.archivedAt;
     })
-    .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((agent) => {
       const chat = store.chats[agent.chatId];
       return {
@@ -432,7 +436,7 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
         chatId: agent.chatId,
         name: agent.name,
         model: chat?.selectedModel || "",
-        preview: chat ? previewFromMessages(chat.uiMessages) : "Пустой чат",
+        preview: chat ? previewFromMessages(chat.uiMessages) : "Empty chat",
         updatedAt: agent.updatedAt,
         active: agent.id === store.activeAgentId,
         contextUsed:
@@ -591,7 +595,7 @@ export function formatListTime(ts: number): string {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   if (sameDay) {
-    return d.toLocaleTimeString("ru-RU", {
+    return d.toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
@@ -604,9 +608,9 @@ export function formatListTime(ts: number): string {
     d.getMonth() === yesterday.getMonth() &&
     d.getDate() === yesterday.getDate()
   ) {
-    return "вчера";
+    return "yesterday";
   }
-  return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
 }
 
 export interface ChatBranchItem {
@@ -692,7 +696,7 @@ export function buildBranchesList(
   if (!agent) {
     return [];
   }
-  const agentName = String(agent.name || "").trim() || "Агент";
+  const agentName = String(agent.name || "").trim() || "Agent";
   const ids = getAgentChatIds(agent);
   const canDelete =
     ids.filter((id) => {
@@ -707,7 +711,7 @@ export function buildBranchesList(
       }
       // Корень — «Основная»; форки — «Имя агента · 2», «· 3», …
       const label =
-        index === 0 ? "Основная" : `${agentName} · ${index + 1}`;
+        index === 0 ? "Main" : `${agentName} · ${index + 1}`;
       const item: ChatBranchItem = {
         id,
         label,
@@ -752,7 +756,7 @@ export function branchChatFromMessage(
   }
 
   const now = Date.now();
-  const agentName = String(agent.name || "").trim() || "Агент";
+  const agentName = String(agent.name || "").trim() || "Agent";
   const branchIndex = ids.length + 1;
   const chat: ChatSession = {
     id: uid("chat"),
@@ -982,7 +986,7 @@ export function searchChatMessages(
         }
         hits.push({
           agentId: agent.id,
-          agentName: agent.name || "Агент",
+          agentName: agent.name || "Agent",
           chatId: chat.id,
           messageIndex: i,
           role: msg.role,

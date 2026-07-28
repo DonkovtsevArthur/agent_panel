@@ -1,5 +1,7 @@
+import * as vscode from "vscode";
 import type { ChatTool } from "./openaiClient";
 import { agentTools, READONLY_TOOL_NAMES } from "./tools";
+import { resolveUiLanguage } from "./i18n";
 
 export type ModeToolsPolicy = "agent" | "readonly";
 
@@ -16,49 +18,49 @@ export interface AgentModeDef {
   placeholder?: string;
 }
 
-const PLAN_MODE_SYSTEM_PROMPT = `Сейчас включён режим плана (Plan).
-Твоя задача — исследовать контекст и предложить чёткий план реализации.
-Разрешены только инструменты чтения: list_files, read_file.
-Запрещено: менять файлы, выполнять shell-команды, писать или править код в репозитории.
-В ответе дай структурированный план на русском: цель, шаги по порядку, какие файлы затронуть, риски и открытые вопросы.
-Не приступай к реализации — только план. Если не хватает данных — сначала прочитай нужные файлы, затем сформулируй план.`;
+const PLAN_MODE_SYSTEM_PROMPT = `Plan mode is active.
+Your task is to inspect the context and produce a clear implementation plan.
+Only read-only tools are allowed: list_files, read_file.
+Do not modify files, run shell commands, or implement code in the repository.
+Reply with a structured plan in English: goal, ordered steps, affected files, risks, and open questions.
+Do not start implementation. If you need more data, read the relevant files first and then write the plan.`;
 
-const ASK_MODE_SYSTEM_PROMPT = `Сейчас включён режим «Спросить» (Ask).
-Отвечай на вопросы пользователя: объясняй код, ищи причину, давай советы и примеры.
-Разрешены только инструменты чтения: list_files, read_file.
-Запрещено: менять файлы, выполнять shell-команды, реализовывать фичи и править репозиторий.
-Не составляй большой план внедрения и не предлагай сразу «давай внесу правки» — ответь по существу.
-Если не хватает данных — прочитай нужные файлы и опирайся на факты из кода.`;
+const ASK_MODE_SYSTEM_PROMPT = `Ask mode is active.
+Answer the user's questions: explain code, investigate causes, give advice and examples.
+Only read-only tools are allowed: list_files, read_file.
+Do not modify files, run shell commands, implement features, or edit the repository.
+Do not turn the answer into a large implementation plan or jump straight to "I can make the change" — answer the question directly.
+If you need more data, read the relevant files and ground your answer in facts from the code.`;
 
 export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
 
 export const BUILTIN_MODES: AgentModeDef[] = [
   {
     id: "agent",
-    label: "Агент",
-    description: "Читает и правит код",
+    label: "Agent",
+    description: "Reads and edits code",
     tools: "agent",
     builtin: true,
-    placeholder: "Задача для агента... (@ — файл)",
+    placeholder: "Task for the agent... (@ for file)",
   },
   {
     id: "plan",
-    label: "План",
-    description: "Только план, без правок",
+    label: "Plan",
+    description: "Plan only, no edits",
     tools: "readonly",
     prompt: PLAN_MODE_SYSTEM_PROMPT,
     builtin: true,
     placeholder:
-      "Опишите задачу — агент составит план без правок… (@ — файл)",
+      "Describe the task — the agent will draft a plan without edits... (@ for file)",
   },
   {
     id: "ask",
-    label: "Спросить",
-    description: "Ответы и объяснения",
+    label: "Ask",
+    description: "Answers and explanations",
     tools: "readonly",
     prompt: ASK_MODE_SYSTEM_PROMPT,
     builtin: true,
-    placeholder: "Спросите про код или задачу… (@ — файл)",
+    placeholder: "Ask about code or a task... (@ for file)",
   },
 ];
 
@@ -115,6 +117,15 @@ export function slugifyModeId(label: string): string {
 
 export function normalizeToolsPolicy(value: unknown): ModeToolsPolicy {
   return value === "readonly" ? "readonly" : "agent";
+}
+
+function currentUiLanguage(): "en" | "ru" {
+  const setting = vscode.workspace
+    .getConfiguration("agentPanel")
+    .get<"auto" | "en" | "ru">("language");
+  return resolveUiLanguage(
+    setting === "en" || setting === "ru" ? setting : "auto"
+  );
 }
 
 export function parseCustomModes(raw: unknown): AgentModeDef[] {
@@ -234,43 +245,46 @@ export function toolsForPolicy(tools: ModeToolsPolicy): ChatTool[] {
 }
 
 export function modeThinkingLabel(mode: AgentModeDef): string {
+  const lang = currentUiLanguage();
   if (mode.id === "plan") {
-    return "Планирует…";
+    return lang === "ru" ? "Планирую..." : "Planning...";
   }
   if (mode.id === "ask") {
-    return "Смотрит…";
+    return lang === "ru" ? "Изучаю..." : "Reviewing...";
   }
   if (isReadonlyPolicy(mode.tools)) {
-    return "Смотрит…";
+    return lang === "ru" ? "Изучаю..." : "Reviewing...";
   }
-  return "Думает…";
+  return lang === "ru" ? "Думаю..." : "Thinking...";
 }
 
 export function modeDoneLabel(mode: AgentModeDef): string {
+  const lang = currentUiLanguage();
   if (mode.id === "plan") {
-    return "План готов";
+    return lang === "ru" ? "План готов" : "Plan ready";
   }
   if (mode.id === "ask") {
-    return "Ответил";
+    return lang === "ru" ? "Готово" : "Answered";
   }
-  return "Надумал";
+  return lang === "ru" ? "Готово" : "Done";
 }
 
 export function modeCollectLabel(mode: AgentModeDef): string {
+  const lang = currentUiLanguage();
   if (mode.id === "plan") {
-    return "Собирает план…";
+    return lang === "ru" ? "Собираю план..." : "Building plan...";
   }
-  return "Собирает ответ…";
+  return lang === "ru" ? "Готовлю ответ..." : "Drafting answer...";
 }
 
 export function modeFinalNudge(mode: AgentModeDef): string {
   if (mode.id === "plan") {
-    return "Инструменты больше недоступны. Сформулируй итоговый план по уже полученным данным. Не вызывай инструменты и не предлагай сразу править код.";
+    return "Tools are no longer available. Write the final plan based on the information already gathered. Do not call tools and do not jump straight to editing code.";
   }
   if (isReadonlyPolicy(mode.tools)) {
-    return "Инструменты больше недоступны. Кратко ответь на вопрос по уже полученным данным. Не вызывай инструменты и не предлагай править код.";
+    return "Tools are no longer available. Answer the question briefly using the information already gathered. Do not call tools and do not propose editing code.";
   }
-  return "Инструменты больше недоступны. Кратко ответь пользователю по уже полученным данным. Не вызывай инструменты.";
+  return "Tools are no longer available. Reply briefly to the user using the information already gathered. Do not call tools.";
 }
 
 export function modeTitle(mode: AgentModeDef): string {

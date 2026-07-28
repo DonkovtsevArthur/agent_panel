@@ -18,6 +18,7 @@ import {
   resolveModelEndpoint,
   resolveModelSupportsVision,
 } from "./config";
+import { resolveUiLanguage } from "./i18n";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import type { FileEditStat } from "./diffStats";
@@ -41,6 +42,7 @@ import {
   deleteAgentFromStore,
   ensureActiveVisible,
   formatListTime,
+  findAgentByChatId,
   getActiveChat,
   getAgentChatIds,
   migrateToStoreV2,
@@ -73,6 +75,7 @@ type SettingsPayload = {
     favorite?: boolean;
     supportsVision?: boolean;
   }>;
+  language: string;
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -136,6 +139,7 @@ type WebviewToHost =
     }
   | { type: "openSearchHit"; agentId: string; messageIndex: number; chatId?: string }
   | { type: "copyText"; text: string }
+  | { type: "chatScroll"; chatId: string; scrollTop: number }
   | { type: "branchFromMessage"; messageIndex: number }
   | { type: "switchBranch"; chatId: string }
   | { type: "deleteBranch"; chatId: string };
@@ -153,7 +157,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private selectedModel = "";
   private lastTurnModel = "";
   private contextTokens = 0;
-  private abort?: AbortController;
+  private readonly chatRuns = new Map<string, AbortController>();
+  private readonly agentRunState = new Map<
+    string,
+    "running" | "success" | "error"
+  >();
+  private readonly chatStatusState = new Map<
+    string,
+    { text: string; hidden: boolean; phase?: AgentPhase }
+  >();
   private readonly disposables: vscode.Disposable[] = [];
   private scmRefreshTimer?: ReturnType<typeof setTimeout>;
   private gitApiBound = false;
@@ -237,7 +249,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const selection = getEditorSelectionPayload();
     if (!selection) {
       void vscode.window.showInformationMessage(
-        "Выделите фрагмент кода в редакторе."
+        "Select a code fragment in the editor."
       );
       return;
     }
@@ -281,9 +293,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   /** Новый чат теперь всегда создаёт нового агента. */
   newChat(): void {
-    this.abort?.abort();
-    this.abort = undefined;
-
     const config = getConfig();
     const enabled = getEnabledModels();
     const model =
@@ -312,7 +321,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   dispose(): void {
-    this.abort?.abort();
+    this.abortAllRuns();
     if (this.scmRefreshTimer) {
       clearTimeout(this.scmRefreshTimer);
     }
@@ -493,7 +502,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const kept = attachments.filter((a) => a.kind !== "image");
     if (kept.length < attachments.length) {
       void vscode.window.showWarningMessage(
-        "Текущая модель не поддерживает изображения. Картинки не прикреплены."
+        "The current model does not support images. Image attachments were skipped."
       );
     }
     return kept;
@@ -503,7 +512,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     try {
       if (options?.imagesOnly && !this.selectedModelSupportsVision()) {
         void vscode.window.showWarningMessage(
-          "Текущая модель не поддерживает изображения."
+          "The current model does not support images."
         );
         return;
       }
@@ -662,15 +671,81 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private saveStore(): void {
     this.persistActiveChat();
+    this.writeStoreOnly();
+  }
+
+  private writeStoreOnly(): void {
     if (!this.hasWorkspaceFolder()) {
       return;
     }
     void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
   }
 
+  private isViewingChat(chatId: string): boolean {
+    return this.store.screen === "chat" && this.store.activeChatId === chatId;
+  }
+
+  private syncActiveSnapshotFromChat(
+    chatId: string,
+    state: {
+      history: ChatMessage[];
+      uiMessages: UiMessage[];
+      selectedModel: string;
+      lastTurnModel: string;
+      contextTokens: number;
+    }
+  ): void {
+    if (!this.isViewingChat(chatId)) {
+      return;
+    }
+    this.history = state.history;
+    this.uiMessages = state.uiMessages;
+    this.selectedModel = state.selectedModel;
+    this.lastTurnModel = state.lastTurnModel;
+    this.contextTokens = state.contextTokens;
+  }
+
+  private setRunStateForChat(
+    chatId: string,
+    state?: "running" | "success" | "error"
+  ): void {
+    const agentId = findAgentByChatId(this.store, chatId)?.id;
+    if (!agentId) {
+      return;
+    }
+    if (state) {
+      this.agentRunState.set(agentId, state);
+    } else {
+      this.agentRunState.delete(agentId);
+    }
+    this.postAgentsList();
+  }
+
+  private isChatRunning(chatId: string | undefined): boolean {
+    return Boolean(chatId && this.chatRuns.has(chatId));
+  }
+
+  private abortChatRun(chatId: string | undefined): void {
+    if (!chatId) {
+      return;
+    }
+    const controller = this.chatRuns.get(chatId);
+    if (!controller) {
+      return;
+    }
+    this.chatRuns.delete(chatId);
+    controller.abort();
+  }
+
+  private abortAllRuns(): void {
+    for (const [chatId, controller] of this.chatRuns.entries()) {
+      this.chatRuns.delete(chatId);
+      controller.abort();
+    }
+  }
+
   private reloadStoreForWorkspace(): void {
-    this.abort?.abort();
-    this.abort = undefined;
+    this.abortAllRuns();
     this.saveStore();
     this.loadStore();
     void this.postInit();
@@ -689,8 +764,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: "append", role, text });
   }
 
-  private setStatus(text: string, hidden = false, phase?: AgentPhase): void {
-    this.view?.webview.postMessage({ type: "status", text, hidden, phase });
+  private setStatusForChat(
+    chatId: string | undefined,
+    text: string,
+    hidden = false,
+    phase?: AgentPhase
+  ): void {
+    if (!chatId) {
+      return;
+    }
+    const nextHidden = Boolean(hidden || !text);
+    if (nextHidden) {
+      this.chatStatusState.delete(chatId);
+    } else {
+      this.chatStatusState.set(chatId, { text, hidden: false, phase });
+    }
+    if (this.isViewingChat(chatId)) {
+      this.view?.webview.postMessage({
+        type: "status",
+        chatId,
+        text,
+        hidden: nextHidden,
+        phase,
+      });
+    }
   }
 
   private modelLabel(id: string): string {
@@ -710,6 +807,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       time: formatListTime(a.updatedAt),
       active: a.active,
       empty: a.empty,
+      runState: this.agentRunState.get(a.id) || "",
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
@@ -748,14 +846,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       uiMessages: await this.enrichUiMessages(this.uiMessages),
+      busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
       agentId: agent?.id || "",
-      agentName: agent?.name || "Агент",
-      chatTitle: agent?.name || "Агент",
+      agentName: agent?.name || "Agent",
+      chatTitle: agent?.name || "Agent",
       chatId: this.store.activeChatId || "",
       branches,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      scrollTop: this.store.chats[this.store.activeChatId || ""]?.scrollTop,
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
     };
     if (
       typeof highlightMessageIndex === "number" &&
@@ -786,31 +887,34 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.createAgent();
         break;
       case "showAgents":
-        this.abort?.abort();
-        this.abort = undefined;
         this.persistActiveChat();
         this.setScreen("agents");
         this.saveStore();
         this.postAgentsList();
-        this.view?.webview.postMessage({ type: "showAgents" });
+        this.view?.webview.postMessage({
+          type: "showAgents",
+          busy: this.isChatRunning(this.store.activeChatId),
+        });
         break;
       case "showArchive":
-        this.abort?.abort();
-        this.abort = undefined;
         this.persistActiveChat();
         this.setScreen("archive");
         this.saveStore();
         this.postArchiveList();
-        this.view?.webview.postMessage({ type: "showArchive" });
+        this.view?.webview.postMessage({
+          type: "showArchive",
+          busy: this.isChatRunning(this.store.activeChatId),
+        });
         break;
       case "showSettings":
-        this.abort?.abort();
-        this.abort = undefined;
         this.persistActiveChat();
         this.setScreen("settings");
         this.saveStore();
         this.postSettings();
-        this.view?.webview.postMessage({ type: "showSettings" });
+        this.view?.webview.postMessage({
+          type: "showSettings",
+          busy: this.isChatRunning(this.store.activeChatId),
+        });
         break;
       case "saveSettings":
         await this.saveSettings(message.settings);
@@ -846,11 +950,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.confirmDeleteAgent(message.agentId);
         break;
       case "stop":
-        this.abort?.abort();
-        this.abort = undefined;
-        this.setStatus("", true);
+        this.abortChatRun(this.store.activeChatId);
+        this.setStatusForChat(this.store.activeChatId, "", true);
         this.postRegenerateState();
-        this.view?.webview.postMessage({ type: "stopped" });
+        this.view?.webview.postMessage({
+          type: "stopped",
+          chatId: this.store.activeChatId,
+        });
         break;
       case "regenerate":
         await this.handleRegenerate(getModeById(message.agentMode).id);
@@ -979,6 +1085,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       }
+      case "chatScroll": {
+        const chatId = String(message.chatId || "");
+        const chat = this.store.chats[chatId];
+        const scrollTop = Number(message.scrollTop);
+        if (chat && Number.isFinite(scrollTop) && scrollTop >= 0) {
+          chat.scrollTop = scrollTop;
+          this.writeStoreOnly();
+        }
+        break;
+      }
       case "pickModel":
         await this.pickModel();
         break;
@@ -996,8 +1112,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     highlightMessageIndex?: number,
     chatId?: string
   ): void {
-    this.abort?.abort();
-    this.abort = undefined;
     this.persistActiveChat();
 
     const agent = this.store.agents.find((a) => a.id === agentId);
@@ -1032,9 +1146,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private branchFromMessage(messageIndex: number): void {
-    if (this.abort) {
+    if (this.isChatRunning(this.store.activeChatId)) {
       void vscode.window.showWarningMessage(
-        "Дождитесь окончания ответа, затем создайте ветку."
+        "Wait for the current response to finish, then create a branch."
       );
       return;
     }
@@ -1055,7 +1169,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     );
     if (!created) {
       void vscode.window.showWarningMessage(
-        "Нельзя ответвить от этого сообщения."
+        "You cannot branch from this message."
       );
       return;
     }
@@ -1073,8 +1187,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (chatId === this.store.activeChatId) {
       return;
     }
-    this.abort?.abort();
-    this.abort = undefined;
     this.persistActiveChat();
     if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
       return;
@@ -1102,19 +1214,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const answer = await vscode.window.showWarningMessage(
-      `Удалить ветку «${target.label}»?`,
+      `Delete branch "${target.label}"?`,
       {
         modal: true,
-        detail: "История этой ветки будет удалена без восстановления.",
+        detail: "This branch history will be deleted permanently.",
       },
-      "Удалить"
+      "Delete"
     );
-    if (answer !== "Удалить") {
+    if (answer !== "Delete") {
       return;
     }
 
-    this.abort?.abort();
-    this.abort = undefined;
+    this.abortChatRun(chatId);
     this.persistActiveChat();
     if (!deleteAgentBranch(this.store, agent.id, chatId)) {
       return;
@@ -1126,16 +1237,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async createAgent(): Promise<void> {
-    const name = await vscode.window.showInputBox({
-      title: "Новый агент",
-      prompt: "Имя агента",
-      value: "Новый агент",
-      ignoreFocusOut: true,
-    });
-    if (name === undefined) {
-      return;
-    }
-
     const config = getConfig();
     const enabled = getEnabledModels();
     const model =
@@ -1146,7 +1247,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       enabled[0]?.id ||
       "";
     const created = createEmptyAgent(model);
-    created.agent.name = name.trim() || "Новый агент";
     this.persistActiveChat();
     this.store.agents.unshift(created.agent);
     this.store.chats[created.chat.id] = created.chat;
@@ -1164,19 +1264,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `Архивировать агента «${agent.name}»?`,
+      `Archive agent "${agent.name}"?`,
       {
         modal: true,
-        detail: "Агента можно будет восстановить из архива позже.",
+        detail: "You can restore this agent from the archive later.",
       },
-      "В архив"
+      "Archive"
     );
-    if (answer !== "В архив") {
+    if (answer !== "Archive") {
       return;
     }
 
-    this.abort?.abort();
-    this.abort = undefined;
+    for (const chatId of getAgentChatIds(agent)) {
+      this.abortChatRun(chatId);
+    }
     this.persistActiveChat();
     if (!archiveAgentInStore(this.store, agentId)) {
       return;
@@ -1209,22 +1310,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     );
     const answer = await vscode.window.showWarningMessage(
       empty
-        ? `Удалить пустого агента «${agent.name}»?`
-        : `Удалить «${agent.name}» безвозвратно?`,
+        ? `Delete empty agent "${agent.name}"?`
+        : `Delete "${agent.name}" permanently?`,
       {
         modal: true,
         detail: empty
-          ? "Сообщений нет — агент будет удалён без архива."
-          : "История сообщений будет удалена без возможности восстановления.",
+          ? "This agent has no messages and will be deleted without archiving."
+          : "Message history will be deleted permanently.",
       },
-      "Удалить"
+      "Delete"
     );
-    if (answer !== "Удалить") {
+    if (answer !== "Delete") {
       return;
     }
 
-    this.abort?.abort();
-    this.abort = undefined;
+    for (const chatId of getAgentChatIds(agent)) {
+      this.abortChatRun(chatId);
+    }
     this.persistActiveChat();
     if (!deleteAgentFromStore(this.store, agentId)) {
       return;
@@ -1245,20 +1347,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const models = getEnabledModels();
     if (!models.length) {
       void vscode.window.showWarningMessage(
-        "Нет включённых моделей. Включите модели в настройках «Гавань агентов»."
+        "No models are enabled. Enable models in Harbor Agents settings."
       );
       return;
     }
 
     const items = models.map((m) => ({
       label: `${m.favorite === true ? "$(heart-filled) " : ""}${m.label || m.id}`,
-      description: m.id === this.selectedModel ? "текущая" : m.id,
+      description: m.id === this.selectedModel ? "current" : m.id,
       id: m.id,
     }));
 
     const picked = await vscode.window.showQuickPick(items, {
-      title: "Модель агента",
-      placeHolder: "Выберите модель",
+      title: "Agent Model",
+      placeHolder: "Choose a model",
       matchOnDescription: true,
     });
 
@@ -1291,7 +1393,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(
-        `Не удалось открыть ${relativePath}: ${text}`
+        `Failed to open ${relativePath}: ${text}`
       );
     }
   }
@@ -1310,9 +1412,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!enabledModels.length) {
       this.pushUi(
         "error",
-        "Нет включённых моделей. Включите модели в настройках «Гавань агентов»."
+        "No models are enabled. Enable models in Harbor Agents settings."
       );
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
@@ -1326,13 +1431,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const messageText =
         error instanceof Error ? error.message : String(error);
       this.pushUi("error", messageText);
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
     const trimmed = String(text || "").trim();
     if (!trimmed && !attachments.length) {
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
@@ -1347,6 +1458,37 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? config.defaultModel
         : "") ||
       enabledModels[0].id;
+    const runChatId = this.store.activeChatId;
+    if (!runChatId || !this.store.chats[runChatId]) {
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      return;
+    }
+    let runHistory = this.history;
+    let runUiMessages = this.uiMessages;
+    let runLastTurnModel = this.lastTurnModel || "";
+    let runContextTokens = this.contextTokens;
+    const syncRunChat = (): void => {
+      touchChat(this.store, runChatId, {
+        selectedModel: chosen,
+        lastTurnModel: runLastTurnModel,
+        history: runHistory,
+        uiMessages: runUiMessages.slice(-200),
+        contextTokens: runContextTokens,
+      });
+      this.syncActiveSnapshotFromChat(runChatId, {
+        history: runHistory,
+        uiMessages: runUiMessages,
+        selectedModel: chosen,
+        lastTurnModel: runLastTurnModel,
+        contextTokens: runContextTokens,
+      });
+      this.writeStoreOnly();
+    };
+    const postToRunChat = (message: Record<string, unknown>): void => {
+      if (this.isViewingChat(runChatId)) {
+        this.view?.webview.postMessage(message);
+      }
+    };
     this.selectedModel = chosen;
     this.saveSession();
 
@@ -1355,11 +1497,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (withoutImages.length < attachments.length) {
         this.pushUi(
           "error",
-          "Модель не поддерживает изображения — картинки из сообщения убраны."
+          "This model does not support images, so image attachments were removed from the message."
         );
         attachments = withoutImages;
         if (!trimmed && !attachments.length) {
-          this.view?.webview.postMessage({ type: "idle" });
+          this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
           return;
         }
       }
@@ -1369,9 +1511,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!endpoint.baseUrl) {
       this.pushUi(
         "error",
-        `Не задан base URL для «${endpoint.providerName}». Добавьте провайдера в настройках.`
+        `No base URL is configured for "${endpoint.providerName}". Add a provider in settings.`
       );
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
       return;
     }
 
@@ -1380,86 +1522,127 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (attachments.length) {
         uiMsg.attachments = attachments.map(stripAttachmentPayload);
       }
-      this.uiMessages.push(uiMsg);
-      this.saveSession();
+      runUiMessages.push(uiMsg);
+      syncRunChat();
     }
 
-    this.abort?.abort();
-    this.abort = new AbortController();
+    this.abortChatRun(runChatId);
+    const currentRun = new AbortController();
+    this.chatRuns.set(runChatId, currentRun);
+    this.setRunStateForChat(runChatId, "running");
     const mode = getModeById(options?.agentMode);
     const agentMode = mode.id;
-    this.setStatus(modeThinkingLabel(mode), false, "thinking");
+    this.setStatusForChat(runChatId, modeThinkingLabel(mode), false, "thinking");
 
     const turnEdits: FileEditStat[] = [];
 
     try {
-      this.history = await runAgentTurn({
+      runHistory = await runAgentTurn({
         model: chosen,
-        history: this.history,
+        history: runHistory,
         userText: trimmed,
         attachments,
         storageUri: this.storageUri(),
-        signal: this.abort.signal,
+        signal: currentRun.signal,
         agentMode,
         callbacks: {
           onPhase: (phase, detail) => {
+            const lang = resolveUiLanguage(getConfig().language);
             const fallback =
               phase === "done"
-                ? "Надумал"
+                ? lang === "ru"
+                  ? "Готово"
+                  : "Done"
                 : phase === "editing"
-                  ? "Редактирует…"
+                  ? lang === "ru"
+                    ? "Редактирую..."
+                    : "Editing..."
                   : phase === "reading"
-                    ? "Читает…"
+                    ? lang === "ru"
+                      ? "Читаю..."
+                      : "Reading..."
                     : phase === "listing"
-                      ? "Смотрит…"
+                      ? lang === "ru"
+                        ? "Просматриваю..."
+                        : "Listing..."
                       : phase === "running"
-                        ? "Запускает…"
-                        : "Думает…";
-            this.setStatus(detail || fallback, false, phase);
+                        ? lang === "ru"
+                          ? "Запускаю..."
+                          : "Running..."
+                        : lang === "ru"
+                          ? "Думаю..."
+                          : "Thinking...";
+            this.setStatusForChat(runChatId, detail || fallback, false, phase);
           },
-          onTool: (toolText) => this.pushUi("tool", toolText),
+          onTool: (toolText) => {
+            runUiMessages.push({ role: "tool", text: toolText });
+            syncRunChat();
+            postToRunChat({ type: "append", role: "tool", text: toolText });
+          },
           onFileEdit: (edit) => {
             turnEdits.push(edit);
           },
           onAssistant: (assistantText) => {
-            this.lastTurnModel = chosen;
-            this.uiMessages.push({ role: "assistant", text: assistantText });
-            this.saveSession();
-            this.view?.webview.postMessage({
+            runLastTurnModel = chosen;
+            runUiMessages.push({ role: "assistant", text: assistantText });
+            syncRunChat();
+            this.setRunStateForChat(runChatId, "success");
+            postToRunChat({
               type: "assistantDone",
               text: assistantText,
             });
-            this.postRegenerateState();
+            if (this.isViewingChat(runChatId)) {
+              this.postRegenerateState();
+            }
           },
           onReview: (edits) => {
-            void this.publishReview(edits.length ? edits : turnEdits);
+            void this.publishReview(
+              edits.length ? edits : turnEdits,
+              runChatId,
+              runUiMessages
+            );
           },
           onUsage: (usage) => {
-            this.contextTokens = usage.used;
-            this.saveSession();
-            this.postContextUsage();
+            runContextTokens = usage.used;
+            syncRunChat();
+            if (this.isViewingChat(runChatId)) {
+              this.postContextUsage();
+            }
           },
         },
       });
-      this.saveSession();
-      this.postContextUsage();
+      syncRunChat();
+      if (this.isViewingChat(runChatId)) {
+        this.postContextUsage();
+      }
     } catch (error) {
-      this.setStatus("", true);
+      this.setStatusForChat(runChatId, "", true);
       if (
-        this.abort.signal.aborted ||
+        !currentRun ||
+        currentRun.signal.aborted ||
         (error instanceof Error && error.message === "aborted")
       ) {
-        this.postRegenerateState();
-        this.view?.webview.postMessage({ type: "stopped" });
+        this.setRunStateForChat(runChatId);
+        if (this.isViewingChat(runChatId)) {
+          this.postRegenerateState();
+        }
+        this.view?.webview.postMessage({ type: "stopped", chatId: runChatId });
         return;
       }
       const messageText =
         error instanceof Error ? error.message : String(error);
-      this.pushUi("error", messageText);
-      this.postRegenerateState();
-      this.view?.webview.postMessage({ type: "idle" });
+      runUiMessages.push({ role: "error", text: messageText });
+      syncRunChat();
+      this.setRunStateForChat(runChatId, "error");
+      postToRunChat({ type: "append", role: "error", text: messageText });
+      if (this.isViewingChat(runChatId)) {
+        this.postRegenerateState();
+      }
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
     } finally {
-      this.abort = undefined;
+      if (this.chatRuns.get(runChatId) === currentRun) {
+        this.chatRuns.delete(runChatId);
+      }
     }
   }
 
@@ -1467,11 +1650,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const state = this.getRegenerateState();
     if (!state) {
       this.postRegenerateState();
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
-    this.abort?.abort();
+    this.abortChatRun(this.store.activeChatId);
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
@@ -1505,7 +1691,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target.role !== "user"
     ) {
       this.postRegenerateState();
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
@@ -1523,13 +1712,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const messageText =
         error instanceof Error ? error.message : String(error);
       this.pushUi("error", messageText);
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
     if (!nextText && !attachments.length) {
       this.postRegenerateState();
-      this.view?.webview.postMessage({ type: "idle" });
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: this.store.activeChatId,
+      });
       return;
     }
 
@@ -1540,7 +1735,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    this.abort?.abort();
+    this.abortChatRun(this.store.activeChatId);
     this.history = this.history.slice(0, Math.max(0, userOrdinal * 2));
     this.uiMessages = this.uiMessages.slice(0, index);
     const uiMsg: UiMessage = { role: "user", text: nextText };
@@ -1564,23 +1759,35 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async publishReview(edits: FileEditStat[]): Promise<void> {
+  private async publishReview(
+    edits: FileEditStat[],
+    chatId = this.store.activeChatId,
+    targetUiMessages = this.uiMessages
+  ): Promise<void> {
     const unique = mergeEdits(edits).filter((e) => Boolean(e.path));
     if (!unique.length) {
-      this.setStatus("", true);
+      this.setStatusForChat(chatId, "", true);
       return;
     }
 
     const showScm = await hasUncommittedChanges(unique.map((f) => f.path));
     const payload = JSON.stringify({ files: unique, showScm });
-    this.uiMessages.push({ role: "review", text: payload });
-    this.saveSession();
-    this.view?.webview.postMessage({
-      type: "review",
-      files: unique,
-      showScm,
+    targetUiMessages.push({ role: "review", text: payload });
+    touchChat(this.store, chatId, {
+      uiMessages: targetUiMessages.slice(-200),
     });
-    this.setStatus("", true);
+    if (this.isViewingChat(chatId)) {
+      this.uiMessages = targetUiMessages;
+    }
+    this.writeStoreOnly();
+    if (this.isViewingChat(chatId)) {
+      this.view?.webview.postMessage({
+        type: "review",
+        files: unique,
+        showScm,
+      });
+    }
+    this.setStatusForChat(chatId, "", true);
   }
 
   private scheduleScmRefresh(): void {
@@ -1747,6 +1954,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           supportsVision: resolveModelSupportsVision(m),
         })),
         defaultModel: config.defaultModel,
+        language: config.language,
         defaultContextWindow: config.defaultContextWindow,
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -1798,7 +2006,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     if (!providers.length) {
       void vscode.window.showWarningMessage(
-        "Нужен хотя бы один провайдер с id и base URL."
+        "At least one provider with an id and base URL is required."
       );
       return;
     }
@@ -1882,7 +2090,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     if (!models.length) {
       void vscode.window.showWarningMessage(
-        "Нужна хотя бы одна модель с непустым id."
+        "At least one model with a non-empty id is required."
       );
       return;
     }
@@ -1909,6 +2117,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("providers", providers, target);
     await cfg.update("models", models, target);
     await cfg.update("defaultModel", resolvedDefault, target);
+    await cfg.update(
+      "language",
+      raw.language === "ru" ? "ru" : raw.language === "en" ? "en" : "auto",
+      target
+    );
     await cfg.update(
       "defaultContextWindow",
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
@@ -2009,15 +2222,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       uiMessages: await this.enrichUiMessages(this.uiMessages),
+      busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
       screen: this.store.screen,
       agentId: this.store.activeAgentId || "",
       agentName:
         this.store.agents.find((a) => a.id === this.store.activeAgentId)?.name ||
-        "Агент",
-      chatTitle: getActiveChat(this.store)?.title || "Чат",
+        "Agent",
+      chatTitle: getActiveChat(this.store)?.title || "Chat",
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      chatId: this.store.activeChatId || "",
+      scrollTop: getActiveChat(this.store)?.scrollTop,
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       modes: this.serializeModesForUi(),
     });
 
@@ -2040,6 +2257,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private getHtml(webview: vscode.Webview): string {
+    const lang = resolveUiLanguage(getConfig().language);
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
         ?.version ?? "0";
@@ -2064,7 +2282,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const nonce = getNonce();
 
     return `<!DOCTYPE html>
-<html lang="ru">
+<html lang="${lang}">
 <head>
   <meta charset="UTF-8" />
   <meta
@@ -2082,19 +2300,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       src: url("${materialIconsUri}") format("truetype");
     }
   </style>
-  <title>Гавань агентов</title>
+  <title>Harbor Agents</title>
 </head>
 <body>
   <section id="agentsScreen" class="screen" hidden>
     <div class="agents-top">
-      <div class="agents-title">Агенты</div>
-      <button type="button" class="icon-btn" id="openSettingsBtn" title="Настройки" aria-label="Настройки">
+      <div class="agents-title">Agents</div>
+      <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
         <span class="material-symbols-outlined" aria-hidden="true">settings</span>
       </button>
-      <button type="button" class="icon-btn" id="openArchiveBtn" title="Архив" aria-label="Архив">
+      <button type="button" class="icon-btn" id="openArchiveBtn" title="Archive" aria-label="Archive">
         <span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>
       </button>
-      <button type="button" class="icon-btn" id="newAgentBtn" title="Новый агент" aria-label="Новый агент">
+      <button type="button" class="icon-btn" id="newAgentBtn" title="New Agent" aria-label="New Agent">
         <span class="material-symbols-outlined" aria-hidden="true">add</span>
       </button>
     </div>
@@ -2103,55 +2321,67 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   <section id="archiveScreen" class="screen" hidden>
     <div class="agents-top">
-      <button type="button" class="icon-btn" id="backFromArchiveBtn" title="К списку агентов" aria-label="К списку агентов">
+      <button type="button" class="icon-btn" id="backFromArchiveBtn" title="Back to agents" aria-label="Back to agents">
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
-      <div class="agents-title">Архив</div>
+      <div class="agents-title">Archive</div>
     </div>
     <div id="archiveList" class="agents-list"></div>
   </section>
 
   <section id="settingsScreen" class="screen" hidden>
     <div class="agents-top">
-      <button type="button" class="icon-btn" id="backFromSettingsBtn" title="К списку агентов" aria-label="К списку агентов">
+      <button type="button" class="icon-btn" id="backFromSettingsBtn" title="Back to agents" aria-label="Back to agents">
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
-      <div class="agents-title">Настройки</div>
-      <div id="settingsSaveStatus" class="settings-save-status" hidden>Сохранено</div>
+      <div class="agents-title">Settings</div>
+      <div id="settingsSaveStatus" class="settings-save-status" hidden>Saved</div>
     </div>
     <div class="settings-body" id="settingsBody">
       <section class="settings-section">
-        <h3 class="settings-section-title">Провайдеры</h3>
-        <p class="settings-section-note">Base URL и API key для каждого OpenAI-compatible API. Модель выбирает провайдера в карточке.</p>
+        <h3 class="settings-section-title">Providers</h3>
+        <p class="settings-section-note">Base URL and API key for each OpenAI-compatible API. Each model picks its provider in the model card.</p>
         <div id="settingsProvidersList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Провайдер</button>
+        <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
         <div id="settingsProvidersHint" class="settings-hint" hidden></div>
       </section>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Модели</h3>
+        <h3 class="settings-section-title">Models</h3>
         <label class="settings-field">
-          <span class="settings-label">Модель по умолчанию</span>
+          <span class="settings-label">Default model</span>
           <select id="settingsDefaultModel" class="settings-input"></select>
         </label>
 
         <div id="settingsModelsList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Добавить</button>
+        <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Add</button>
         <div id="settingsModelsHint" class="settings-hint" hidden></div>
       </section>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Режимы</h3>
-        <p class="settings-section-note">Агент, План и Спросить встроены — их тоже можно править. Свои режимы можно добавлять и удалять.</p>
+        <h3 class="settings-section-title">Modes</h3>
+        <p class="settings-section-note">Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.</p>
         <div id="settingsModesList" class="settings-models"></div>
-        <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Режим</button>
+        <button type="button" class="text-btn settings-add-model" id="addModeBtn">+ Mode</button>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Language</h3>
+        <label class="settings-field">
+          <span class="settings-label">Plugin UI language</span>
+          <select id="settingsLanguage" class="settings-input">
+            <option value="auto">Auto (follow VS Code)</option>
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+          </select>
+        </label>
       </section>
 
       <section class="settings-section">
         <h3 class="settings-section-title">TLS</h3>
         <label class="settings-field settings-check">
           <input id="settingsRejectUnauthorized" type="checkbox" />
-          <span class="settings-label">Проверять TLS-сертификат</span>
+          <span class="settings-label">Validate TLS certificate</span>
         </label>
         <label class="settings-field">
           <span class="settings-label">CA bundle path</span>
@@ -2160,13 +2390,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </section>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Поведение агента</h3>
+        <h3 class="settings-section-title">Agent behavior</h3>
         <label class="settings-field">
-          <span class="settings-label">Системный промпт</span>
+          <span class="settings-label">System prompt</span>
           <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
         </label>
         <label class="settings-field">
-          <span class="settings-label">Макс. раундов tools</span>
+          <span class="settings-label">Max tool rounds</span>
           <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
         </label>
         <label class="settings-field">
@@ -2174,7 +2404,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Макс. длина ответа (символы)</span>
+          <span class="settings-label">Max response length (chars)</span>
           <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
         </label>
       </section>
@@ -2183,56 +2413,56 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div class="settings-modal-backdrop" data-modal-dismiss="1"></div>
       <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="modelEditTitle">
         <div class="settings-modal-head">
-          <h3 id="modelEditTitle" class="settings-modal-title">Модель</h3>
-          <button type="button" class="icon-btn" id="modelEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+          <h3 id="modelEditTitle" class="settings-modal-title">Model</h3>
+          <button type="button" class="icon-btn" id="modelEditCloseBtn" title="Close" aria-label="Close">
             <span class="material-symbols-outlined" aria-hidden="true">close</span>
           </button>
         </div>
         <div class="settings-modal-tabs" id="modelEditTabs" hidden>
-          <button type="button" class="settings-modal-tab is-active" data-model-mode="manual">Вручную</button>
+          <button type="button" class="settings-modal-tab is-active" data-model-mode="manual">Manual</button>
           <button type="button" class="settings-modal-tab" data-model-mode="json">JSON</button>
         </div>
         <div class="settings-modal-body" id="modelEditManualPane">
           <label class="settings-field">
             <span class="settings-label">ID</span>
-            <input id="modelEditId" class="settings-input" type="text" placeholder="как в API, напр. gpt-4.1" />
+            <input id="modelEditId" class="settings-input" type="text" placeholder="as in the API, e.g. gpt-4.1" />
           </label>
           <label class="settings-field">
-            <span class="settings-label">Название</span>
-            <input id="modelEditLabel" class="settings-input" type="text" placeholder="как видно в списке" />
+            <span class="settings-label">Name</span>
+            <input id="modelEditLabel" class="settings-input" type="text" placeholder="shown in the list" />
           </label>
           <label class="settings-field">
-            <span class="settings-label">Провайдер</span>
+            <span class="settings-label">Provider</span>
             <select id="modelEditProvider" class="settings-input"></select>
           </label>
           <div class="settings-model-limits">
             <label class="settings-field">
-              <span class="settings-label">Контекст (вход)</span>
+              <span class="settings-label">Context (input)</span>
               <input id="modelEditContext" class="settings-input" type="number" min="1024" step="1024" placeholder="max_input" />
             </label>
             <label class="settings-field">
-              <span class="settings-label">Ответ (выход)</span>
+              <span class="settings-label">Response (output)</span>
               <input id="modelEditOutput" class="settings-input" type="number" min="1" step="1024" placeholder="max_output" />
             </label>
           </div>
           <label class="settings-field settings-check">
             <input id="modelEditVision" type="checkbox" />
-            <span class="settings-label">Поддерживает изображения (vision)</span>
+            <span class="settings-label">Supports images (vision)</span>
           </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
           <label class="settings-field">
-            <span class="settings-label">JSON список моделей</span>
+            <span class="settings-label">Model list JSON</span>
             <textarea id="settingsModelsJson" class="settings-input settings-textarea settings-json-textarea" rows="8" placeholder='["gpt-4.1", {"model":"claude-sonnet-4-5","name":"Claude","context_window":200000}]'></textarea>
           </label>
           <div class="settings-json-actions">
-            <button type="button" class="text-btn" id="exportModelsJsonBtn">Скопировать текущий список</button>
+            <button type="button" class="text-btn" id="exportModelsJsonBtn">Copy current list</button>
           </div>
           <div id="settingsJsonHint" class="settings-hint" hidden></div>
         </div>
         <div class="settings-modal-foot">
-          <button type="button" class="text-btn" id="modelEditCancelBtn">Отмена</button>
-          <button type="button" class="text-btn settings-modal-done" id="modelEditDoneBtn">Готово</button>
+          <button type="button" class="text-btn" id="modelEditCancelBtn">Cancel</button>
+          <button type="button" class="text-btn settings-modal-done" id="modelEditDoneBtn">Done</button>
         </div>
       </div>
     </div>
@@ -2240,8 +2470,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div class="settings-modal-backdrop" data-provider-dismiss="1"></div>
       <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="providerEditTitle">
         <div class="settings-modal-head">
-          <h3 id="providerEditTitle" class="settings-modal-title">Провайдер</h3>
-          <button type="button" class="icon-btn" id="providerEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+          <h3 id="providerEditTitle" class="settings-modal-title">Provider</h3>
+          <button type="button" class="icon-btn" id="providerEditCloseBtn" title="Close" aria-label="Close">
             <span class="material-symbols-outlined" aria-hidden="true">close</span>
           </button>
         </div>
@@ -2251,7 +2481,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="providerEditId" class="settings-input" type="text" placeholder="zai, kimi, openai…" />
           </label>
           <label class="settings-field">
-            <span class="settings-label">Название</span>
+            <span class="settings-label">Name</span>
             <input id="providerEditName" class="settings-input" type="text" placeholder="Z.AI" />
           </label>
           <label class="settings-field">
@@ -2264,8 +2494,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </label>
         </div>
         <div class="settings-modal-foot">
-          <button type="button" class="text-btn" id="providerEditCancelBtn">Отмена</button>
-          <button type="button" class="text-btn settings-modal-done" id="providerEditDoneBtn">Готово</button>
+          <button type="button" class="text-btn" id="providerEditCancelBtn">Cancel</button>
+          <button type="button" class="text-btn settings-modal-done" id="providerEditDoneBtn">Done</button>
         </div>
       </div>
     </div>
@@ -2275,118 +2505,118 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     <div class="settings-modal-backdrop" data-mode-dismiss="1"></div>
     <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="modeEditTitle">
       <div class="settings-modal-head">
-        <h3 id="modeEditTitle" class="settings-modal-title">Режим</h3>
-        <button type="button" class="icon-btn" id="modeEditCloseBtn" title="Закрыть" aria-label="Закрыть">
+        <h3 id="modeEditTitle" class="settings-modal-title">Mode</h3>
+        <button type="button" class="icon-btn" id="modeEditCloseBtn" title="Close" aria-label="Close">
           <span class="material-symbols-outlined" aria-hidden="true">close</span>
         </button>
       </div>
       <div class="settings-modal-body">
         <label class="settings-field">
-          <span class="settings-label">Название</span>
-          <input id="modeEditLabel" class="settings-input" type="text" placeholder="Напр. Ревью" />
+          <span class="settings-label">Name</span>
+          <input id="modeEditLabel" class="settings-input" type="text" placeholder="e.g. Review" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Описание</span>
-          <input id="modeEditDescription" class="settings-input" type="text" placeholder="Кратко во всплывашке" />
+          <span class="settings-label">Description</span>
+          <input id="modeEditDescription" class="settings-input" type="text" placeholder="Short tooltip text" />
         </label>
         <label class="settings-field">
           <span class="settings-label">Tools</span>
           <select id="modeEditTools" class="settings-input">
-            <option value="agent">Агент — чтение и правки</option>
-            <option value="readonly">Только чтение</option>
+            <option value="agent">Agent — read and edit</option>
+            <option value="readonly">Read only</option>
           </select>
         </label>
         <label class="settings-field">
-          <span class="settings-label">Промпт режима</span>
-          <textarea id="modeEditPrompt" class="settings-input settings-textarea" rows="6" placeholder="Инструкции для этого режима…"></textarea>
+          <span class="settings-label">Mode prompt</span>
+          <textarea id="modeEditPrompt" class="settings-input settings-textarea" rows="6" placeholder="Instructions for this mode..."></textarea>
         </label>
       </div>
       <div class="settings-modal-foot">
-        <button type="button" class="text-btn" id="modeEditCancelBtn">Отмена</button>
-        <button type="button" class="text-btn settings-modal-done" id="modeEditDoneBtn">Готово</button>
+        <button type="button" class="text-btn" id="modeEditCancelBtn">Cancel</button>
+        <button type="button" class="text-btn settings-modal-done" id="modeEditDoneBtn">Done</button>
       </div>
     </div>
   </div>
 
   <section id="chatScreen" class="screen chat-screen" hidden>
     <div class="chat-top">
-      <button type="button" class="icon-btn" id="backToAgentsBtn" title="К списку агентов" aria-label="К списку агентов">
+      <button type="button" class="icon-btn" id="backToAgentsBtn" title="Back to agents" aria-label="Back to agents">
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
       <div class="chat-top-text">
-        <div id="chatAgentName" class="chat-agent-name">Агент</div>
+        <div id="chatAgentName" class="chat-agent-name">Agent</div>
         <div id="chatTitle" class="chat-title" hidden></div>
       </div>
-      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Поиск по чату" aria-label="Поиск по чату">
+      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Search chat" aria-label="Search chat">
         <span class="material-symbols-outlined" aria-hidden="true">search</span>
       </button>
     </div>
-    <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Ветки диалога"></div>
+    <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Conversation branches"></div>
     <div id="chatSearchPanel" class="chat-search-panel" hidden>
       <div class="chat-search-bar">
         <input
           id="chatSearchInput"
           class="chat-search-input"
           type="search"
-          placeholder="Поиск"
+          placeholder="Search"
           autocomplete="off"
           spellcheck="false"
-          aria-label="Поиск по чату"
+          aria-label="Search chat"
         />
-        <button type="button" class="icon-btn" id="closeChatSearchBtn" title="Закрыть поиск" aria-label="Закрыть поиск">
+        <button type="button" class="icon-btn" id="closeChatSearchBtn" title="Close search" aria-label="Close search">
           <span class="material-symbols-outlined" aria-hidden="true">close</span>
         </button>
       </div>
     </div>
-    <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Результаты поиска" hidden></div>
+    <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Search results" hidden></div>
     <div id="messages"></div>
     <div class="composer-wrap" id="composerWrap">
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
       <div class="composer" id="composer">
         <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
-        <textarea id="prompt" placeholder="Задача для агента... (@ — файл)" rows="3"></textarea>
+        <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
         <div class="composer-footer">
           <div class="composer-footer-left">
             <div class="composer-plus" id="composerPlus">
-              <button type="button" class="icon-btn" id="composerPlusBtn" title="Добавить" aria-label="Добавить" aria-haspopup="menu" aria-expanded="false">
+              <button type="button" class="icon-btn" id="composerPlusBtn" title="Add" aria-label="Add" aria-haspopup="menu" aria-expanded="false">
                 <span class="material-symbols-outlined" aria-hidden="true">add</span>
               </button>
               <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
                 <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
                   <span class="material-symbols-outlined" aria-hidden="true">image</span>
-                  <span>Изображение</span>
+                  <span>Image</span>
                 </button>
               </div>
             </div>
             <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
-              <button type="button" class="model-trigger" id="modeTrigger" aria-haspopup="listbox" aria-expanded="false" title="Режим">
-                <span class="model-label" id="modeLabel">Агент</span>
+              <button type="button" class="model-trigger" id="modeTrigger" aria-haspopup="listbox" aria-expanded="false" title="Mode">
+                <span class="model-label" id="modeLabel">Agent</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
             </div>
             <div class="model-picker" id="modelPicker">
-              <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Модель">
-                <span class="model-label" id="modelLabel">Модель</span>
+              <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Model">
+                <span class="model-label" id="modelLabel">Model</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
             </div>
           </div>
           <div class="composer-footer-right">
-            <button class="primary" id="sendBtn" title="Отправить" aria-label="Отправить" data-mode="send">
+            <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
               <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
               <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
             </button>
           </div>
         </div>
         <div id="composerDropHint" class="composer-drop-hint" hidden>
-          <span class="composer-drop-hint-text">Отпустите файл, чтобы прикрепить</span>
+          <span class="composer-drop-hint-text">Drop file to attach</span>
         </div>
       </div>
       <div class="composer-meta">
-        <button type="button" class="context-meter" id="contextRing" aria-label="Использование контекста">
+        <button type="button" class="context-meter" id="contextRing" aria-label="Context usage">
           <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
             <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
             <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
