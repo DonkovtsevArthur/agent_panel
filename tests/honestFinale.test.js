@@ -93,6 +93,60 @@ test("decideHonestFinale replaces after nudges exhausted", () => {
   assert.equal(decision.text, MISSING_WRITE_USER_VISIBLE);
 });
 
+test("decideHonestFinale accepts a write followed by verification tools", () => {
+  const decision = decideHonestFinale({
+    text: "Исправил модель и проверил TypeScript.",
+    canEdit: true,
+    messages: [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "verify",
+            type: "function",
+            function: { name: "run_command", arguments: "{}" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "run_command",
+        tool_call_id: "verify",
+        content: JSON.stringify({ ok: true }),
+      },
+      { role: "assistant", content: "Исправил модель и проверил TypeScript." },
+    ],
+    userText: "исправь ошибку",
+    hadSuccessfulWrite: true,
+    allowNudgeWrite: false,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("decideHonestFinale does not re-check UI after completed git push", () => {
+  const decision = decideHonestFinale({
+    text: "Запушил коммит: добавлена кнопка проверки.",
+    canEdit: true,
+    messages: [],
+    userText: "давай запушим",
+    gitOperationCompleted: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("decideHonestFinale accepts changes applied through git restore", () => {
+  const decision = decideHonestFinale({
+    text: "Вернул последние изменения в двух файлах.",
+    canEdit: true,
+    messages: [],
+    userText: "отмени последние изменения",
+    gitOperationCompleted: true,
+    allowNudgeWrite: false,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
 test("looksLikeUserEditRequest catches follow-ups", () => {
   assert.equal(
     looksLikeUserEditRequest(

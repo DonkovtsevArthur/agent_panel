@@ -197,7 +197,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private contextTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
-  private readonly agentRunState = new Map<
+  private readonly chatRunState = new Map<
     string,
     "running" | "success" | "error"
   >();
@@ -829,16 +829,43 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     chatId: string,
     state?: "running" | "success" | "error"
   ): void {
-    const agentId = findAgentByChatId(this.store, chatId)?.id;
-    if (!agentId) {
+    if (!findAgentByChatId(this.store, chatId)) {
       return;
     }
-    if (state) {
-      this.agentRunState.set(agentId, state);
+    if (state === "running" || (state && !this.isViewingChat(chatId))) {
+      this.chatRunState.set(chatId, state);
     } else {
-      this.agentRunState.delete(agentId);
+      this.chatRunState.delete(chatId);
     }
     this.postAgentsList();
+  }
+
+  private acknowledgeViewedChatRunState(chatId: string | undefined): boolean {
+    if (!chatId || this.chatRunState.get(chatId) === "running") {
+      return false;
+    }
+    return this.chatRunState.delete(chatId);
+  }
+
+  private runStateForAgent(
+    agentId: string
+  ): "running" | "success" | "error" | "" {
+    const agent = this.store.agents.find((item) => item.id === agentId);
+    if (!agent) {
+      return "";
+    }
+    const states = getAgentChatIds(agent)
+      .map((chatId) => this.chatRunState.get(chatId))
+      .filter(
+        (state): state is "running" | "success" | "error" => Boolean(state)
+      );
+    if (states.includes("running")) {
+      return "running";
+    }
+    if (states.includes("error")) {
+      return "error";
+    }
+    return states.includes("success") ? "success" : "";
   }
 
   private isChatRunning(chatId: string | undefined): boolean {
@@ -1003,7 +1030,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       time: formatListTime(a.updatedAt),
       active: a.active,
       empty: a.empty,
-      runState: this.agentRunState.get(a.id) || "",
+      runState: this.runStateForAgent(a.id),
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
@@ -1028,6 +1055,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private async postChatScreen(highlightMessageIndex?: number): Promise<void> {
     const config = getConfig();
+    if (this.acknowledgeViewedChatRunState(this.store.activeChatId)) {
+      this.postAgentsList();
+    }
     const models = getEnabledModels();
     if (!this.selectedModel || !models.some((m) => m.id === this.selectedModel)) {
       this.selectedModel =
@@ -1381,6 +1411,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.store.activeChatId = chat.id;
     this.setScreen("chat");
     this.hydrateActiveChat();
+    this.acknowledgeViewedChatRunState(chat.id);
     this.saveStore();
     this.postAgentsList();
     void this.postChatScreen(
