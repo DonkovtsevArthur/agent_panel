@@ -382,6 +382,10 @@ export function createDefaultStore(fallbackModel = ""): AgentsStoreV2 {
   };
 }
 
+export function cloneStore(store: AgentsStoreV2): AgentsStoreV2 {
+  return JSON.parse(JSON.stringify(store)) as AgentsStoreV2;
+}
+
 export function getActiveChat(store: AgentsStoreV2): ChatSession | undefined {
   return store.chats[store.activeChatId];
 }

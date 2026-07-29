@@ -18,10 +18,96 @@ export interface ChatMessage {
   tool_call_id?: string;
   name?: string;
   /**
+   * Thinking-модели (Kimi и др.) возвращают ход рассуждения отдельно от ответа.
+   * При tool-call loop его нужно эхоить обратно в messages.
+   */
+  reasoning_content?: string;
+  /**
    * Локальные вложения user-хода (пути/метаданные).
-   * В JSON для API не отправляется — см. toApiMessage.
+   * В JSON для API не отправляется — см. toApiMessages.
    */
   attachments?: import("./attachments").MessageAttachment[];
+}
+
+/** Kimi / Moonshot family — thinking on by default, special message rules. */
+export function isKimiFamilyModel(model: string): boolean {
+  const m = model.toLowerCase();
+  return m.includes("kimi") || m.includes("moonshot");
+}
+
+function isEffectivelyEmptyContent(
+  content: ChatMessage["content"]
+): boolean {
+  if (content == null) {
+    return true;
+  }
+  if (typeof content === "string") {
+    return content.trim().length === 0;
+  }
+  if (!Array.isArray(content) || content.length === 0) {
+    return true;
+  }
+  return content.every((part) => {
+    if (part.type === "text") {
+      return !String(part.text || "").trim();
+    }
+    return false;
+  });
+}
+
+/**
+ * Готовит messages к chat/completions:
+ * - не шлёт attachments;
+ * - при tool_calls и пустом content — опускает content (иначе Kimi 400);
+ * - сохраняет reasoning_content; для Kimi tool-call без него — placeholder.
+ */
+export function toApiMessages(
+  messages: ChatMessage[],
+  options?: { ensureReasoningForTools?: boolean }
+): Record<string, unknown>[] {
+  const ensureReasoning = Boolean(options?.ensureReasoningForTools);
+  return messages.map((message) => {
+    const { attachments: _a, ...rest } = message;
+    const out: Record<string, unknown> = { role: rest.role };
+
+    if (rest.tool_call_id) {
+      out.tool_call_id = rest.tool_call_id;
+    }
+    if (rest.name) {
+      out.name = rest.name;
+    }
+    if (rest.tool_calls?.length) {
+      out.tool_calls = rest.tool_calls;
+    }
+
+    const reasoning =
+      typeof rest.reasoning_content === "string"
+        ? rest.reasoning_content
+        : undefined;
+    if (reasoning && reasoning.length > 0) {
+      out.reasoning_content = reasoning;
+    } else if (
+      ensureReasoning &&
+      rest.role === "assistant" &&
+      rest.tool_calls?.length
+    ) {
+      // «thinking is enabled but reasoning_content is missing…»
+      out.reasoning_content = " ";
+    }
+
+    const empty = isEffectivelyEmptyContent(rest.content ?? null);
+    const omitContent =
+      rest.role === "assistant" && Boolean(rest.tool_calls?.length) && empty;
+    if (!omitContent) {
+      if (rest.content !== undefined && rest.content !== null) {
+        out.content = rest.content;
+      } else if (!rest.tool_calls?.length) {
+        out.content = "";
+      }
+    }
+
+    return out;
+  });
 }
 
 export interface ToolCall {
@@ -169,7 +255,32 @@ export class OpenAICompatibleClient {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
 
-    const payload = JSON.stringify(body);
+    const kimi = isKimiFamilyModel(body.model);
+    const apiBody: Record<string, unknown> = {
+      model: body.model,
+      messages: toApiMessages(body.messages, {
+        ensureReasoningForTools: kimi,
+      }),
+    };
+    if (body.tools) {
+      apiBody.tools = body.tools;
+    }
+    if (body.tool_choice) {
+      apiBody.tool_choice = body.tool_choice;
+    }
+    // Kimi k2.6/k2.7: temperature не задаётся; reasoning+content делят max_tokens.
+    if (!kimi && body.temperature !== undefined) {
+      apiBody.temperature = body.temperature;
+    }
+    if (body.max_tokens !== undefined) {
+      apiBody.max_tokens = kimi
+        ? Math.max(body.max_tokens, 16384)
+        : body.max_tokens;
+    } else if (kimi) {
+      apiBody.max_tokens = 16384;
+    }
+
+    const payload = JSON.stringify(apiBody);
     headers["Content-Length"] = Buffer.byteLength(payload).toString();
 
     const response = await requestJson(`${this.baseUrl}/chat/completions`, {
@@ -186,10 +297,18 @@ export class OpenAICompatibleClient {
       );
     }
 
-    const data = JSON.parse(response.text) as ChatCompletionResponse;
-    const message = data.choices?.[0]?.message;
-    if (!message) {
+    const data = JSON.parse(response.text) as ChatCompletionResponse & {
+      choices?: Array<{
+        message?: ChatMessage & { reasoning_content?: unknown };
+      }>;
+    };
+    const raw = data.choices?.[0]?.message;
+    if (!raw) {
       throw new Error("Пустой ответ от API");
+    }
+    const message: ChatMessage = { ...raw };
+    if (typeof raw.reasoning_content === "string") {
+      message.reasoning_content = raw.reasoning_content;
     }
     return { message, usage: data.usage };
   }

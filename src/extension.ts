@@ -2,12 +2,14 @@ import * as vscode from "vscode";
 import { AgentPanelProvider } from "./agentPanelProvider";
 import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
+import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
 
 export function activate(context: vscode.ExtensionContext): void {
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);
+  registerGitDiffProvider(context.subscriptions);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

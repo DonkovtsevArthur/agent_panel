@@ -32,6 +32,8 @@ export interface McpServerRuntimeStatus {
   toolCount: number;
   message?: string;
   detail?: string;
+  /** True when secrets/credentials for reconnect are present. */
+  hasCredentials?: boolean;
   /** Present for custom servers — used by edit UI. */
   command?: string;
   args?: string[];

@@ -200,6 +200,7 @@
       noAgentsYet: "No agents yet. Click + to create one.",
       rename: "Rename",
       openFile: "Open file",
+      openChanges: "Open changes",
       openSourceControl: "Open Source Control",
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
@@ -430,6 +431,7 @@
       noAgentsYet: "Нет агентов. Нажмите +, чтобы создать.",
       rename: "Переименовать",
       openFile: "Открыть файл",
+      openChanges: "Открыть изменения",
       openSourceControl: "Открыть Source Control",
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
@@ -1611,10 +1613,16 @@
     if (!match) {
       return null;
     }
+    const query = match[2] || "";
+    // Не рассматриваем @https://... / @...:... как упоминание файла.
+    // Иначе появляется mention-панель с файлами (searchFiles по "https://...").
+    if (query.includes("://") || query.includes(":")) {
+      return null;
+    }
     const atIndex = before.length - match[2].length - 1;
     return {
       start: atIndex,
-      query: match[2],
+      query,
       end: cursor,
     };
   }
@@ -4585,10 +4593,17 @@
     }
     const connected = state === "connected";
     const connecting = state === "connecting";
+    // Remote OAuth usually returns 403 for Harbor Agents — keep PAT as primary.
+    const preferPat =
+      Boolean(figmaStatus.preferPat) ||
+      Boolean(figmaStatus.showPatFallback) ||
+      figmaStatus.mode === "pat" ||
+      Boolean(figmaStatus.hasPat) ||
+      state === "error" ||
+      state === "disconnected";
     if (settingsFigmaConnectBtn) {
-      settingsFigmaConnectBtn.hidden = connected;
-      settingsFigmaConnectBtn.disabled =
-        connecting || figmaStatus.enabled === false;
+      settingsFigmaConnectBtn.hidden = connected || preferPat;
+      settingsFigmaConnectBtn.disabled = connecting;
     }
     if (settingsFigmaDisconnectBtn) {
       settingsFigmaDisconnectBtn.hidden = !connected && state !== "error";
@@ -4598,8 +4613,7 @@
       settingsFigmaPatBlock.hidden = false;
     }
     if (settingsFigmaPatConnectBtn) {
-      settingsFigmaPatConnectBtn.disabled =
-        connecting || figmaStatus.enabled === false;
+      settingsFigmaPatConnectBtn.disabled = connecting;
     }
     renderMcpServersList();
   }
@@ -4616,6 +4630,7 @@
         transport: s.detail || String(s.transport || ""),
         error: s.state === "error" ? s.message || "" : "",
         builtin: Boolean(s.builtin),
+        hasCredentials: Boolean(s.hasCredentials),
       }));
     }
     const tools = Number(figmaStatus.toolCount) || 0;
@@ -4636,6 +4651,7 @@
         transport,
         error: state === "error" ? figmaStatus.message || "" : "",
         builtin: true,
+        hasCredentials: Boolean(figmaStatus.hasPat),
       },
     ];
   }
@@ -4681,6 +4697,9 @@
               ? "is-connecting"
               : "";
 
+      const switchOn =
+        server.state === "connected" || server.state === "connecting";
+
       card.innerHTML =
         `<div class="mcp-server-icon"><span class="material-symbols-outlined" aria-hidden="true">electrical_services</span></div>` +
         `<div class="mcp-server-main">` +
@@ -4697,15 +4716,15 @@
         `<label class="mcp-switch" title="${escapeHtml(t("mcpEnable"))}">` +
         `<input type="checkbox" class="mcp-enable-toggle" data-id="${escapeHtml(
           server.id
-        )}" ${server.enabled ? "checked" : ""} />` +
+        )}" ${switchOn ? "checked" : ""} />` +
         `<span class="mcp-switch-track"></span>` +
         `</label>` +
         `<button type="button" class="icon-btn mcp-edit-btn" data-id="${escapeHtml(
           server.id
-        )}" title="${escapeHtml(t("edit"))}" aria-label="${escapeHtml(
-          t("edit")
+        )}" title="${escapeHtml(t("settings"))}" aria-label="${escapeHtml(
+          t("settings")
         )}">` +
-        `<span class="material-symbols-outlined" aria-hidden="true">edit</span>` +
+        `<span class="material-symbols-outlined" aria-hidden="true">settings</span>` +
         `</button>` +
         `<button type="button" class="icon-btn mcp-delete-btn" data-id="${escapeHtml(
           server.id
@@ -5027,7 +5046,7 @@
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
-        enabled: settings.figmaEnabled !== false,
+        enabled: settings.figmaEnabled === true,
       };
     }
     if (settings.figma) {
@@ -5128,7 +5147,7 @@
           ? "workspace"
           : "global"
         : "global",
-      figmaEnabled: figmaStatus.enabled !== false,
+      figmaEnabled: figmaStatus.enabled === true,
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
@@ -5756,7 +5775,7 @@
       const row = document.createElement("button");
       row.type = "button";
       row.className = "review-file";
-      row.title = t("openFile");
+      row.title = t("openChanges");
       row.innerHTML =
         `<span class="review-file-path"></span>` +
         `<span class="review-file-stats">` +
@@ -5765,7 +5784,7 @@
         `</span>`;
       row.querySelector(".review-file-path").textContent = file.path;
       row.addEventListener("click", () => {
-        vscode.postMessage({ type: "openFile", path: file.path });
+        vscode.postMessage({ type: "openFileDiff", path: file.path });
       });
       fileList.appendChild(row);
     }
@@ -7383,10 +7402,26 @@
       }
       const id = toggle.dataset.id || "";
       const enabled = Boolean(toggle.checked);
-      if (id === "figma") {
-        figmaStatus = { ...figmaStatus, enabled };
+      if (!enabled) {
+        if (id === "figma") {
+          figmaStatus = { ...figmaStatus, enabled: false };
+        }
+        vscode.postMessage({ type: "mcpSetEnabled", id, enabled: false });
+        return;
       }
-      vscode.postMessage({ type: "mcpSetEnabled", id, enabled });
+      if (id === "figma") {
+        const server = getMcpServers().find((s) => s.id === "figma");
+        const hasCreds =
+          Boolean(server && server.hasCredentials) ||
+          Boolean(figmaStatus.hasPat);
+        if (!hasCreds) {
+          toggle.checked = false;
+          openMcpEditModal("figma");
+          return;
+        }
+        figmaStatus = { ...figmaStatus, enabled: true };
+      }
+      vscode.postMessage({ type: "mcpSetEnabled", id, enabled: true });
     });
   }
   if (mcpEditCloseBtn) {

@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.97",
+  "version": "0.7.122",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -377,7 +377,7 @@
         },
         "agentPanel.figma.enabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "%config.figma.enabled.description%"
         },
         "agentPanel.mcp.servers": {
@@ -441,7 +441,8 @@
     "compile": "tsc -p ./ && node scripts/bundle-mcp.js",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "npm run compile && node --test tests/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
