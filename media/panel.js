@@ -5494,7 +5494,9 @@
         return;
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
-      block.querySelector(".agent-preview").textContent = a.preview || "";
+      block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
+        a.preview
+      );
       block.querySelector(".agent-time").textContent = a.time || "";
     });
   }
@@ -5559,7 +5561,9 @@
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
       block.querySelector(".agent-chip").textContent = a.model || "—";
-      block.querySelector(".agent-preview").textContent = a.preview || "";
+      block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
+        a.preview
+      );
       block.querySelector(".agent-time").textContent = a.time || "";
     });
   }
@@ -6023,6 +6027,7 @@
     if (marked && typeof marked.marked === "function") {
       return {
         parse: marked.marked.parse || marked.marked,
+        parseInline: marked.marked.parseInline || marked.parseInline,
         Renderer: marked.Renderer || marked.marked.Renderer,
         use: marked.use || marked.marked.use,
       };
@@ -6271,6 +6276,23 @@
       /\n/g,
       "<br />"
     )}</div>`;
+  }
+
+  /** Однострочный Markdown для короткого описания агента. */
+  function renderPreviewMarkdown(text) {
+    const raw = String(text || "");
+    if (!raw) {
+      return "";
+    }
+    const api = getMarkedApi();
+    if (ensureMarkdownRenderer() && api && typeof api.parseInline === "function") {
+      try {
+        return api.parseInline(raw, { async: false });
+      } catch {
+        // fallback below
+      }
+    }
+    return escapeHtml(raw);
   }
 
   let copyToastEl = null;
