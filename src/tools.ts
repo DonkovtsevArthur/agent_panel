@@ -6,6 +6,8 @@ import { URL } from "url";
 import { promisify } from "util";
 import * as vscode from "vscode";
 import { lineDiffStats } from "./diffStats";
+import { rememberEditBefore } from "./editSnapshots";
+import { collectImportWarnings } from "./pathAliasContext";
 import type { ChatTool } from "./openaiClient";
 
 const execFileAsync = promisify(execFile);
@@ -55,7 +57,8 @@ export const agentTools: ChatTool[] = [
     type: "function",
     function: {
       name: "write_file",
-      description: "Создать или перезаписать текстовый файл в workspace",
+      description:
+        "Создать или перезаписать текстовый файл в workspace. Для импортов копируй стиль из соседних файлов и алиасы tsconfig; при importWarnings сразу исправь пути.",
       parameters: {
         type: "object",
         properties: {
@@ -77,7 +80,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Используй для git status/log/diff, сборки, тестов.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для «как было до правок» используй git show HEAD:path / git diff HEAD -- path / git log -p -- path. Также: git status/log, сборка, тесты.",
       parameters: {
         type: "object",
         properties: {
@@ -572,7 +575,11 @@ async function fetchUrl(rawUrl: string): Promise<string> {
   });
 }
 
-async function runCommand(command: string, cwdRelative = ""): Promise<string> {
+async function runCommand(
+  command: string,
+  cwdRelative = "",
+  signal?: AbortSignal
+): Promise<string> {
   const trimmed = command.trim();
   if (!trimmed) {
     throw new Error("Пустая команда");
@@ -590,6 +597,7 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
       cwd,
       timeout: 60_000,
       maxBuffer: 2 * 1024 * 1024,
+      signal,
       env: {
         ...process.env,
         // меньше интерактива
@@ -626,7 +634,8 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
 
 export async function runTool(
   name: string,
-  argsJson: string
+  argsJson: string,
+  options?: { signal?: AbortSignal }
 ): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
@@ -675,22 +684,45 @@ export async function runTool(
         } catch {
           created = true;
         }
+        if (!created && before === content) {
+          return JSON.stringify({
+            ok: false,
+            unchanged: true,
+            path: relativePath,
+            added: 0,
+            removed: 0,
+            error:
+              "No changes: content is identical to the existing file. Do not claim you rewrote/fixed anything. Either write different content that actually changes the file, or explain honestly that the file was already correct.",
+          });
+        }
         const parent = vscode.Uri.joinPath(uri, "..");
         await vscode.workspace.fs.createDirectory(parent);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
         const { added, removed } = lineDiffStats(before, content);
+        rememberEditBefore(relativePath, before);
+        const importWarnings = await collectImportWarnings(
+          relativePath,
+          content
+        );
         return JSON.stringify({
           ok: true,
           path: relativePath,
           created,
           added,
           removed,
+          ...(importWarnings.length
+            ? {
+                importWarnings,
+                note: "Fix unresolved imports with write_file using real paths from tsconfig aliases / sibling files.",
+              }
+            : {}),
         });
       }
       case "run_command": {
         return await runCommand(
           String(args.command ?? ""),
-          String(args.cwd ?? "")
+          String(args.cwd ?? ""),
+          options?.signal
         );
       }
       case "open_external": {

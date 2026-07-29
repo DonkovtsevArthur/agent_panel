@@ -531,7 +531,13 @@ export function extractMentionPaths(text: string): string[] {
   const re = new RegExp(MENTION_RE.source, "g");
   let match: RegExpExecArray | null;
   while ((match = re.exec(String(text || "")))) {
-    const rel = match[1].replace(/^\.\//, "").replace(/^\/+/, "");
+    const raw = String(match[1] || "");
+    // Не превращаем URL-подобные строки в "упоминание файла".
+    // Иначе @https://... воспринимается как @path и триггерит лишнюю логику.
+    if (raw.includes("://") || raw.includes(":")) {
+      continue;
+    }
+    const rel = raw.replace(/^\.\//, "").replace(/^\/+/, "");
     if (!rel || seen.has(rel)) {
       continue;
     }

@@ -7,6 +7,7 @@ import {
 import { getConfig, getModeById, resolveModelEndpoint } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import { buildEditorContextMessage } from "./editorContext";
+import { buildPathAliasContextMessage } from "./pathAliasContext";
 import {
   modeCollectLabel,
   modeDoneLabel,
@@ -26,6 +27,13 @@ import { sanitizeAssistantText } from "./sanitize";
 import { messageHasFigmaUrl } from "./mcp/figma";
 import { getMcpManager } from "./mcpBundle";
 import { parseTextToolCalls } from "./parseTextToolCalls";
+import {
+  decideHonestFinale,
+  HEDGE_USER_NUDGE,
+  HOLLOW_USER_NUDGE,
+  IMPACT_USER_NUDGE,
+  MISSING_WRITE_USER_NUDGE,
+} from "./honestFinale";
 import { runTool } from "./tools";
 import type * as vscode from "vscode";
 
@@ -72,7 +80,8 @@ export interface AgentRunCallbacks {
   onTool: (text: string) => void;
   onFileEdit: (edit: FileEditStat) => void;
   onAssistant: (text: string) => void;
-  onReview: (edits: FileEditStat[]) => void;
+  /** Может быть async (SCM check) — ждём, иначе review теряется в finally. */
+  onReview: (edits: FileEditStat[]) => void | Promise<void>;
   onUsage?: (usage: ContextUsageInfo) => void;
   /** User pasted a Figma URL but MCP is not connected. */
   onFigmaNeedsConnect?: () => void;
@@ -88,6 +97,70 @@ function truncateStatus(value: string, max = 56): string {
     return text;
   }
   return `${text.slice(0, max - 1)}…`;
+}
+
+function summarizeEditsFallback(edits: Map<string, FileEditStat>): string {
+  const files = [...edits.keys()];
+  if (!files.length) {
+    return "";
+  }
+  const listed = files
+    .slice(0, 8)
+    .map((p) => `• ${p}`)
+    .join("\n");
+  const more =
+    files.length > 8 ? `\n…и ещё ${files.length - 8} файл(ов)` : "";
+  return `Готово. Изменения применены (${files.length}):\n${listed}${more}`;
+}
+
+function summarizeToolActivity(messages: ChatMessage[]): string {
+  const names: string[] = [];
+  for (const msg of messages) {
+    if (msg.role !== "assistant" || !msg.tool_calls?.length) {
+      continue;
+    }
+    for (const call of msg.tool_calls) {
+      const name = call.function?.name;
+      if (name) {
+        names.push(name);
+      }
+    }
+  }
+  if (!names.length) {
+    return "";
+  }
+  const counts = new Map<string, number>();
+  for (const name of names) {
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const lines = [...counts.entries()]
+    .map(([name, count]) => (count > 1 ? `• ${name} ×${count}` : `• ${name}`))
+    .join("\n");
+  return `Модель выполнила инструменты, но не вернула итоговый текст.\n\nЧто было сделано:\n${lines}\n\nПопробуйте повторить запрос или сменить модель.`;
+}
+
+function finalizeAssistantText(
+  raw: string,
+  edits: Map<string, FileEditStat>,
+  maxChars: number,
+  messages?: ChatMessage[]
+): string {
+  const trimmed = String(raw || "").trim();
+  if (trimmed && trimmed !== "(пустой ответ)") {
+    return sanitizeAssistantText(trimmed, { maxChars });
+  }
+  const fromEdits = summarizeEditsFallback(edits);
+  if (fromEdits) {
+    return sanitizeAssistantText(fromEdits, { maxChars });
+  }
+  const fromTools = messages ? summarizeToolActivity(messages) : "";
+  if (fromTools) {
+    return sanitizeAssistantText(fromTools, { maxChars });
+  }
+  return sanitizeAssistantText(
+    "Не удалось получить текстовый ответ модели. Попробуйте повторить запрос или сменить модель.",
+    { maxChars }
+  );
 }
 
 function formatEditingDetail(edits: FileEditStat[]): string {
@@ -273,7 +346,64 @@ function contentAsString(content: ChatMessage["content"]): string {
   if (typeof content === "string") {
     return content;
   }
-  return contentPartsToHistoryText(content);
+  const bits: string[] = [];
+  for (const part of content as Array<Record<string, unknown>>) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const type = String(part.type || "");
+    if (
+      (type === "text" || type === "output_text" || type === "input_text") &&
+      typeof part.text === "string"
+    ) {
+      bits.push(part.text);
+      continue;
+    }
+    if (typeof part.text === "string" && part.text.trim()) {
+      bits.push(part.text);
+    }
+  }
+  return bits.join("\n").trim();
+}
+
+function extractAssistantText(message: ChatMessage): string {
+  const direct = contentAsString(message.content).trim();
+  if (direct) {
+    return direct;
+  }
+  // Не берём reasoning_content как ответ пользователю — это thinking, не финал.
+  const raw = message as ChatMessage & { output_text?: unknown };
+  if (typeof raw.output_text === "string" && raw.output_text.trim()) {
+    return raw.output_text.trim();
+  }
+  return "";
+}
+
+function reasoningFromApi(message: ChatMessage): string | undefined {
+  const value = message.reasoning_content;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Assistant-ход для history/API: с tool_calls и reasoning_content как у Kimi. */
+function buildAssistantTurn(
+  apiMessage: ChatMessage,
+  visibleContent: string,
+  toolCalls?: NonNullable<ChatMessage["tool_calls"]>
+): ChatMessage {
+  const hasTools = Boolean(toolCalls?.length);
+  const trimmed = visibleContent.trim();
+  const msg: ChatMessage = {
+    role: "assistant",
+    content: trimmed ? visibleContent : hasTools ? null : visibleContent,
+  };
+  if (hasTools && toolCalls) {
+    msg.tool_calls = toolCalls;
+  }
+  const reasoning = reasoningFromApi(apiMessage);
+  if (reasoning) {
+    msg.reasoning_content = reasoning;
+  }
+  return msg;
 }
 
 async function hydrateHistoryForApi(
@@ -383,6 +513,19 @@ export async function runAgentTurn(options: {
       .filter((t) => !t.function.name.startsWith("mcp__"))
       .map((t) => t.function.name)
       .join(", ")}.`,
+    !isReadonlyPolicy(mode.tools)
+      ? [
+          "Agent mode has write_file available this turn — never claim that file-editing tools are unavailable.",
+          "When the user asks to implement or change code, call write_file yourself and apply the changes.",
+          "When the user asks where something was BEFORE changes (до правок / до начала изменений / как было раньше / look again where X was), do NOT call write_file. Use run_command with git: `git show HEAD:path`, `git diff HEAD -- path`, or `git log -p -- path`, then answer from that output only. Never claim you rewrote the file after an inspect-only question.",
+          "Never say «Готово» / «исправлено» unless you already called write_file in this turn.",
+          "Never invent import paths: use tsconfig aliases from context, copy imports from sibling files, and fix importWarnings from write_file.",
+          "Do not speculate about TypeScript/build errors. If you need to verify, call run_command (tsc/npm run build) or read_file; never say «возможно» / «если TS ругается» / «попробую пересобрать» without doing it.",
+          "Before changing shared UI (shared/, components/, toast/notification/modal), search usages with run_command (rg) and update call sites or keep backwards-compatible props. Never unilaterally break consumers and never end with «скажи — верну/переделаю».",
+          "Never ask the user to copy/paste code, never say «вставь вручную / apply manually», and never dump full file replacements for manual application.",
+          "After editing, reply briefly with what you changed.",
+        ].join(" ")
+      : "",
     "Whenever the user shares an http(s) link and asks ANYTHING about that page (facts, summary, colors, price, author, version, features, text), IMMEDIATELY call fetch_url on the URL before answering.",
     "Answer only from the tool result (title, description, headings, content, colors, links, jsonLd). Never say you cannot open/load/access external URLs.",
     "Do not invent login/authorization requirements unless the tool result clearly shows HTTP 401/403 or an explicit auth page.",
@@ -395,9 +538,11 @@ export async function runAgentTurn(options: {
   ]
     .filter(Boolean)
     .join(" ");
+  const pathAliasContext = await buildPathAliasContextMessage();
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
+    { role: "system", content: pathAliasContext },
     {
       role: "system",
       content: mcpHint,
@@ -418,6 +563,25 @@ export async function runAgentTurn(options: {
   const extendStep = 10;
   const seenToolCalls = new Set<string>();
   let answered = false;
+  // Иногда модель завершает шаг без текстового assistant.content (только tool output),
+  // и тогда UI показывает "(пустой ответ)". Дадим модели один дополнительный шанс.
+  let emptyFinalAttempts = 0;
+  const maxEmptyFinalAttempts = 3;
+  // Модель иногда врёт «write_file недоступен» / «Готово», не вызывая write_file.
+  let manualPatchAttempts = 0;
+  const maxManualPatchAttempts = 3;
+  let importFixAttempts = 0;
+  const maxImportFixAttempts = 2;
+  const pendingImportWarnings: string[] = [];
+  let noOpWriteAttempts = 0;
+  const maxNoOpWriteAttempts = 2;
+  const pendingNoOpWrites: string[] = [];
+  let hedgeAttempts = 0;
+  const maxHedgeAttempts = 2;
+  let hollowAttempts = 0;
+  const maxHollowAttempts = 2;
+  let impactAttempts = 0;
+  const maxImpactAttempts = 2;
 
   const reportUsage = (
     usage: ChatCompletionUsage | undefined,
@@ -469,7 +633,7 @@ export async function runAgentTurn(options: {
     let toolCalls = (assistant.tool_calls ?? []).filter(
       (call) => call?.function?.name
     );
-    let assistantContent = contentAsString(assistant.content);
+    let assistantContent = extractAssistantText(assistant);
 
     if (toolCalls.length === 0 && assistantContent.trim()) {
       const recovered = parseTextToolCalls(assistantContent);
@@ -479,22 +643,194 @@ export async function runAgentTurn(options: {
       }
     }
 
-    messages.push({
-      role: "assistant",
-      content: assistantContent || null,
-      tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-    });
+    messages.push(
+      buildAssistantTurn(
+        assistant,
+        assistantContent,
+        toolCalls.length > 0 ? toolCalls : undefined
+      )
+    );
 
     if (toolCalls.length === 0) {
+      const trimmed = assistantContent.trim();
+      const canEdit = !isReadonlyPolicy(mode.tools);
+
+      if (
+        canEdit &&
+        pendingImportWarnings.length > 0 &&
+        importFixAttempts < maxImportFixAttempts
+      ) {
+        importFixAttempts += 1;
+        const listed = pendingImportWarnings.slice(0, 10).join("\n");
+        pendingImportWarnings.length = 0;
+        messages.push({
+          role: "user",
+          content: `write_file reported unresolved imports:\n${listed}\nCall write_file again with corrected import paths (use tsconfig aliases from context and copy style from sibling files). Do not claim the work is done yet.`,
+        });
+        continue;
+      }
+
+      if (
+        canEdit &&
+        pendingNoOpWrites.length > 0 &&
+        noOpWriteAttempts < maxNoOpWriteAttempts
+      ) {
+        noOpWriteAttempts += 1;
+        const listed = pendingNoOpWrites.slice(0, 8).join("\n");
+        pendingNoOpWrites.length = 0;
+        messages.push({
+          role: "user",
+          content: `write_file made NO changes (content identical) for:\n${listed}\nDo not claim you rewrote/fixed the file. Either apply a real content change with write_file, or reply honestly that the file was already correct and nothing was modified.`,
+        });
+        continue;
+      }
+
+      const decision = decideHonestFinale({
+        text: trimmed,
+        canEdit,
+        messages,
+        userText: options.userText,
+        allowNudgeWrite: manualPatchAttempts < maxManualPatchAttempts,
+        allowNudgeHedge: hedgeAttempts < maxHedgeAttempts,
+        allowNudgeHollow: hollowAttempts < maxHollowAttempts,
+        allowNudgeImpact: impactAttempts < maxImpactAttempts,
+      });
+
+      if (decision.kind === "nudge_write") {
+        manualPatchAttempts += 1;
+        messages.push({
+          role: "user",
+          content: MISSING_WRITE_USER_NUDGE,
+        });
+        continue;
+      }
+      if (decision.kind === "nudge_hedge") {
+        hedgeAttempts += 1;
+        messages.push({
+          role: "user",
+          content: HEDGE_USER_NUDGE,
+        });
+        continue;
+      }
+      if (decision.kind === "nudge_hollow") {
+        hollowAttempts += 1;
+        messages.push({
+          role: "user",
+          content: HOLLOW_USER_NUDGE,
+        });
+        continue;
+      }
+      if (decision.kind === "nudge_impact") {
+        impactAttempts += 1;
+        messages.push({
+          role: "user",
+          content: IMPACT_USER_NUDGE,
+        });
+        continue;
+      }
+      if (decision.kind === "replace") {
+        const text = decision.text;
+        messages[messages.length - 1] = { role: "assistant", content: text };
+        options.callbacks.onPhase("done", modeDoneLabel(mode));
+        options.callbacks.onAssistant(text);
+        await Promise.resolve(
+          options.callbacks.onReview([...editsByPath.values()])
+        );
+        answered = true;
+        break;
+      }
+
+      if (!trimmed && emptyFinalAttempts < maxEmptyFinalAttempts) {
+        emptyFinalAttempts += 1;
+        if (canEdit && editsByPath.size === 0 && emptyFinalAttempts <= 2) {
+          messages.push({
+            role: "user",
+            content:
+              "You gathered context but made no file edits. Call write_file to apply the required changes now. Do not ask the user to paste code manually. After editing, reply with a short summary.",
+          });
+          continue;
+        }
+
+        // Последние попытки — только текст, без tools, иначе модель снова молчит.
+        options.callbacks.onPhase("thinking", modeCollectLabel(mode));
+        const forced = await client.chatCompletions(
+          {
+            model: options.model,
+            messages: [
+              ...messages,
+              {
+                role: "user",
+                content:
+                  editsByPath.size > 0
+                    ? "Write a short Russian summary of the file changes you applied. Never return an empty message. Do not call tools."
+                    : "Write a clear Russian reply for the user now: what you found and what still needs to be done. Never return an empty message. Do not call tools.",
+              },
+            ],
+            tool_choice: "none",
+            temperature: 0.3,
+            max_tokens: Math.max(config.maxTokens, 1024),
+          },
+          options.signal
+        );
+        reportUsage(forced.usage, messages);
+        const forcedText = extractAssistantText(forced.message).trim();
+        if (forcedText) {
+          let text = finalizeAssistantText(
+            forcedText,
+            editsByPath,
+            config.maxResponseChars,
+            messages
+          );
+          const forcedDecision = decideHonestFinale({
+            text,
+            canEdit: !isReadonlyPolicy(mode.tools),
+            messages,
+            userText: options.userText,
+            allowNudgeWrite: false,
+            allowNudgeHedge: false,
+            allowNudgeHollow: false,
+            allowNudgeImpact: false,
+          });
+          if (forcedDecision.kind === "replace") {
+            text = forcedDecision.text;
+          }
+          messages.push({ role: "assistant", content: text });
+          options.callbacks.onPhase("done", modeDoneLabel(mode));
+          options.callbacks.onAssistant(text);
+          await Promise.resolve(
+            options.callbacks.onReview([...editsByPath.values()])
+          );
+          answered = true;
+          break;
+        }
+        continue;
+      }
+
       options.callbacks.onPhase("done", modeDoneLabel(mode));
-      const text = sanitizeAssistantText(
-        parseTextToolCalls(assistantContent.trim() || "(пустой ответ)")
-          .cleanedContent || "(пустой ответ)",
-        { maxChars: config.maxResponseChars }
+      let text = finalizeAssistantText(
+        parseTextToolCalls(trimmed || "").cleanedContent || trimmed,
+        editsByPath,
+        config.maxResponseChars,
+        messages
       );
+      const acceptDecision = decideHonestFinale({
+        text,
+        canEdit: !isReadonlyPolicy(mode.tools),
+        messages,
+        userText: options.userText,
+        allowNudgeWrite: false,
+        allowNudgeHedge: false,
+        allowNudgeHollow: false,
+        allowNudgeImpact: false,
+      });
+      if (acceptDecision.kind === "replace") {
+        text = acceptDecision.text;
+      }
       messages[messages.length - 1] = { role: "assistant", content: text };
       options.callbacks.onAssistant(text);
-      options.callbacks.onReview([...editsByPath.values()]);
+      await Promise.resolve(
+        options.callbacks.onReview([...editsByPath.values()])
+      );
       answered = true;
       break;
     }
@@ -533,7 +869,8 @@ export async function runAgentTurn(options: {
       } else {
         result = await runTool(
           call.function.name,
-          call.function.arguments || ""
+          call.function.arguments || "",
+          { signal: options.signal }
         );
       }
       messages.push({
@@ -547,18 +884,39 @@ export async function runAgentTurn(options: {
         try {
           const parsed = JSON.parse(result) as {
             ok?: boolean;
+            unchanged?: boolean;
             path?: string;
             created?: boolean;
             added?: number;
             removed?: number;
+            importWarnings?: unknown;
           };
-          if (parsed.ok && parsed.path) {
+          if (parsed.unchanged) {
+            if (parsed.path) {
+              pendingNoOpWrites.push(String(parsed.path));
+            }
+          } else if (
+            parsed.ok &&
+            parsed.path &&
+            (Boolean(parsed.created) ||
+              Number(parsed.added) > 0 ||
+              Number(parsed.removed) > 0)
+          ) {
             bumpEdit({
               path: parsed.path,
               created: Boolean(parsed.created),
               added: Number(parsed.added) || 0,
               removed: Number(parsed.removed) || 0,
             });
+          }
+          if (Array.isArray(parsed.importWarnings)) {
+            for (const warning of parsed.importWarnings) {
+              if (typeof warning === "string" && warning.trim()) {
+                pendingImportWarnings.push(
+                  `${parsed.path || "?"}: ${warning.trim()}`
+                );
+              }
+            }
           }
         } catch {
           // ignore
@@ -590,11 +948,15 @@ export async function runAgentTurn(options: {
 
     options.callbacks.onPhase("thinking", modeCollectLabel(mode));
 
+    const canEdit = !isReadonlyPolicy(mode.tools);
+    const needsEdits = canEdit && editsByPath.size === 0;
     const finalRequest = [
       ...messages,
       {
         role: "user" as const,
-        content: modeFinalNudge(mode),
+        content: needsEdits
+          ? "You still have not called write_file. write_file is available. Apply the required file changes now. Do not claim tools are unavailable and do not ask the user to paste code manually."
+          : modeFinalNudge(mode),
       },
     ];
     const { message: finalMessage, usage: finalUsage } =
@@ -602,30 +964,207 @@ export async function runAgentTurn(options: {
         {
           model: options.model,
           messages: finalRequest,
-          temperature: 0.2,
-          max_tokens: config.maxTokens,
+          ...(needsEdits
+            ? { tools: activeTools, tool_choice: "auto" as const }
+            : { tool_choice: "none" as const }),
+          temperature: 0.3,
+          max_tokens: Math.max(config.maxTokens, 1024),
         },
         options.signal
       );
     reportUsage(finalUsage, finalRequest);
 
-    let text = contentAsString(finalMessage.content).trim();
-    if (!text && finalMessage.tool_calls?.length) {
-      text =
-        "Модель продолжила вызывать инструменты. Попробуйте другую модель (например DeepSeek-V4-Flash) или уточните задачу.";
+    let toolCalls = (finalMessage.tool_calls ?? []).filter(
+      (call) => call?.function?.name
+    );
+    let text = extractAssistantText(finalMessage).trim();
+    if (toolCalls.length === 0 && text) {
+      const recovered = parseTextToolCalls(text);
+      if (recovered.calls.length > 0) {
+        toolCalls = recovered.calls;
+        text = recovered.cleanedContent;
+      }
     }
-    const recoveredFinal = parseTextToolCalls(text || "");
-    if (recoveredFinal.calls.length > 0) {
-      // Late textual tool dump without another round — strip markup from UI text.
-      text = recoveredFinal.cleanedContent;
+
+    if (needsEdits && toolCalls.length > 0) {
+      messages.push(buildAssistantTurn(finalMessage, text, toolCalls));
+      for (const call of toolCalls) {
+        const toolStatus = formatToolStatus(
+          call.function.name,
+          call.function.arguments || ""
+        );
+        options.callbacks.onPhase(toolStatus.phase, toolStatus.detail);
+        options.callbacks.onTool(
+          `⚙ ${call.function.name}(${call.function.arguments})`
+        );
+        let result: string;
+        if (!allowedToolNames.has(call.function.name)) {
+          result = JSON.stringify({
+            error:
+              "This tool is not available in the current mode. Use the allowed tools only.",
+          });
+        } else if (call.function.name.startsWith("mcp__")) {
+          result = mcp
+            ? await mcp.callTool(
+                call.function.name,
+                call.function.arguments || ""
+              )
+            : JSON.stringify({ error: "Figma MCP is not available" });
+        } else {
+          result = await runTool(
+            call.function.name,
+            call.function.arguments || "",
+            { signal: options.signal }
+          );
+        }
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.function.name,
+          content: result,
+        });
+        if (call.function.name === "write_file") {
+          try {
+            const parsed = JSON.parse(result) as {
+              ok?: boolean;
+              unchanged?: boolean;
+              path?: string;
+              created?: boolean;
+              added?: number;
+              removed?: number;
+            };
+            if (
+              parsed.ok &&
+              parsed.path &&
+              !parsed.unchanged &&
+              (Boolean(parsed.created) ||
+                Number(parsed.added) > 0 ||
+                Number(parsed.removed) > 0)
+            ) {
+              bumpEdit({
+                path: parsed.path,
+                created: Boolean(parsed.created),
+                added: Number(parsed.added) || 0,
+                removed: Number(parsed.removed) || 0,
+              });
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      const summaryRequest = [
+        ...messages,
+        {
+          role: "user" as const,
+          content:
+            "Briefly summarize the file changes you just applied in Russian. Do not ask the user to paste code. Never return an empty message.",
+        },
+      ];
+      const { message: summaryMessage, usage: summaryUsage } =
+        await client.chatCompletions(
+          {
+            model: options.model,
+            messages: summaryRequest,
+            tool_choice: "none",
+            temperature: 0.3,
+            max_tokens: Math.max(config.maxTokens, 1024),
+          },
+          options.signal
+        );
+      reportUsage(summaryUsage, summaryRequest);
+      text = finalizeAssistantText(
+        extractAssistantText(summaryMessage).trim(),
+        editsByPath,
+        config.maxResponseChars,
+        messages
+      );
+      const summaryDecision = decideHonestFinale({
+        text,
+        canEdit,
+        messages,
+        userText: options.userText,
+        allowNudgeWrite: false,
+        allowNudgeHedge: false,
+        allowNudgeHollow: false,
+        allowNudgeImpact: false,
+      });
+      if (summaryDecision.kind === "replace") {
+        text = summaryDecision.text;
+      }
+    } else {
+      if (!text && toolCalls.length) {
+        // Финал без needsEdits, но модель всё равно вернула tools — запросим текст отдельно.
+        const forced = await client.chatCompletions(
+          {
+            model: options.model,
+            messages: [
+              ...messages,
+              buildAssistantTurn(finalMessage, text, toolCalls),
+              {
+                role: "user",
+                content:
+                  "Stop calling tools. Write the final Russian reply for the user now. Never return an empty message.",
+              },
+            ],
+            tool_choice: "none",
+            temperature: 0.3,
+            max_tokens: Math.max(config.maxTokens, 1024),
+          },
+          options.signal
+        );
+        reportUsage(forced.usage, messages);
+        text = extractAssistantText(forced.message).trim();
+      }
+      if (!text) {
+        const forced = await client.chatCompletions(
+          {
+            model: options.model,
+            messages: [
+              ...messages,
+              {
+                role: "user",
+                content:
+                  "Write a clear Russian reply for the user now based on the tool results already gathered. Never return an empty message. Do not call tools.",
+              },
+            ],
+            tool_choice: "none",
+            temperature: 0.3,
+            max_tokens: Math.max(config.maxTokens, 1024),
+          },
+          options.signal
+        );
+        reportUsage(forced.usage, messages);
+        text = extractAssistantText(forced.message).trim();
+      }
+      text = finalizeAssistantText(
+        text,
+        editsByPath,
+        config.maxResponseChars,
+        messages
+      );
+      const finalDecision = decideHonestFinale({
+        text,
+        canEdit,
+        messages,
+        userText: options.userText,
+        allowNudgeWrite: false,
+        allowNudgeHedge: false,
+        allowNudgeHollow: false,
+        allowNudgeImpact: false,
+      });
+      if (finalDecision.kind === "replace") {
+        text = finalDecision.text;
+      }
     }
-    text = sanitizeAssistantText(text || "(пустой ответ)", {
-      maxChars: config.maxResponseChars,
-    });
+
     messages.push({ role: "assistant", content: text });
     options.callbacks.onPhase("done", modeDoneLabel(mode));
     options.callbacks.onAssistant(text);
-    options.callbacks.onReview([...editsByPath.values()]);
+    await Promise.resolve(
+      options.callbacks.onReview([...editsByPath.values()])
+    );
   }
 
   let finalAssistant = "";
@@ -639,6 +1178,17 @@ export async function runAgentTurn(options: {
       break;
     }
   }
+  if (
+    !finalAssistant ||
+    finalAssistant === "(пустой ответ)" ||
+    finalAssistant.includes("Не удалось получить текстовый ответ модели")
+  ) {
+    finalAssistant =
+      summarizeEditsFallback(editsByPath) ||
+      summarizeToolActivity(messages) ||
+      finalAssistant ||
+      "Не удалось получить текстовый ответ модели. Попробуйте повторить запрос или сменить модель.";
+  }
 
   const historyUser: ChatMessage = {
     role: "user",
@@ -651,6 +1201,6 @@ export async function runAgentTurn(options: {
   return compactHistory([
     ...prior,
     historyUser,
-    { role: "assistant", content: finalAssistant || "(пустой ответ)" },
+    { role: "assistant", content: finalAssistant },
   ]);
 }

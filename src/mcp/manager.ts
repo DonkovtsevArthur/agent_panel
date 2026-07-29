@@ -42,11 +42,40 @@ import {
 const SECRET_PAT = "agentPanel.figma.pat";
 const GLOBAL_MODE_KEY = "agentPanel.figma.transportMode";
 const GLOBAL_SHOW_PAT_KEY = "agentPanel.figma.showPatFallback";
+const CUSTOM_CONNECT_TIMEOUT_MS = 15_000;
+const CUSTOM_LIST_TOOLS_TIMEOUT_MS = 15_000;
+const CUSTOM_RETRY_BASE_MS = 5_000;
+const CUSTOM_RETRY_MAX_MS = 60_000;
 
 interface ServerRuntime {
   client?: Client;
   tools: ChatTool[];
   status: McpServerRuntimeStatus;
+  connectPromise?: Promise<McpServerRuntimeStatus>;
+  failureCount: number;
+  nextRetryAt: number;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 function toolResultToString(result: unknown): string {
@@ -86,7 +115,7 @@ export class McpManager {
   private figmaTools: ChatTool[] = [];
   private figmaStatus: FigmaStatusPayload = {
     state: "disconnected",
-    enabled: true,
+    enabled: false,
   };
   private figmaConnectPromise: Promise<void> | undefined;
 
@@ -94,12 +123,13 @@ export class McpManager {
   private customRuntimes = new Map<string, ServerRuntime>();
   private statusListeners = new Set<(status: FigmaStatusPayload) => void>();
   private listListeners = new Set<(servers: McpServerRuntimeStatus[]) => void>();
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly context: vscode.ExtensionContext) {
     const enabled = vscode.workspace
       .getConfiguration("agentPanel")
       .get<boolean>("figma.enabled");
-    this.figmaStatus.enabled = enabled !== false;
+    this.figmaStatus.enabled = enabled === true;
     this.figmaStatus.showPatFallback = Boolean(
       this.context.globalState.get(GLOBAL_SHOW_PAT_KEY)
     );
@@ -108,6 +138,16 @@ export class McpManager {
       this.figmaMode = savedMode;
     }
     this.reloadCustomConfigs();
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (
+          event.affectsConfiguration("agentPanel.mcp.servers") ||
+          event.affectsConfiguration("agentPanel.figma.enabled")
+        ) {
+          void this.handleConfigurationChange();
+        }
+      })
+    );
   }
 
   reloadCustomConfigs(): void {
@@ -117,6 +157,8 @@ export class McpManager {
         this.customRuntimes.set(cfg.id, {
           tools: [],
           status: this.makeDisconnectedStatus(cfg),
+          failureCount: 0,
+          nextRetryAt: 0,
         });
       } else {
         const rt = this.customRuntimes.get(cfg.id)!;
@@ -154,6 +196,7 @@ export class McpManager {
       toolCount: this.figmaTools.length,
       message: this.figmaStatus.message,
       detail: figmaDetail,
+      hasCredentials: Boolean(this.figmaStatus.hasPat),
     };
     const customs = this.customConfigs.map((cfg) => {
       const rt = this.customRuntimes.get(cfg.id);
@@ -353,6 +396,10 @@ export class McpManager {
     try {
       await this.context.secrets.store(SECRET_PAT, trimmed);
       this.figmaStatus.hasPat = true;
+      this.figmaStatus.enabled = true;
+      await vscode.workspace
+        .getConfiguration("agentPanel")
+        .update("figma.enabled", true, vscode.ConfigurationTarget.Global);
       await this.disconnectFigmaClientOnly();
       const client = await connectFigmaPat(trimmed);
       await this.adoptFigmaClient(client, "pat");
@@ -410,7 +457,14 @@ export class McpManager {
       this.figmaStatus.state = "disconnected";
       this.figmaStatus.message = "Figma MCP disabled";
     } else if (enabled) {
-      void this.tryQuietReconnect();
+      this.figmaStatus = {
+        ...this.figmaStatus,
+        state: "connecting",
+        message: "Connecting…",
+      };
+      this.notifyStatus();
+      this.notifyList();
+      await this.tryQuietReconnect();
     }
     this.notifyStatus();
     this.notifyList();
@@ -452,6 +506,48 @@ export class McpManager {
         // ignore quiet failures
       }
     }
+  }
+
+  private async handleConfigurationChange(): Promise<void> {
+    const figmaEnabled = vscode.workspace
+      .getConfiguration("agentPanel")
+      .get<boolean>("figma.enabled");
+    const nextFigmaEnabled = figmaEnabled === true;
+    if (nextFigmaEnabled !== this.figmaStatus.enabled) {
+      this.figmaStatus.enabled = nextFigmaEnabled;
+      if (!nextFigmaEnabled) {
+        await this.disconnectFigmaClientOnly();
+        this.figmaStatus.state = "disconnected";
+        this.figmaStatus.message = "Figma MCP disabled";
+      } else if (!this.figmaClient) {
+        this.figmaStatus.state = "connecting";
+        this.figmaStatus.message = "Connecting…";
+        void this.tryQuietReconnect();
+      }
+      this.notifyStatus();
+    }
+
+    const previous = new Map(
+      this.customConfigs.map((cfg) => [cfg.id, JSON.stringify(cfg)])
+    );
+    this.reloadCustomConfigs();
+    for (const cfg of this.customConfigs) {
+      const changed = previous.get(cfg.id) !== JSON.stringify(cfg);
+      if (!changed) {
+        continue;
+      }
+      await this.closeCustomClient(cfg.id);
+      const rt = this.customRuntimes.get(cfg.id);
+      if (rt) {
+        rt.tools = [];
+        rt.connectPromise = undefined;
+        rt.status = this.makeDisconnectedStatus(cfg);
+      }
+      if (cfg.enabled !== false) {
+        void this.connectCustom(cfg.id, { force: true });
+      }
+    }
+    this.notifyList();
   }
 
   // —— Custom servers ——
@@ -522,6 +618,8 @@ export class McpManager {
       this.customRuntimes.set(id, {
         tools: [],
         status: this.makeDisconnectedStatus(cfg),
+        failureCount: 0,
+        nextRetryAt: 0,
       });
     } else {
       const rt = this.customRuntimes.get(id)!;
@@ -535,7 +633,7 @@ export class McpManager {
     }
 
     if (options.connect !== false && cfg.enabled !== false) {
-      await this.connectCustom(id);
+      await this.connectCustom(id, { force: true });
     } else {
       this.notifyList();
     }
@@ -582,23 +680,65 @@ export class McpManager {
         rt.status.message = "Disabled";
         rt.tools = [];
         rt.status.toolCount = 0;
+        rt.connectPromise = undefined;
       }
     } else {
-      await this.connectCustom(id);
+      await this.connectCustom(id, { force: true });
     }
     this.notifyList();
   }
 
-  async connectCustom(id: string): Promise<McpServerRuntimeStatus> {
+  async connectCustom(
+    id: string,
+    options?: { force?: boolean }
+  ): Promise<McpServerRuntimeStatus> {
     const cfg = this.customConfigs.find((c) => c.id === id);
     if (!cfg) {
       throw new Error(`Unknown MCP server: ${id}`);
     }
     let rt = this.customRuntimes.get(id);
     if (!rt) {
-      rt = { tools: [], status: this.makeDisconnectedStatus(cfg) };
+      rt = {
+        tools: [],
+        status: this.makeDisconnectedStatus(cfg),
+        failureCount: 0,
+        nextRetryAt: 0,
+      };
       this.customRuntimes.set(id, rt);
     }
+    if (rt.connectPromise) {
+      return rt.connectPromise;
+    }
+    const now = Date.now();
+    if (!options?.force && rt.nextRetryAt > now) {
+      const waitSeconds = Math.max(
+        1,
+        Math.ceil((rt.nextRetryAt - now) / 1000)
+      );
+      rt.status = {
+        ...rt.status,
+        state: "error",
+        message: `Reconnect paused for ${waitSeconds}s after repeated failures.`,
+        enabled: cfg.enabled !== false,
+      };
+      this.notifyList();
+      return rt.status;
+    }
+    rt.connectPromise = this.connectCustomInner(id, cfg, rt);
+    try {
+      return await rt.connectPromise;
+    } finally {
+      if (rt.connectPromise) {
+        rt.connectPromise = undefined;
+      }
+    }
+  }
+
+  private async connectCustomInner(
+    id: string,
+    cfg: McpServerConfig,
+    rt: ServerRuntime
+  ): Promise<McpServerRuntimeStatus> {
     rt.status = {
       ...rt.status,
       state: "connecting",
@@ -606,19 +746,25 @@ export class McpManager {
       enabled: cfg.enabled !== false,
     };
     this.notifyList();
+    let client: Client | undefined;
     try {
       await this.closeCustomClient(id);
-      const bearerToken = await getServerBearerToken(
-        this.context.secrets,
-        id
-      );
+      const bearerToken = await getServerBearerToken(this.context.secrets, id);
       const secretEnv = await getServerSecretEnv(this.context.secrets, id);
-      const client = await connectCustomMcpServer({
-        config: cfg,
-        bearerToken,
-        secretEnv,
-      });
-      const listed = await client.listTools();
+      client = await withTimeout(
+        connectCustomMcpServer({
+          config: cfg,
+          bearerToken,
+          secretEnv,
+        }),
+        CUSTOM_CONNECT_TIMEOUT_MS,
+        `Connecting MCP server "${cfg.name}"`
+      );
+      const listed = await withTimeout(
+        client.listTools(),
+        CUSTOM_LIST_TOOLS_TIMEOUT_MS,
+        `Listing tools for "${cfg.name}"`
+      );
       const tools = (listed.tools || []).map((tool) => ({
         type: "function" as const,
         function: {
@@ -632,6 +778,8 @@ export class McpManager {
       }));
       rt.client = client;
       rt.tools = tools;
+      rt.failureCount = 0;
+      rt.nextRetryAt = 0;
       rt.status = {
         id,
         name: cfg.name,
@@ -647,8 +795,21 @@ export class McpManager {
       return rt.status;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (client) {
+        try {
+          await client.close();
+        } catch {
+          // ignore
+        }
+      }
       rt.client = undefined;
       rt.tools = [];
+      rt.failureCount += 1;
+      const retryDelay = Math.min(
+        CUSTOM_RETRY_MAX_MS,
+        CUSTOM_RETRY_BASE_MS * 2 ** Math.max(0, rt.failureCount - 1)
+      );
+      rt.nextRetryAt = Date.now() + retryDelay;
       rt.status = {
         id,
         name: cfg.name,
@@ -657,7 +818,7 @@ export class McpManager {
         transport: cfg.transport,
         state: "error",
         toolCount: 0,
-        message,
+        message: `${message} Retry in ${Math.ceil(retryDelay / 1000)}s.`,
         detail: formatTransportDetail(cfg),
       };
       this.notifyList();
@@ -679,7 +840,14 @@ export class McpManager {
   }
 
   private async quietReconnectFigma(): Promise<void> {
-    const preferred = this.figmaMode;
+    await this.refreshSecretFlags();
+    const hasPat = Boolean(this.figmaStatus.hasPat);
+    const preferPat =
+      hasPat ||
+      this.figmaMode === "pat" ||
+      Boolean(this.figmaStatus.preferPat) ||
+      Boolean(this.figmaStatus.showPatFallback);
+
     const tryRemote = async () => {
       const client = await connectFigmaRemote({
         secrets: this.context.secrets,
@@ -695,16 +863,43 @@ export class McpManager {
       const client = await connectFigmaPat(pat);
       await this.adoptFigmaClient(client, "pat");
     };
-    const order =
-      preferred === "pat" ? [tryPat, tryRemote] : [tryRemote, tryPat];
+
+    // Harbor Agents is usually blocked on remote Figma MCP (403). Prefer PAT.
+    const order = preferPat ? [tryPat, tryRemote] : [tryRemote, tryPat];
+    let lastError: unknown;
     for (const attempt of order) {
       try {
         await attempt();
         this.notifyList();
         return;
-      } catch {
-        // next
+      } catch (error) {
+        lastError = error;
       }
+    }
+
+    if (lastError && looksLikeCatalogBlockedError(lastError)) {
+      const langSetting = vscode.workspace
+        .getConfiguration("agentPanel")
+        .get<"auto" | "en" | "ru">("language");
+      const lang = resolveUiLanguage(
+        langSetting === "en" || langSetting === "ru" ? langSetting : "auto"
+      );
+      this.figmaStatus = {
+        ...this.figmaStatus,
+        state: "error",
+        message: formatFigmaRemoteError(lastError, lang),
+        showPatFallback: true,
+        preferPat: true,
+      };
+    } else if (lastError) {
+      const message =
+        lastError instanceof Error ? lastError.message : String(lastError);
+      this.figmaStatus = {
+        ...this.figmaStatus,
+        state: "error",
+        message: message.slice(0, 400),
+        showPatFallback: true,
+      };
     }
   }
 
@@ -729,7 +924,7 @@ export class McpManager {
     this.figmaStatus = {
       state: "connected",
       mode,
-      enabled: this.figmaStatus.enabled,
+      enabled: true,
       toolCount: this.figmaTools.length,
       message:
         mode === "remote"
@@ -738,6 +933,9 @@ export class McpManager {
       showPatFallback: mode === "pat" || this.figmaStatus.showPatFallback,
       hasPat: this.figmaStatus.hasPat,
     };
+    await vscode.workspace
+      .getConfiguration("agentPanel")
+      .update("figma.enabled", true, vscode.ConfigurationTarget.Global);
   }
 
   private async disconnectFigmaClientOnly(): Promise<void> {
@@ -814,6 +1012,9 @@ export class McpManager {
     void this.disconnectFigmaClientOnly();
     for (const id of [...this.customRuntimes.keys()]) {
       void this.closeCustomClient(id);
+    }
+    for (const disposable of this.disposables) {
+      disposable.dispose();
     }
     this.statusListeners.clear();
     this.listListeners.clear();

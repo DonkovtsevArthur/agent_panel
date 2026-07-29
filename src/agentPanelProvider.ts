@@ -25,6 +25,7 @@ import type { FileEditStat } from "./diffStats";
 import { getEditorSelectionPayload } from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
 import { hasUncommittedChanges } from "./gitStatus";
+import { openWorkingTreeDiff } from "./gitDiff";
 import {
   modeThinkingLabel,
   parseCustomModes,
@@ -42,6 +43,7 @@ import {
   buildAgentsList,
   buildArchiveList,
   chatHasMessages,
+  cloneStore,
   createEmptyAgent,
   deleteAgentFromStore,
   ensureActiveVisible,
@@ -131,6 +133,7 @@ type WebviewToHost =
   | { type: "deleteAgent"; agentId: string }
   | { type: "modelChanged"; model: string }
   | { type: "openFile"; path: string }
+  | { type: "openFileDiff"; path: string }
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
@@ -193,6 +196,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private lastTurnModel = "";
   private contextTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
+  private readonly chatRunTokens = new Map<string, number>();
   private readonly agentRunState = new Map<
     string,
     "running" | "success" | "error"
@@ -205,6 +209,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private scmRefreshTimer?: ReturnType<typeof setTimeout>;
   private gitApiBound = false;
   private pendingScmReturnRefresh = false;
+  private nextRunToken = 1;
+  private workspaceGeneration = 1;
+  private storeRevision = 0;
+  private persistedStoreRevision = 0;
+  private storeWriteQueue: Promise<void> = Promise.resolve();
   private pendingComposerInsert = "";
   private pendingComposerSelection:
     | {
@@ -454,15 +463,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!this.store.agents.length) {
       this.store = migrateToStoreV2(undefined, fallbackModel);
     }
+    this.storeRevision = 0;
+    this.persistedStoreRevision = 0;
+    this.storeWriteQueue = Promise.resolve();
     this.ensureChatReady(fallbackModel);
     this.hydrateActiveChat();
 
     if (seededFromGlobal && this.hasWorkspaceFolder()) {
-      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
-      void this.context.globalState.update(STORAGE_KEY_V2, undefined);
+      void this.writeStoreOnly().then(() =>
+        this.context.globalState.update(STORAGE_KEY_V2, undefined)
+      );
     } else if (this.hasWorkspaceFolder()) {
       // Сохраняем screen=chat и автосозданного агента.
-      void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+      void this.writeStoreOnly();
     }
   }
 
@@ -765,16 +778,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private saveStore(): void {
+  private saveStore(): Promise<void> {
     this.persistActiveChat();
-    this.writeStoreOnly();
+    return this.writeStoreOnly();
   }
 
-  private writeStoreOnly(): void {
+  private writeStoreOnly(): Promise<void> {
     if (!this.hasWorkspaceFolder()) {
-      return;
+      return Promise.resolve();
     }
-    void this.context.workspaceState.update(STORAGE_KEY_V2, this.store);
+    const revision = ++this.storeRevision;
+    const snapshot = cloneStore(this.store);
+    this.storeWriteQueue = this.storeWriteQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (revision < this.persistedStoreRevision) {
+          return;
+        }
+        await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
+        this.persistedStoreRevision = revision;
+      });
+    return this.storeWriteQueue;
   }
 
   private isViewingChat(chatId: string): boolean {
@@ -830,21 +854,73 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     this.chatRuns.delete(chatId);
+    this.chatRunTokens.delete(chatId);
     controller.abort();
   }
 
   private abortAllRuns(): void {
     for (const [chatId, controller] of this.chatRuns.entries()) {
       this.chatRuns.delete(chatId);
+      this.chatRunTokens.delete(chatId);
       controller.abort();
     }
   }
 
-  private reloadStoreForWorkspace(): void {
+  private async reloadStoreForWorkspace(): Promise<void> {
+    this.workspaceGeneration += 1;
     this.abortAllRuns();
-    this.saveStore();
+    await this.saveStore();
     this.loadStore();
-    void this.postInit();
+    this.workspaceGeneration += 1;
+    await this.postInit();
+  }
+
+  private beginChatRun(chatId: string): {
+    controller: AbortController;
+    token: number;
+    workspaceGeneration: number;
+  } {
+    this.abortChatRun(chatId);
+    const controller = new AbortController();
+    const token = this.nextRunToken++;
+    this.chatRuns.set(chatId, controller);
+    this.chatRunTokens.set(chatId, token);
+    return {
+      controller,
+      token,
+      workspaceGeneration: this.workspaceGeneration,
+    };
+  }
+
+  private isChatRunCurrent(
+    chatId: string,
+    run: {
+      controller: AbortController;
+      token: number;
+      workspaceGeneration: number;
+    }
+  ): boolean {
+    return (
+      this.workspaceGeneration === run.workspaceGeneration &&
+      !run.controller.signal.aborted &&
+      this.chatRuns.get(chatId) === run.controller &&
+      this.chatRunTokens.get(chatId) === run.token
+    );
+  }
+
+  private finishChatRun(
+    chatId: string,
+    run: {
+      controller: AbortController;
+      token: number;
+      workspaceGeneration: number;
+    }
+  ): void {
+    if (!this.isChatRunCurrent(chatId, run)) {
+      return;
+    }
+    this.chatRuns.delete(chatId);
+    this.chatRunTokens.delete(chatId);
   }
 
   private saveSession(): void {
@@ -871,7 +947,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     const chat = this.store.chats[chatId];
     if (!chat) {
-      this.pushUi(role, text);
       return;
     }
     const nextUiMessages = [...chat.uiMessages, { role, text }].slice(-200);
@@ -1233,6 +1308,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "openFile":
         await this.openWorkspaceFile(message.path);
         break;
+      case "openFileDiff":
+        await this.openWorkspaceFileDiff(message.path);
+        break;
       case "openScm":
         this.pendingScmReturnRefresh = true;
         await vscode.commands.executeCommand("workbench.view.scm");
@@ -1549,15 +1627,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async openWorkspaceFile(relativePath: string): Promise<void> {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) {
+    const uri = this.resolveWorkspaceUri(relativePath);
+    if (!uri) {
       return;
     }
-    const normalized = relativePath
-      .trim()
-      .replace(/^\.\//, "")
-      .replace(/^\/+/, "");
-    const uri = vscode.Uri.joinPath(folder.uri, normalized);
     try {
       const doc = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(doc, { preview: true });
@@ -1567,6 +1640,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         `Failed to open ${relativePath}: ${text}`
       );
     }
+  }
+
+  /** Diff working tree vs HEAD — свой provider, без git.openChange. */
+  private async openWorkspaceFileDiff(relativePath: string): Promise<void> {
+    const opened = await openWorkingTreeDiff(relativePath);
+    if (opened) {
+      return;
+    }
+    await this.openWorkspaceFile(relativePath);
+  }
+
+  private resolveWorkspaceUri(relativePath: string): vscode.Uri | undefined {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder) {
+      return undefined;
+    }
+    const normalized = relativePath
+      .trim()
+      .replace(/^\.\//, "")
+      .replace(/^\/+/, "")
+      .replace(/\\/g, "/");
+    if (!normalized) {
+      return undefined;
+    }
+    return vscode.Uri.joinPath(folder.uri, ...normalized.split("/"));
   }
 
   private async handleSend(
@@ -1640,6 +1738,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     let runLastTurnModel = this.lastTurnModel || "";
     let runContextTokens = this.contextTokens;
     const syncRunChat = (): void => {
+      if (!this.isChatRunCurrent(runChatId, runRef)) {
+        return;
+      }
       touchChat(this.store, runChatId, {
         selectedModel: chosen,
         lastTurnModel: runLastTurnModel,
@@ -1654,15 +1755,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
       });
-      this.writeStoreOnly();
+      void this.writeStoreOnly();
     };
     const postToRunChat = (message: Record<string, unknown>): void => {
-      if (this.isViewingChat(runChatId)) {
+      if (
+        this.isChatRunCurrent(runChatId, runRef) &&
+        this.isViewingChat(runChatId)
+      ) {
         this.view?.webview.postMessage(message);
       }
     };
     this.selectedModel = chosen;
-    this.saveSession();
+    void this.saveSession();
 
     if (!resolveModelSupportsVision(chosen)) {
       const withoutImages = attachments.filter((a) => a.kind !== "image");
@@ -1691,6 +1795,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Start run tracking before we touch UI/store for this run.
+    // Otherwise early syncRunChat() calls could run in TDZ of runRef.
+    const runRef = this.beginChatRun(runChatId);
+    const currentRun = runRef.controller;
+
     if (options?.appendUser !== false) {
       const uiMsg: UiMessage = { role: "user", text: trimmed };
       if (attachments.length) {
@@ -1700,9 +1809,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       syncRunChat();
     }
 
-    this.abortChatRun(runChatId);
-    const currentRun = new AbortController();
-    this.chatRuns.set(runChatId, currentRun);
     this.setRunStateForChat(runChatId, "running");
     const mode = getModeById(options?.agentMode);
     const agentMode = mode.id;
@@ -1721,6 +1827,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         agentMode,
         callbacks: {
           onPhase: (phase, detail) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             const lang = resolveUiLanguage(getConfig().language);
             const fallback =
               phase === "done"
@@ -1749,14 +1858,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             this.setStatusForChat(runChatId, detail || fallback, false, phase);
           },
           onTool: (toolText) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             runUiMessages.push({ role: "tool", text: toolText });
             syncRunChat();
             postToRunChat({ type: "append", role: "tool", text: toolText });
           },
           onFileEdit: (edit) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             turnEdits.push(edit);
           },
           onAssistant: (assistantText) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             runLastTurnModel = chosen;
             runUiMessages.push({ role: "assistant", text: assistantText });
             syncRunChat();
@@ -1770,13 +1888,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
           },
           onReview: (edits) => {
-            void this.publishReview(
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
+            // Не завязываемся на chatRuns после await: finally снимает run,
+            // а review всё ещё должен попасть в UI (если не abort / не новый run).
+            return this.publishReview(
               edits.length ? edits : turnEdits,
               runChatId,
-              runUiMessages
+              runUiMessages,
+              () =>
+                this.workspaceGeneration === runRef.workspaceGeneration &&
+                !runRef.controller.signal.aborted &&
+                Boolean(this.store.chats[runChatId])
             );
           },
           onUsage: (usage) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             runContextTokens = usage.used;
             syncRunChat();
             if (this.isViewingChat(runChatId)) {
@@ -1784,6 +1914,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
           },
           onFigmaNeedsConnect: () => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
             const lang = resolveUiLanguage(getConfig().language);
             const text =
               lang === "ru"
@@ -1799,21 +1932,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         },
       });
       syncRunChat();
-      if (this.isViewingChat(runChatId)) {
+      if (
+        this.isChatRunCurrent(runChatId, runRef) &&
+        this.isViewingChat(runChatId)
+      ) {
         this.postContextUsage();
       }
     } catch (error) {
-      this.setStatusForChat(runChatId, "", true);
+      if (this.isChatRunCurrent(runChatId, runRef)) {
+        this.setStatusForChat(runChatId, "", true);
+      }
       if (
-        !currentRun ||
         currentRun.signal.aborted ||
         (error instanceof Error && error.message === "aborted")
       ) {
         this.setRunStateForChat(runChatId);
-        if (this.isViewingChat(runChatId)) {
+        if (
+          this.isChatRunCurrent(runChatId, runRef) &&
+          this.isViewingChat(runChatId)
+        ) {
           this.postRegenerateState();
+          this.view?.webview.postMessage({ type: "stopped", chatId: runChatId });
         }
-        this.view?.webview.postMessage({ type: "stopped", chatId: runChatId });
+        return;
+      }
+      if (!this.isChatRunCurrent(runChatId, runRef)) {
         return;
       }
       const messageText =
@@ -1827,9 +1970,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
       this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
     } finally {
-      if (this.chatRuns.get(runChatId) === currentRun) {
-        this.chatRuns.delete(runChatId);
-      }
+      this.finishChatRun(runChatId, runRef);
     }
   }
 
@@ -1949,15 +2090,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async publishReview(
     edits: FileEditStat[],
     chatId = this.store.activeChatId,
-    targetUiMessages = this.uiMessages
+    targetUiMessages = this.uiMessages,
+    isStillValid: () => boolean = () => true
   ): Promise<void> {
-    const unique = mergeEdits(edits).filter((e) => Boolean(e.path));
+    const unique = mergeEdits(edits).filter(
+      (e) =>
+        Boolean(e.path) &&
+        (Boolean(e.created) || Number(e.added) > 0 || Number(e.removed) > 0)
+    );
     if (!unique.length) {
       this.setStatusForChat(chatId, "", true);
       return;
     }
 
+    if (!isStillValid()) {
+      return;
+    }
     const showScm = await hasUncommittedChanges(unique.map((f) => f.path));
+    // После await run мог завершиться нормально — публикуем, если чат жив и не abort.
+    if (!isStillValid() || !this.store.chats[chatId]) {
+      return;
+    }
     const payload = JSON.stringify({ files: unique, showScm });
     targetUiMessages.push({ role: "review", text: payload });
     touchChat(this.store, chatId, {
@@ -1966,7 +2119,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (this.isViewingChat(chatId)) {
       this.uiMessages = targetUiMessages;
     }
-    this.writeStoreOnly();
+    void this.writeStoreOnly();
     if (this.isViewingChat(chatId)) {
       this.view?.webview.postMessage({
         type: "review",
@@ -2539,7 +2692,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     await this.saveCommitMessageSettings(raw);
 
-    const figmaEnabled = raw.figmaEnabled !== false;
+    const figmaEnabled = raw.figmaEnabled === true;
     await cfg.update("figma.enabled", figmaEnabled, target);
     const mcp = getMcpManager();
     if (mcp) {
@@ -3132,8 +3285,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     </div>
   </section>
 
-  <section id="mcpScreen" class="screen" hidden>
-    <div id="mcpEditModal" class="settings-modal" hidden>
+  <section id="mcpScreen" class="screen" hidden></section>
+
+  <div id="mcpEditModal" class="settings-modal" hidden>
       <div class="settings-modal-backdrop" data-mcp-dismiss="1"></div>
       <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="mcpEditTitle">
         <div class="settings-modal-head">
@@ -3218,7 +3372,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </div>
       </div>
     </div>
-  </section>
 
   <div id="modeEditModal" class="settings-modal" hidden>
     <div class="settings-modal-backdrop" data-mode-dismiss="1"></div>

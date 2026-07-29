@@ -423,7 +423,7 @@ export function getConfig(): AgentPanelConfig {
       };
     })(),
     figma: {
-      enabled: cfg.get<boolean>("figma.enabled") !== false,
+      enabled: cfg.get<boolean>("figma.enabled") === true,
     },
   };
 }

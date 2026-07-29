@@ -18,7 +18,18 @@ export interface AgentModeDef {
   placeholder?: string;
 }
 
-const PLAN_MODE_SYSTEM_PROMPT = `Plan mode is active.
+function planModeSystemPrompt(lang: "en" | "ru"): string {
+  if (lang === "ru") {
+    return `Режим Plan активен.
+Твоя задача — осмотреть контекст и составить понятный план реализации.
+Разрешены только read-only инструменты: list_files, read_file, fetch_url, open_external (плюс любые MCP tools, если они подключены).
+Ты МОЖЕШЬ читать http(s) ссылки через fetch_url — никогда не говори, что не можешь открывать внешние URL.
+Если пользователь спрашивает что-то про ссылочную страницу, вызови fetch_url и отвечай по структурированным полям страницы.
+Не изменяй файлы, не запускай shell-команды и не реализуй код в репозитории.
+Отвечай структурированным планом на русском: цель, упорядоченные шаги, затронутые файлы, риски и открытые вопросы.
+Не начинай реализацию. Если нужно больше данных — сначала прочитай релевантные файлы/URL, а затем напиши план.`;
+  }
+  return `Plan mode is active.
 Your task is to inspect the context and produce a clear implementation plan.
 Read-only tools are allowed: list_files, read_file, fetch_url, open_external (plus any MCP tools provided).
 You CAN read http(s) links via fetch_url — never say you cannot open external URLs.
@@ -26,8 +37,20 @@ If the user asks anything about a linked page, call fetch_url and answer from th
 Do not modify files, run shell commands, or implement code in the repository.
 Reply with a structured plan in English: goal, ordered steps, affected files, risks, and open questions.
 Do not start implementation. If you need more data, read the relevant files/URLs first and then write the plan.`;
+}
 
-const ASK_MODE_SYSTEM_PROMPT = `Ask mode is active.
+function askModeSystemPrompt(lang: "en" | "ru"): string {
+  if (lang === "ru") {
+    return `Режим Ask активен.
+Отвечай на вопросы пользователя: объясняй код, разбирай причины, давай советы и примеры.
+Разрешены только read-only инструменты: list_files, read_file, fetch_url, open_external (плюс любые MCP tools, если они подключены).
+Ты МОЖЕШЬ читать http(s) ссылки через fetch_url — никогда не говори, что не можешь открывать внешние URL.
+Если пользователь спрашивает что-то про ссылочную страницу, вызови fetch_url сразу и отвечай по полям: title/description/headings/content/colors/links/jsonLd.
+Не придумывай “стены” про авторизацию. Не изменяй файлы, не запускай shell-команды, не внедряй фичи и не правь репозиторий.
+Не превращай ответ в большой план реализации и не перепрыгивай сразу к фразе “I can make the change” — отвечай по сути вопроса.
+Если нужно больше данных — прочитай релевантные файлы/URL и опирайся на факты.`;
+  }
+  return `Ask mode is active.
 Answer the user's questions: explain code, investigate causes, give advice and examples.
 Read-only tools are allowed: list_files, read_file, fetch_url, open_external (plus any MCP tools provided).
 You CAN read http(s) links via fetch_url — never say you cannot open external URLs.
@@ -35,6 +58,7 @@ If the user asks anything about a linked page, call fetch_url immediately and an
 Do not invent authorization walls. Do not modify files, run shell commands, implement features, or edit the repository.
 Do not turn the answer into a large implementation plan or jump straight to "I can make the change" — answer the question directly.
 If you need more data, read the relevant files/URLs and ground your answer in facts.`;
+}
 
 export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
 
@@ -52,7 +76,7 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     label: "Plan",
     description: "Plan only, no edits",
     tools: "readonly",
-    prompt: PLAN_MODE_SYSTEM_PROMPT,
+    prompt: planModeSystemPrompt("en"),
     builtin: true,
     placeholder:
       "Describe the task — the agent will draft a plan without edits... (@ for file)",
@@ -62,7 +86,7 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     label: "Ask",
     description: "Answers and explanations",
     tools: "readonly",
-    prompt: ASK_MODE_SYSTEM_PROMPT,
+    prompt: askModeSystemPrompt("en"),
     builtin: true,
     placeholder: "Ask about code or a task... (@ for file)",
   },
@@ -194,10 +218,17 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
   const byId = new Map(
     custom.filter((m) => m.id).map((m) => [m.id, m] as const)
   );
+  const lang = currentUiLanguage();
   const builtins = BUILTIN_MODES.map((base) => {
     const override = byId.get(base.id);
+    const basePrompt =
+      base.id === "plan"
+        ? planModeSystemPrompt(lang)
+        : base.id === "ask"
+          ? askModeSystemPrompt(lang)
+          : base.prompt;
     if (!override) {
-      return { ...base };
+      return { ...base, prompt: basePrompt };
     }
     const merged: AgentModeDef = {
       ...base,
@@ -210,6 +241,8 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
     }
     if (override.prompt !== undefined) {
       merged.prompt = override.prompt;
+    } else if (basePrompt) {
+      merged.prompt = basePrompt;
     }
     if (override.placeholder !== undefined) {
       merged.placeholder = override.placeholder;
@@ -294,7 +327,8 @@ export function modeFinalNudge(mode: AgentModeDef): string {
   if (isReadonlyPolicy(mode.tools)) {
     return "Tools are no longer available. Answer the question briefly using the information already gathered. Do not call tools and do not propose editing code.";
   }
-  return "Tools are no longer available. Reply briefly to the user using the information already gathered. Do not call tools.";
+  // Не говорим «tools unavailable» в Agent — модель потом врёт, что write_file недоступен.
+  return "If you still need to change files, call write_file now. Otherwise reply briefly with what you already changed. Do not ask the user to paste code manually.";
 }
 
 export function modeTitle(mode: AgentModeDef): string {
