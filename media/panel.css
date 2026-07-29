@@ -3193,6 +3193,21 @@ html[data-surface="settings"] .settings-layout {
   min-width: 0;
 }
 
+.agent-preview .md-link,
+.agent-preview .md-code {
+  color: inherit;
+}
+
+.agent-preview .md-link {
+  pointer-events: none;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.agent-preview .md-code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+}
+
 .agent-time {
   font-size: 10px;
   color: var(--vscode-descriptionForeground, #888);
