@@ -9,6 +9,10 @@ import { lineDiffStats } from "./diffStats";
 import { rememberEditBefore } from "./editSnapshots";
 import { collectImportWarnings } from "./pathAliasContext";
 import type { ChatTool } from "./openaiClient";
+import {
+  shouldBlockBroadGitDiscard,
+  shouldBlockBroadGitStage,
+} from "./gitCommandPolicy";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,7 +84,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для «как было до правок» используй git show HEAD:path / git diff HEAD -- path / git log -p -- path. Также: git status/log, сборка, тесты.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для commit/push сначала проверь git status и добавляй только относящиеся к задаче пути; git add --all/-A/. запрещён без явной просьбы включить все изменения. После успешного git push не читай файлы и заверши ответ. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: git log, сборка, тесты.",
       parameters: {
         type: "object",
         properties: {
@@ -578,7 +582,8 @@ async function fetchUrl(rawUrl: string): Promise<string> {
 async function runCommand(
   command: string,
   cwdRelative = "",
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  userText = ""
 ): Promise<string> {
   const trimmed = command.trim();
   if (!trimmed) {
@@ -589,6 +594,24 @@ async function runCommand(
   const blocked = [/^\s*rm\s+-rf\s+\/\s*$/i, /mkfs\./i, /diskutil\s+erase/i];
   if (blocked.some((re) => re.test(trimmed))) {
     throw new Error("Команда заблокирована политикой безопасности");
+  }
+  if (shouldBlockBroadGitStage(trimmed, userText)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr:
+        "Широкий git add/commit заблокирован: он может включить новые или посторонние файлы. Сначала вызови `git status --short`, затем добавь только относящиеся к задаче пути через `git add -- <path...>`. Используй --all/-A/. только если пользователь явно попросил включить все изменения.",
+    });
+  }
+  if (shouldBlockBroadGitDiscard(trimmed, userText)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr:
+        "Широкий откат заблокирован: команда может удалить посторонние локальные изменения или новые файлы. Уточни объект отката и используй точечный `git restore -- <path...>` / `git revert <commit>`. Широкий откат разрешён только по явной просьбе убрать все локальные изменения.",
+    });
   }
 
   const cwd = resolvePath(cwdRelative).fsPath;
@@ -635,7 +658,7 @@ async function runCommand(
 export async function runTool(
   name: string,
   argsJson: string,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; userText?: string }
 ): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
@@ -722,7 +745,8 @@ export async function runTool(
         return await runCommand(
           String(args.command ?? ""),
           String(args.cwd ?? ""),
-          options?.signal
+          options?.signal,
+          options?.userText
         );
       }
       case "open_external": {

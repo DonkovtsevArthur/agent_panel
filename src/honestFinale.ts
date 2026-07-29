@@ -185,6 +185,8 @@ export function decideHonestFinale(input: {
   canEdit: boolean;
   messages: ChatMessage[];
   userText: string;
+  hadSuccessfulWrite?: boolean;
+  gitOperationCompleted?: boolean;
   allowNudgeWrite?: boolean;
   allowNudgeHedge?: boolean;
   allowNudgeHollow?: boolean;
@@ -210,7 +212,15 @@ export function decideHonestFinale(input: {
     return { kind: "ok", text };
   }
 
-  const hadWrite = precedingToolRoundHadSuccessfulWrite(input.messages);
+  // Успешный commit/push — отдельная завершённая задача. Текст коммита может
+  // описывать UI-правки, но это не новая правка и не повод читать файлы заново.
+  if (input.gitOperationCompleted) {
+    return { kind: "ok", text };
+  }
+
+  const hadWrite =
+    input.hadSuccessfulWrite === true ||
+    precedingToolRoundHadSuccessfulWrite(input.messages);
   const claimsEdit =
     looksLikeClaimedFileChanges(text) || looksLikeManualPatchReply(text);
   const userWantsEdit = looksLikeUserEditRequest(input.userText);

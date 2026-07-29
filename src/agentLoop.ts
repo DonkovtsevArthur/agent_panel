@@ -35,6 +35,13 @@ import {
   MISSING_WRITE_USER_NUDGE,
 } from "./honestFinale";
 import { runTool } from "./tools";
+import { looksLikeAmbiguousRestoreRequest } from "./discardChanges";
+import {
+  isGitMutationCommand,
+  isGitPushCommand,
+  isGitStatusCommand,
+} from "./gitCommandPolicy";
+
 import type * as vscode from "vscode";
 
 function contentCharLength(content: ChatMessage["content"]): number {
@@ -475,6 +482,28 @@ export async function runAgentTurn(options: {
   const persistedAttachments = (options.attachments || []).map(
     stripAttachmentPayload
   );
+  if (
+    !isReadonlyPolicy(mode.tools) &&
+    looksLikeAmbiguousRestoreRequest(options.userText)
+  ) {
+    const answer =
+      "Что именно вернуть: конкретные файлы, последний коммит или все локальные изменения? Укажите объект отката — без этого я не буду запускать широкие restore/delete-команды.";
+    options.callbacks.onPhase("done", modeDoneLabel(mode));
+    options.callbacks.onAssistant(answer);
+    const historyUser: ChatMessage = {
+      role: "user",
+      content: userContentForHistory(options.userText, persistedAttachments),
+    };
+    if (persistedAttachments.length) {
+      historyUser.attachments = persistedAttachments;
+    }
+    return compactHistory([
+      ...prior,
+      historyUser,
+      { role: "assistant", content: answer },
+    ]);
+  }
+
   const userApiContent = await buildUserApiContent(
     options.userText,
     options.attachments,
@@ -516,6 +545,10 @@ export async function runAgentTurn(options: {
     !isReadonlyPolicy(mode.tools)
       ? [
           "Agent mode has write_file available this turn — never claim that file-editing tools are unavailable.",
+          "A short ambiguous restore request such as «верни» / «откати» has no safe target: ask whether to restore specific files, a commit, or all local changes. Do not call tools, write_file, rm, or broad git restore until the target is explicit.",
+          "When the user asks to discard/revert ALL local changes (убери все изменения / откатить всё / git restore / discard changes): do NOT read_file the changed files. Run git only: `git status --short`, then `git restore .` and `git clean -fd` if needed (or restore specific paths). Confirm with status. Never rewrite files via write_file to «undo».",
+          "A successful git restore/revert/reset/clean is a real file change and does not require write_file. After verifying it with git status, do not read the restored files; report the Git result.",
+          "For commit/push requests, inspect git status and stage only files related to the requested work. Never use `git add --all`, `git add -A`, `git add .`, or `git commit -a` unless the user explicitly asks to include every local change. After a successful `git push`, do not read/list files or run impact checks; reply with the push result.",
           "When the user asks to implement or change code, call write_file yourself and apply the changes.",
           "When the user asks where something was BEFORE changes (до правок / до начала изменений / как было раньше / look again where X was), do NOT call write_file. Use run_command with git: `git show HEAD:path`, `git diff HEAD -- path`, or `git log -p -- path`, then answer from that output only. Never claim you rewrote the file after an inspect-only question.",
           "Never say «Готово» / «исправлено» unless you already called write_file in this turn.",
@@ -557,6 +590,9 @@ export async function runAgentTurn(options: {
 
   const allowedToolNames = new Set(activeTools.map((t) => t.function.name));
   const editsByPath = new Map<string, FileEditStat>();
+  let successfulGitPush = false;
+  let successfulGitMutation = false;
+  let gitMutationVerified = false;
   /** Base limit from settings; auto-extends by +10 while model still needs tools. */
   let roundLimit = Math.max(1, config.maxToolRounds);
   const hardCap = Math.max(roundLimit, 60);
@@ -608,6 +644,34 @@ export async function runAgentTurn(options: {
       formatEditingDetail([...editsByPath.values()])
     );
   };
+  const recordGitCommandResult = (call: ToolCall, result: string): void => {
+    if (call.function.name !== "run_command") {
+      return;
+    }
+    try {
+      const args = JSON.parse(call.function.arguments || "{}") as {
+        command?: unknown;
+      };
+      const parsed = JSON.parse(result) as { ok?: unknown };
+      const command = String(args.command || "");
+      if (parsed.ok === true && isGitPushCommand(command)) {
+        successfulGitPush = true;
+      }
+      if (parsed.ok === true && isGitMutationCommand(command)) {
+        successfulGitMutation = true;
+      }
+      if (
+        parsed.ok === true &&
+        successfulGitMutation &&
+        isGitStatusCommand(command)
+      ) {
+        gitMutationVerified = true;
+      }
+    } catch {
+      // Некорректный результат не подтверждает Git-операцию.
+    }
+  };
+
 
   for (let round = 0; round < roundLimit; round++) {
     if (options.signal?.aborted) {
@@ -622,7 +686,8 @@ export async function runAgentTurn(options: {
         model: options.model,
         messages,
         tools: activeTools,
-        tool_choice: "auto",
+        tool_choice:
+          successfulGitPush || gitMutationVerified ? "none" : "auto",
         temperature: 0.2,
         max_tokens: config.maxTokens,
       },
@@ -690,6 +755,8 @@ export async function runAgentTurn(options: {
         canEdit,
         messages,
         userText: options.userText,
+        hadSuccessfulWrite: editsByPath.size > 0,
+        gitOperationCompleted: successfulGitPush || successfulGitMutation,
         allowNudgeWrite: manualPatchAttempts < maxManualPatchAttempts,
         allowNudgeHedge: hedgeAttempts < maxHedgeAttempts,
         allowNudgeHollow: hollowAttempts < maxHollowAttempts,
@@ -786,6 +853,8 @@ export async function runAgentTurn(options: {
             canEdit: !isReadonlyPolicy(mode.tools),
             messages,
             userText: options.userText,
+            hadSuccessfulWrite: editsByPath.size > 0,
+            gitOperationCompleted: successfulGitPush || successfulGitMutation,
             allowNudgeWrite: false,
             allowNudgeHedge: false,
             allowNudgeHollow: false,
@@ -818,6 +887,8 @@ export async function runAgentTurn(options: {
         canEdit: !isReadonlyPolicy(mode.tools),
         messages,
         userText: options.userText,
+        hadSuccessfulWrite: editsByPath.size > 0,
+        gitOperationCompleted: successfulGitPush || successfulGitMutation,
         allowNudgeWrite: false,
         allowNudgeHedge: false,
         allowNudgeHollow: false,
@@ -870,8 +941,9 @@ export async function runAgentTurn(options: {
         result = await runTool(
           call.function.name,
           call.function.arguments || "",
-          { signal: options.signal }
+          { signal: options.signal, userText: options.userText }
         );
+      recordGitCommandResult(call, result);
       }
       messages.push({
         role: "tool",
@@ -1014,8 +1086,9 @@ export async function runAgentTurn(options: {
           result = await runTool(
             call.function.name,
             call.function.arguments || "",
-            { signal: options.signal }
+            { signal: options.signal, userText: options.userText }
           );
+        recordGitCommandResult(call, result);
         }
         messages.push({
           role: "tool",
@@ -1084,6 +1157,8 @@ export async function runAgentTurn(options: {
         text,
         canEdit,
         messages,
+        hadSuccessfulWrite: editsByPath.size > 0,
+        gitOperationCompleted: successfulGitPush || successfulGitMutation,
         userText: options.userText,
         allowNudgeWrite: false,
         allowNudgeHedge: false,
@@ -1148,6 +1223,8 @@ export async function runAgentTurn(options: {
         text,
         canEdit,
         messages,
+        hadSuccessfulWrite: editsByPath.size > 0,
+        gitOperationCompleted: successfulGitPush || successfulGitMutation,
         userText: options.userText,
         allowNudgeWrite: false,
         allowNudgeHedge: false,
