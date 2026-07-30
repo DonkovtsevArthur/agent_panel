@@ -8,17 +8,28 @@ import * as vscode from "vscode";
 import { lineDiffStats } from "./diffStats";
 import { rememberEditBefore } from "./editSnapshots";
 import { collectImportWarnings } from "./pathAliasContext";
+import { applySearchReplace } from "./patchApply";
+import { collectWorkspaceDiagnostics } from "./diagnosticsContext";
+import {
+  createReadFileCache,
+  searchTextFiles,
+  sliceFileLines,
+} from "./searchText";
 import type { ChatTool } from "./openaiClient";
 import {
   shouldBlockBroadGitDiscard,
   shouldBlockBroadGitStage,
+  shouldBlockGitCommitOrPush,
 } from "./gitCommandPolicy";
+import { evaluateVerificationCommand } from "./verificationCommandPolicy";
 
 const execFileAsync = promisify(execFile);
 
 export const READONLY_TOOL_NAMES = new Set([
   "list_files",
   "read_file",
+  "search_text",
+  "get_diagnostics",
   "open_external",
   "fetch_url",
 ]);
@@ -44,7 +55,8 @@ export const agentTools: ChatTool[] = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Прочитать текстовый файл из workspace",
+      description:
+        "Прочитать текстовый файл из workspace. Для больших файлов указывай startLine/endLine (1-based), чтобы читать только нужный фрагмент.",
       parameters: {
         type: "object",
         properties: {
@@ -52,8 +64,74 @@ export const agentTools: ChatTool[] = [
             type: "string",
             description: "Относительный путь к файлу",
           },
+          startLine: {
+            type: "number",
+            description: "Первая строка (1-based, по умолчанию 1)",
+          },
+          endLine: {
+            type: "number",
+            description: "Последняя строка включительно (по умолчанию конец файла)",
+          },
         },
         required: ["relativePath"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_text",
+      description:
+        "Быстрый поиск текста по файлам workspace (как grep): находит строки с подстрокой или RegExp и возвращает path:line. Пропускает node_modules/.git/dist/out. Используй вместо чтения файлов вслепую, когда нужно найти, где что-то определено или используется.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Подстрока или RegExp (см. regex)",
+          },
+          pathPrefix: {
+            type: "string",
+            description:
+              "Относительная подпапка для ограничения поиска (по умолчанию весь workspace)",
+          },
+          include: {
+            type: "string",
+            description:
+              "Glob-маска имени файла, например *.ts или *.{ts,tsx}",
+          },
+          regex: {
+            type: "boolean",
+            description: "Трактовать query как RegExp (по умолчанию false)",
+          },
+          caseSensitive: {
+            type: "boolean",
+            description: "Учитывать регистр (по умолчанию false)",
+          },
+          maxResults: {
+            type: "number",
+            description: "Максимум совпадений (по умолчанию 50)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_diagnostics",
+      description:
+        "Получить актуальные VS Code Problems уровня error/warning для указанных файлов workspace; без paths проверяет открытые файлы.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description: "Относительные пути файлов workspace",
+          },
+        },
       },
     },
   },
@@ -82,9 +160,40 @@ export const agentTools: ChatTool[] = [
   {
     type: "function",
     function: {
+      name: "search_replace",
+      description:
+        "Точно заменить текст в существующем файле workspace. По умолчанию old_string должен встречаться ровно один раз; для всех совпадений укажи replace_all=true. Сохраняет окончания строк файла.",
+      parameters: {
+        type: "object",
+        properties: {
+          relativePath: {
+            type: "string",
+            description: "Относительный путь к существующему файлу",
+          },
+          old_string: {
+            type: "string",
+            description:
+              "Точный старый текст. Добавь окружающий контекст, чтобы совпадение было уникальным.",
+          },
+          new_string: {
+            type: "string",
+            description: "Новый текст (может быть пустым для удаления)",
+          },
+          replace_all: {
+            type: "boolean",
+            description: "Заменить все совпадения (по умолчанию false)",
+          },
+        },
+        required: ["relativePath", "old_string", "new_string"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для commit/push сначала проверь git status и добавляй только относящиеся к задаче пути; git add --all/-A/. запрещён без явной просьбы включить все изменения. После успешного git push не читай файлы и заверши ответ. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: git log, сборка, тесты.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit и git push ЗАПРЕЩЕНЫ — после правок пользователь сам нажимает тег «Закоммитить и запушить» в панели. Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
       parameters: {
         type: "object",
         properties: {
@@ -166,7 +275,38 @@ function resolvePath(relativePath: string): vscode.Uri {
   return resolved;
 }
 
-function truncate(text: string, max = 40_000): string {
+/** Default cap for tool text payloads (stdout, generic truncate). */
+export const TOOL_TEXT_MAX = 12_000;
+/** Cap for read_file content in tool results. */
+export const READ_FILE_MAX = 24_000;
+/** Cap for fetch_url page body. */
+export const FETCH_URL_MAX = 20_000;
+
+/** Per-turn кэш read_file по mtime: повторное чтение неизменного файла бесплатно. */
+const readFileCache = createReadFileCache(40);
+
+/** Диагностика по отредактированному файлу сразу в результате edit-tool. */
+async function collectEditDiagnostics(relativePath: string): Promise<{
+  diagnostics: ReturnType<typeof collectWorkspaceDiagnostics>;
+  errorCount: number;
+  warningCount: number;
+}> {
+  // Даём VS Code мгновение обновить Problems после записи файла.
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const diagnostics = collectWorkspaceDiagnostics({
+    paths: [relativePath],
+    perFile: 10,
+    total: 10,
+  });
+  return {
+    diagnostics,
+    errorCount: diagnostics.filter((item) => item.severity === "error").length,
+    warningCount: diagnostics.filter((item) => item.severity === "warning")
+      .length,
+  };
+}
+
+function truncate(text: string, max = TOOL_TEXT_MAX): string {
   if (text.length <= max) {
     return text;
   }
@@ -524,7 +664,7 @@ async function fetchUrl(rawUrl: string): Promise<string> {
       status,
       contentType,
       note: "Non-HTML response. Answer from content. Do not claim you cannot open external URLs.",
-      content: truncate(body, 60_000),
+      content: truncate(body, FETCH_URL_MAX),
     });
   }
 
@@ -575,7 +715,7 @@ async function fetchUrl(rawUrl: string): Promise<string> {
     note: spa
       ? "Page looks like a JS SPA shell: body text may be sparse. Still answer from whatever title/description/headings/colors/jsonLd/content you have. Do NOT invent login/authorization walls. Say what is missing honestly. For Harbor Agents branding use package.json / media via read_file."
       : "Use title, description, headings, content, colors, links, and jsonLd to answer ANY user question about this URL. Do not claim you cannot open or load external URLs.",
-    content: truncate(isCss || isJson ? body : text, 60_000),
+    content: truncate(isCss || isJson ? body : text, FETCH_URL_MAX),
   });
 }
 
@@ -604,6 +744,15 @@ async function runCommand(
         "Широкий git add/commit заблокирован: он может включить новые или посторонние файлы. Сначала вызови `git status --short`, затем добавь только относящиеся к задаче пути через `git add -- <path...>`. Используй --all/-A/. только если пользователь явно попросил включить все изменения.",
     });
   }
+  if (shouldBlockGitCommitOrPush(trimmed)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr:
+        "git commit и git push через run_command запрещены. После правок пользователь сам решает: в панели появляется тег «Закоммитить и запушить». Не вызывай commit/push сам — кратко напомни про этот тег.",
+    });
+  }
   if (shouldBlockBroadGitDiscard(trimmed, userText)) {
     return JSON.stringify({
       ok: false,
@@ -611,6 +760,20 @@ async function runCommand(
       command: trimmed,
       stderr:
         "Широкий откат заблокирован: команда может удалить посторонние локальные изменения или новые файлы. Уточни объект отката и используй точечный `git restore -- <path...>` / `git revert <commit>`. Широкий откат разрешён только по явной просьбе убрать все локальные изменения.",
+    });
+  }
+  const verificationDecision = evaluateVerificationCommand(trimmed);
+  if (verificationDecision.blocked) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      reason: verificationDecision.reason,
+      suggestion: verificationDecision.suggestion,
+      stderr:
+        verificationDecision.reason === "hidden_pipeline_exit"
+          ? "Проверочная команда через `head`/`tail` скрывает exit code исходной команды. Запусти проверку без пайпа: вывод run_command уже ограничивается автоматически."
+          : "Некорректная проверка TypeScript: нельзя совмещать `--project` с файлами, а запуск отдельных файлов не использует конфигурацию проекта. Запусти project-wide typecheck из suggestion.",
     });
   }
 
@@ -687,11 +850,92 @@ export async function runTool(
       case "read_file": {
         const relativePath = String(args.relativePath ?? "");
         const uri = resolvePath(relativePath);
-        const data = await vscode.workspace.fs.readFile(uri);
-        const text = Buffer.from(data).toString("utf8");
+        const startLine =
+          typeof args.startLine === "number" ? args.startLine : undefined;
+        const endLine =
+          typeof args.endLine === "number" ? args.endLine : undefined;
+        let text: string;
+        let mtimeMs = 0;
+        try {
+          const stat = await vscode.workspace.fs.stat(uri);
+          mtimeMs = stat.mtime;
+        } catch {
+          mtimeMs = 0;
+        }
+        const cached = mtimeMs
+          ? readFileCache.get(uri.fsPath, mtimeMs)
+          : undefined;
+        if (cached !== undefined) {
+          text = cached;
+        } else {
+          const data = await vscode.workspace.fs.readFile(uri);
+          text = Buffer.from(data).toString("utf8");
+          if (mtimeMs) {
+            readFileCache.set(uri.fsPath, mtimeMs, text);
+          }
+        }
+        const sliced = sliceFileLines(text, startLine, endLine);
         return JSON.stringify({
           path: relativePath,
-          content: truncate(text, 80_000),
+          content: truncate(sliced.content, READ_FILE_MAX),
+          ...(sliced.ranged
+            ? {
+                startLine: sliced.startLine,
+                endLine: sliced.endLine,
+                totalLines: sliced.totalLines,
+                cached: cached !== undefined,
+              }
+            : { totalLines: sliced.totalLines, cached: cached !== undefined }),
+        });
+      }
+      case "search_text": {
+        const query = String(args.query ?? "").trim();
+        if (!query) {
+          return JSON.stringify({ error: "Пустой query" });
+        }
+        const root = getWorkspaceRoot();
+        const found = searchTextFiles({
+          rootPath: root.fsPath,
+          query,
+          ...(args.pathPrefix
+            ? { pathPrefix: String(args.pathPrefix) }
+            : {}),
+          ...(args.include ? { include: String(args.include) } : {}),
+          regex: args.regex === true,
+          caseSensitive: args.caseSensitive === true,
+          ...(typeof args.maxResults === "number"
+            ? { maxResults: args.maxResults }
+            : {}),
+        });
+        return JSON.stringify({
+          ok: true,
+          query,
+          matchCount: found.matches.length,
+          searchedFiles: found.searchedFiles,
+          truncated: found.truncated,
+          skippedLargeFiles: found.skippedLargeFiles,
+          matches: found.matches,
+        });
+      }
+      case "get_diagnostics": {
+        const paths = Array.isArray(args.paths)
+          ? args.paths
+              .map((item) => String(item || "").trim())
+              .filter(Boolean)
+              .slice(0, 50)
+          : [];
+        const diagnostics = collectWorkspaceDiagnostics({
+          ...(paths.length ? { paths } : {}),
+        });
+        return JSON.stringify({
+          ok: true,
+          paths: paths.length ? paths : undefined,
+          diagnostics,
+          errorCount: diagnostics.filter((item) => item.severity === "error")
+            .length,
+          warningCount: diagnostics.filter(
+            (item) => item.severity === "warning"
+          ).length,
         });
       }
       case "write_file": {
@@ -721,22 +965,96 @@ export async function runTool(
         const parent = vscode.Uri.joinPath(uri, "..");
         await vscode.workspace.fs.createDirectory(parent);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+        readFileCache.set(uri.fsPath, Date.now(), content);
         const { added, removed } = lineDiffStats(before, content);
         rememberEditBefore(relativePath, before);
         const importWarnings = await collectImportWarnings(
           relativePath,
           content
         );
+        const editDiagnostics = await collectEditDiagnostics(relativePath);
         return JSON.stringify({
           ok: true,
           path: relativePath,
           created,
           added,
           removed,
+          diagnostics: editDiagnostics.diagnostics,
+          diagnosticErrorCount: editDiagnostics.errorCount,
+          diagnosticWarningCount: editDiagnostics.warningCount,
+          ...(editDiagnostics.errorCount > 0
+            ? {
+                note: "Fix the diagnostics errors above before finishing. Do not call get_diagnostics again for this file unless you edit it further.",
+              }
+            : importWarnings.length
+              ? {
+                  note: "Fix unresolved imports with write_file using real paths from tsconfig aliases / sibling files.",
+                }
+              : {}),
           ...(importWarnings.length
             ? {
                 importWarnings,
-                note: "Fix unresolved imports with write_file using real paths from tsconfig aliases / sibling files.",
+              }
+            : {}),
+        });
+      }
+      case "search_replace": {
+        const relativePath = String(args.relativePath ?? "");
+        const oldString = String(args.old_string ?? "");
+        const newString = String(args.new_string ?? "");
+        const replaceAll = args.replace_all === true;
+        const uri = resolvePath(relativePath);
+        const existing = await vscode.workspace.fs.readFile(uri);
+        const before = Buffer.from(existing).toString("utf8");
+        const applied = applySearchReplace(
+          before,
+          oldString,
+          newString,
+          replaceAll
+        );
+        if (!applied.ok) {
+          return JSON.stringify({
+            ok: false,
+            path: relativePath,
+            unchanged: applied.unchanged,
+            error: applied.error,
+          });
+        }
+
+        await vscode.workspace.fs.writeFile(
+          uri,
+          Buffer.from(applied.content, "utf8")
+        );
+        readFileCache.set(uri.fsPath, Date.now(), applied.content);
+        const { added, removed } = lineDiffStats(before, applied.content);
+        rememberEditBefore(relativePath, before);
+        const importWarnings = await collectImportWarnings(
+          relativePath,
+          applied.content
+        );
+        const editDiagnostics = await collectEditDiagnostics(relativePath);
+        return JSON.stringify({
+          ok: true,
+          path: relativePath,
+          created: false,
+          replacements: applied.replacements,
+          added,
+          removed,
+          diagnostics: editDiagnostics.diagnostics,
+          diagnosticErrorCount: editDiagnostics.errorCount,
+          diagnosticWarningCount: editDiagnostics.warningCount,
+          ...(editDiagnostics.errorCount > 0
+            ? {
+                note: "Fix the diagnostics errors above before finishing. Do not call get_diagnostics again for this file unless you edit it further.",
+              }
+            : importWarnings.length
+              ? {
+                  note: "Fix unresolved imports with search_replace or write_file using real paths from tsconfig aliases / sibling files.",
+                }
+              : {}),
+          ...(importWarnings.length
+            ? {
+                importWarnings,
               }
             : {}),
         });

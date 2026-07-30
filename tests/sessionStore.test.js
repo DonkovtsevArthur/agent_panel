@@ -10,6 +10,7 @@ const {
   searchChatMessages,
   summarizeMarkdownText,
   buildAgentsList,
+  getAgentDisplayName,
 } = require("../out/sessionStore.js");
 
 test("branchChatFromMessage creates an isolated branch and activates it", () => {
@@ -143,4 +144,8 @@ test("list summaries remove markdown and prefer prompt after selection fences", 
   const rows = buildAgentsList(store);
   assert.equal(rows[0].name, "Перепиши этот вызов");
   assert.equal(rows[0].preview, "Перепиши этот вызов");
+  assert.equal(
+    getAgentDisplayName(agent, chat),
+    "Перепиши этот вызов"
+  );
 });

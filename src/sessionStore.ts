@@ -193,7 +193,7 @@ function titleFromMessages(uiMessages: UiMessage[]): string {
   return truncateSummary(firstUser.text, 48) || "New Agent";
 }
 
-function agentNameForList(
+export function getAgentDisplayName(
   agent: AgentRecord,
   chat: ChatSession | undefined
 ): string {
@@ -512,7 +512,7 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
       return {
         id: agent.id,
         chatId: agent.chatId,
-        name: agentNameForList(agent, chat),
+        name: getAgentDisplayName(agent, chat),
         model: chat?.selectedModel || "",
         preview: chat ? previewFromMessages(chat.uiMessages) : "Empty chat",
         updatedAt: agent.updatedAt,
@@ -610,7 +610,7 @@ export function buildArchiveList(store: AgentsStoreV2): ArchiveAgentItem[] {
       const chat = store.chats[agent.chatId];
       return {
         id: agent.id,
-        name: agentNameForList(agent, chat),
+        name: getAgentDisplayName(agent, chat),
         preview: chat ? previewFromMessages(chat.uiMessages) : "",
         archivedAt: agent.archivedAt || chat?.archivedAt || agent.updatedAt,
       };

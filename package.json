@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.146",
+  "version": "0.7.176",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -208,6 +208,11 @@
                 "type": "string",
                 "description": "%config.providers.baseUrl.description%"
               },
+              "statusUrl": {
+                "type": "string",
+                "default": "",
+                "description": "%config.providers.statusUrl.description%"
+              },
               "apiKey": {
                 "type": "string",
                 "description": "%config.providers.apiKey.description%"
@@ -360,12 +365,46 @@
           "maximum": 128000,
           "description": "%config.maxTokens.description%"
         },
+        "agentPanel.speedRouting.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.enabled.description%"
+        },
+        "agentPanel.speedRouting.fastModel": {
+          "type": "string",
+          "default": "",
+          "description": "%config.speedRouting.fastModel.description%",
+          "deprecationMessage": "Use agentPanel.speedRouting.fastModelIds"
+        },
+        "agentPanel.speedRouting.fastModelIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.speedRouting.fastModelIds.description%"
+        },
+        "agentPanel.speedRouting.readonlyOverride": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.readonlyOverride.description%"
+        },
+        "agentPanel.speedRouting.agentExplore": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.agentExplore.description%"
+        },
         "agentPanel.maxResponseChars": {
           "type": "number",
           "default": 12000,
           "minimum": 1000,
           "maximum": 200000,
           "description": "%config.maxResponseChars.description%"
+        },
+        "agentPanel.soundNotifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.soundNotifications.enabled.description%"
         },
         "agentPanel.rejectUnauthorized": {
           "type": "boolean",

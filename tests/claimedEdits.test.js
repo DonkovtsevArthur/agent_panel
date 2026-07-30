@@ -1,7 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { looksLikeClaimedFileChanges } = require("../out/claimedEdits.js");
+const {
+  looksLikeClaimedFileChanges,
+  looksLikeQuestionRequest,
+  looksLikeUserEditRequest,
+} = require("../out/claimedEdits.js");
 
 test("detects «Перезаписал файл» claim", () => {
   assert.equal(
@@ -39,6 +43,15 @@ test("detects «теперь не рендерится» style claims", () => {
   );
 });
 
+test("detects a focused replacement claim", () => {
+  assert.equal(
+    looksLikeClaimedFileChanges(
+      "Заменил вызов функции в файле через search_replace."
+    ),
+    true
+  );
+});
+
 test("detects fake «Готово / исправлено» without write_file", () => {
   assert.equal(
     looksLikeClaimedFileChanges(
@@ -59,6 +72,28 @@ test("ordinary explanation is not a claim", () => {
     looksLikeClaimedFileChanges(
       "Кнопка закрытия обычно живёт внутри контейнера с текстом."
     ),
+    false
+  );
+});
+
+test("looksLikeQuestionRequest detects Q&A prompts", () => {
+  assert.equal(looksLikeQuestionRequest("что экспортирует model.ts?"), true);
+  assert.equal(looksLikeQuestionRequest("Как работает resolveSpeedRouting?"), true);
+  assert.equal(looksLikeQuestionRequest("Explain this function"), true);
+  assert.equal(looksLikeQuestionRequest("расскажи про agentLoop"), true);
+  assert.equal(looksLikeQuestionRequest("в чём разница между Ask и Agent"), true);
+});
+
+test("looksLikeQuestionRequest ignores edit requests", () => {
+  assert.equal(looksLikeQuestionRequest("добавь кнопку закрытия"), false);
+  assert.equal(looksLikeQuestionRequest("исправь баг в panel.js"), false);
+  assert.equal(looksLikeQuestionRequest("сделай как в Ask"), false);
+  assert.equal(looksLikeUserEditRequest("добавь кнопку закрытия"), true);
+});
+
+test("looksLikeQuestionRequest ignores plain tasks without question shape", () => {
+  assert.equal(
+    looksLikeQuestionRequest("обнови версию в package.json и поставь расширение"),
     false
   );
 });
