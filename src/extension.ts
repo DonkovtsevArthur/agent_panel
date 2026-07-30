@@ -4,12 +4,14 @@ import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
 import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
+import { registerSelectionCodeLens } from "./selectionCodeLens";
 
 export function activate(context: vscode.ExtensionContext): void {
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);
   registerGitDiffProvider(context.subscriptions);
+  registerSelectionCodeLens(context.subscriptions);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -38,6 +40,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("agentPanel.addSelectionToChat", () =>
       provider.addSelectionToChat()
+    ),
+    vscode.commands.registerCommand("agentPanel.addSelectionToNewChat", () =>
+      provider.addSelectionToNewChat()
     ),
     vscode.commands.registerCommand(
       "agentPanel.generateCommitMessage",
