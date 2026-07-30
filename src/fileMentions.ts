@@ -7,7 +7,7 @@ export interface FileMentionCandidate {
 }
 
 const SEARCH_EXCLUDE =
-  "{**/node_modules/**,**/.git/**,**/out/**,**/dist/**,**/*.vsix,**/package-lock.json}";
+  "{**/node_modules/**,**/.git/**,**/.hg/**,**/.svn/**,**/out/**,**/dist/**,**/build/**,**/.next/**,**/.nuxt/**,**/coverage/**,**/__pycache__/**,**/target/**,**/vendor/**,**/.vscode-test/**,**/.idea/**,**/*.vsix,**/package-lock.json}";
 
 function workspaceRelativePath(uri: vscode.Uri): string | undefined {
   const folders = vscode.workspace.workspaceFolders;

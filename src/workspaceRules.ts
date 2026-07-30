@@ -16,6 +16,8 @@ export type WorkspaceRule = ParsedWorkspaceRule & {
 export type LoadWorkspaceRulesOptions = {
   targetPaths?: string[];
   charCap?: number;
+  /** Не подмешивать корневой AGENTS.md (чтобы не дублировать при его же перезаписи). */
+  omitAgentsMd?: boolean;
 };
 
 function unquote(value: string): string {
@@ -258,7 +260,7 @@ export async function loadWorkspaceRules(
   root: string,
   options: LoadWorkspaceRulesOptions = {}
 ): Promise<string | undefined> {
-  const candidates: string[] = ["AGENTS.md"];
+  const candidates: string[] = options.omitAgentsMd ? [] : ["AGENTS.md"];
   try {
     const entries = await fs.readdir(path.join(root, ".cursor", "rules"));
     candidates.push(

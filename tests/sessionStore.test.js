@@ -28,6 +28,7 @@ test("branchChatFromMessage creates an isolated branch and activates it", () => 
     { role: "user", content: "Second prompt" },
   ];
   rootChat.contextTokens = 123;
+  rootChat.selectedMode = "plan";
 
   const branched = branchChatFromMessage(
     store,
@@ -47,7 +48,50 @@ test("branchChatFromMessage creates an isolated branch and activates it", () => 
   );
   assert.equal(branched.parentChatId, rootChat.id);
   assert.equal(branched.contextTokens, 123);
+  assert.equal(branched.selectedMode, "plan");
   assert.deepEqual(agent.chatIds, [rootChat.id, branched.id]);
+});
+
+test("normalizeSelectedMode defaults empty to agent", () => {
+  const {
+    normalizeSelectedMode,
+    migrateToStoreV2,
+  } = require("../out/sessionStore.js");
+  assert.equal(normalizeSelectedMode(""), "agent");
+  assert.equal(normalizeSelectedMode("  "), "agent");
+  assert.equal(normalizeSelectedMode(undefined), "agent");
+  assert.equal(normalizeSelectedMode("plan"), "plan");
+  assert.equal(normalizeSelectedMode(" ask "), "ask");
+
+  const migrated = migrateToStoreV2(
+    {
+      version: 2,
+      agents: [
+        {
+          id: "a1",
+          name: "Test",
+          chatId: "c1",
+          chatIds: ["c1"],
+          updatedAt: 1,
+        },
+      ],
+      chats: {
+        c1: {
+          id: "c1",
+          title: "Test",
+          selectedModel: "gpt-4.1",
+          history: [],
+          uiMessages: [],
+          updatedAt: 1,
+        },
+      },
+      activeAgentId: "a1",
+      activeChatId: "c1",
+      screen: "chat",
+    },
+    "gpt-4.1"
+  );
+  assert.equal(migrated.chats.c1.selectedMode, "agent");
 });
 
 test("archive and restore keep chat visibility invariants", () => {

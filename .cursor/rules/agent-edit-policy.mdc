@@ -1,0 +1,56 @@
+---
+description: Что агенту можно править и что запрещено (режимы, tools, git)
+alwaysApply: true
+---
+
+# Политика правок агента (Harbor Agents)
+
+Документ для моделей, работающих **в этом репозитории** и для поведения runtime панели. Подробности и карта файлов: `AGENTS.md`.
+
+## Режим из UI — закон
+
+- **Agent** — можно `write_file`, полный набор tools + MCP (Figma).
+- **Plan / Ask** — нельзя `write_file` / `run_command`. MCP (включая **все** Figma tools) доступны. Также `list_files`, `read_file`, `fetch_url`, `open_external`.
+- **Нельзя** подменять Agent → Ask по тексту вопроса (это уже убрано из `agentPanelProvider.ts`).
+- **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.
+- **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
+
+## Tools runtime (все модели)
+
+Путь: `agentLoop.ts` → `agentLoopMainLike.ts` + `mainLikeTools.ts`.
+
+Разрешено вызывать из схемы:
+
+- `list_files`, `read_file`, `write_file` (Agent), `run_command`
+- `fetch_url`, `open_external` при URL в сообщении
+- MCP (Figma и др.), если подключены
+
+Нельзя утверждать «нет доступа к сайтам / Figma», если эти tools доступны. Если Figma MCP не подключён — направить в Settings → MCP Servers (PAT).
+
+## Картинки (vision)
+
+Если выбранная модель без vision — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5.
+
+## Git — нельзя через shell
+
+- Запрещены через `run_command`: `git commit`, `git push`.
+- После правок — тег панели **Commit and push**, не commit из tools.
+- Широкий `git add .` / discard всего — только по явной просьбе «все изменения».
+
+## В этом репозитории — можно править
+
+- Код задачи в `src/`, `media/`, `tests/`
+- `version` в `package.json` перед vsce
+- `AGENTS.md` / `.cursor/rules` при фиксации реальных правил
+- nls / UI copy без бренда Cursor
+
+## В этом репозитории — нельзя
+
+- Сравнения с Cursor в README / Marketplace / toasts / nls
+- Писать агентов в `globalState` как основное хранилище
+- Ставить VSIX через `/usr/local/bin/code` (часто Cursor)
+- Врать про сделанные правки без реального `write_file`
+
+## Сборка после UI/логики
+
+См. `.cursor/rules/vscode-build-and-workspace.mdc`: compile → bump version → vsce → install в бинарь VS Code → Reload Window.

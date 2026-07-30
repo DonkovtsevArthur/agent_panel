@@ -45,6 +45,8 @@
   "config.speedRouting.fastModelIds.description": "Упорядоченный список id быстрых моделей для Plan/Ask и Agent explore. Пусто = автоматически выбрать лёгкую включённую модель.",
   "config.speedRouting.readonlyOverride.description": "В Plan/Ask запускать тяжёлую выбранную модель через быстрый helper.",
   "config.speedRouting.agentExplore.description": "В Agent сначала собирать контекст на быстрой модели, затем править/отвечать на выбранной.",
+  "config.visionRouting.preferredModelIds.description": "Упорядоченный список id моделей для сообщений с картинками, если выбранная модель без vision. Пусто = авто (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5 среди включённых vision-моделей).",
+  "config.visionRouting.preferredModelId.description": "Устарело. Используйте visionRouting.preferredModelIds.",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.soundNotifications.enabled.description": "Проигрывать звук при успешном завершении или ошибке агента.",
   "config.rejectUnauthorized.description": "Проверять TLS-сертификат. Для корпоративных CA можно использовать false или true вместе с caBundlePath.",

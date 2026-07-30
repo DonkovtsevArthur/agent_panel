@@ -13,9 +13,9 @@ export function resolveUiLanguage(setting: UiLanguageSetting): UiLanguage {
 
 export function defaultSystemPromptForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
-    return "Ты — coding-агент в VS Code. Отвечай кратко на русском. У тебя есть инструменты: list_files, read_file, write_file, run_command. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.";
+    return "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command, fetch_url, open_external. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную. Чтобы открыть http(s) ссылку в браузере пользователя, вызывай open_external; чтобы самому прочитать страницу — fetch_url. Для Figma — MCP tools, если подключены. Никогда не говори, что не можешь открывать внешние URL.";
   }
-  return "You are a coding agent in VS Code. Reply concisely in English. You have these tools: list_files, read_file, write_file, run_command. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually.";
+  return "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command, fetch_url, open_external. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually. To open an http(s) link in the user's browser, call open_external; to read a page yourself, call fetch_url. For Figma use MCP tools when connected. Never claim you cannot open external URLs.";
 }
 
 /** Built-in / legacy defaults — treat as «not customized» so UI language can swap them. */

@@ -82,6 +82,11 @@ test("looksLikeQuestionRequest detects Q&A prompts", () => {
   assert.equal(looksLikeQuestionRequest("Explain this function"), true);
   assert.equal(looksLikeQuestionRequest("расскажи про agentLoop"), true);
   assert.equal(looksLikeQuestionRequest("в чём разница между Ask и Agent"), true);
+  assert.equal(
+    looksLikeQuestionRequest("найди, где определяется resolveSpeedRouting"),
+    true
+  );
+  assert.equal(looksLikeQuestionRequest("find where resolveSpeedRouting is defined"), true);
 });
 
 test("looksLikeQuestionRequest ignores edit requests", () => {

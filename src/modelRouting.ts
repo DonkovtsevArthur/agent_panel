@@ -7,6 +7,11 @@ export type EnabledAgentModels = ReturnType<typeof getEnabledModels>;
 export interface ModelRoutingHints {
   /** Only models with explicit or registered vision support are eligible. */
   vision_required?: boolean;
+  /**
+   * Ordered model ids preferred when vision_required is true and the user's
+   * selection is not vision-eligible. Empty / omitted → {@link VISION_MODEL_PREFERENCE}.
+   */
+  vision_preference?: readonly string[];
   /** Minimum known input context window. Unknown context is not eligible. */
   min_context_window?: number;
   /** Enables an explicit preference intended for short, read-only work. */
@@ -34,6 +39,7 @@ export type ModelRoutingReason =
   | "user_selected"
   | "favorite"
   | "capability_match"
+  | "vision_preference"
   | "fast_readonly_preference"
   | "utility_preference"
   | "fallback_after_failure"
@@ -57,6 +63,28 @@ export const UTILITY_MODEL_PREFERENCE: readonly string[] = [
 
 /** Same preference list for Plan/Ask and Agent explore phases. */
 export const FAST_READONLY_PREFERENCE: readonly string[] = UTILITY_MODEL_PREFERENCE;
+
+/**
+ * Default under-the-hood models when a message has images and the selected
+ * model lacks vision. Exact ids first; only enabled vision-capable models win.
+ */
+export const VISION_MODEL_PREFERENCE: readonly string[] = [
+  "Gemini 2.5 Flash",
+  "gpt-4.1",
+  "claude-sonnet-4-5",
+];
+
+/**
+ * Manual preferred ids when non-empty; otherwise the built-in vision list.
+ */
+export function resolveVisionPreferenceIds(
+  manualIds: readonly string[] | undefined
+): string[] {
+  const manual = normalizedIds(manualIds).filter(
+    (id, index, all) => all.indexOf(id) === index
+  );
+  return manual.length > 0 ? manual : [...VISION_MODEL_PREFERENCE];
+}
 
 /** Names that look heavy / agentic — never treat as utility even if they match a light token. */
 const UTILITY_HEAVY_NAME =
@@ -260,6 +288,8 @@ export interface ModelFallbackEligibility {
 export interface FallbackModelSelectionOptions {
   failedModelId: string;
   visionRequired?: boolean;
+  /** Ordered vision helper ids; empty → {@link VISION_MODEL_PREFERENCE}. */
+  visionPreferenceIds?: readonly string[];
   minContextWindow?: number;
 }
 
@@ -267,6 +297,7 @@ interface Candidate {
   model: AgentModel;
   index: number;
   fastPreferenceIndex: number;
+  visionPreferenceIndex: number;
 }
 
 function normalizedIds(ids: readonly string[] | undefined): string[] {
@@ -370,7 +401,11 @@ export function shouldAbandonHelperModel(error: unknown): boolean {
   return classifyModelFallbackError(error)?.kind === "transport";
 }
 
-/** Pure safety gate for the single cross-model retry allowed per turn. */
+/**
+ * Pure safety gate for the single cross-model retry allowed per turn.
+ * Transport failures before any side effects may restart once on another model;
+ * mid-turn transport after tools is handled inside the agent loop instead.
+ */
 export function modelFallbackEligibility(
   input: ModelFallbackEligibility
 ): ModelFallbackError | undefined {
@@ -400,6 +435,13 @@ export function selectFallbackModel(
       fallback_after_failure: true,
       excluded_model_ids: [failedModelId],
       vision_required: options.visionRequired === true,
+      ...(options.visionRequired === true
+        ? {
+            vision_preference: resolveVisionPreferenceIds(
+              options.visionPreferenceIds
+            ),
+          }
+        : {}),
       min_context_window: positiveInteger(options.minContextWindow),
     },
   });
@@ -474,6 +516,16 @@ export function routeModel(
       fastRanks.set(id, index);
     }
   });
+  const visionPreference =
+    hints.vision_required === true && hints.vision_preference != null
+      ? resolveVisionPreferenceIds(hints.vision_preference)
+      : [];
+  const visionRanks = new Map<string, number>();
+  visionPreference.forEach((id, index) => {
+    if (!visionRanks.has(id)) {
+      visionRanks.set(id, index);
+    }
+  });
 
   const candidates: Candidate[] = [];
   models.forEach((model, index) => {
@@ -501,6 +553,7 @@ export function routeModel(
       model: { ...model, id },
       index,
       fastPreferenceIndex: fastRanks.get(id) ?? Number.POSITIVE_INFINITY,
+      visionPreferenceIndex: visionRanks.get(id) ?? Number.POSITIVE_INFINITY,
     });
   });
 
@@ -513,6 +566,9 @@ export function routeModel(
   }
 
   candidates.sort((a, b) => {
+    if (a.visionPreferenceIndex !== b.visionPreferenceIndex) {
+      return a.visionPreferenceIndex - b.visionPreferenceIndex;
+    }
     const favoriteA = a.model.favorite === true ? 0 : 1;
     const favoriteB = b.model.favorite === true ? 0 : 1;
     if (favoriteA !== favoriteB) {
@@ -532,6 +588,8 @@ export function routeModel(
   let reason: ModelRoutingReason = "original_order";
   if (hints.fallback_after_failure === true) {
     reason = "fallback_after_failure";
+  } else if (Number.isFinite(winner.visionPreferenceIndex)) {
+    reason = "vision_preference";
   } else if (Number.isFinite(winner.fastPreferenceIndex)) {
     reason = "fast_readonly_preference";
   } else if (winner.model.favorite === true) {

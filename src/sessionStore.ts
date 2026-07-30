@@ -21,6 +21,8 @@ export interface ChatSession {
   id: string;
   title: string;
   selectedModel: string;
+  /** Agent / Plan / Ask (или custom mode id) для этого чата. */
+  selectedMode?: string;
   lastTurnModel?: string;
   history: ChatMessage[];
   uiMessages: UiMessage[];
@@ -204,12 +206,19 @@ export function getAgentDisplayName(
   return truncateSummary(rawName, 48) || "New Agent";
 }
 
+/** Нормализует id режима чата; пустое → agent. */
+export function normalizeSelectedMode(mode: unknown): string {
+  const id = typeof mode === "string" ? mode.trim() : "";
+  return id || "agent";
+}
+
 function createEmptyChat(selectedModel = ""): ChatSession {
   const now = Date.now();
   return {
     id: uid("chat"),
     title: "New Agent",
     selectedModel,
+    selectedMode: "agent",
     history: [],
     uiMessages: [],
     updatedAt: now,
@@ -285,6 +294,7 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
     ...chat,
     title: chat.title || titleFromMessages(chat.uiMessages || []),
     selectedModel: chat.selectedModel || fallbackModel,
+    selectedMode: normalizeSelectedMode(chat.selectedMode),
     history: Array.isArray(chat.history) ? chat.history : [],
     uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
     updatedAt: chat.updatedAt || Date.now(),
@@ -420,6 +430,7 @@ export function migrateToStoreV2(
       id: uid("chat"),
       title: titleFromMessages(v1.uiMessages || []),
       selectedModel: v1.selectedModel || fallbackModel,
+      selectedMode: "agent",
       history: Array.isArray(v1.history) ? v1.history : [],
       uiMessages: Array.isArray(v1.uiMessages) ? v1.uiMessages : [],
       updatedAt: v1.updatedAt || Date.now(),
@@ -840,6 +851,7 @@ export function branchChatFromMessage(
     id: uid("chat"),
     title: `${agentName} · ${branchIndex}`,
     selectedModel: source.selectedModel || "",
+    selectedMode: normalizeSelectedMode(source.selectedMode),
     history: prefix.history,
     uiMessages: prefix.uiMessages,
     updatedAt: now,

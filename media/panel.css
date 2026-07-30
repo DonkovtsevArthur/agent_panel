@@ -1889,6 +1889,10 @@ body.vscode-dark .md-pre .syntax-property {
   transform: rotate(180deg);
 }
 
+.model-picker.is-open.opens-down .model-chevron {
+  transform: none;
+}
+
 .model-menu {
   position: absolute;
   left: 0;
@@ -1904,6 +1908,18 @@ body.vscode-dark .md-pre .syntax-property {
   border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   z-index: 1000;
+}
+
+.model-menu.opens-down {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.model-menu.is-fixed {
+  position: fixed;
+  /* top / left / bottom / max-height задаются в JS */
+  right: auto;
+  z-index: 10000;
 }
 
 .model-menu[hidden] {
@@ -2849,6 +2865,34 @@ html[data-surface="settings"] .settings-layout {
   transition: border-color 0.12s ease;
 }
 
+.settings-models {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-provider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-provider-group .settings-provider-head {
+  margin: 0;
+  padding: 4px 2px 6px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-provider-group .settings-model-row {
+  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 55%, transparent);
+}
+
 .settings-model-row:hover {
   border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 55%, transparent);
 }
@@ -3088,9 +3132,9 @@ html[data-surface="settings"] .settings-layout {
 .settings-modal-card {
   position: relative;
   z-index: 1;
-  width: min(100%, 360px);
-  max-height: min(90vh, 520px);
-  overflow: auto;
+  width: min(100%, 400px);
+  max-height: min(90vh, 640px);
+  overflow: hidden;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
@@ -3105,6 +3149,7 @@ html[data-surface="settings"] .settings-layout {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 12px 8px;
+  flex: 0 0 auto;
 }
 
 .settings-modal-title {
@@ -3115,6 +3160,9 @@ html[data-surface="settings"] .settings-layout {
 
 .settings-modal-body {
   padding: 4px 12px 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .settings-modal-foot {
@@ -3122,10 +3170,84 @@ html[data-surface="settings"] .settings-layout {
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px 12px;
+  flex: 0 0 auto;
 }
 
 .settings-modal-done {
   font-weight: 600;
+}
+
+.settings-modal-tabs {
+  flex: 0 0 auto;
+}
+
+#modelEditModal .settings-modal-card,
+#fetchModelsModal .settings-modal-card {
+  width: min(100%, 420px);
+}
+
+#modelEditApiPane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#modelEditApiPane[hidden] {
+  display: none !important;
+}
+
+.settings-fetch-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(36vh, 260px);
+  overflow: auto;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  border-radius: 0;
+}
+
+.settings-fetch-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.settings-fetch-model-row:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.settings-fetch-model-row.is-existing {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.settings-fetch-model-row input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.settings-fetch-model-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+
+.settings-fetch-model-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
 }
 
 .settings-add-actions {
@@ -3209,8 +3331,8 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .settings-model-row.is-under-provider {
-  margin-left: 10px;
-  border-style: dashed;
+  margin-left: 0;
+  border-style: solid;
 }
 
 .settings-new-provider {

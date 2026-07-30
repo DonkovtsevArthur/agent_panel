@@ -32,6 +32,18 @@ test("readonly classifier blocks write-ish verbs", () => {
   assert.equal(isMcpReadonlyTool("mcp__demo__delete_row"), false);
 });
 
+test("Plan/Ask allow all Figma MCP tools and other read MCP", () => {
+  const { isAllowedMcpInReadonlyMode } = require("../out/mcp/types.js");
+  assert.equal(
+    isAllowedMcpInReadonlyMode("mcp__figma__get_figma_data"),
+    true
+  );
+  assert.equal(isAllowedMcpInReadonlyMode("mcp__figma__use_figma"), true);
+  assert.equal(isAllowedMcpInReadonlyMode("mcp__figma__generate_diagram"), true);
+  assert.equal(isAllowedMcpInReadonlyMode("mcp__demo__get_metadata"), true);
+  assert.equal(isAllowedMcpInReadonlyMode("mcp__demo__create_ticket"), false);
+});
+
 test("transport detail is formatted for http and stdio configs", () => {
   assert.equal(
     formatTransportDetail({

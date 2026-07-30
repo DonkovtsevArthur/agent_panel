@@ -11,17 +11,27 @@ import { collectImportWarnings } from "./pathAliasContext";
 import { applySearchReplace } from "./patchApply";
 import { collectWorkspaceDiagnostics } from "./diagnosticsContext";
 import {
+  buildSearchPrefetchMessage,
   createReadFileCache,
+  createServedReadTracker,
   searchTextFiles,
+  servedReadKey,
   sliceFileLines,
+  type ServedReadTracker,
 } from "./searchText";
 import type { ChatTool } from "./openaiClient";
 import {
   shouldBlockBroadGitDiscard,
   shouldBlockBroadGitStage,
   shouldBlockGitCommitOrPush,
+  isGitPushCommand,
 } from "./gitCommandPolicy";
 import { evaluateVerificationCommand } from "./verificationCommandPolicy";
+import {
+  ignoredPathError,
+  isIgnoredDirName,
+  isIgnoredWorkspacePath,
+} from "./workspaceIgnore";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,7 +49,8 @@ export const agentTools: ChatTool[] = [
     type: "function",
     function: {
       name: "list_files",
-      description: "Список файлов в папке workspace (относительно корня)",
+      description:
+        "Список файлов в папке workspace (относительно корня). Пропускает node_modules/.git/dist/out и другие служебные каталоги.",
       parameters: {
         type: "object",
         properties: {
@@ -56,7 +67,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "read_file",
       description:
-        "Прочитать текстовый файл из workspace. Для больших файлов указывай startLine/endLine (1-based), чтобы читать только нужный фрагмент.",
+        "Прочитать текстовый файл из workspace. Для больших файлов указывай startLine/endLine (1-based), чтобы читать только нужный фрагмент. Не для node_modules/.git/dist/out.",
       parameters: {
         type: "object",
         properties: {
@@ -140,7 +151,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "write_file",
       description:
-        "Создать или перезаписать текстовый файл в workspace. Для импортов копируй стиль из соседних файлов и алиасы tsconfig; при importWarnings сразу исправь пути.",
+        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out. Для импортов копируй стиль из соседних файлов и алиасы tsconfig; при importWarnings сразу исправь пути.",
       parameters: {
         type: "object",
         properties: {
@@ -193,7 +204,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit и git push ЗАПРЕЩЕНЫ — после правок пользователь сам нажимает тег «Закоммитить и запушить» в панели. Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit ЗАПРЕЩЁН — после правок пользователь жмёт тег «Закоммитить и запушить». git push разрешён только по явной просьбе («запушь» / «выполни push»). Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
       parameters: {
         type: "object",
         properties: {
@@ -278,12 +289,15 @@ function resolvePath(relativePath: string): vscode.Uri {
 /** Default cap for tool text payloads (stdout, generic truncate). */
 export const TOOL_TEXT_MAX = 12_000;
 /** Cap for read_file content in tool results. */
-export const READ_FILE_MAX = 24_000;
+export const READ_FILE_MAX = 12_000;
 /** Cap for fetch_url page body. */
 export const FETCH_URL_MAX = 20_000;
 
 /** Per-turn кэш read_file по mtime: повторное чтение неизменного файла бесплатно. */
 const readFileCache = createReadFileCache(40);
+
+/** Fallback, если ход не передал свой tracker. */
+const defaultServedReads = createServedReadTracker();
 
 /** Диагностика по отредактированному файлу сразу в результате edit-tool. */
 async function collectEditDiagnostics(relativePath: string): Promise<{
@@ -744,13 +758,14 @@ async function runCommand(
         "Широкий git add/commit заблокирован: он может включить новые или посторонние файлы. Сначала вызови `git status --short`, затем добавь только относящиеся к задаче пути через `git add -- <path...>`. Используй --all/-A/. только если пользователь явно попросил включить все изменения.",
     });
   }
-  if (shouldBlockGitCommitOrPush(trimmed)) {
+  if (shouldBlockGitCommitOrPush(trimmed, userText)) {
     return JSON.stringify({
       ok: false,
       blocked: true,
       command: trimmed,
-      stderr:
-        "git commit и git push через run_command запрещены. После правок пользователь сам решает: в панели появляется тег «Закоммитить и запушить». Не вызывай commit/push сам — кратко напомни про этот тег.",
+      stderr: isGitPushCommand(trimmed)
+        ? "git push через run_command разрешён только по явной просьбе пользователя (например «запушь» / «выполни push»). Иначе используй тег «Закоммитить и запушить» в панели."
+        : "git commit через run_command запрещён. После правок пользователь сам решает: в панели появляется тег «Закоммитить и запушить». Не вызывай commit сам — кратко напомни про этот тег.",
     });
   }
   if (shouldBlockBroadGitDiscard(trimmed, userText)) {
@@ -821,7 +836,11 @@ async function runCommand(
 export async function runTool(
   name: string,
   argsJson: string,
-  options?: { signal?: AbortSignal; userText?: string }
+  options?: {
+    signal?: AbortSignal;
+    userText?: string;
+    servedReads?: ServedReadTracker;
+  }
 ): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
@@ -830,30 +849,46 @@ export async function runTool(
     return JSON.stringify({ error: "Некорректный JSON аргументов" });
   }
 
+  const servedReads = options?.servedReads ?? defaultServedReads;
+
   try {
     switch (name) {
       case "list_files": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const dir = resolvePath(relativePath);
         const entries = await vscode.workspace.fs.readDirectory(dir);
-        const items = entries.map(([entryName, type]) => ({
-          name: entryName,
-          type:
-            type === vscode.FileType.Directory
-              ? "dir"
-              : type === vscode.FileType.File
-                ? "file"
-                : "other",
-        }));
+        const items = entries
+          .filter(([entryName, type]) => {
+            if (type === vscode.FileType.Directory && isIgnoredDirName(entryName)) {
+              return false;
+            }
+            return true;
+          })
+          .map(([entryName, type]) => ({
+            name: entryName,
+            type:
+              type === vscode.FileType.Directory
+                ? "dir"
+                : type === vscode.FileType.File
+                  ? "file"
+                  : "other",
+          }));
         return JSON.stringify({ path: relativePath || ".", items });
       }
       case "read_file": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const uri = resolvePath(relativePath);
         const startLine =
           typeof args.startLine === "number" ? args.startLine : undefined;
         const endLine =
           typeof args.endLine === "number" ? args.endLine : undefined;
+        const rangeKey = servedReadKey(relativePath, startLine, endLine);
         let text: string;
         let mtimeMs = 0;
         try {
@@ -861,6 +896,17 @@ export async function runTool(
           mtimeMs = stat.mtime;
         } catch {
           mtimeMs = 0;
+        }
+        if (servedReads.wasServed(rangeKey, mtimeMs)) {
+          return JSON.stringify({
+            ok: true,
+            path: relativePath,
+            reused: true,
+            note: "Unchanged since an earlier read_file this turn — reuse that content. Do not call read_file on this path again unless you edit it.",
+            ...(typeof startLine === "number" || typeof endLine === "number"
+              ? { startLine, endLine }
+              : {}),
+          });
         }
         const cached = mtimeMs
           ? readFileCache.get(uri.fsPath, mtimeMs)
@@ -875,6 +921,7 @@ export async function runTool(
           }
         }
         const sliced = sliceFileLines(text, startLine, endLine);
+        servedReads.markServed(rangeKey, mtimeMs);
         return JSON.stringify({
           path: relativePath,
           content: truncate(sliced.content, READ_FILE_MAX),
@@ -893,13 +940,17 @@ export async function runTool(
         if (!query) {
           return JSON.stringify({ error: "Пустой query" });
         }
+        const pathPrefix = args.pathPrefix
+          ? String(args.pathPrefix)
+          : undefined;
+        if (pathPrefix && isIgnoredWorkspacePath(pathPrefix)) {
+          return JSON.stringify({ error: ignoredPathError(pathPrefix) });
+        }
         const root = getWorkspaceRoot();
         const found = searchTextFiles({
           rootPath: root.fsPath,
           query,
-          ...(args.pathPrefix
-            ? { pathPrefix: String(args.pathPrefix) }
-            : {}),
+          ...(pathPrefix ? { pathPrefix } : {}),
           ...(args.include ? { include: String(args.include) } : {}),
           regex: args.regex === true,
           caseSensitive: args.caseSensitive === true,
@@ -940,6 +991,9 @@ export async function runTool(
       }
       case "write_file": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const content = String(args.content ?? "");
         const uri = resolvePath(relativePath);
         let before = "";
@@ -966,6 +1020,7 @@ export async function runTool(
         await vscode.workspace.fs.createDirectory(parent);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
         readFileCache.set(uri.fsPath, Date.now(), content);
+        servedReads.invalidatePath(relativePath);
         const { added, removed } = lineDiffStats(before, content);
         rememberEditBefore(relativePath, before);
         const importWarnings = await collectImportWarnings(
@@ -1000,6 +1055,9 @@ export async function runTool(
       }
       case "search_replace": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const oldString = String(args.old_string ?? "");
         const newString = String(args.new_string ?? "");
         const replaceAll = args.replace_all === true;
@@ -1026,6 +1084,7 @@ export async function runTool(
           Buffer.from(applied.content, "utf8")
         );
         readFileCache.set(uri.fsPath, Date.now(), applied.content);
+        servedReads.invalidatePath(relativePath);
         const { added, removed } = lineDiffStats(before, applied.content);
         rememberEditBefore(relativePath, before);
         const importWarnings = await collectImportWarnings(

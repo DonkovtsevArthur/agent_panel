@@ -43,25 +43,51 @@ test("detects git push commands", () => {
   assert.equal(isGitPushCommand("git status --short"), false);
 });
 
-test("blocks git commit and push from agent run_command", () => {
+test("blocks git commit always; blocks push unless user explicitly asked", () => {
   const {
     isGitCommitCommand,
     shouldBlockGitCommitOrPush,
+    looksLikeExplicitPushRequest,
   } = require("../out/gitCommandPolicy.js");
 
   for (const command of [
     "git commit -m 'msg'",
     "git add package.json && git commit -m 'chore: bump' && git push",
-    "git push",
-    "git push -u origin HEAD",
   ]) {
     assert.equal(shouldBlockGitCommitOrPush(command), true, command);
+    assert.equal(
+      shouldBlockGitCommitOrPush(command, "выполни push"),
+      true,
+      command
+    );
   }
+  assert.equal(shouldBlockGitCommitOrPush("git push"), true);
+  assert.equal(shouldBlockGitCommitOrPush("git push -u origin HEAD"), true);
+  assert.equal(
+    shouldBlockGitCommitOrPush("git push", "выполни push"),
+    false
+  );
+  assert.equal(
+    shouldBlockGitCommitOrPush("git push -u origin HEAD", "запушь"),
+    false
+  );
   assert.equal(isGitCommitCommand("git commit -m 'x'"), true);
   assert.equal(isGitCommitCommand("git status --short"), false);
   assert.equal(shouldBlockGitCommitOrPush("git status --short"), false);
   assert.equal(
     shouldBlockGitCommitOrPush("git add -- package.json"),
+    false
+  );
+
+  assert.equal(looksLikeExplicitPushRequest("выполни push"), true);
+  assert.equal(looksLikeExplicitPushRequest("запушь"), true);
+  assert.equal(looksLikeExplicitPushRequest("давай запушим"), true);
+  assert.equal(looksLikeExplicitPushRequest("push"), true);
+  assert.equal(looksLikeExplicitPushRequest("git push"), true);
+  assert.equal(looksLikeExplicitPushRequest("как сделать push?"), false);
+  assert.equal(looksLikeExplicitPushRequest("не пушь"), false);
+  assert.equal(
+    looksLikeExplicitPushRequest("закоммить и запушь"),
     false
   );
 });

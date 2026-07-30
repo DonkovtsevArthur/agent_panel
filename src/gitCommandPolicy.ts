@@ -64,9 +64,55 @@ export function isGitCommitCommand(command: string): boolean {
   return /(?:^|[;&|]\s*)git\s+commit(?:\s|$)/i.test(String(command || ""));
 }
 
-/** Commit/push только через UI-тег — агент не должен делать их через run_command. */
-export function shouldBlockGitCommitOrPush(command: string): boolean {
-  return isGitCommitCommand(command) || isGitPushCommand(command);
+/**
+ * Короткая явная просьба только запушить (без commit).
+ * Такие запросы исполняем детерминированно — без LLM.
+ */
+export function looksLikeExplicitPushRequest(text: string): boolean {
+  const value = String(text || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[.!?…]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value) {
+    return false;
+  }
+  if (/^(как|почему|зачем|что)\b/.test(value)) {
+    return false;
+  }
+  if (/(^|\s)(не|не надо|не нужно)\s+(пуш|push|запуш)/.test(value)) {
+    return false;
+  }
+  // Commit+push — отдельный UI-тег, не этот fast-path.
+  if (/(коммит|commit|закоммит)/.test(value)) {
+    return false;
+  }
+
+  return (
+    /^(выполни|сделай|запусти|run)\s+(git\s+)?push$/.test(value) ||
+    /^(git\s+)?push$/.test(value) ||
+    /^(please\s+)?push(\s+(please|it|now))?$/.test(value) ||
+    /^(давай\s+)?(запушь|запушить|запушим|пушни|пуш)$/.test(value) ||
+    /^git\s+push(\s+-u\s+\S+(\s+\S+)?)?$/.test(value)
+  );
+}
+
+/**
+ * Commit всегда только через UI-тег.
+ * Push через run_command — только если пользователь явно попросил запушить.
+ */
+export function shouldBlockGitCommitOrPush(
+  command: string,
+  userText = ""
+): boolean {
+  if (isGitCommitCommand(command)) {
+    return true;
+  }
+  if (isGitPushCommand(command)) {
+    return !looksLikeExplicitPushRequest(userText);
+  }
+  return false;
 }
 
 export function isGitMutationCommand(command: string): boolean {

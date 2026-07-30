@@ -234,6 +234,15 @@ export function getEditorSelectionPayload():
  * не тратила первый раунд на read_file текущего файла.
  * Содержимое volatile — держать в хвосте system-блоков.
  */
+export function getActiveFileRelativePath(): string | undefined {
+  const editor = resolveEditor();
+  const document = editor?.document;
+  if (!document || document.isClosed || document.uri.scheme !== "file") {
+    return undefined;
+  }
+  return relativeOrFsPath(document.uri);
+}
+
 export function buildActiveFilePrefetchMessage(): string {
   const editor = resolveEditor();
   const document = editor?.document;

@@ -9,7 +9,14 @@ const {
   searchTextFiles,
   sliceFileLines,
   createReadFileCache,
+  extractCodeIdentifiers,
+  buildSearchPrefetchMessage,
+  isLikelyDefinitionLine,
 } = require("../out/searchText.js");
+const {
+  looksLikeLocateDefinitionRequest,
+  formatLocateDefinitionAnswer,
+} = require("../out/localCodeNav.js");
 
 function makeWorkspace(files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "search-text-"));
@@ -179,4 +186,87 @@ test("createReadFileCache invalidates by mtime and evicts LRU", () => {
   assert.equal(cache.size, 2);
   cache.invalidate("/a");
   assert.equal(cache.get("/a", 2), undefined);
+});
+
+test("createServedReadTracker blocks same path/range until edit", () => {
+  const {
+    createServedReadTracker,
+    servedReadKey,
+  } = require("../out/searchText.js");
+  const tracker = createServedReadTracker();
+  const key = servedReadKey("package.json");
+  assert.equal(tracker.wasServed(key, 100), false);
+  tracker.markServed(key, 100);
+  assert.equal(tracker.wasServed(key, 100), true);
+  assert.equal(tracker.wasServed(key, 200), false);
+  assert.equal(
+    tracker.wasServed(servedReadKey("package.json", 1, 20), 100),
+    false
+  );
+  tracker.invalidatePath("package.json");
+  assert.equal(tracker.wasServed(key, 100), false);
+});
+
+test("extractCodeIdentifiers picks code-shaped tokens only", () => {
+  assert.deepEqual(
+    extractCodeIdentifiers("Найди, где определяется функция resolveSpeedRouting в проекте"),
+    ["resolveSpeedRouting"]
+  );
+  assert.deepEqual(
+    extractCodeIdentifiers("почини `looksLikeUserEditRequest` и HISTORY_LIMIT"),
+    ["looksLikeUserEditRequest", "HISTORY_LIMIT"]
+  );
+  assert.deepEqual(extractCodeIdentifiers("добавь кнопку закрытия в панель"), []);
+  assert.deepEqual(extractCodeIdentifiers(""), []);
+});
+
+test("looksLikeLocateDefinitionRequest detects find-definition prompts", () => {
+  assert.equal(
+    looksLikeLocateDefinitionRequest(
+      "найди, где определяется resolveSpeedRouting"
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeLocateDefinitionRequest("find where resolveSpeedRouting is defined"),
+    true
+  );
+  assert.equal(looksLikeLocateDefinitionRequest("расскажи про проект"), false);
+  assert.equal(
+    looksLikeLocateDefinitionRequest("добавь кнопку закрытия"),
+    false
+  );
+});
+
+test("formatLocateDefinitionAnswer prefers definition lines", () => {
+  const root = makeWorkspace({
+    "src/routing.ts":
+      "export function mySpecialRouter() {}\nconst x = mySpecialRouter();\n",
+    "src/other.ts": "mySpecialRouter();\n",
+  });
+  try {
+    const answer = formatLocateDefinitionAnswer(
+      root,
+      "найди, где определяется mySpecialRouter"
+    );
+    assert.ok(answer);
+    assert.ok(answer.includes("src/routing.ts:1"));
+    assert.ok(answer.includes("определение"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("isLikelyDefinitionLine recognizes common declaration shapes", () => {
+  assert.equal(
+    isLikelyDefinitionLine(
+      "export function resolveSpeedRouting() {",
+      "resolveSpeedRouting"
+    ),
+    true
+  );
+  assert.equal(
+    isLikelyDefinitionLine("const x = resolveSpeedRouting();", "resolveSpeedRouting"),
+    false
+  );
 });
