@@ -287,8 +287,22 @@ body {
   min-width: 0;
 }
 
-.msg-edit-model-menu {
+.msg-edit-footer-left .msg-edit-mode-picker {
+  flex: 0 1 auto;
+  max-width: 42%;
+}
+
+.msg-edit-model-menu,
+.msg-edit-mode-menu {
   z-index: 1100;
+}
+
+.msg-edit-mode-picker .model-option {
+  align-items: flex-start;
+}
+
+.msg-edit-mode-picker .model-option-label {
+  font-weight: 500;
 }
 
 .msg-edit-footer-right {

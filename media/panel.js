@@ -1541,8 +1541,10 @@
   let editingUserIndex = null;
   let editingUserText = "";
   let editingModelId = "";
+  let editingModeId = "";
   let editingAttachments = [];
   let editModelMenuOpen = false;
+  let editModeMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = "";
   let menuOpen = false;
@@ -2080,6 +2082,7 @@
     closePlusMenu();
     closeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     renderSlashMenu();
   }
 
@@ -2703,9 +2706,11 @@
     const preservedScrollTop = messagesEl.scrollTop;
     closeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
+    editingModeId = agentMode || "agent";
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
@@ -2715,9 +2720,11 @@
   function cancelEditingUserMessage() {
     const preservedScrollTop = messagesEl.scrollTop;
     closeEditModelMenu();
+    closeEditModeMenu();
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
     renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
@@ -2733,28 +2740,48 @@
     }
     const model =
       editingModelId || selectedModelId || models[0]?.id || "";
+    const mode = normalizeAgentModeUi(editingModeId || agentMode);
     if (model && model !== selectedModelId) {
       setSelectedModel(model, true);
     }
+    if (mode && mode !== agentMode) {
+      setAgentMode(mode, { close: true, notify: true, focus: false });
+    }
     closeEditModelMenu();
+    closeEditModeMenu();
     setBusy(true);
     vscode.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
       text: nextText,
       model,
-      agentMode,
+      agentMode: mode,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
   }
 
   function modelDisplayName(id) {
     const model = models.find((m) => m.id === id);
     return model ? model.label || model.id : id || t("noModels");
+  }
+
+  function modeDisplayName(id) {
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    const wanted = String(id || "").trim();
+    const raw =
+      modes.find((m) => m.id === wanted) ||
+      modes.find((m) => m.id === "agent") ||
+      modes[0];
+    if (!raw) {
+      return t("mode");
+    }
+    const mode = localizeModeMeta(raw);
+    return mode.label || mode.id || t("mode");
   }
 
   function renderEditModelMenu(menuEl) {
@@ -2980,6 +3007,7 @@
       return;
     }
     closeMenu();
+    closeEditModeMenu();
     editModelMenuOpen = true;
     const trigger = picker.querySelector(".msg-edit-model-trigger");
     const menu = findEditModelMenu(picker);
@@ -3043,6 +3071,147 @@
       return false;
     }
     selectEditingModel(editingModelIdFromOption(option));
+    return true;
+  }
+
+  function getEditModePicker() {
+    return messagesEl.querySelector(".msg-edit-mode-picker");
+  }
+
+  function findEditModeMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-mode-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-mode-menu");
+  }
+
+  function renderEditModeMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    if (!modes.length) {
+      const empty = document.createElement("div");
+      empty.className = "model-option is-empty";
+      empty.textContent = t("noModes");
+      menuEl.appendChild(empty);
+      return;
+    }
+    const activeId = normalizeAgentModeUi(editingModeId || agentMode);
+    for (const sourceMode of modes) {
+      const mode = localizeModeMeta(sourceMode);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (mode.id === activeId ? " is-active" : "");
+      btn.dataset.mode = mode.id;
+      btn.setAttribute("role", "option");
+      const text = document.createElement("span");
+      text.className = "mode-option-text";
+      const title = document.createElement("span");
+      title.className = "model-option-label";
+      title.textContent = mode.label || mode.id;
+      text.appendChild(title);
+      if (mode.description) {
+        const desc = document.createElement("span");
+        desc.className = "mode-option-desc";
+        desc.textContent = mode.description;
+        text.appendChild(desc);
+      }
+      btn.appendChild(text);
+      if (mode.id === activeId) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function closeEditModeMenu() {
+    editModeMenuOpen = false;
+    const picker = getEditModePicker();
+    const menu = findEditModeMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-mode-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditModeMenu() {
+    const picker = getEditModePicker();
+    if (!picker || busy) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeEditModelMenu();
+    editModeMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-mode-trigger");
+    const menu = findEditModeMenu(picker);
+    renderEditModeMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditModeMenu() {
+    if (editModeMenuOpen) {
+      closeEditModeMenu();
+    } else {
+      openEditModeMenu();
+    }
+  }
+
+  function selectEditingMode(id) {
+    const next = normalizeAgentModeUi(id);
+    editingModeId = next;
+    const picker = getEditModePicker();
+    const label = picker
+      ? picker.querySelector(".msg-edit-mode-label")
+      : null;
+    if (label) {
+      label.textContent = modeDisplayName(editingModeId);
+    }
+    if (picker) {
+      picker.dataset.mode = editingModeId;
+    }
+    closeEditModeMenu();
+  }
+
+  function selectEditingModeFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-mode-menu .model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    const modeId = String(option.dataset.mode || "").trim();
+    if (!modeId) {
+      return false;
+    }
+    selectEditingMode(modeId);
     return true;
   }
 
@@ -8279,6 +8448,8 @@
           : [];
       if (isEditing) {
         el.classList.add("is-editing");
+        const editModeId = normalizeAgentModeUi(editingModeId || agentMode);
+        const editModeLabel = modeDisplayName(editModeId);
         const editModelLabel = modelDisplayName(
           editingModelId || selectedModelId
         );
@@ -8290,6 +8461,17 @@
           `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="${t("editMessage")}"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
+          `<div class="model-picker mode-picker msg-edit-mode-picker" data-mode="${escapeHtml(
+            editModeId
+          )}">` +
+          `<button type="button" class="model-trigger msg-edit-mode-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("mode")}">` +
+          `<span class="model-label msg-edit-mode-label">${escapeHtml(
+            editModeLabel
+          )}</span>` +
+          `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+          `</button>` +
+          `<div class="model-menu msg-edit-mode-menu" role="listbox" hidden></div>` +
+          `</div>` +
           `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
           `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("model")}">` +
           `<span class="model-label msg-edit-model-label">${escapeHtml(
@@ -8574,6 +8756,7 @@
     closeMenu();
     closeModeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     plusMenuOpen = true;
     if (composerPlusEl) {
       composerPlusEl.classList.add("is-open");
@@ -8675,6 +8858,8 @@
   function openModeMenu() {
     closeMenu();
     closePlusMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
     renderModeMenu();
     modeMenuOpen = true;
     if (modePicker) {
@@ -8873,6 +9058,11 @@
   });
 
   document.addEventListener("pointerup", (event) => {
+    if (editModeMenuOpen && selectEditingModeFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (!editModelMenuOpen) {
       return;
     }
@@ -8883,6 +9073,17 @@
   });
 
   document.addEventListener("click", (event) => {
+    if (editModeMenuOpen) {
+      const editModeOption = event.target.closest(
+        ".msg-edit-mode-menu .model-option"
+      );
+      if (editModeOption && !editModeOption.classList.contains("is-empty")) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectEditingMode(String(editModeOption.dataset.mode || "").trim());
+        return;
+      }
+    }
     if (!editModelMenuOpen) {
       return;
     }
@@ -8938,30 +9139,51 @@
     ) {
       closeMentionMenu();
     }
-    const editPicker = getEditModelPicker();
-    const editMenu = findEditModelMenu(editPicker);
-    const inEditMenu =
-      Boolean(editMenu && targetNode && editMenu.contains(targetNode)) ||
+    const editModelPickerEl = getEditModelPicker();
+    const editModelMenuEl = findEditModelMenu(editModelPickerEl);
+    const editModePickerEl = getEditModePicker();
+    const editModeMenuEl = findEditModeMenu(editModePickerEl);
+    const inEditModelMenu =
       Boolean(
-        target instanceof Element &&
-          target.closest(".msg-edit-model-menu")
+        editModelMenuEl && targetNode && editModelMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-model-menu")
+      );
+    const inEditModeMenu =
+      Boolean(
+        editModeMenuEl && targetNode && editModeMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-mode-menu")
       );
     if (editModelMenuOpen) {
       const inPicker =
-        editPicker && targetNode && editPicker.contains(targetNode);
-      if (!inPicker && !inEditMenu) {
+        editModelPickerEl &&
+        targetNode &&
+        editModelPickerEl.contains(targetNode);
+      if (!inPicker && !inEditModelMenu) {
         closeEditModelMenu();
       }
     }
-    // Floated model menu lives on document.body — must not count as
-    // "outside composer" or the whole edit is cancelled before select.
+    if (editModeMenuOpen) {
+      const inPicker =
+        editModePickerEl &&
+        targetNode &&
+        editModePickerEl.contains(targetNode);
+      if (!inPicker && !inEditModeMenu) {
+        closeEditModeMenu();
+      }
+    }
+    // Floated edit menus live on document.body — must not cancel the edit.
     if (Number.isInteger(editingUserIndex) && !busy) {
       const composer = messagesEl.querySelector(".msg-edit-composer");
       if (
         composer &&
         targetNode &&
         !composer.contains(targetNode) &&
-        !inEditMenu
+        !inEditModelMenu &&
+        !inEditModeMenu
       ) {
         cancelEditingUserMessage();
       }
@@ -8983,6 +9205,9 @@
     }
     if (event.key === "Escape" && editModelMenuOpen) {
       closeEditModelMenu();
+    }
+    if (event.key === "Escape" && editModeMenuOpen) {
+      closeEditModeMenu();
     }
   });
 
@@ -9013,6 +9238,7 @@
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
     uiMessagesCache.push({ role: "user", text, attachments });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
@@ -10329,6 +10555,13 @@
       updateToolGroupSummary(group);
       return;
     }
+    const editModeTrigger = event.target.closest(".msg-edit-mode-trigger");
+    if (editModeTrigger && messagesEl.contains(editModeTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleEditModeMenu();
+      return;
+    }
     const editModelTrigger = event.target.closest(".msg-edit-model-trigger");
     if (editModelTrigger && messagesEl.contains(editModelTrigger)) {
       event.preventDefault();
@@ -10452,6 +10685,11 @@
       submitEditedUserMessage();
       return;
     }
+    if (event.key === "Escape" && editModeMenuOpen) {
+      event.preventDefault();
+      closeEditModeMenu();
+      return;
+    }
     if (event.key === "Escape" && editModelMenuOpen) {
       event.preventDefault();
       closeEditModelMenu();
@@ -10528,6 +10766,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         editingAttachments = [];
         clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
@@ -10632,6 +10871,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         setCanRegenerate(msg.canRegenerate);
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
         if (msg.providerConnStatus) {
@@ -10724,6 +10964,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         editingAttachments = [];
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
@@ -10812,6 +11053,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         setBusy(false);
         ensureRegenerateButton();
         break;
@@ -10838,6 +11080,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         streamingEl = null;
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
