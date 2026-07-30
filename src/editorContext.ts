@@ -31,6 +31,36 @@ function resolveEditor(): vscode.TextEditor | undefined {
   return vscode.window.activeTextEditor ?? lastEditor;
 }
 
+/** Workspace root and editor paths used to select contextual project rules. */
+export function getEditorWorkspaceContext(): {
+  rootPath?: string;
+  targetPaths: string[];
+} {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const paths = [
+    resolveEditor()?.document,
+    ...vscode.window.visibleTextEditors.map((editor) => editor.document),
+  ]
+    .filter(
+      (document): document is vscode.TextDocument =>
+        Boolean(
+          document &&
+            !document.isClosed &&
+            document.uri.scheme === "file"
+        )
+    )
+    .map((document) => relativeOrFsPath(document.uri))
+    .filter(
+      (value, index, values) =>
+        Boolean(value) && values.indexOf(value) === index
+    )
+    .slice(0, 12);
+  return {
+    ...(folder ? { rootPath: folder.uri.fsPath } : {}),
+    targetPaths: paths,
+  };
+}
+
 /** Снимок окружения/редактора для system-контекста на каждый ход агента. */
 export function buildEditorContextMessage(): string {
   const now = new Date();
@@ -197,6 +227,44 @@ export function getEditorSelectionPayload():
     text: text.replace(/\n$/, ""),
     language: document.languageId || "",
   };
+}
+
+/**
+ * Prefetch до первого LLM-вызова: срез активного файла, чтобы модель
+ * не тратила первый раунд на read_file текущего файла.
+ * Содержимое volatile — держать в хвосте system-блоков.
+ */
+export function getActiveFileRelativePath(): string | undefined {
+  const editor = resolveEditor();
+  const document = editor?.document;
+  if (!document || document.isClosed || document.uri.scheme !== "file") {
+    return undefined;
+  }
+  return relativeOrFsPath(document.uri);
+}
+
+export function buildActiveFilePrefetchMessage(): string {
+  const editor = resolveEditor();
+  const document = editor?.document;
+  if (!document || document.isClosed || document.uri.scheme !== "file") {
+    return "";
+  }
+  const text = document.getText();
+  if (!text.trim()) {
+    return "";
+  }
+  const MAX_CHARS = 8_000;
+  const relative = relativeOrFsPath(document.uri);
+  const totalLines = document.lineCount;
+  const sliced = text.length > MAX_CHARS;
+  const content = sliced ? text.slice(0, MAX_CHARS) : text;
+  const fenceLang = document.languageId || "";
+  return [
+    `Active file content (prefetched, may be stale after edits — re-read for exact current text): ${relative} (${totalLines} lines${sliced ? ", truncated" : ""})`,
+    "```" + fenceLang,
+    content,
+    "```",
+  ].join("\n");
 }
 
 /** @deprecated используйте getEditorSelectionPayload + чипы */

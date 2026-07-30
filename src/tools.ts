@@ -1,20 +1,56 @@
 import { execFile } from "child_process";
+import * as http from "http";
+import * as https from "https";
 import * as path from "path";
+import { URL } from "url";
 import { promisify } from "util";
 import * as vscode from "vscode";
 import { lineDiffStats } from "./diffStats";
+import { rememberEditBefore } from "./editSnapshots";
+import { collectImportWarnings } from "./pathAliasContext";
+import { applySearchReplace } from "./patchApply";
+import { collectWorkspaceDiagnostics } from "./diagnosticsContext";
+import {
+  buildSearchPrefetchMessage,
+  createReadFileCache,
+  createServedReadTracker,
+  searchTextFiles,
+  servedReadKey,
+  sliceFileLines,
+  type ServedReadTracker,
+} from "./searchText";
 import type { ChatTool } from "./openaiClient";
+import {
+  shouldBlockBroadGitDiscard,
+  shouldBlockBroadGitStage,
+  shouldBlockGitCommitOrPush,
+  isGitPushCommand,
+} from "./gitCommandPolicy";
+import { evaluateVerificationCommand } from "./verificationCommandPolicy";
+import {
+  ignoredPathError,
+  isIgnoredDirName,
+  isIgnoredWorkspacePath,
+} from "./workspaceIgnore";
 
 const execFileAsync = promisify(execFile);
 
-export const READONLY_TOOL_NAMES = new Set(["list_files", "read_file"]);
+export const READONLY_TOOL_NAMES = new Set([
+  "list_files",
+  "read_file",
+  "search_text",
+  "get_diagnostics",
+  "open_external",
+  "fetch_url",
+]);
 
 export const agentTools: ChatTool[] = [
   {
     type: "function",
     function: {
       name: "list_files",
-      description: "Список файлов в папке workspace (относительно корня)",
+      description:
+        "Список файлов в папке workspace (относительно корня). Пропускает node_modules/.git/dist/out и другие служебные каталоги.",
       parameters: {
         type: "object",
         properties: {
@@ -30,13 +66,22 @@ export const agentTools: ChatTool[] = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Прочитать текстовый файл из workspace",
+      description:
+        "Прочитать текстовый файл из workspace. Для больших файлов указывай startLine/endLine (1-based), чтобы читать только нужный фрагмент. Не для node_modules/.git/dist/out.",
       parameters: {
         type: "object",
         properties: {
           relativePath: {
             type: "string",
             description: "Относительный путь к файлу",
+          },
+          startLine: {
+            type: "number",
+            description: "Первая строка (1-based, по умолчанию 1)",
+          },
+          endLine: {
+            type: "number",
+            description: "Последняя строка включительно (по умолчанию конец файла)",
           },
         },
         required: ["relativePath"],
@@ -46,8 +91,67 @@ export const agentTools: ChatTool[] = [
   {
     type: "function",
     function: {
+      name: "search_text",
+      description:
+        "Быстрый поиск текста по файлам workspace (как grep): находит строки с подстрокой или RegExp и возвращает path:line. Пропускает node_modules/.git/dist/out. Используй вместо чтения файлов вслепую, когда нужно найти, где что-то определено или используется.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Подстрока или RegExp (см. regex)",
+          },
+          pathPrefix: {
+            type: "string",
+            description:
+              "Относительная подпапка для ограничения поиска (по умолчанию весь workspace)",
+          },
+          include: {
+            type: "string",
+            description:
+              "Glob-маска имени файла, например *.ts или *.{ts,tsx}",
+          },
+          regex: {
+            type: "boolean",
+            description: "Трактовать query как RegExp (по умолчанию false)",
+          },
+          caseSensitive: {
+            type: "boolean",
+            description: "Учитывать регистр (по умолчанию false)",
+          },
+          maxResults: {
+            type: "number",
+            description: "Максимум совпадений (по умолчанию 50)",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_diagnostics",
+      description:
+        "Получить актуальные VS Code Problems уровня error/warning для указанных файлов workspace; без paths проверяет открытые файлы.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description: "Относительные пути файлов workspace",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
-      description: "Создать или перезаписать текстовый файл в workspace",
+      description:
+        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out. Для импортов копируй стиль из соседних файлов и алиасы tsconfig; при importWarnings сразу исправь пути.",
       parameters: {
         type: "object",
         properties: {
@@ -67,9 +171,40 @@ export const agentTools: ChatTool[] = [
   {
     type: "function",
     function: {
+      name: "search_replace",
+      description:
+        "Точно заменить текст в существующем файле workspace. По умолчанию old_string должен встречаться ровно один раз; для всех совпадений укажи replace_all=true. Сохраняет окончания строк файла.",
+      parameters: {
+        type: "object",
+        properties: {
+          relativePath: {
+            type: "string",
+            description: "Относительный путь к существующему файлу",
+          },
+          old_string: {
+            type: "string",
+            description:
+              "Точный старый текст. Добавь окружающий контекст, чтобы совпадение было уникальным.",
+          },
+          new_string: {
+            type: "string",
+            description: "Новый текст (может быть пустым для удаления)",
+          },
+          replace_all: {
+            type: "boolean",
+            description: "Заменить все совпадения (по умолчанию false)",
+          },
+        },
+        required: ["relativePath", "old_string", "new_string"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Используй для git status/log/diff, сборки, тестов.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit ЗАПРЕЩЁН — после правок пользователь жмёт тег «Закоммитить и запушить». git push разрешён только по явной просьбе («запушь» / «выполни push»). Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
       parameters: {
         type: "object",
         properties: {
@@ -84,6 +219,42 @@ export const agentTools: ChatTool[] = [
           },
         },
         required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "fetch_url",
+      description:
+        "Скачать http(s) URL и вернуть структурированные данные страницы: title, description, headings, content, colors, links. Используй для ЛЮБОГО вопроса по ссылке (факты, цвета, цены, текст, метаданные). Не говори, что не можешь открывать URL. Для figma.com — MCP Figma tools, если доступны.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_external",
+      description:
+        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — сначала fetch_url. Для Figma — MCP tools.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
       },
     },
   },
@@ -115,14 +286,459 @@ function resolvePath(relativePath: string): vscode.Uri {
   return resolved;
 }
 
-function truncate(text: string, max = 40_000): string {
+/** Default cap for tool text payloads (stdout, generic truncate). */
+export const TOOL_TEXT_MAX = 12_000;
+/** Cap for read_file content in tool results. */
+export const READ_FILE_MAX = 12_000;
+/** Cap for fetch_url page body. */
+export const FETCH_URL_MAX = 20_000;
+
+/** Per-turn кэш read_file по mtime: повторное чтение неизменного файла бесплатно. */
+const readFileCache = createReadFileCache(40);
+
+/** Fallback, если ход не передал свой tracker. */
+const defaultServedReads = createServedReadTracker();
+
+/** Диагностика по отредактированному файлу сразу в результате edit-tool. */
+async function collectEditDiagnostics(relativePath: string): Promise<{
+  diagnostics: ReturnType<typeof collectWorkspaceDiagnostics>;
+  errorCount: number;
+  warningCount: number;
+}> {
+  // Даём VS Code мгновение обновить Problems после записи файла.
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const diagnostics = collectWorkspaceDiagnostics({
+    paths: [relativePath],
+    perFile: 10,
+    total: 10,
+  });
+  return {
+    diagnostics,
+    errorCount: diagnostics.filter((item) => item.severity === "error").length,
+    warningCount: diagnostics.filter((item) => item.severity === "warning")
+      .length,
+  };
+}
+
+function truncate(text: string, max = TOOL_TEXT_MAX): string {
   if (text.length <= max) {
     return text;
   }
   return text.slice(0, max) + "\n\n[truncated]";
 }
 
-async function runCommand(command: string, cwdRelative = ""): Promise<string> {
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    });
+}
+
+function stripTags(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function attrValue(tag: string, name: string): string | undefined {
+  const re = new RegExp(
+    `${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i"
+  );
+  const m = tag.match(re);
+  return m?.[1] ?? m?.[2] ?? m?.[3];
+}
+
+function extractMetaContent(html: string, key: string): string | undefined {
+  const metaRe = /<meta\b[^>]*>/gi;
+  for (const tag of html.match(metaRe) || []) {
+    const name = (
+      attrValue(tag, "name") ||
+      attrValue(tag, "property") ||
+      attrValue(tag, "itemprop") ||
+      ""
+    ).toLowerCase();
+    if (name === key.toLowerCase()) {
+      const content = attrValue(tag, "content");
+      if (content?.trim()) {
+        return decodeHtmlEntities(content.trim());
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractTitle(html: string): string | undefined {
+  const og = extractMetaContent(html, "og:title");
+  if (og) {
+    return og;
+  }
+  const m = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  if (m?.[1]) {
+    return stripTags(m[1]).trim() || undefined;
+  }
+  return undefined;
+}
+
+function extractHeadings(html: string, limit = 20): string[] {
+  const out: string[] = [];
+  const re = /<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const text = stripTags(m[2]);
+    if (text) {
+      out.push(`h${m[1]}: ${text}`);
+    }
+  }
+  return out;
+}
+
+function extractLinks(html: string, pageUrl: URL, limit = 30): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = /<a\b[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && out.length < limit) {
+    const hrefRaw = m[1] ?? m[2] ?? m[3] ?? "";
+    if (!hrefRaw || hrefRaw.startsWith("#") || hrefRaw.startsWith("javascript:")) {
+      continue;
+    }
+    let abs: string;
+    try {
+      abs = new URL(hrefRaw, pageUrl).toString();
+    } catch {
+      continue;
+    }
+    if (seen.has(abs)) {
+      continue;
+    }
+    seen.add(abs);
+    const label = stripTags(m[4] || "").slice(0, 80);
+    out.push(label ? `${label} → ${abs}` : abs);
+  }
+  return out;
+}
+
+function extractJsonLd(html: string, limitChars = 8_000): string[] {
+  const blocks: string[] = [];
+  const re =
+    /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  let used = 0;
+  while ((m = re.exec(html)) && used < limitChars) {
+    const raw = m[1].trim();
+    if (!raw) {
+      continue;
+    }
+    const slice = raw.slice(0, Math.min(raw.length, limitChars - used));
+    blocks.push(slice);
+    used += slice.length;
+  }
+  return blocks;
+}
+
+function htmlToReadableText(html: string): string {
+  const withBreaks = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<\/(p|div|section|article|li|tr|h[1-6]|br)\s*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<(p|div|section|article|li|h[1-6])\b[^>]*>/gi, "\n");
+  return decodeHtmlEntities(
+    withBreaks
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim()
+  );
+}
+
+function normalizeColorToken(raw: string): string {
+  const t = raw.trim().toLowerCase().replace(/\s+/g, "");
+  if (/^#[0-9a-f]{3}$/i.test(t)) {
+    return (
+      "#" +
+      t
+        .slice(1)
+        .split("")
+        .map((c) => c + c)
+        .join("")
+    );
+  }
+  if (/^#[0-9a-f]{4}$/i.test(t)) {
+    const r = t[1];
+    const g = t[2];
+    const b = t[3];
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  if (/^#[0-9a-f]{8}$/i.test(t)) {
+    return t.slice(0, 7);
+  }
+  return t;
+}
+
+function extractColorsFromText(source: string): string[] {
+  const counts = new Map<string, number>();
+  const bump = (token: string) => {
+    const n = normalizeColorToken(token);
+    if (!n) {
+      return;
+    }
+    counts.set(n, (counts.get(n) || 0) + 1);
+  };
+
+  const hexRe = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b/gi;
+  const rgbRe =
+    /rgba?\(\s*[\d.]+\s*(?:,|\s)\s*[\d.]+\s*(?:,|\s)\s*[\d.]+(?:\s*(?:,|\/)\s*[\d.%]+)?\s*\)/gi;
+  const hslRe =
+    /hsla?\(\s*[\d.]+(?:deg|rad|turn)?\s*(?:,|\s)\s*[\d.%]+\s*(?:,|\s)\s*[\d.%]+(?:\s*(?:,|\/)\s*[\d.%]+)?\s*\)/gi;
+
+  for (const re of [hexRe, rgbRe, hslRe]) {
+    const matches = source.match(re) || [];
+    for (const m of matches) {
+      bump(m);
+    }
+  }
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 24)
+    .map(([color]) => color);
+}
+
+function collectStylesheetHrefs(html: string, pageUrl: URL): string[] {
+  const hrefs: string[] = [];
+  const linkRe =
+    /<link\b[^>]*rel\s*=\s*["'][^"']*stylesheet[^"']*["'][^>]*>/gi;
+  const hrefAttr = /href\s*=\s*["']([^"']+)["']/i;
+  for (const tag of html.match(linkRe) || []) {
+    const m = tag.match(hrefAttr);
+    if (!m?.[1]) {
+      continue;
+    }
+    try {
+      hrefs.push(new URL(m[1], pageUrl).toString());
+    } catch {
+      // ignore bad href
+    }
+  }
+  return [...new Set(hrefs)].slice(0, 4);
+}
+
+function looksLikeSpaShell(text: string, html: string): boolean {
+  if (text.length >= 400) {
+    return false;
+  }
+  return (
+    /<div\s+id=["'](?:root|app|__next|__nuxt)["']/i.test(html) ||
+    /marketplace\.visualstudio\.com/i.test(html) ||
+    (/<script\b/i.test(html) && text.length < 200)
+  );
+}
+
+function parseHttpUrl(raw: string): URL {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error("Пустой URL");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("Некорректный URL");
+  }
+  const scheme = parsed.protocol.replace(":", "").toLowerCase();
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error("Разрешены только http и https");
+  }
+  return parsed;
+}
+
+async function httpGet(
+  url: URL,
+  redirectsLeft = 5
+): Promise<{ status: number; contentType: string; body: string; finalUrl: string }> {
+  const lib = url.protocol === "https:" ? https : http;
+  const result = await new Promise<{
+    status: number;
+    contentType: string;
+    body: string;
+    location?: string;
+  }>((resolve, reject) => {
+    const req = lib.request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === "https:" ? 443 : 80),
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: {
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,text/css,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+          "User-Agent":
+            "Mozilla/5.0 (compatible; HarborAgents/1.0; +https://github.com/DonkovtsevArthur/agent_panel)",
+        },
+        timeout: 20_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        const maxBytes = 512_000;
+        res.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total <= maxBytes) {
+            chunks.push(chunk);
+          }
+        });
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            contentType: String(res.headers["content-type"] || ""),
+            body: Buffer.concat(chunks).toString("utf8"),
+            location: res.headers.location
+              ? String(res.headers.location)
+              : undefined,
+          });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy(new Error("Таймаут запроса URL"));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+
+  if (
+    result.location &&
+    redirectsLeft > 0 &&
+    result.status >= 300 &&
+    result.status < 400
+  ) {
+    const next = new URL(result.location, url);
+    if (next.protocol === "http:" || next.protocol === "https:") {
+      return httpGet(next, redirectsLeft - 1);
+    }
+  }
+
+  return {
+    status: result.status,
+    contentType: result.contentType,
+    body: result.body,
+    finalUrl: url.toString(),
+  };
+}
+
+async function fetchUrl(rawUrl: string): Promise<string> {
+  const parsed = parseHttpUrl(rawUrl);
+  const { status, contentType, body, finalUrl } = await httpGet(parsed);
+
+  if (status < 200 || status >= 400) {
+    return JSON.stringify({
+      ok: false,
+      url: finalUrl,
+      status,
+      error: `HTTP ${status}`,
+      preview: truncate(body, 2_000),
+      note: "Do not invent authorization requirements. Report the HTTP status. If the question is about this workspace/project, use read_file / list_files instead.",
+    });
+  }
+
+  const isHtml = /html|xml/i.test(contentType) || /^\s*</.test(body);
+  const isCss = /css/i.test(contentType) || /\.css(\?|$)/i.test(finalUrl);
+  const isJson =
+    /json/i.test(contentType) || /^\s*[{[]/.test(body.trim());
+
+  if (!isHtml && !isCss) {
+    return JSON.stringify({
+      ok: true,
+      url: finalUrl,
+      status,
+      contentType,
+      note: "Non-HTML response. Answer from content. Do not claim you cannot open external URLs.",
+      content: truncate(body, FETCH_URL_MAX),
+    });
+  }
+
+  const text = isHtml ? htmlToReadableText(body) : body;
+  const title = isHtml ? extractTitle(body) : undefined;
+  const description =
+    (isHtml &&
+      (extractMetaContent(body, "description") ||
+        extractMetaContent(body, "og:description") ||
+        extractMetaContent(body, "twitter:description"))) ||
+    undefined;
+  const headings = isHtml ? extractHeadings(body) : [];
+  const links = isHtml ? extractLinks(body, new URL(finalUrl)) : [];
+  const jsonLd = isHtml ? extractJsonLd(body) : [];
+
+  let colorSource = body;
+  const stylesheetUrls: string[] = [];
+  if (isHtml) {
+    for (const href of collectStylesheetHrefs(body, new URL(finalUrl))) {
+      try {
+        const sheet = await httpGet(new URL(href));
+        if (sheet.status >= 200 && sheet.status < 400) {
+          stylesheetUrls.push(href);
+          colorSource += "\n" + sheet.body;
+        }
+      } catch {
+        // ignore stylesheet fetch errors
+      }
+    }
+  }
+
+  const colors = extractColorsFromText(colorSource);
+  const spa = isHtml && looksLikeSpaShell(text, body);
+
+  return JSON.stringify({
+    ok: true,
+    url: finalUrl,
+    status,
+    contentType,
+    title,
+    description,
+    headings,
+    colors,
+    links,
+    jsonLd: jsonLd.length ? jsonLd : undefined,
+    stylesheetsFetched: stylesheetUrls,
+    spaShell: spa || undefined,
+    note: spa
+      ? "Page looks like a JS SPA shell: body text may be sparse. Still answer from whatever title/description/headings/colors/jsonLd/content you have. Do NOT invent login/authorization walls. Say what is missing honestly. For Harbor Agents branding use package.json / media via read_file."
+      : "Use title, description, headings, content, colors, links, and jsonLd to answer ANY user question about this URL. Do not claim you cannot open or load external URLs.",
+    content: truncate(isCss || isJson ? body : text, FETCH_URL_MAX),
+  });
+}
+
+async function runCommand(
+  command: string,
+  cwdRelative = "",
+  signal?: AbortSignal,
+  userText = ""
+): Promise<string> {
   const trimmed = command.trim();
   if (!trimmed) {
     throw new Error("Пустая команда");
@@ -133,6 +749,48 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
   if (blocked.some((re) => re.test(trimmed))) {
     throw new Error("Команда заблокирована политикой безопасности");
   }
+  if (shouldBlockBroadGitStage(trimmed, userText)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr:
+        "Широкий git add/commit заблокирован: он может включить новые или посторонние файлы. Сначала вызови `git status --short`, затем добавь только относящиеся к задаче пути через `git add -- <path...>`. Используй --all/-A/. только если пользователь явно попросил включить все изменения.",
+    });
+  }
+  if (shouldBlockGitCommitOrPush(trimmed, userText)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr: isGitPushCommand(trimmed)
+        ? "git push через run_command разрешён только по явной просьбе пользователя (например «запушь» / «выполни push»). Иначе используй тег «Закоммитить и запушить» в панели."
+        : "git commit через run_command запрещён. После правок пользователь сам решает: в панели появляется тег «Закоммитить и запушить». Не вызывай commit сам — кратко напомни про этот тег.",
+    });
+  }
+  if (shouldBlockBroadGitDiscard(trimmed, userText)) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      stderr:
+        "Широкий откат заблокирован: команда может удалить посторонние локальные изменения или новые файлы. Уточни объект отката и используй точечный `git restore -- <path...>` / `git revert <commit>`. Широкий откат разрешён только по явной просьбе убрать все локальные изменения.",
+    });
+  }
+  const verificationDecision = evaluateVerificationCommand(trimmed);
+  if (verificationDecision.blocked) {
+    return JSON.stringify({
+      ok: false,
+      blocked: true,
+      command: trimmed,
+      reason: verificationDecision.reason,
+      suggestion: verificationDecision.suggestion,
+      stderr:
+        verificationDecision.reason === "hidden_pipeline_exit"
+          ? "Проверочная команда через `head`/`tail` скрывает exit code исходной команды. Запусти проверку без пайпа: вывод run_command уже ограничивается автоматически."
+          : "Некорректная проверка TypeScript: нельзя совмещать `--project` с файлами, а запуск отдельных файлов не использует конфигурацию проекта. Запусти project-wide typecheck из suggestion.",
+    });
+  }
 
   const cwd = resolvePath(cwdRelative).fsPath;
   try {
@@ -140,6 +798,7 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
       cwd,
       timeout: 60_000,
       maxBuffer: 2 * 1024 * 1024,
+      signal,
       env: {
         ...process.env,
         // меньше интерактива
@@ -176,7 +835,12 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
 
 export async function runTool(
   name: string,
-  argsJson: string
+  argsJson: string,
+  options?: {
+    signal?: AbortSignal;
+    userText?: string;
+    servedReads?: ServedReadTracker;
+  }
 ): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
@@ -185,35 +849,151 @@ export async function runTool(
     return JSON.stringify({ error: "Некорректный JSON аргументов" });
   }
 
+  const servedReads = options?.servedReads ?? defaultServedReads;
+
   try {
     switch (name) {
       case "list_files": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const dir = resolvePath(relativePath);
         const entries = await vscode.workspace.fs.readDirectory(dir);
-        const items = entries.map(([entryName, type]) => ({
-          name: entryName,
-          type:
-            type === vscode.FileType.Directory
-              ? "dir"
-              : type === vscode.FileType.File
-                ? "file"
-                : "other",
-        }));
+        const items = entries
+          .filter(([entryName, type]) => {
+            if (type === vscode.FileType.Directory && isIgnoredDirName(entryName)) {
+              return false;
+            }
+            return true;
+          })
+          .map(([entryName, type]) => ({
+            name: entryName,
+            type:
+              type === vscode.FileType.Directory
+                ? "dir"
+                : type === vscode.FileType.File
+                  ? "file"
+                  : "other",
+          }));
         return JSON.stringify({ path: relativePath || ".", items });
       }
       case "read_file": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const uri = resolvePath(relativePath);
-        const data = await vscode.workspace.fs.readFile(uri);
-        const text = Buffer.from(data).toString("utf8");
+        const startLine =
+          typeof args.startLine === "number" ? args.startLine : undefined;
+        const endLine =
+          typeof args.endLine === "number" ? args.endLine : undefined;
+        const rangeKey = servedReadKey(relativePath, startLine, endLine);
+        let text: string;
+        let mtimeMs = 0;
+        try {
+          const stat = await vscode.workspace.fs.stat(uri);
+          mtimeMs = stat.mtime;
+        } catch {
+          mtimeMs = 0;
+        }
+        if (servedReads.wasServed(rangeKey, mtimeMs)) {
+          return JSON.stringify({
+            ok: true,
+            path: relativePath,
+            reused: true,
+            note: "Unchanged since an earlier read_file this turn — reuse that content. Do not call read_file on this path again unless you edit it.",
+            ...(typeof startLine === "number" || typeof endLine === "number"
+              ? { startLine, endLine }
+              : {}),
+          });
+        }
+        const cached = mtimeMs
+          ? readFileCache.get(uri.fsPath, mtimeMs)
+          : undefined;
+        if (cached !== undefined) {
+          text = cached;
+        } else {
+          const data = await vscode.workspace.fs.readFile(uri);
+          text = Buffer.from(data).toString("utf8");
+          if (mtimeMs) {
+            readFileCache.set(uri.fsPath, mtimeMs, text);
+          }
+        }
+        const sliced = sliceFileLines(text, startLine, endLine);
+        servedReads.markServed(rangeKey, mtimeMs);
         return JSON.stringify({
           path: relativePath,
-          content: truncate(text, 80_000),
+          content: truncate(sliced.content, READ_FILE_MAX),
+          ...(sliced.ranged
+            ? {
+                startLine: sliced.startLine,
+                endLine: sliced.endLine,
+                totalLines: sliced.totalLines,
+                cached: cached !== undefined,
+              }
+            : { totalLines: sliced.totalLines, cached: cached !== undefined }),
+        });
+      }
+      case "search_text": {
+        const query = String(args.query ?? "").trim();
+        if (!query) {
+          return JSON.stringify({ error: "Пустой query" });
+        }
+        const pathPrefix = args.pathPrefix
+          ? String(args.pathPrefix)
+          : undefined;
+        if (pathPrefix && isIgnoredWorkspacePath(pathPrefix)) {
+          return JSON.stringify({ error: ignoredPathError(pathPrefix) });
+        }
+        const root = getWorkspaceRoot();
+        const found = searchTextFiles({
+          rootPath: root.fsPath,
+          query,
+          ...(pathPrefix ? { pathPrefix } : {}),
+          ...(args.include ? { include: String(args.include) } : {}),
+          regex: args.regex === true,
+          caseSensitive: args.caseSensitive === true,
+          ...(typeof args.maxResults === "number"
+            ? { maxResults: args.maxResults }
+            : {}),
+        });
+        return JSON.stringify({
+          ok: true,
+          query,
+          matchCount: found.matches.length,
+          searchedFiles: found.searchedFiles,
+          truncated: found.truncated,
+          skippedLargeFiles: found.skippedLargeFiles,
+          matches: found.matches,
+        });
+      }
+      case "get_diagnostics": {
+        const paths = Array.isArray(args.paths)
+          ? args.paths
+              .map((item) => String(item || "").trim())
+              .filter(Boolean)
+              .slice(0, 50)
+          : [];
+        const diagnostics = collectWorkspaceDiagnostics({
+          ...(paths.length ? { paths } : {}),
+        });
+        return JSON.stringify({
+          ok: true,
+          paths: paths.length ? paths : undefined,
+          diagnostics,
+          errorCount: diagnostics.filter((item) => item.severity === "error")
+            .length,
+          warningCount: diagnostics.filter(
+            (item) => item.severity === "warning"
+          ).length,
         });
       }
       case "write_file": {
         const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
         const content = String(args.content ?? "");
         const uri = resolvePath(relativePath);
         let before = "";
@@ -225,23 +1005,143 @@ export async function runTool(
         } catch {
           created = true;
         }
+        if (!created && before === content) {
+          return JSON.stringify({
+            ok: false,
+            unchanged: true,
+            path: relativePath,
+            added: 0,
+            removed: 0,
+            error:
+              "No changes: content is identical to the existing file. Do not claim you rewrote/fixed anything. Either write different content that actually changes the file, or explain honestly that the file was already correct.",
+          });
+        }
         const parent = vscode.Uri.joinPath(uri, "..");
         await vscode.workspace.fs.createDirectory(parent);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+        readFileCache.set(uri.fsPath, Date.now(), content);
+        servedReads.invalidatePath(relativePath);
         const { added, removed } = lineDiffStats(before, content);
+        rememberEditBefore(relativePath, before);
+        const importWarnings = await collectImportWarnings(
+          relativePath,
+          content
+        );
+        const editDiagnostics = await collectEditDiagnostics(relativePath);
         return JSON.stringify({
           ok: true,
           path: relativePath,
           created,
           added,
           removed,
+          diagnostics: editDiagnostics.diagnostics,
+          diagnosticErrorCount: editDiagnostics.errorCount,
+          diagnosticWarningCount: editDiagnostics.warningCount,
+          ...(editDiagnostics.errorCount > 0
+            ? {
+                note: "Fix the diagnostics errors above before finishing. Do not call get_diagnostics again for this file unless you edit it further.",
+              }
+            : importWarnings.length
+              ? {
+                  note: "Fix unresolved imports with write_file using real paths from tsconfig aliases / sibling files.",
+                }
+              : {}),
+          ...(importWarnings.length
+            ? {
+                importWarnings,
+              }
+            : {}),
+        });
+      }
+      case "search_replace": {
+        const relativePath = String(args.relativePath ?? "");
+        if (isIgnoredWorkspacePath(relativePath)) {
+          return JSON.stringify({ error: ignoredPathError(relativePath) });
+        }
+        const oldString = String(args.old_string ?? "");
+        const newString = String(args.new_string ?? "");
+        const replaceAll = args.replace_all === true;
+        const uri = resolvePath(relativePath);
+        const existing = await vscode.workspace.fs.readFile(uri);
+        const before = Buffer.from(existing).toString("utf8");
+        const applied = applySearchReplace(
+          before,
+          oldString,
+          newString,
+          replaceAll
+        );
+        if (!applied.ok) {
+          return JSON.stringify({
+            ok: false,
+            path: relativePath,
+            unchanged: applied.unchanged,
+            error: applied.error,
+          });
+        }
+
+        await vscode.workspace.fs.writeFile(
+          uri,
+          Buffer.from(applied.content, "utf8")
+        );
+        readFileCache.set(uri.fsPath, Date.now(), applied.content);
+        servedReads.invalidatePath(relativePath);
+        const { added, removed } = lineDiffStats(before, applied.content);
+        rememberEditBefore(relativePath, before);
+        const importWarnings = await collectImportWarnings(
+          relativePath,
+          applied.content
+        );
+        const editDiagnostics = await collectEditDiagnostics(relativePath);
+        return JSON.stringify({
+          ok: true,
+          path: relativePath,
+          created: false,
+          replacements: applied.replacements,
+          added,
+          removed,
+          diagnostics: editDiagnostics.diagnostics,
+          diagnosticErrorCount: editDiagnostics.errorCount,
+          diagnosticWarningCount: editDiagnostics.warningCount,
+          ...(editDiagnostics.errorCount > 0
+            ? {
+                note: "Fix the diagnostics errors above before finishing. Do not call get_diagnostics again for this file unless you edit it further.",
+              }
+            : importWarnings.length
+              ? {
+                  note: "Fix unresolved imports with search_replace or write_file using real paths from tsconfig aliases / sibling files.",
+                }
+              : {}),
+          ...(importWarnings.length
+            ? {
+                importWarnings,
+              }
+            : {}),
         });
       }
       case "run_command": {
         return await runCommand(
           String(args.command ?? ""),
-          String(args.cwd ?? "")
+          String(args.cwd ?? ""),
+          options?.signal,
+          options?.userText
         );
+      }
+      case "open_external": {
+        const raw = String(args.url ?? "").trim();
+        let parsed: URL;
+        try {
+          parsed = parseHttpUrl(raw);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return JSON.stringify({ error: message });
+        }
+        const opened = await vscode.env.openExternal(
+          vscode.Uri.parse(parsed.toString())
+        );
+        return JSON.stringify({ ok: opened, url: parsed.toString() });
+      }
+      case "fetch_url": {
+        return await fetchUrl(String(args.url ?? ""));
       }
       default:
         return JSON.stringify({ error: `Неизвестный инструмент: ${name}` });

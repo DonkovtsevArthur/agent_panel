@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.46",
+  "version": "0.7.228",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -26,11 +26,15 @@
     "Other"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:agentPanel.chat",
     "onCommand:agentPanel.open",
+    "onCommand:agentPanel.openSettings",
     "onCommand:agentPanel.newChat",
     "onCommand:agentPanel.clearChat",
-    "onCommand:agentPanel.addSelectionToChat"
+    "onCommand:agentPanel.addSelectionToChat",
+    "onCommand:agentPanel.addSelectionToNewChat",
+    "onCommand:agentPanel.generateCommitMessage"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -60,6 +64,11 @@
         "category": "%command.category%"
       },
       {
+        "command": "agentPanel.openSettings",
+        "title": "%command.openSettings.title%",
+        "category": "%command.category%"
+      },
+      {
         "command": "agentPanel.newChat",
         "title": "%command.newAgent.title%",
         "category": "%command.category%"
@@ -78,6 +87,17 @@
         "command": "agentPanel.addSelectionToChat",
         "title": "%command.addSelection.title%",
         "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addSelectionToNewChat",
+        "title": "%command.addSelectionToNewChat.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.generateCommitMessage",
+        "title": "%command.generateCommitMessage.title%",
+        "category": "%command.category%",
+        "icon": "$(sparkle)"
       }
     ],
     "menus": {
@@ -86,11 +106,21 @@
           "command": "agentPanel.open"
         },
         {
+          "command": "agentPanel.openSettings"
+        },
+        {
           "command": "agentPanel.newChat"
         },
         {
           "command": "agentPanel.addSelectionToChat",
           "when": "editorHasSelection"
+        },
+        {
+          "command": "agentPanel.addSelectionToNewChat",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "agentPanel.generateCommitMessage"
         }
       ],
       "editor/context": [
@@ -98,6 +128,18 @@
           "command": "agentPanel.addSelectionToChat",
           "when": "editorHasSelection",
           "group": "navigation@9"
+        },
+        {
+          "command": "agentPanel.addSelectionToNewChat",
+          "when": "editorHasSelection",
+          "group": "navigation@10"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "agentPanel.generateCommitMessage",
+          "when": "scmProvider == git || gitOpenRepositoryCount > 0",
+          "group": "navigation@1"
         }
       ]
     },
@@ -107,6 +149,12 @@
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l",
         "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "agentPanel.addSelectionToNewChat",
+        "key": "ctrl+alt+shift+l",
+        "mac": "cmd+alt+shift+l",
+        "when": "editorTextFocus && editorHasSelection"
       }
     ],
     "configuration": {
@@ -115,7 +163,11 @@
         "agentPanel.language": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "en", "ru"],
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
           "enumDescriptions": [
             "%config.language.enum.auto%",
             "%config.language.enum.en%",
@@ -155,6 +207,11 @@
               "baseUrl": {
                 "type": "string",
                 "description": "%config.providers.baseUrl.description%"
+              },
+              "statusUrl": {
+                "type": "string",
+                "default": "",
+                "description": "%config.providers.statusUrl.description%"
               },
               "apiKey": {
                 "type": "string",
@@ -250,7 +307,7 @@
         },
         "agentPanel.systemPrompt": {
           "type": "string",
-          "default": "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually.",
+          "default": "",
           "description": "%config.systemPrompt.description%"
         },
         "agentPanel.modes": {
@@ -298,7 +355,7 @@
           "type": "number",
           "default": 20,
           "minimum": 1,
-          "maximum": 50,
+          "maximum": 60,
           "description": "%config.maxToolRounds.description%"
         },
         "agentPanel.maxTokens": {
@@ -308,12 +365,60 @@
           "maximum": 128000,
           "description": "%config.maxTokens.description%"
         },
+        "agentPanel.speedRouting.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.enabled.description%"
+        },
+        "agentPanel.speedRouting.fastModel": {
+          "type": "string",
+          "default": "",
+          "description": "%config.speedRouting.fastModel.description%",
+          "deprecationMessage": "Use agentPanel.speedRouting.fastModelIds"
+        },
+        "agentPanel.speedRouting.fastModelIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.speedRouting.fastModelIds.description%"
+        },
+        "agentPanel.speedRouting.readonlyOverride": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.readonlyOverride.description%"
+        },
+        "agentPanel.speedRouting.agentExplore": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.speedRouting.agentExplore.description%"
+        },
+        "agentPanel.visionRouting.preferredModelIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.visionRouting.preferredModelIds.description%"
+        },
+        "agentPanel.visionRouting.preferredModelId": {
+          "type": "string",
+          "default": "",
+          "description": "%config.visionRouting.preferredModelId.description%",
+          "deprecationMessage": "Use agentPanel.visionRouting.preferredModelIds"
+        },
         "agentPanel.maxResponseChars": {
           "type": "number",
           "default": 12000,
           "minimum": 1000,
           "maximum": 200000,
           "description": "%config.maxResponseChars.description%"
+        },
+        "agentPanel.soundNotifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.soundNotifications.enabled.description%"
         },
         "agentPanel.rejectUnauthorized": {
           "type": "boolean",
@@ -324,24 +429,106 @@
           "type": "string",
           "default": "~/Documents/Cline/severstal-ca-bundle.pem",
           "description": "%config.caBundlePath.description%"
+        },
+        "agentPanel.commitMessage.prompt": {
+          "type": "string",
+          "default": "",
+          "description": "%config.commitMessage.prompt.description%"
+        },
+        "agentPanel.commitMessage.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "enumDescriptions": [
+            "%config.commitMessage.language.enum.auto%",
+            "%config.commitMessage.language.enum.en%",
+            "%config.commitMessage.language.enum.ru%"
+          ],
+          "description": "%config.commitMessage.language.description%"
+        },
+        "agentPanel.figma.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.figma.enabled.description%"
+        },
+        "agentPanel.mcp.servers": {
+          "type": "array",
+          "default": [],
+          "description": "%config.mcp.servers.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "transport"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http"
+                ]
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && node scripts/bundle-mcp.js",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "npm run compile && node --test tests/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "marked": "^15.0.12"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "marked": "^15.0.12",
+    "zod": "^4.4.3"
   }
 }

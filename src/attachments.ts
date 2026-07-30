@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ContentPart } from "./openaiClient";
+import { IMAGE_ONLY_ANALYSIS_PROMPT } from "./imagePromptPolicy";
 
 export type AttachmentKind = "image" | "file";
 
@@ -531,7 +532,13 @@ export function extractMentionPaths(text: string): string[] {
   const re = new RegExp(MENTION_RE.source, "g");
   let match: RegExpExecArray | null;
   while ((match = re.exec(String(text || "")))) {
-    const rel = match[1].replace(/^\.\//, "").replace(/^\/+/, "");
+    const raw = String(match[1] || "");
+    // Не превращаем URL-подобные строки в "упоминание файла".
+    // Иначе @https://... воспринимается как @path и триггерит лишнюю логику.
+    if (raw.includes("://") || raw.includes(":")) {
+      continue;
+    }
+    const rel = raw.replace(/^\.\//, "").replace(/^\/+/, "");
     if (!rel || seen.has(rel)) {
       continue;
     }
@@ -663,7 +670,7 @@ export async function buildUserApiContent(
   if (combinedText) {
     parts.push({ type: "text", text: combinedText });
   } else {
-    parts.push({ type: "text", text: "Что на изображении? Опиши и помоги." });
+    parts.push({ type: "text", text: IMAGE_ONLY_ANALYSIS_PROMPT });
   }
   parts.push(...imageParts);
   return parts;

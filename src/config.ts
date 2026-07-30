@@ -1,7 +1,10 @@
 import * as vscode from "vscode";
 import {
+  defaultCommitMessagePromptForLanguage,
   defaultProviderNameForLanguage,
   defaultSystemPromptForLanguage,
+  isBuiltinCommitMessagePrompt,
+  isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
 import {
@@ -10,6 +13,10 @@ import {
   parseCustomModes,
   resolveMode,
 } from "./modes";
+import {
+  resolveModelCapabilities,
+  resolveModelContextWindow,
+} from "./modelCapabilities";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -19,6 +26,11 @@ export interface AgentProvider {
   name?: string;
   baseUrl: string;
   apiKey?: string;
+  /**
+   * URL проверки соединения (GET).
+   * Пусто или равен baseUrl → `{baseUrl}/models`.
+   */
+  statusUrl?: string;
 }
 
 export interface AgentModel {
@@ -46,67 +58,53 @@ export interface ModelEndpoint {
   apiKey: string;
   providerId: string;
   providerName: string;
+  /** Полный URL для GET-проверки статуса (см. resolveProviderProbeUrl). */
+  statusUrl?: string;
+}
+
+/** URL для проверки доступности провайдера. */
+export function resolveProviderProbeUrl(provider: {
+  baseUrl: string;
+  statusUrl?: string;
+}): string {
+  const base = normalizeBaseUrl(provider.baseUrl);
+  if (!base) {
+    return "";
+  }
+  const status = normalizeBaseUrl(provider.statusUrl || "");
+  if (!status || status === base) {
+    return `${base}/models`;
+  }
+  return status;
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 export const DEFAULT_PROVIDER_ID = "default";
 
-/** Известные лимиты контекста по id модели (если не заданы в settings). */
-const KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
-  "DeepSeek-V4-Flash": 128_000,
-  "Qwen3-Coder-Next": 262_144,
-  "Gemma-4-31b": 128_000,
-  "claude-sonnet-4-5": 200_000,
-  "gpt-4.1": 1_047_576,
-  "Gemini 2.5 Flash": 1_048_576,
-};
-
-/** Явные значения vision для дефолтных/известных id. */
-const KNOWN_VISION_SUPPORT: Record<string, boolean> = {
-  "DeepSeek-V4-Flash": false,
-  "Qwen3-Coder-Next": false,
-  "Gemma-4-31b": false,
-  "claude-sonnet-4-5": true,
-  "gpt-4.1": true,
-  "Gemini 2.5 Flash": true,
-};
-
 const DEFAULT_MODELS: AgentModel[] = [
   {
     id: "DeepSeek-V4-Flash",
     label: "DeepSeek V4 Flash",
-    contextWindow: 128_000,
-    supportsVision: false,
   },
   {
     id: "Qwen3-Coder-Next",
     label: "Qwen3 Coder Next",
-    contextWindow: 262_144,
-    supportsVision: false,
   },
   {
     id: "Gemma-4-31b",
     label: "Gemma 4 31B",
-    contextWindow: 128_000,
-    supportsVision: false,
   },
   {
     id: "claude-sonnet-4-5",
     label: "Claude Sonnet 4.5",
-    contextWindow: 200_000,
-    supportsVision: true,
   },
   {
     id: "gpt-4.1",
     label: "GPT-4.1",
-    contextWindow: 1_047_576,
-    supportsVision: true,
   },
   {
     id: "Gemini 2.5 Flash",
     label: "Gemini 2.5 Flash",
-    contextWindow: 1_048_576,
-    supportsVision: true,
   },
 ];
 
@@ -126,8 +124,41 @@ export interface AgentPanelConfig {
   maxToolRounds: number;
   maxTokens: number;
   maxResponseChars: number;
+  /**
+   * When the user selects a heavy model: Plan/Ask run on a fast helper;
+   * Agent gathers context on fast, then edits/answers on the selected model.
+   */
+  speedRouting: {
+    enabled: boolean;
+    /** Ordered model ids allowed as fast helpers; empty = auto. */
+    fastModelIds: string[];
+    /** Plan/Ask override onto fast helper. */
+    readonlyOverride: boolean;
+    /** Agent explore-then-edit on fast helper. */
+    agentExplore: boolean;
+  };
+  /**
+   * Under-the-hood model for image messages when the selected chat model
+   * lacks vision. Empty preferredModelIds → built-in VISION_MODEL_PREFERENCE.
+   */
+  visionRouting: {
+    /** Ordered preferred vision model ids; empty = auto. */
+    preferredModelIds: string[];
+  };
+  soundNotifications: {
+    enabled: boolean;
+  };
   rejectUnauthorized: boolean;
   caBundlePath: string;
+  commitMessage: {
+    prompt: string;
+    language: "auto" | "en" | "ru";
+    /** Откуда сейчас действуют настройки commit message. */
+    scope: "global" | "workspace";
+  };
+  figma: {
+    enabled: boolean;
+  };
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -148,6 +179,7 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
       name?: unknown;
       baseUrl?: unknown;
       apiKey?: unknown;
+      statusUrl?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     const baseUrl = normalizeBaseUrl(
@@ -163,6 +195,12 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
     }
     if (typeof row.apiKey === "string" && row.apiKey) {
       provider.apiKey = row.apiKey;
+    }
+    const statusUrl = normalizeBaseUrl(
+      typeof row.statusUrl === "string" ? row.statusUrl : ""
+    );
+    if (statusUrl && statusUrl !== baseUrl) {
+      provider.statusUrl = statusUrl;
     }
     providers.push(provider);
   }
@@ -313,6 +351,30 @@ function compareModelsByFavoriteThenLabel(a: AgentModel, b: AgentModel): number 
   });
 }
 
+function readCommitMessageLanguage(
+  value: unknown
+): "auto" | "en" | "ru" {
+  if (value === "ru" || value === "en" || value === "auto") {
+    return value;
+  }
+  return "auto";
+}
+
+function resolveCommitMessageScope(
+  cfg: vscode.WorkspaceConfiguration
+): "global" | "workspace" {
+  for (const key of ["commitMessage.prompt", "commitMessage.language"]) {
+    const info = cfg.inspect(key);
+    if (
+      info?.workspaceValue !== undefined ||
+      info?.workspaceFolderValue !== undefined
+    ) {
+      return "workspace";
+    }
+  }
+  return "global";
+}
+
 export function getConfig(): AgentPanelConfig {
   const cfg = vscode.workspace.getConfiguration("agentPanel");
   const legacyBaseUrl = normalizeBaseUrl(
@@ -350,18 +412,82 @@ export function getConfig(): AgentPanelConfig {
     providers,
     models,
     modes,
-    defaultModel: cfg.get<string>("defaultModel") ?? models[0]?.id ?? "",
+    defaultModel:
+      models.find((m) => m.enabled !== false)?.id || models[0]?.id || "",
     defaultContextWindow,
-    systemPrompt:
-      cfg.get<string>("systemPrompt") ??
-      defaultSystemPromptForLanguage(resolveUiLanguage(language)),
+    systemPrompt: (() => {
+      const stored = String(cfg.get<string>("systemPrompt") || "").trim();
+      if (isBuiltinSystemPrompt(stored)) {
+        return defaultSystemPromptForLanguage(resolveUiLanguage(language));
+      }
+      return stored;
+    })(),
     maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
     maxTokens: cfg.get<number>("maxTokens") ?? 4096,
     maxResponseChars: cfg.get<number>("maxResponseChars") ?? 12_000,
+    speedRouting: (() => {
+      const rawIds = cfg.get<unknown>("speedRouting.fastModelIds");
+      const fromArray = Array.isArray(rawIds)
+        ? rawIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .filter((id, index, all) => all.indexOf(id) === index)
+        : [];
+      const legacy = String(cfg.get<string>("speedRouting.fastModel") || "").trim();
+      return {
+        enabled: cfg.get<boolean>("speedRouting.enabled") !== false,
+        fastModelIds:
+          fromArray.length > 0 ? fromArray : legacy ? [legacy] : [],
+        readonlyOverride:
+          cfg.get<boolean>("speedRouting.readonlyOverride") !== false,
+        agentExplore: cfg.get<boolean>("speedRouting.agentExplore") !== false,
+      };
+    })(),
+    visionRouting: (() => {
+      const rawIds = cfg.get<unknown>("visionRouting.preferredModelIds");
+      const fromArray = Array.isArray(rawIds)
+        ? rawIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .filter((id, index, all) => all.indexOf(id) === index)
+        : [];
+      const legacy = String(
+        cfg.get<string>("visionRouting.preferredModelId") || ""
+      ).trim();
+      return {
+        preferredModelIds:
+          fromArray.length > 0 ? fromArray : legacy ? [legacy] : [],
+      };
+    })(),
+    soundNotifications: {
+      enabled: cfg.get<boolean>("soundNotifications.enabled") !== false,
+    },
     rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? false,
     caBundlePath:
       cfg.get<string>("caBundlePath") ??
       "~/Documents/Cline/severstal-ca-bundle.pem",
+    commitMessage: (() => {
+      const commitLanguage = readCommitMessageLanguage(
+        cfg.get("commitMessage.language")
+      );
+      const commitLangResolved =
+        commitLanguage === "ru" || commitLanguage === "en"
+          ? commitLanguage
+          : resolveUiLanguage(language);
+      const storedPrompt = String(
+        cfg.get<string>("commitMessage.prompt") || ""
+      ).trim();
+      return {
+        prompt: isBuiltinCommitMessagePrompt(storedPrompt)
+          ? defaultCommitMessagePromptForLanguage(commitLangResolved)
+          : storedPrompt,
+        language: commitLanguage,
+        scope: resolveCommitMessageScope(cfg),
+      };
+    })(),
+    figma: {
+      enabled: cfg.get<boolean>("figma.enabled") === true,
+    },
   };
 }
 
@@ -373,48 +499,20 @@ export function getModeById(id: unknown): AgentModeDef {
   return resolveMode(id, getConfig().modes);
 }
 
-/** Контекстное окно для модели: settings → known map → default. */
+/** Контекстное окно для модели: settings → capability registry → default. */
 export function getContextWindow(modelId: string): number {
   const config = getConfig();
   const fromSettings = config.models.find((m) => m.id === modelId)?.contextWindow;
-  if (fromSettings && fromSettings > 0) {
-    return fromSettings;
-  }
-  const known = KNOWN_CONTEXT_WINDOWS[modelId];
-  if (known && known > 0) {
-    return known;
-  }
-  return config.defaultContextWindow;
+  return resolveModelContextWindow(
+    modelId,
+    fromSettings,
+    config.defaultContextWindow
+  );
 }
 
 /** Эвристика vision по id, если флаг не задан в settings. */
 export function guessModelSupportsVision(modelId: string): boolean {
-  const id = String(modelId || "").trim();
-  if (!id) {
-    return false;
-  }
-  if (Object.prototype.hasOwnProperty.call(KNOWN_VISION_SUPPORT, id)) {
-    return KNOWN_VISION_SUPPORT[id];
-  }
-  const lower = id.toLowerCase();
-  if (
-    /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/.test(
-      lower
-    )
-  ) {
-    return false;
-  }
-  if (
-    /gpt-4o|gpt-4\.1|gpt-5|o[1-9]|claude|gemini|llava|vision|pixtral|gpt-image/.test(
-      lower
-    )
-  ) {
-    return true;
-  }
-  if (/gemma-3|gemma3/.test(lower)) {
-    return true;
-  }
-  return false;
+  return resolveModelCapabilities(modelId).supportsVision;
 }
 
 /** Итоговое supportsVision: явный флаг модели → known/эвристика. */
@@ -426,15 +524,13 @@ export function resolveModelSupportsVision(
   }
   if (typeof modelOrId === "string") {
     const fromConfig = getConfig().models.find((m) => m.id === modelOrId);
-    if (fromConfig && typeof fromConfig.supportsVision === "boolean") {
-      return fromConfig.supportsVision;
-    }
-    return guessModelSupportsVision(modelOrId);
+    return resolveModelCapabilities(modelOrId, {
+      supportsVision: fromConfig?.supportsVision,
+    }).supportsVision;
   }
-  if (typeof modelOrId.supportsVision === "boolean") {
-    return modelOrId.supportsVision;
-  }
-  return guessModelSupportsVision(modelOrId.id);
+  return resolveModelCapabilities(modelOrId.id, {
+    supportsVision: modelOrId.supportsVision,
+  }).supportsVision;
 }
 
 /** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
@@ -468,10 +564,13 @@ export function resolveModelEndpoint(modelId: string): ModelEndpoint {
     };
   }
 
+  const baseUrl = normalizeBaseUrl(provider.baseUrl);
+  const statusUrl = normalizeBaseUrl(provider.statusUrl || "");
   return {
-    baseUrl: normalizeBaseUrl(provider.baseUrl),
+    baseUrl,
     apiKey: provider.apiKey || "",
     providerId: provider.id,
     providerName: provider.name || provider.id,
+    statusUrl: statusUrl && statusUrl !== baseUrl ? statusUrl : undefined,
   };
 }
