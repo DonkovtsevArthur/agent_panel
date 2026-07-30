@@ -2285,6 +2285,7 @@
     if (!item || item.role !== "user" || busy) {
       return;
     }
+    const preservedScrollTop = messagesEl.scrollTop;
     closeMenu();
     closeEditModelMenu();
     editingUserIndex = index;
@@ -2293,16 +2294,17 @@
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
-    renderMessages(uiMessagesCache);
+    renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
 
   function cancelEditingUserMessage() {
+    const preservedScrollTop = messagesEl.scrollTop;
     closeEditModelMenu();
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
     editingAttachments = [];
-    renderMessages(uiMessagesCache);
+    renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
 
   function submitEditedUserMessage() {

@@ -10,6 +10,7 @@
   "command.clearChat.title": "Новый агент",
   "command.attachFile.title": "Прикрепить файл",
   "command.addSelection.title": "Добавить выделение в чат",
+  "command.addSelectionToNewChat.title": "Добавить выделение в новый чат",
   "command.generateCommitMessage.title": "Сгенерировать сообщение коммита",
   "config.title": "Гавань агентов",
   "config.language.description": "Язык интерфейса плагина. Auto берёт язык отображения VS Code.",

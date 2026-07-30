@@ -308,6 +308,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    await this.queueSelectionForComposer(selection);
+  }
+
+  /** Создать агента и вставить выделенный код в composer его нового чата. */
+  async addSelectionToNewChat(): Promise<void> {
+    const selection = getEditorSelectionPayload();
+    if (!selection) {
+      void vscode.window.showInformationMessage(
+        "Select a code fragment in the editor."
+      );
+      return;
+    }
+
+    this.newChat();
+    await this.queueSelectionForComposer(selection);
+  }
+
+  private async queueSelectionForComposer(
+    selection: NonNullable<ReturnType<typeof getEditorSelectionPayload>>
+  ): Promise<void> {
     this.pendingComposerSelection = selection;
     this.pendingComposerInsert = "";
     this.setScreen("chat");

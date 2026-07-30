@@ -10,6 +10,7 @@
   "command.clearChat.title": "New Agent",
   "command.attachFile.title": "Attach File",
   "command.addSelection.title": "Add Selection to Chat",
+  "command.addSelectionToNewChat.title": "Add Selection to New Chat",
   "command.generateCommitMessage.title": "Generate Commit Message",
   "config.title": "Harbor Agents",
   "config.language.description": "Plugin UI language. Auto follows the VS Code display language.",
