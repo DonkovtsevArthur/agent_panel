@@ -279,3 +279,96 @@ export function looksLikeUserEditRequest(text: string): boolean {
 
   return false;
 }
+
+/**
+ * Вопрос / просьба объяснить — в Agent режиме можно отвечать как Ask
+ * (readonly tools, без правок). Не срабатывает, если это запрос на правку.
+ */
+export function looksLikeQuestionRequest(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw || looksLikeUserEditRequest(raw)) {
+    return false;
+  }
+
+  if (/[?？]\s*$/u.test(raw) || /[?？]/u.test(raw.slice(0, 280))) {
+    return true;
+  }
+
+  const head = raw.slice(0, 160).toLowerCase();
+  // JS `\b` is ASCII-only — do not use it after Cyrillic tokens.
+  const ruStarters = [
+    "что ",
+    "что\u00a0",
+    "как ",
+    "как\u00a0",
+    "почему ",
+    "зачем ",
+    "где ",
+    "когда ",
+    "какой ",
+    "какая ",
+    "какие ",
+    "какое ",
+    "кто ",
+    "сколько ",
+    "чем ",
+    "в чём ",
+    "в чем ",
+    "можно ли ",
+    "есть ли ",
+    "верно ли ",
+    "правильно ли ",
+    "расскажи ",
+    "объясни ",
+    "поясни ",
+    "покажи ",
+    "разбери ",
+    "проанализируй ",
+    "что такое ",
+    "как работает ",
+    "в чём разница ",
+    "в чем разница ",
+  ];
+  if (ruStarters.some((prefix) => head.startsWith(prefix))) {
+    return true;
+  }
+
+  const enStarters = [
+    /^what\b/i,
+    /^how\b/i,
+    /^why\b/i,
+    /^where\b/i,
+    /^when\b/i,
+    /^which\b/i,
+    /^who\b/i,
+    /^explain\b/i,
+    /^describe\b/i,
+    /^tell me\b/i,
+    /^can you (explain|tell|describe|clarify)\b/i,
+    /^could you (explain|tell|describe|clarify)\b/i,
+    /^is there\b/i,
+    /^are there\b/i,
+    /^does\b/i,
+    /^is it\b/i,
+  ];
+  if (enStarters.some((re) => re.test(head))) {
+    return true;
+  }
+
+  const body = raw.toLowerCase();
+  const midNeedles = [
+    "что такое",
+    "как работает",
+    "в чём разница",
+    "в чем разница",
+    "чем отличается",
+    "зачем нужен",
+    "зачем нужна",
+    "для чего",
+    "what is",
+    "how does",
+    "how do",
+    "difference between",
+  ];
+  return hasAny(body, midNeedles);
+}

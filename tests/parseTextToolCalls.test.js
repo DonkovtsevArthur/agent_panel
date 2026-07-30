@@ -53,3 +53,34 @@ test("parseTextToolCalls coerces primitive parameter values", () => {
     safe: true,
   });
 });
+
+test("parseTextToolCalls recovers search_replace invoke parameters", () => {
+  const parsed = parseTextToolCalls(`
+<invoke name="search_replace">
+  <parameter name="relativePath">src/example.ts</parameter>
+  <parameter name="old_string">const oldName = 1;</parameter>
+  <parameter name="new_string">const newName = 1;</parameter>
+  <parameter name="replace_all">true</parameter>
+</invoke>
+`);
+
+  assert.equal(parsed.calls[0].function.name, "search_replace");
+  assert.deepEqual(JSON.parse(parsed.calls[0].function.arguments), {
+    relativePath: "src/example.ts",
+    old_string: "const oldName = 1;",
+    new_string: "const newName = 1;",
+    replace_all: true,
+  });
+});
+
+test("parseTextToolCalls keeps empty search_replace new_string", () => {
+  const parsed = parseTextToolCalls(`
+<tool_call>{"name":"search_replace","arguments":{"relativePath":"a.txt","old_string":"remove me","new_string":""}}</tool_call>
+`);
+
+  assert.deepEqual(JSON.parse(parsed.calls[0].function.arguments), {
+    relativePath: "a.txt",
+    old_string: "remove me",
+    new_string: "",
+  });
+});

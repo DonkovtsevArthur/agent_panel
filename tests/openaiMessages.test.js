@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const {
   toApiMessages,
   isKimiFamilyModel,
+  resolveRequestMaxTokens,
+  KIMI_MIN_MAX_TOKENS,
 } = require("../out/openaiClient.js");
 
 test("isKimiFamilyModel detects kimi / moonshot ids", () => {
@@ -11,6 +13,16 @@ test("isKimiFamilyModel detects kimi / moonshot ids", () => {
   assert.equal(isKimiFamilyModel("moonshot/kimi-k2.5"), true);
   assert.equal(isKimiFamilyModel("kimi2.6"), true);
   assert.equal(isKimiFamilyModel("gpt-4o"), false);
+});
+
+test("resolveRequestMaxTokens floors Kimi but keeps other models", () => {
+  assert.equal(resolveRequestMaxTokens("kimi-k2.6", 4096), KIMI_MIN_MAX_TOKENS);
+  assert.equal(resolveRequestMaxTokens("kimi-k2.6", 20000), 20000);
+  assert.equal(resolveRequestMaxTokens("kimi-k2.6"), KIMI_MIN_MAX_TOKENS);
+  assert.equal(resolveRequestMaxTokens("kimi-k2.6", 4096, 4096), 4096);
+  assert.equal(resolveRequestMaxTokens("kimi-k2.6", 2048, 2048), 2048);
+  assert.equal(resolveRequestMaxTokens("gpt-4o", 4096), 4096);
+  assert.equal(resolveRequestMaxTokens("gpt-4o"), undefined);
 });
 
 test("toApiMessages omits empty content when tool_calls present", () => {

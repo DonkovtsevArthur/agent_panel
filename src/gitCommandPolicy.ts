@@ -60,6 +60,15 @@ export function isGitPushCommand(command: string): boolean {
   return /(?:^|[;&|]\s*)git\s+push(?:\s|$)/i.test(String(command || ""));
 }
 
+export function isGitCommitCommand(command: string): boolean {
+  return /(?:^|[;&|]\s*)git\s+commit(?:\s|$)/i.test(String(command || ""));
+}
+
+/** Commit/push только через UI-тег — агент не должен делать их через run_command. */
+export function shouldBlockGitCommitOrPush(command: string): boolean {
+  return isGitCommitCommand(command) || isGitPushCommand(command);
+}
+
 export function isGitMutationCommand(command: string): boolean {
   return /(?:^|[;&|]\s*)git\s+(?:commit|restore|revert|reset|clean)(?:\s|$)/i.test(
     String(command || "")
@@ -68,4 +77,31 @@ export function isGitMutationCommand(command: string): boolean {
 
 export function isGitStatusCommand(command: string): boolean {
   return /(?:^|[;&|]\s*)git\s+status(?:\s|$)/i.test(String(command || ""));
+}
+
+/** Вывод push с remote-ссылками (MR и т.п.) — для кликабельного ответа в чате. */
+export function formatGitRemoteOutput(
+  stdout?: string,
+  stderr?: string
+): string {
+  const text = [stderr, stdout]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  if (!text) {
+    return "";
+  }
+  const lines = text.split(/\r?\n/);
+  const useful = lines.filter((line) => {
+    const value = line.trim();
+    return (
+      /https?:\/\//i.test(value) ||
+      /^remote:/i.test(value) ||
+      /^To\s+\S+/i.test(value) ||
+      /\*\s+\[[^\]]+\]/i.test(value) ||
+      /\b[0-9a-f]{7,}\.\.[0-9a-f]{7,}\b/i.test(value)
+    );
+  });
+  return (useful.length ? useful : lines).join("\n").trim();
 }

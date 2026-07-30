@@ -72,6 +72,31 @@ export function looksLikeHollowStatusOrDeferral(text: string): boolean {
     return true;
   }
 
+  // Модель нашла устаревший тест, но перекладывает очевидное обновление
+  // ожидания на пользователя вместо завершения изменения поведения.
+  if (
+    hasAny(value, ["тест", ".test.", ".spec.", "test ", "spec "]) &&
+    hasAny(value, [
+      "ожидает",
+      "будет падать",
+      "теперь падает",
+      "expects",
+      "will fail",
+      "failing",
+    ]) &&
+    hasAny(value, [
+      "нужно обновить",
+      "обновить ожидание",
+      "обновить тест",
+      "обновить?",
+      "should i update",
+      "update the expectation?",
+      "update the test?",
+    ])
+  ) {
+    return true;
+  }
+
   // Утверждает, что объяснил, но в сообщении почти нет содержания
   if (
     hasAny(value, ["объяснил", "explained"]) &&

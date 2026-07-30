@@ -13,12 +13,17 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
+import { selectUtilityModel } from "./modelRouting";
 import { OpenAICompatibleClient } from "./openaiClient";
+import {
+  capWorkspaceRuleText,
+  DEFAULT_WORKSPACE_RULE_CHAR_CAP,
+  readWorkspaceRuleFile,
+} from "./workspaceRules";
 
 const execFileAsync = promisify(execFile);
 
 const MAX_DIFF_CHARS = 90_000;
-const MAX_RULE_CHARS = 12_000;
 
 const COMMIT_RULE_CANDIDATES = [
   ".cursor/rules/commit.mdc",
@@ -148,20 +153,44 @@ function truncateDiff(text: string): { text: string; truncated: boolean } {
   };
 }
 
-/** Собрать staged diff, иначе unstaged + status. */
+function normalizeRelPaths(paths: string[] = []): string[] {
+  return [
+    ...new Set(
+      paths
+        .map((p) =>
+          String(p || "")
+            .trim()
+            .replace(/^\.\//, "")
+            .replace(/^\/+/, "")
+            .replace(/\\/g, "/")
+        )
+        .filter(Boolean)
+    ),
+  ];
+}
+
+/** Собрать staged diff, иначе unstaged + status. Опционально — только по путям. */
 export async function collectCommitDiff(
-  cwd: string
+  cwd: string,
+  paths: string[] = []
 ): Promise<{ diff: string; source: "staged" | "unstaged" } | undefined> {
+  const scoped = normalizeRelPaths(paths);
+  const pathArgs = scoped.length ? (["--", ...scoped] as string[]) : [];
   try {
-    const staged = (await runGit(cwd, ["diff", "--cached"])).trim();
+    const staged = (await runGit(cwd, ["diff", "--cached", ...pathArgs])).trim();
     if (staged) {
       const { text } = truncateDiff(staged);
       return { diff: text, source: "staged" };
     }
 
-    const unstaged = (await runGit(cwd, ["diff"])).trim();
+    const unstaged = (await runGit(cwd, ["diff", ...pathArgs])).trim();
     const status = (
-      await runGit(cwd, ["status", "--porcelain", "--untracked-files=normal"])
+      await runGit(cwd, [
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        ...pathArgs,
+      ])
     ).trim();
     if (!unstaged && !status) {
       return undefined;
@@ -200,28 +229,6 @@ function cleanCommitMessage(raw: string): string {
   return text;
 }
 
-function stripFrontmatter(raw: string): string {
-  const text = String(raw || "");
-  if (!text.startsWith("---")) {
-    return text.trim();
-  }
-  const end = text.indexOf("\n---", 3);
-  if (end < 0) {
-    return text.trim();
-  }
-  return text.slice(end + 4).trim();
-}
-
-async function readTextFile(filePath: string): Promise<string | undefined> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const body = stripFrontmatter(raw);
-    return body || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function findCommitRuleInCursorRules(
   root: string
 ): Promise<string | undefined> {
@@ -241,14 +248,14 @@ async function findCommitRuleInCursorRules(
     /commit|git.?message|committing/i.test(name)
   );
   for (const name of byName) {
-    const body = await readTextFile(path.join(rulesDir, name));
+    const body = await readWorkspaceRuleFile(path.join(rulesDir, name));
     if (body) {
       return body;
     }
   }
 
   for (const name of files) {
-    const body = await readTextFile(path.join(rulesDir, name));
+    const body = await readWorkspaceRuleFile(path.join(rulesDir, name));
     if (body && RULE_HINT.test(body)) {
       return body;
     }
@@ -267,7 +274,7 @@ async function findGitCommitTemplate(cwd: string): Promise<string | undefined> {
     const resolved = path.isAbsolute(template)
       ? template
       : path.join(cwd, template);
-    return readTextFile(resolved);
+    return readWorkspaceRuleFile(resolved);
   } catch {
     return undefined;
   }
@@ -278,7 +285,7 @@ export async function loadProjectCommitRule(
   root: string
 ): Promise<string | undefined> {
   for (const rel of COMMIT_RULE_CANDIDATES) {
-    const body = await readTextFile(path.join(root, rel));
+    const body = await readWorkspaceRuleFile(path.join(root, rel));
     if (!body) {
       continue;
     }
@@ -289,17 +296,17 @@ export async function loadProjectCommitRule(
     ) {
       continue;
     }
-    return body.slice(0, MAX_RULE_CHARS);
+    return capWorkspaceRuleText(body, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
   }
 
   const fromRules = await findCommitRuleInCursorRules(root);
   if (fromRules) {
-    return fromRules.slice(0, MAX_RULE_CHARS);
+    return capWorkspaceRuleText(fromRules, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
   }
 
   const fromTemplate = await findGitCommitTemplate(root);
   if (fromTemplate) {
-    return fromTemplate.slice(0, MAX_RULE_CHARS);
+    return capWorkspaceRuleText(fromTemplate, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
   }
 
   return undefined;
@@ -340,6 +347,122 @@ function buildPrompts(
   };
 }
 
+/** Fallback, если модель недоступна. */
+export function fallbackCommitMessage(
+  paths: string[],
+  lang: "en" | "ru" = "en"
+): string {
+  const list = normalizeRelPaths(paths);
+  if (!list.length) {
+    return lang === "ru" ? "Обновить изменения" : "Update changes";
+  }
+  if (list.length === 1) {
+    return lang === "ru" ? `Обновить ${list[0]}` : `Update ${list[0]}`;
+  }
+  return lang === "ru"
+    ? `Обновить ${list.length} файлов`
+    : `Update ${list.length} files`;
+}
+
+/**
+ * Сгенерировать текст сообщения коммита по diff.
+ * Без UI — для SCM-команды и детерминированного commit/push из панели.
+ */
+export async function composeCommitMessageText(
+  cwd: string,
+  collected?: { diff: string; source: "staged" | "unstaged" },
+  signal?: AbortSignal,
+  paths: string[] = []
+): Promise<string> {
+  const data = collected ?? (await collectCommitDiff(cwd, paths));
+  if (!data) {
+    return "";
+  }
+
+  const config = getConfig();
+  const uiLang = resolveUiLanguage(config.language);
+  const commitLangSetting = config.commitMessage.language;
+  const lang =
+    commitLangSetting === "ru" || commitLangSetting === "en"
+      ? commitLangSetting
+      : uiLang;
+
+  const enabled = getEnabledModels().filter((m) => {
+    const endpoint = resolveModelEndpoint(m.id);
+    return Boolean(endpoint.baseUrl && endpoint.apiKey);
+  });
+  const mainModelId =
+    (config.defaultModel &&
+    enabled.some((m) => m.id === config.defaultModel)
+      ? config.defaultModel
+      : "") ||
+    enabled[0]?.id ||
+    "";
+  // Под капотом для коммита — лёгкая модель, если она включена; иначе основная.
+  const modelId =
+    selectUtilityModel(enabled, { fallbackModelId: mainModelId })?.modelId ||
+    mainModelId;
+  if (!modelId) {
+    return fallbackCommitMessage(paths, lang);
+  }
+
+  const endpoint = resolveModelEndpoint(modelId);
+  if (!endpoint.baseUrl || !endpoint.apiKey) {
+    return fallbackCommitMessage(paths, lang);
+  }
+
+  const storedPrompt = String(
+    vscode.workspace
+      .getConfiguration("agentPanel")
+      .get<string>("commitMessage.prompt") || ""
+  ).trim();
+  const hasCustomPrompt =
+    Boolean(storedPrompt) && !isBuiltinCommitMessagePrompt(storedPrompt);
+  const projectRule = hasCustomPrompt
+    ? undefined
+    : await loadProjectCommitRule(cwd);
+  const instruction = hasCustomPrompt
+    ? storedPrompt
+    : projectRule || defaultCommitMessagePromptForLanguage(lang);
+  const prompts = buildPrompts(
+    lang,
+    data.diff,
+    data.source,
+    instruction
+  );
+  const client = new OpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
+    rejectUnauthorized: config.rejectUnauthorized,
+    caBundlePath: config.caBundlePath,
+  });
+
+  const result = await client.chatCompletions(
+    {
+      model: modelId,
+      messages: [
+        { role: "system", content: prompts.system },
+        { role: "user", content: prompts.user },
+      ],
+      temperature: 0.2,
+      max_tokens: 256,
+    },
+    signal
+  );
+  const content = result.message.content;
+  const raw =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((part) =>
+              part && typeof part === "object" && "text" in part
+                ? String(part.text || "")
+                : ""
+            )
+            .join("")
+        : "";
+  return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+}
+
 export async function generateCommitMessage(
   arg?: unknown
 ): Promise<void> {
@@ -365,65 +488,7 @@ export async function generateCommitMessage(
     return;
   }
 
-  const config = getConfig();
-  const enabled = getEnabledModels();
-  const modelId =
-    (config.defaultModel &&
-    enabled.some((m) => m.id === config.defaultModel)
-      ? config.defaultModel
-      : "") ||
-    enabled[0]?.id ||
-    "";
-  if (!modelId) {
-    void vscode.window.showWarningMessage(
-      "No models are enabled. Enable a model in Harbor Agents settings."
-    );
-    return;
-  }
-
-  const endpoint = resolveModelEndpoint(modelId);
-  if (!endpoint.baseUrl) {
-    void vscode.window.showWarningMessage(
-      `No base URL is configured for "${endpoint.providerName}". Add a provider in Harbor Agents settings.`
-    );
-    return;
-  }
-  if (!endpoint.apiKey) {
-    void vscode.window.showWarningMessage(
-      `No API key is configured for "${endpoint.providerName}". Add a key in Harbor Agents settings.`
-    );
-    return;
-  }
-
-  const uiLang = resolveUiLanguage(config.language);
-  const commitLangSetting = config.commitMessage.language;
-  const lang =
-    commitLangSetting === "ru" || commitLangSetting === "en"
-      ? commitLangSetting
-      : uiLang;
-  const storedPrompt = String(
-    vscode.workspace
-      .getConfiguration("agentPanel")
-      .get<string>("commitMessage.prompt") || ""
-  ).trim();
-  const hasCustomPrompt =
-    Boolean(storedPrompt) && !isBuiltinCommitMessagePrompt(storedPrompt);
-  const projectRule = hasCustomPrompt
-    ? undefined
-    : await loadProjectCommitRule(cwd);
-  const instruction = hasCustomPrompt
-    ? storedPrompt
-    : projectRule || defaultCommitMessagePromptForLanguage(lang);
-  const prompts = buildPrompts(
-    lang,
-    collected.diff,
-    collected.source,
-    instruction
-  );
-  const client = new OpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
-    rejectUnauthorized: config.rejectUnauthorized,
-    caBundlePath: config.caBundlePath,
-  });
+  const lang = resolveUiLanguage(getConfig().language);
 
   try {
     const message = await vscode.window.withProgress(
@@ -438,32 +503,7 @@ export async function generateCommitMessage(
       async (_progress, token) => {
         const abort = new AbortController();
         token.onCancellationRequested(() => abort.abort());
-        const result = await client.chatCompletions(
-          {
-            model: modelId,
-            messages: [
-              { role: "system", content: prompts.system },
-              { role: "user", content: prompts.user },
-            ],
-            temperature: 0.2,
-            max_tokens: 256,
-          },
-          abort.signal
-        );
-        const content = result.message.content;
-        const raw =
-          typeof content === "string"
-            ? content
-            : Array.isArray(content)
-              ? content
-                  .map((part) =>
-                    part && typeof part === "object" && "text" in part
-                      ? String(part.text || "")
-                      : ""
-                  )
-                  .join("")
-              : "";
-        return cleanCommitMessage(raw);
+        return composeCommitMessageText(cwd, collected, abort.signal);
       }
     );
 

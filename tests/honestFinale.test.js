@@ -70,6 +70,49 @@ test("no-op write_file (0 lines) is not a successful write", () => {
   assert.equal(precedingToolRoundHadSuccessfulWrite(messages), false);
 });
 
+test("successful search_replace counts as a write, but no-op does not", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "replace",
+          type: "function",
+          function: { name: "search_replace", arguments: "{}" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      name: "search_replace",
+      tool_call_id: "replace",
+      content: JSON.stringify({
+        ok: true,
+        path: "a.tsx",
+        replacements: 1,
+        added: 0,
+        removed: 0,
+      }),
+    },
+    { role: "assistant", content: "Заменил вызов функции." },
+  ];
+
+  assert.equal(precedingToolRoundHadSuccessfulWrite(messages), true);
+
+  messages[1].content = JSON.stringify({
+    ok: false,
+    path: "a.tsx",
+    unchanged: true,
+    error: {
+      code: "NO_CHANGE",
+      message: "Replacement would not change the file.",
+      matchCount: 1,
+    },
+  });
+  assert.equal(precedingToolRoundHadSuccessfulWrite(messages), false);
+});
+
 test("decideHonestFinale blocks claimed edits without write", () => {
   const decision = decideHonestFinale({
     text: "Вернул пропсы cancelButtonText на место, ничего не сломается.",

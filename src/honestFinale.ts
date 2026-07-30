@@ -11,10 +11,10 @@ import {
 } from "./hollowReplies";
 
 export const MISSING_WRITE_USER_NUDGE =
-  "False: you described code changes but did NOT successfully call write_file in this step. write_file IS available. Do NOT claim you already returned/fixed/restored anything. Call write_file now with the full updated file content, then reply briefly.";
+  "False: you described code changes but did NOT successfully call write_file or search_replace in this step. Editing tools ARE available. Do NOT claim you already returned/fixed/restored anything. Call search_replace for a focused edit or write_file for full content, then reply briefly.";
 
 export const MISSING_WRITE_USER_VISIBLE =
-  "Файлы не изменены: модель описала правки («вернул / исправил»), но не вызвала write_file успешно в этом шаге. Повторите запрос — изменения нужно применить через инструменты.";
+  "Файлы не изменены: модель описала правки («вернул / исправил»), но не применила их успешно через write_file или search_replace в этом шаге. Повторите запрос — изменения нужно применить через инструменты.";
 
 export const HEDGE_USER_NUDGE =
   "Do not speculate («возможно», «если TypeScript ругается», «попробую пересобрать»). Either call tools now (read_file / run_command with the real build or tsc command) and report the actual result, or give a final factual answer without unfinished promises. Never end with «I'll try…».";
@@ -23,10 +23,10 @@ export const HEDGE_USER_VISIBLE =
   "Модель ответила догадкой («возможно / если TS ругается / попробую пересобрать») вместо проверки. Повторите запрос — нужно проверить через инструменты и дать фактический результат.";
 
 export const HOLLOW_USER_NUDGE =
-  "False: do NOT claim you already explained something or that the file is already correct unless THIS reply contains the actual explanation. Write the concrete reason in the reply now. Do not say «скажи — перепишу/переделаю»: if a layout change is needed, call write_file now. Before changing shared UI, search usages (rg) and update consumers or keep a backwards-compatible API.";
+  "False: do NOT claim you already explained something or that the file is already correct unless THIS reply contains the actual explanation. Write the concrete reason in the reply now. Do not defer obvious follow-up work to the user. If an existing test expects the old behavior, update its expectation with search_replace and run that single test file now; do not ask permission. If a layout change is needed, call search_replace or write_file now. Before changing shared UI, search usages (rg) and update consumers or keep a backwards-compatible API.";
 
 export const HOLLOW_USER_VISIBLE =
-  "Модель ответила пустышкой («файл уже ок / я объяснил / скажи — перепишу») без реального объяснения в сообщении. Повторите запрос — нужен конкретный ответ или write_file.";
+  "Модель ответила пустышкой («файл уже ок / я объяснил / скажи — перепишу») без реального объяснения в сообщении. Повторите запрос — нужен конкретный ответ или применение правки через инструмент.";
 
 export const IMPACT_USER_NUDGE =
   "You changed (or claim to change) shared UI layout/structure. Before finishing: run_command with rg/grep to find imports and usages of this component, check whether other call sites break, update them if needed, and report the impact. Do NOT say «скажи — верну/переделаю». Prefer backwards-compatible API (optional props) over breaking shared components unilaterally.";
@@ -43,7 +43,7 @@ export type HonestFinaleDecision =
   | { kind: "replace"; text: string };
 
 /**
- * Успешный write_file в tool-раунде сразу перед финальным текстом.
+ * Успешный файловый edit в tool-раунде сразу перед финальным текстом.
  * Смотрим результаты tool (ok:true), а не только факт вызова.
  */
 export function precedingToolRoundHadSuccessfulWrite(
@@ -64,7 +64,10 @@ export function precedingToolRoundHadSuccessfulWrite(
     const m = messages[i];
     if (m.role === "tool") {
       sawTool = true;
-      if (m.name === "write_file" && toolResultLooksSuccessful(m.content)) {
+      if (
+        (m.name === "write_file" || m.name === "search_replace") &&
+        toolResultLooksSuccessful(m.content, m.name)
+      ) {
         return true;
       }
       i -= 1;
@@ -79,7 +82,10 @@ export function precedingToolRoundHadSuccessfulWrite(
   return false;
 }
 
-function toolResultLooksSuccessful(content: ChatMessage["content"]): boolean {
+function toolResultLooksSuccessful(
+  content: ChatMessage["content"],
+  toolName: string
+): boolean {
   const raw =
     typeof content === "string"
       ? content
@@ -99,19 +105,27 @@ function toolResultLooksSuccessful(content: ChatMessage["content"]): boolean {
       created?: unknown;
       added?: unknown;
       removed?: unknown;
+      replacements?: unknown;
+      unchanged?: unknown;
     };
     if (parsed.error) {
       return false;
     }
-    if (parsed.ok === false) {
+    if (parsed.ok === false || parsed.unchanged === true) {
       return false;
     }
     const added = Number(parsed.added) || 0;
     const removed = Number(parsed.removed) || 0;
     const created = Boolean(parsed.created);
+    const replacements = Number(parsed.replacements) || 0;
     // ok:true с 0 правок = no-op, не считаем успешной записью
     if (parsed.ok === true) {
-      return created || added > 0 || removed > 0;
+      return (
+        created ||
+        added > 0 ||
+        removed > 0 ||
+        (toolName === "search_replace" && replacements > 0)
+      );
     }
     if (typeof parsed.path === "string" && parsed.path.trim()) {
       return created || added > 0 || removed > 0;
@@ -151,7 +165,10 @@ function turnHadUsageSearch(messages: ChatMessage[]): boolean {
 
 function editedSharedLookingPath(messages: ChatMessage[]): boolean {
   for (const m of messages) {
-    if (m.role !== "tool" || m.name !== "write_file") {
+    if (
+      m.role !== "tool" ||
+      (m.name !== "write_file" && m.name !== "search_replace")
+    ) {
       continue;
     }
     const raw = typeof m.content === "string" ? m.content : "";
@@ -229,7 +246,7 @@ export function decideHonestFinale(input: {
   const sharedEdited = editedSharedLookingPath(input.messages);
   const searchedUsages = turnHadUsageSearch(input.messages);
 
-  // Явная ложь «уже сделал» без успешного write_file
+  // Явная ложь «уже сделал» без успешного файлового edit
   if (!hadWrite && claimsEdit) {
     if (allowNudgeWrite) {
       return { kind: "nudge_write" };

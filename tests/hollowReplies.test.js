@@ -26,6 +26,27 @@ test("detects «скажи, переделаю» deferral after layout change", 
   );
 });
 
+test("detects stale test expectation deferred to the user", () => {
+  assert.equal(
+    looksLikeHollowStatusOrDeferral(
+      "Примечание: тест get-work-status.test.ts ожидает '' и теперь будет падать. Нужно обновить ожидание на null?"
+    ),
+    true
+  );
+});
+
+test("honest finale requires updating a stale related test", () => {
+  const decision = decideHonestFinale({
+    text: "Тест get-work-status.test.ts ожидает ''. Теперь будет падать. Нужно обновить ожидание на null?",
+    canEdit: true,
+    messages: [],
+    userText: "давай вернем null",
+    hadSuccessfulWrite: true,
+    allowNudgeHollow: true,
+  });
+  assert.equal(decision.kind, "nudge_hollow");
+});
+
 test("detects shared layout change claim", () => {
   const {
     looksLikeSharedLayoutChangeClaim,

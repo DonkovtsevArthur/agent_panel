@@ -10,6 +10,7 @@ const {
   isGitMutationCommand,
   isGitPushCommand,
   isGitStatusCommand,
+  formatGitRemoteOutput,
 } = require("../out/gitCommandPolicy.js");
 
 test("blocks broad staging for an ordinary push request", () => {
@@ -42,6 +43,29 @@ test("detects git push commands", () => {
   assert.equal(isGitPushCommand("git status --short"), false);
 });
 
+test("blocks git commit and push from agent run_command", () => {
+  const {
+    isGitCommitCommand,
+    shouldBlockGitCommitOrPush,
+  } = require("../out/gitCommandPolicy.js");
+
+  for (const command of [
+    "git commit -m 'msg'",
+    "git add package.json && git commit -m 'chore: bump' && git push",
+    "git push",
+    "git push -u origin HEAD",
+  ]) {
+    assert.equal(shouldBlockGitCommitOrPush(command), true, command);
+  }
+  assert.equal(isGitCommitCommand("git commit -m 'x'"), true);
+  assert.equal(isGitCommitCommand("git status --short"), false);
+  assert.equal(shouldBlockGitCommitOrPush("git status --short"), false);
+  assert.equal(
+    shouldBlockGitCommitOrPush("git add -- package.json"),
+    false
+  );
+});
+
 test("distinguishes mutating Git commands from status verification", () => {
   assert.equal(
     isGitMutationCommand("git restore --source=HEAD --worktree src/model.ts"),
@@ -71,4 +95,26 @@ test("blocks broad discard unless all changes were requested explicitly", () => 
       command
     );
   }
+});
+
+test("formatGitRemoteOutput keeps remote MR URLs and branch lines", () => {
+  const stderr = [
+    "remote: ",
+    "remote: To create a merge request for ASUIP-3028, visit:",
+    "remote: ",
+    "remote:   https://git.example.com/group/repo/-/merge_requests/new?merge_request%5Bsource_branch%5D=ASUIP-3028",
+    "remote: ",
+    "To https://git.example.com/group/repo.git",
+    " * [new branch]      ASUIP-3028 -> ASUIP-3028",
+  ].join("\n");
+
+  const out = formatGitRemoteOutput("", stderr);
+  assert.match(out, /merge_requests\/new/);
+  assert.match(out, /ASUIP-3028 -> ASUIP-3028/);
+  assert.match(out, /To https:\/\/git\.example\.com\/group\/repo\.git/);
+});
+
+test("formatGitRemoteOutput returns empty for blank input", () => {
+  assert.equal(formatGitRemoteOutput(), "");
+  assert.equal(formatGitRemoteOutput("  ", "\n"), "");
 });

@@ -45,6 +45,8 @@
       otherProvider: "Other",
       noProvidersOrModels: "No providers yet — add a provider or a model.",
       baseUrl: "Base URL",
+      statusUrl: "Status URL",
+      statusUrlHint: "Empty = Base URL + /models",
       apiKey: "API Key",
       modes: "Modes",
       modesNote:
@@ -109,6 +111,17 @@
         `Status: Connected (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
       figmaStatusError: (msg) =>
         msg ? `Status: Error — ${msg}` : "Status: Error",
+      providerConnUnknown: "Status: Unknown",
+      providerConnConnecting: "Status: Connecting…",
+      providerConnConnected: (name) =>
+        name ? `Status: Connected · ${name}` : "Status: Connected",
+      providerConnError: (msg) =>
+        msg ? `Status: Offline (${msg})` : "Status: Offline",
+      providerConnShortUnknown: "Unknown",
+      providerConnShortConnecting: "Connecting…",
+      providerConnShortConnected: "Connected",
+      providerConnShortError: (msg) =>
+        msg ? `Offline (${msg})` : "Offline",
       figmaConnect: "Connect Figma",
       figmaDisconnect: "Disconnect",
       figmaPatNote:
@@ -122,6 +135,17 @@
       systemPrompt: "System prompt",
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
+      soundNotifications: "Sound notifications",
+      speedRoutingTitle: "Speed routing",
+      speedRoutingNote:
+        "When a heavy model is selected, use a fast helper for Plan/Ask and Agent context gathering.",
+      speedRoutingEnabled: "Speed up heavy models",
+      speedRoutingFastModel: "Fast models",
+      speedRoutingFastModelHint:
+        "Left: use as fast helper (enabled first). Right: turn the model on/off in Harbor. Disabled models cannot be used as helpers.",
+      speedRoutingFastModelEmpty: "No models in settings",
+      speedRoutingReadonlyOverride: "Plan / Ask on fast model",
+      speedRoutingAgentExplore: "Agent: explore on fast model first",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -228,6 +252,7 @@
       toolMcp: "MCP…",
       toolKindRead: "read",
       toolKindWrite: "write",
+      toolKindReplace: "replace",
       toolKindList: "list",
       toolKindRun: "run",
       toolKindFetch: "fetch",
@@ -237,6 +262,8 @@
       toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
+      commitAndPush: "Commit and push",
+      changesTag: "Changes",
       taskForMode: (label) => `Task (${label})... (@ for file)`,
       modePlaceholder: (label) => `${label}... (@ for file)`,
       failedReadFile: "Failed to read file",
@@ -274,6 +301,8 @@
       otherProvider: "Другое",
       noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
       baseUrl: "Base URL",
+      statusUrl: "URL проверки статуса",
+      statusUrlHint: "Пусто = Base URL + /models",
       apiKey: "API Key",
       modes: "Режимы",
       modesNote:
@@ -340,6 +369,17 @@
         `Статус: подключено (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
       figmaStatusError: (msg) =>
         msg ? `Статус: ошибка — ${msg}` : "Статус: ошибка",
+      providerConnUnknown: "Статус: не проверено",
+      providerConnConnecting: "Статус: подключение…",
+      providerConnConnected: (name) =>
+        name ? `Статус: подключено · ${name}` : "Статус: подключено",
+      providerConnError: (msg) =>
+        msg ? `Статус: не в сети (${msg})` : "Статус: не в сети",
+      providerConnShortUnknown: "Не проверено",
+      providerConnShortConnecting: "Подключение…",
+      providerConnShortConnected: "Подключено",
+      providerConnShortError: (msg) =>
+        msg ? `Не в сети (${msg})` : "Не в сети",
       figmaConnect: "Connect Figma",
       figmaDisconnect: "Отключить",
       figmaPatNote:
@@ -353,6 +393,17 @@
       systemPrompt: "Системный промпт",
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
+      soundNotifications: "Звуковые уведомления",
+      speedRoutingTitle: "Ускорение тяжёлых моделей",
+      speedRoutingNote:
+        "Если выбрана тяжёлая модель — Plan/Ask и сбор контекста в Agent идут на быстрой.",
+      speedRoutingEnabled: "Ускорять тяжёлые модели",
+      speedRoutingFastModel: "Быстрые модели",
+      speedRoutingFastModelHint:
+        "Слева: использовать как быструю (включённые сверху). Справа: вкл/выкл модели в Harbor. Выключенная модель не работает как helper.",
+      speedRoutingFastModelEmpty: "Нет моделей в настройках",
+      speedRoutingReadonlyOverride: "Plan / Ask на быстрой",
+      speedRoutingAgentExplore: "Agent: сначала explore на быстрой",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
@@ -459,6 +510,7 @@
       toolMcp: "MCP…",
       toolKindRead: "чтение",
       toolKindWrite: "запись",
+      toolKindReplace: "замена",
       toolKindList: "список",
       toolKindRun: "команда",
       toolKindFetch: "загрузка",
@@ -468,6 +520,8 @@
       toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
+      commitAndPush: "Закоммитить и запушить",
+      changesTag: "Изменения",
       taskForMode: (label) => `Задача (${label})… (@ — файл)`,
       modePlaceholder: (label) => `${label}… (@ — файл)`,
       failedReadFile: "Не удалось прочитать файл",
@@ -503,6 +557,7 @@
   const mentionMenuEl = document.getElementById("mentionMenu");
   const composerEl = document.getElementById("composer");
   const composerWrapEl = document.getElementById("composerWrap");
+  const composerScmActionsEl = document.getElementById("composerScmActions");
   const composerDropHintEl = document.getElementById("composerDropHint");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
@@ -571,6 +626,7 @@
   const providerEditId = document.getElementById("providerEditId");
   const providerEditName = document.getElementById("providerEditName");
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
+  const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
@@ -578,6 +634,7 @@
   const toggleAgentsRailBtn = document.getElementById("toggleAgentsRailBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
+  const providerConnStatusEl = document.getElementById("providerConnStatus");
   const openChatSearchBtn = document.getElementById("openChatSearchBtn");
   const chatSearchPanel = document.getElementById("chatSearchPanel");
   const chatSearchInput = document.getElementById("chatSearchInput");
@@ -598,6 +655,23 @@
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
+  const settingsSoundNotificationsEnabled = document.getElementById(
+    "settingsSoundNotificationsEnabled"
+  );
+  const settingsSpeedRoutingEnabled = document.getElementById(
+    "settingsSpeedRoutingEnabled"
+  );
+  const settingsSpeedRoutingFastModels = document.getElementById(
+    "settingsSpeedRoutingFastModels"
+  );
+  const settingsSpeedRoutingReadonlyOverride = document.getElementById(
+    "settingsSpeedRoutingReadonlyOverride"
+  );
+  const settingsSpeedRoutingAgentExplore = document.getElementById(
+    "settingsSpeedRoutingAgentExplore"
+  );
+  /** Ordered ids enabled as fast helpers in the settings list. */
+  let speedRoutingFastModelIds = [];
   const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsCommitScope = document.getElementById("settingsCommitScope");
@@ -723,6 +797,8 @@
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
+  /** @type {Record<string, { providerId?: string, providerName?: string, state?: string, message?: string }>} */
+  let providerConnById = {};
   let settingsModes = [];
   let settingsDefaultModelId = "";
   let settingsLanguageValue = "auto";
@@ -740,6 +816,76 @@
   let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
+  let notificationAudioContext = null;
+
+  function ensureNotificationAudioContext() {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      return null;
+    }
+    if (
+      !notificationAudioContext ||
+      notificationAudioContext.state === "closed"
+    ) {
+      notificationAudioContext = new AudioContextCtor();
+    }
+    return notificationAudioContext;
+  }
+
+  function unlockNotificationAudio() {
+    const ctx = ensureNotificationAudioContext();
+    if (ctx && ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+  }
+
+  function scheduleNotificationTone(ctx, frequency, start, duration) {
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      start + Math.max(0.05, duration)
+    );
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  }
+
+  function playRunFinishedSound(outcome) {
+    const ctx = ensureNotificationAudioContext();
+    if (!ctx) {
+      return;
+    }
+    const play = () => {
+      const start = ctx.currentTime + 0.02;
+      if (outcome === "error") {
+        scheduleNotificationTone(ctx, 220, start, 0.16);
+        scheduleNotificationTone(ctx, 165, start + 0.17, 0.24);
+      } else {
+        scheduleNotificationTone(ctx, 523.25, start, 0.12);
+        scheduleNotificationTone(ctx, 659.25, start + 0.13, 0.2);
+      }
+    };
+    if (ctx.state === "suspended") {
+      void ctx.resume().then(play).catch(() => {});
+    } else {
+      play();
+    }
+  }
+
+  document.addEventListener("pointerdown", unlockNotificationAudio, {
+    once: true,
+    capture: true,
+  });
+  document.addEventListener("keydown", unlockNotificationAudio, {
+    once: true,
+    capture: true,
+  });
 
   const ARCHIVE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>';
@@ -770,9 +916,6 @@
 
   const BRANCH_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">fork_right</span>';
-
-  const SCM_ICON =
-    '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
   let chatSearchOpen = false;
   let chatSearchScope = "current";
@@ -878,6 +1021,18 @@
     }
     if (newProviderUrlLabel) newProviderUrlLabel.textContent = t("baseUrl");
     if (newProviderKeyLabel) newProviderKeyLabel.textContent = t("apiKey");
+    const providerEditStatusUrlLabel = document.getElementById(
+      "providerEditStatusUrlLabel"
+    );
+    const providerEditStatusUrlHint = document.getElementById(
+      "providerEditStatusUrlHint"
+    );
+    if (providerEditStatusUrlLabel) {
+      providerEditStatusUrlLabel.textContent = t("statusUrl");
+    }
+    if (providerEditStatusUrlHint) {
+      providerEditStatusUrlHint.textContent = t("statusUrlHint");
+    }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
     );
@@ -937,6 +1092,62 @@
     );
     if (settingsMaxResponseCharsLabel) {
       settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
+    }
+    const settingsSoundNotificationsLabel = document.getElementById(
+      "settingsSoundNotificationsLabel"
+    );
+    if (settingsSoundNotificationsLabel) {
+      settingsSoundNotificationsLabel.textContent = t("soundNotifications");
+    }
+    const settingsSpeedRoutingTitle = document.getElementById(
+      "settingsSpeedRoutingTitle"
+    );
+    if (settingsSpeedRoutingTitle) {
+      settingsSpeedRoutingTitle.textContent = t("speedRoutingTitle");
+    }
+    const settingsSpeedRoutingNote = document.getElementById(
+      "settingsSpeedRoutingNote"
+    );
+    if (settingsSpeedRoutingNote) {
+      settingsSpeedRoutingNote.textContent = t("speedRoutingNote");
+    }
+    const settingsSpeedRoutingEnabledLabel = document.getElementById(
+      "settingsSpeedRoutingEnabledLabel"
+    );
+    if (settingsSpeedRoutingEnabledLabel) {
+      settingsSpeedRoutingEnabledLabel.textContent = t("speedRoutingEnabled");
+    }
+    const settingsSpeedRoutingFastModelLabel = document.getElementById(
+      "settingsSpeedRoutingFastModelLabel"
+    );
+    if (settingsSpeedRoutingFastModelLabel) {
+      settingsSpeedRoutingFastModelLabel.textContent = t(
+        "speedRoutingFastModel"
+      );
+    }
+    const settingsSpeedRoutingFastModelHint = document.getElementById(
+      "settingsSpeedRoutingFastModelHint"
+    );
+    if (settingsSpeedRoutingFastModelHint) {
+      settingsSpeedRoutingFastModelHint.textContent = t(
+        "speedRoutingFastModelHint"
+      );
+    }
+    const settingsSpeedRoutingReadonlyOverrideLabel = document.getElementById(
+      "settingsSpeedRoutingReadonlyOverrideLabel"
+    );
+    if (settingsSpeedRoutingReadonlyOverrideLabel) {
+      settingsSpeedRoutingReadonlyOverrideLabel.textContent = t(
+        "speedRoutingReadonlyOverride"
+      );
+    }
+    const settingsSpeedRoutingAgentExploreLabel = document.getElementById(
+      "settingsSpeedRoutingAgentExploreLabel"
+    );
+    if (settingsSpeedRoutingAgentExploreLabel) {
+      settingsSpeedRoutingAgentExploreLabel.textContent = t(
+        "speedRoutingAgentExplore"
+      );
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
@@ -1127,12 +1338,6 @@
     return guessModelSupportsVision(model.id);
   }
 
-  function currentModelSupportsVision() {
-    return resolveModelSupportsVision(
-      models.find((m) => m.id === selectedModelId) || selectedModelId
-    );
-  }
-
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
@@ -1167,6 +1372,7 @@
   let modeEditSource = "settings";
   let chatModes = [];
   let streamingEl = null;
+  let streamingRenderScheduled = false;
   let composerDragDepth = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
@@ -1284,8 +1490,6 @@
     if (!Array.isArray(list) || !list.length) {
       return;
     }
-    const visionOk = currentModelSupportsVision();
-    let skippedImages = 0;
     for (const item of list) {
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
@@ -1297,10 +1501,6 @@
       const kind =
         item.kind ||
         (String(item.mime || "").startsWith("image/") ? "image" : "file");
-      if (kind === "image" && !visionOk) {
-        skippedImages += 1;
-        continue;
-      }
       pendingAttachments.push({
         id,
         kind,
@@ -1312,9 +1512,6 @@
         dataBase64: item.dataBase64,
         previewDataUrl: item.previewDataUrl,
       });
-    }
-    if (skippedImages) {
-      showCopyToast(t("modelNoImages"));
     }
     renderAttachPreview();
   }
@@ -1343,6 +1540,42 @@
       return path;
     }
     return start === end ? `${path}:${start}` : `${path}:${start}–${end}`;
+  }
+
+  function selectionFileType(sel) {
+    const path = String(sel.path || "");
+    const fileName = path.split(/[\\/]/).pop() || "";
+    const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
+    const languageAliases = {
+      typescript: "ts",
+      typescriptreact: "tsx",
+      javascript: "js",
+      javascriptreact: "jsx",
+      shellscript: "sh",
+      plaintext: "txt",
+      markdown: "md",
+      python: "py",
+      rust: "rs",
+      csharp: "cs",
+    };
+    const language = String(sel.language || "").toLowerCase();
+    const extension =
+      (match && match[1]) || languageAliases[language] || language || "code";
+    const normalized = extension.replace(/[^a-z0-9]/g, "").slice(0, 8) || "code";
+    const labels = {
+      javascript: "JS",
+      javascriptreact: "JSX",
+      typescript: "TS",
+      typescriptreact: "TSX",
+      markdown: "MD",
+      plaintext: "TXT",
+      shellscript: "SH",
+      yaml: "YML",
+    };
+    return {
+      className: normalized,
+      label: (labels[normalized] || normalized).slice(0, 4).toUpperCase(),
+    };
   }
 
   function selectionToFence(sel) {
@@ -1413,13 +1646,14 @@
     selectionPreviewEl.innerHTML = pendingSelections
       .map((sel) => {
         const label = escapeHtml(formatSelectionLabel(sel));
+        const fileType = selectionFileType(sel);
         const lines =
           sel.startLine === sel.endLine
             ? `line ${sel.startLine}`
             : `lines ${sel.startLine}–${sel.endLine}`;
         return (
           `<div class="selection-chip" data-id="${escapeHtml(sel.id)}" title="${label}">` +
-          `<span class="material-symbols-outlined selection-chip-icon" aria-hidden="true">code</span>` +
+          `<span class="selection-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(fileType.label)}</span>` +
           `<span class="selection-chip-body">` +
           `<span class="selection-chip-path">${escapeHtml(sel.path || "file")}</span>` +
           `<span class="selection-chip-lines">${escapeHtml(lines)}</span>` +
@@ -2617,6 +2851,10 @@
         return args.relativePath
           ? `${t("toolKindWrite")} · ${args.relativePath}`
           : t("toolKindWrite");
+      case "search_replace":
+        return args.relativePath
+          ? `${t("toolKindReplace")} · ${args.relativePath}`
+          : t("toolKindReplace");
       case "list_files": {
         const path = args.relativePath || ".";
         return `${t("toolKindList")} · ${path}`;
@@ -2665,6 +2903,12 @@
       return "write_file";
     }
     if (
+      prefix === "replace" ||
+      prefix === t("toolKindReplace").toLowerCase()
+    ) {
+      return "search_replace";
+    }
+    if (
       prefix === "list" ||
       prefix === t("toolKindList").toLowerCase()
     ) {
@@ -2702,6 +2946,9 @@
     if (n === "write_file") {
       return "write";
     }
+    if (n === "search_replace") {
+      return "replace";
+    }
     if (n === "list_files") {
       return "list";
     }
@@ -2728,6 +2975,8 @@
         return t("toolKindList");
       case "write":
         return t("toolKindWrite");
+      case "replace":
+        return t("toolKindReplace");
       case "run":
         return t("toolKindRun");
       case "fetch":
@@ -2748,6 +2997,7 @@
       case "list":
         return t("toolListing");
       case "write":
+      case "replace":
         return t("toolWriting");
       case "run":
         return t("toolRunning");
@@ -2769,7 +3019,17 @@
       const kind = toolKind(name) || "tool";
       counts.set(kind, (counts.get(kind) || 0) + 1);
     }
-    const order = ["read", "list", "write", "run", "fetch", "open", "mcp", "tool"];
+    const order = [
+      "read",
+      "list",
+      "write",
+      "replace",
+      "run",
+      "fetch",
+      "open",
+      "mcp",
+      "tool",
+    ];
     const parts = [];
     for (const kind of order) {
       const n = counts.get(kind);
@@ -2791,6 +3051,40 @@
     )) {
       group.dataset.sealed = "1";
       updateToolGroupSummary(group);
+    }
+  }
+
+  function clearStoppedRunArtifacts() {
+    if (streamingEl) {
+      const wrap = streamingEl.closest(".msg-wrap-assistant");
+      (wrap || streamingEl).remove();
+      streamingEl = null;
+    }
+    streamingRenderScheduled = false;
+
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    if (turn) {
+      for (const group of turn.querySelectorAll(".tool-group")) {
+        group.remove();
+      }
+    } else {
+      // Fallback для старой/восстановленной разметки: незапечатанная группа
+      // всегда относится к текущему незавершённому запуску.
+      for (const group of messagesEl.querySelectorAll(
+        ".tool-group:not([data-sealed])"
+      )) {
+        group.remove();
+      }
+    }
+
+    while (
+      uiMessagesCache.length &&
+      uiMessagesCache[uiMessagesCache.length - 1]?.role === "tool"
+    ) {
+      uiMessagesCache.pop();
     }
   }
 
@@ -2840,8 +3134,7 @@
     while (
       node &&
       (node.id === "agentStatus" ||
-        node.classList.contains("agent-status") ||
-        node.classList.contains("review-actions"))
+        node.classList.contains("agent-status"))
     ) {
       node = node.previousElementSibling;
     }
@@ -3490,6 +3783,7 @@
       name: provider.name || "",
       baseUrl: provider.baseUrl || "",
       apiKey: provider.apiKey || "",
+      statusUrl: provider.statusUrl || "",
     };
   }
 
@@ -3586,12 +3880,13 @@
     providerEditIndex = index;
     const isNew = index === -1;
     const provider = isNew
-      ? preset || { id: "", name: "", baseUrl: "", apiKey: "" }
+      ? preset || { id: "", name: "", baseUrl: "", apiKey: "", statusUrl: "" }
       : settingsProviders[index] || {
           id: "",
           name: "",
           baseUrl: "",
           apiKey: "",
+          statusUrl: "",
         };
     if (providerEditTitle) {
       providerEditTitle.textContent = isNew ? t("newProvider") : t("providerTitle");
@@ -3605,6 +3900,12 @@
     }
     if (providerEditBaseUrl) {
       providerEditBaseUrl.value = provider.baseUrl || "";
+    }
+    if (providerEditStatusUrl) {
+      providerEditStatusUrl.value = provider.statusUrl || "";
+      providerEditStatusUrl.placeholder = provider.baseUrl
+        ? `${String(provider.baseUrl).replace(/\/$/, "")}/models`
+        : "https://…/models";
     }
     if (providerEditApiKey) {
       providerEditApiKey.value = provider.apiKey || "";
@@ -3638,7 +3939,13 @@
     }
     const name = providerEditName ? providerEditName.value.trim() : "";
     const apiKey = providerEditApiKey ? providerEditApiKey.value : "";
+    const statusUrl = providerEditStatusUrl
+      ? providerEditStatusUrl.value.trim().replace(/\/$/, "")
+      : "";
     const next = { id, name: name || id, baseUrl, apiKey };
+    if (statusUrl && statusUrl !== baseUrl) {
+      next.statusUrl = statusUrl;
+    }
 
     if (providerEditIndex === -1) {
       if (settingsProviders.some((p) => p.id === id)) {
@@ -3669,10 +3976,18 @@
     const row = document.createElement("div");
     row.className = "settings-provider-head";
     row.dataset.providerIndex = String(index);
+    const providerId = String(provider.id || "").trim();
+    if (providerId) {
+      row.dataset.providerId = providerId;
+    }
     const title = provider.name || provider.id || t("providerTitle");
     row.innerHTML =
       `<div class="settings-model-info">` +
-      `<div class="settings-model-name"></div>` +
+      `<div class="settings-model-name">` +
+      `<span class="provider-status-dot" data-state="unknown" aria-hidden="true"></span>` +
+      `<span class="provider-status-title"></span>` +
+      `<span class="provider-status-text" data-state="unknown"></span>` +
+      `</div>` +
       `<div class="settings-model-id"></div>` +
       `</div>` +
       `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
@@ -3681,10 +3996,66 @@
       `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
       DELETE_ICON +
       `</button>`;
-    row.querySelector(".settings-model-name").textContent = title;
+    row.querySelector(".provider-status-title").textContent = title;
     row.querySelector(".settings-model-id").textContent =
       provider.baseUrl || provider.id || "";
     listEl.appendChild(row);
+    applyProviderHeadStatus(row, providerConnById[providerId]);
+  }
+
+  function providerConnShortLabel(state, message) {
+    if (state === "connecting") {
+      return t("providerConnShortConnecting");
+    }
+    if (state === "connected") {
+      return t("providerConnShortConnected");
+    }
+    if (state === "error") {
+      return t("providerConnShortError", message || "");
+    }
+    return t("providerConnShortUnknown");
+  }
+
+  function applyProviderHeadStatus(row, status) {
+    if (!row) {
+      return;
+    }
+    const state = status?.state || "unknown";
+    const message = status?.message || "";
+    const label = providerConnShortLabel(state, message);
+    const dot = row.querySelector(".provider-status-dot");
+    const text = row.querySelector(".provider-status-text");
+    if (dot) {
+      dot.dataset.state = state;
+    }
+    if (text) {
+      text.dataset.state = state;
+      text.textContent = label;
+    }
+    row.title = label;
+  }
+
+  function applyProviderStatusDots() {
+    document
+      .querySelectorAll(".settings-provider-head[data-provider-id]")
+      .forEach((row) => {
+        const id = row.dataset.providerId || "";
+        applyProviderHeadStatus(row, providerConnById[id]);
+      });
+  }
+
+  function ingestProviderConnStatuses(list) {
+    if (!Array.isArray(list)) {
+      return;
+    }
+    for (const status of list) {
+      const id = String(status?.providerId || "").trim();
+      if (!id) {
+        continue;
+      }
+      providerConnById[id] = status;
+    }
+    applyProviderStatusDots();
   }
 
   function appendModelRow(listEl, model, index, nested) {
@@ -3795,6 +4166,8 @@
     }
 
     syncDefaultModelSelect();
+    renderSpeedRoutingFastModelsList();
+    syncSpeedRoutingControlsDisabled();
   }
 
   function renderSettingsModels() {
@@ -4570,6 +4943,33 @@
     }, 1200);
   }
 
+  function renderProviderConnStatus(status) {
+    const id = String(status?.providerId || "").trim();
+    if (id) {
+      providerConnById[id] = status || providerConnById[id] || {};
+      applyProviderStatusDots();
+    }
+    if (!providerConnStatusEl) {
+      return;
+    }
+    const state = status?.state || "unknown";
+    const name = String(status?.providerName || status?.providerId || "").trim();
+    let text = t("providerConnUnknown");
+    if (state === "connecting") {
+      text = t("providerConnConnecting");
+    } else if (state === "connected") {
+      text = t("providerConnConnected", name);
+    } else if (state === "error") {
+      text = t("providerConnError", status?.message || "");
+    }
+    providerConnStatusEl.hidden = false;
+    providerConnStatusEl.dataset.state = state;
+    providerConnStatusEl.textContent = text;
+    providerConnStatusEl.title = name
+      ? `${name}${status?.message ? ` — ${status.message}` : ""}`
+      : text;
+  }
+
   function renderFigmaStatus(status) {
     figmaStatus = status || figmaStatus || { state: "disconnected", enabled: true };
     const state = figmaStatus.state || "disconnected";
@@ -4968,6 +5368,7 @@
           name: p.name || "",
           baseUrl: p.baseUrl || "",
           apiKey: p.apiKey || "",
+          statusUrl: p.statusUrl || "",
         }))
       : [];
     if (
@@ -4979,6 +5380,7 @@
         name: t("defaultProviderName"),
         baseUrl: String(settings.baseUrl || "").replace(/\/$/, ""),
         apiKey: settings.apiKey || "",
+        statusUrl: "",
       });
     }
     const primaryId = primaryProviderId();
@@ -5068,12 +5470,175 @@
         settings.maxResponseChars || 12000
       );
     }
+    if (settingsSoundNotificationsEnabled) {
+      settingsSoundNotificationsEnabled.checked =
+        settings.soundNotificationsEnabled !== false;
+    }
+    populateSpeedRoutingFastModelsList(
+      Array.isArray(settings.speedRoutingFastModelIds)
+        ? settings.speedRoutingFastModelIds
+        : []
+    );
+    if (settingsSpeedRoutingEnabled) {
+      settingsSpeedRoutingEnabled.checked =
+        settings.speedRoutingEnabled !== false;
+    }
+    if (settingsSpeedRoutingReadonlyOverride) {
+      settingsSpeedRoutingReadonlyOverride.checked =
+        settings.speedRoutingReadonlyOverride !== false;
+    }
+    if (settingsSpeedRoutingAgentExplore) {
+      settingsSpeedRoutingAgentExplore.checked =
+        settings.speedRoutingAgentExplore !== false;
+    }
+    syncSpeedRoutingControlsDisabled();
     closeModelEditModal();
     closeProviderEditModal();
+    ingestProviderConnStatuses(settings.providerConnStatuses);
     renderSettingsProviders();
     renderSettingsModels();
     } finally {
       settingsHydrating = false;
+    }
+  }
+
+  function normalizeSpeedRoutingFastModelIds(ids) {
+    const list = Array.isArray(ids) ? ids : [];
+    return list
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index);
+  }
+
+  function populateSpeedRoutingFastModelsList(selectedIds) {
+    speedRoutingFastModelIds = normalizeSpeedRoutingFastModelIds(selectedIds);
+    renderSpeedRoutingFastModelsList();
+  }
+
+  function renderSpeedRoutingFastModelsList() {
+    if (!settingsSpeedRoutingFastModels) {
+      return;
+    }
+    const models = (settingsModels || []).filter((m) => m && m.id);
+    const fastSet = new Set(speedRoutingFastModelIds);
+    const modelOn = [];
+    const modelOff = [];
+    for (const model of models) {
+      if (model.enabled !== false) {
+        modelOn.push(model);
+      } else {
+        modelOff.push(model);
+      }
+    }
+    const sortFastFirst = (list) => {
+      const on = [];
+      const off = [];
+      for (const id of speedRoutingFastModelIds) {
+        const hit = list.find((m) => m.id === id);
+        if (hit) {
+          on.push(hit);
+        }
+      }
+      for (const model of list) {
+        if (!fastSet.has(model.id)) {
+          off.push(model);
+        }
+      }
+      return [...on, ...off];
+    };
+    const ordered = [...sortFastFirst(modelOn), ...sortFastFirst(modelOff)];
+    if (!ordered.length) {
+      settingsSpeedRoutingFastModels.innerHTML =
+        `<div class="settings-speed-models-empty">${escapeHtml(
+          t("speedRoutingFastModelEmpty")
+        )}</div>`;
+      return;
+    }
+    settingsSpeedRoutingFastModels.innerHTML = ordered
+      .map((model) => {
+        const fastOn = fastSet.has(model.id);
+        const modelEnabled = model.enabled !== false;
+        const label = model.label || model.id;
+        const classes = [
+          "settings-speed-model-row",
+          modelEnabled ? "" : "is-model-off",
+          fastOn ? "" : "is-fast-off",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          `<div class="${classes}">` +
+          `<input type="checkbox" class="settings-speed-fast-check" data-speed-fast-id="${escapeHtml(
+            model.id
+          )}" ${fastOn ? "checked" : ""} title="${escapeHtml(
+            t("speedRoutingFastModel")
+          )}" />` +
+          `<span class="settings-speed-model-name" title="${escapeHtml(
+            label
+          )}">${escapeHtml(label)}</span>` +
+          `<label class="settings-model-switch" title="${escapeHtml(
+            modelEnabled ? t("disable") : t("enable")
+          )}">` +
+          `<input type="checkbox" class="settings-model-toggle" data-speed-model-id="${escapeHtml(
+            model.id
+          )}" ${modelEnabled ? "checked" : ""} />` +
+          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+          `</label>` +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  function readSpeedRoutingFastModelIdsFromDom() {
+    if (!settingsSpeedRoutingFastModels) {
+      return [...speedRoutingFastModelIds];
+    }
+    const checked = [];
+    settingsSpeedRoutingFastModels
+      .querySelectorAll('input.settings-speed-fast-check[data-speed-fast-id]')
+      .forEach((input) => {
+        if (input instanceof HTMLInputElement && input.checked) {
+          const id = String(input.getAttribute("data-speed-fast-id") || "").trim();
+          if (id) {
+            checked.push(id);
+          }
+        }
+      });
+    return normalizeSpeedRoutingFastModelIds(checked);
+  }
+
+  function setModelEnabledById(modelId, enabled) {
+    const id = String(modelId || "").trim();
+    if (!id) {
+      return false;
+    }
+    const index = settingsModels.findIndex((m) => m && m.id === id);
+    if (index < 0) {
+      return false;
+    }
+    settingsModels[index].enabled = enabled !== false;
+    return true;
+  }
+
+  function syncSpeedRoutingControlsDisabled() {
+    const on = settingsSpeedRoutingEnabled
+      ? settingsSpeedRoutingEnabled.checked
+      : true;
+    if (settingsSpeedRoutingFastModels) {
+      settingsSpeedRoutingFastModels
+        .querySelectorAll("input.settings-speed-fast-check")
+        .forEach((el) => {
+          if (el instanceof HTMLInputElement) {
+            el.disabled = !on;
+          }
+        });
+    }
+    if (settingsSpeedRoutingReadonlyOverride) {
+      settingsSpeedRoutingReadonlyOverride.disabled = !on;
+    }
+    if (settingsSpeedRoutingAgentExplore) {
+      settingsSpeedRoutingAgentExplore.disabled = !on;
     }
   }
 
@@ -5091,6 +5656,10 @@
         }
         if (p.apiKey) {
           row.apiKey = p.apiKey;
+        }
+        const statusUrl = String(p.statusUrl || "").replace(/\/$/, "");
+        if (statusUrl && statusUrl !== row.baseUrl) {
+          row.statusUrl = statusUrl;
         }
         return row;
       });
@@ -5153,6 +5722,19 @@
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
+      soundNotificationsEnabled: settingsSoundNotificationsEnabled
+        ? settingsSoundNotificationsEnabled.checked
+        : true,
+      speedRoutingEnabled: settingsSpeedRoutingEnabled
+        ? settingsSpeedRoutingEnabled.checked
+        : true,
+      speedRoutingFastModelIds: readSpeedRoutingFastModelIdsFromDom(),
+      speedRoutingReadonlyOverride: settingsSpeedRoutingReadonlyOverride
+        ? settingsSpeedRoutingReadonlyOverride.checked
+        : true,
+      speedRoutingAgentExplore: settingsSpeedRoutingAgentExplore
+        ? settingsSpeedRoutingAgentExplore.checked
+        : true,
       modes: collectCustomModesForSave(),
     };
   }
@@ -5542,7 +6124,7 @@
           `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
           `<span class="agent-main">` +
           statusHtml +
-          `<div class="agent-name-row"><div class="agent-name" title="${t("rename")}"></div></div>` +
+          `<div class="agent-name-row"><div class="agent-name"></div></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
           `</div>` +
@@ -5798,42 +6380,234 @@
     card.dataset.paths = list.map((f) => f.path).join("\n");
     const mount = ensureChatTurn();
     mount.appendChild(card);
-
-    const actions = document.createElement("div");
-    actions.className = "review-actions";
-    actions.dataset.paths = list.map((f) => f.path).join("\n");
-    actions.hidden = !parsed.showScm;
-    const scmBtn = document.createElement("button");
-    scmBtn.type = "button";
-    scmBtn.className = "review-scm";
-    scmBtn.title = t("openSourceControl");
-    scmBtn.setAttribute("aria-label", t("openSourceControl"));
-    scmBtn.innerHTML = SCM_ICON;
-    scmBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "openScm" });
-    });
-    actions.appendChild(scmBtn);
-    mount.appendChild(actions);
+    setComposerScmActions(list, Boolean(parsed.showScm));
     keepStatusAtEnd();
     scrollToBottom();
   }
 
-  function applyScmButtons(reviews) {
-    const list = Array.isArray(reviews) ? reviews : [];
-    const entries = list.map((r) => ({
-      key: [...(r.paths || [])].map(String).sort().join("\n"),
-      show: Boolean(r.showScm),
-    }));
-    for (const el of messagesEl.querySelectorAll(".review-actions")) {
-      const key = (el.dataset.paths || "")
-        .split("\n")
+  function setComposerScmActions(filesOrPaths, show) {
+    if (!composerScmActionsEl) {
+      return;
+    }
+    const files = [];
+    const seen = new Set();
+    for (const item of Array.isArray(filesOrPaths) ? filesOrPaths : []) {
+      if (!item) {
+        continue;
+      }
+      const path =
+        typeof item === "string"
+          ? item
+          : String(item.path || "").trim();
+      if (!path || seen.has(path)) {
+        continue;
+      }
+      seen.add(path);
+      files.push({
+        path,
+        added: Number(item.added) || 0,
+        removed: Number(item.removed) || 0,
+      });
+    }
+    composerScmActionsEl.replaceChildren();
+    if (!show || !files.length) {
+      composerScmActionsEl.hidden = true;
+      composerScmActionsEl.dataset.paths = "";
+      return;
+    }
+
+    const paths = files.map((f) => f.path);
+    const totalAdd = files.reduce((s, f) => s + (f.added || 0), 0);
+    const totalDel = files.reduce((s, f) => s + (f.removed || 0), 0);
+
+    composerScmActionsEl.hidden = false;
+    composerScmActionsEl.dataset.paths = paths.join("\n");
+
+    const commitPushBtn = document.createElement("button");
+    commitPushBtn.type = "button";
+    commitPushBtn.className = "review-commit-push";
+    commitPushBtn.title = t("commitAndPush");
+    commitPushBtn.disabled = busy;
+    commitPushBtn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">commit</span>` +
+      `<span>${escapeHtml(t("commitAndPush"))}</span>`;
+    commitPushBtn.addEventListener("click", () => {
+      if (busy) {
+        return;
+      }
+      setBusy(true);
+      vscode.postMessage({
+        type: "commitAndPush",
+        paths,
+      });
+    });
+    composerScmActionsEl.appendChild(commitPushBtn);
+
+    const scmBtn = document.createElement("button");
+    scmBtn.type = "button";
+    scmBtn.className = "review-scm-stats";
+    scmBtn.title = t("openSourceControl");
+    scmBtn.setAttribute("aria-label", t("openSourceControl"));
+    scmBtn.innerHTML =
+      `<span class="label">${escapeHtml(t("changesTag"))}</span>` +
+      `<span class="add">+${totalAdd}</span>` +
+      `<span class="del">−${totalDel}</span>`;
+    scmBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "openScm" });
+    });
+    composerScmActionsEl.appendChild(scmBtn);
+  }
+
+  function findReviewFilesByPaths(paths) {
+    const wanted = [...new Set((paths || []).map(String).filter(Boolean))]
+      .slice()
+      .sort()
+      .join("\n");
+    if (!wanted) {
+      return [];
+    }
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const parsed = parseReviewData(item.text);
+      const files = Array.isArray(parsed.files) ? parsed.files : [];
+      const key = files
+        .map((f) => String(f.path || ""))
         .filter(Boolean)
         .sort()
         .join("\n");
-      const hit = entries.find((e) => e.key === key);
-      // если не нашли соответствие — прячем (безопаснее, чем оставлять кнопку)
-      el.hidden = hit ? !hit.show : true;
+      if (key === wanted) {
+        return files;
+      }
     }
+    return (paths || []).map((path) => ({ path, added: 0, removed: 0 }));
+  }
+
+  function renderReviewCardBody(card, files) {
+    const list = Array.isArray(files) ? files : [];
+    const title = card.querySelector(".review-title");
+    const fileList = card.querySelector(".review-files");
+    if (!title || !fileList) {
+      return;
+    }
+    const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
+    const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
+    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
+    fileList.replaceChildren();
+    for (const file of list) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "review-file";
+      row.title = t("openChanges");
+      row.innerHTML =
+        `<span class="review-file-path"></span>` +
+        `<span class="review-file-stats">` +
+        `<span class="add">+${file.added || 0}</span> ` +
+        `<span class="del">−${file.removed || 0}</span>` +
+        `</span>`;
+      row.querySelector(".review-file-path").textContent = file.path;
+      row.addEventListener("click", () => {
+        vscode.postMessage({ type: "openFileDiff", path: file.path });
+      });
+      fileList.appendChild(row);
+    }
+    card.dataset.paths = list.map((f) => f.path).join("\n");
+  }
+
+  function syncReviewCardsFromScm(reviews) {
+    const cards = Array.from(
+      document.querySelectorAll(".review-card")
+    );
+    const entries = Array.isArray(reviews) ? reviews : [];
+    const count = Math.min(cards.length, entries.length);
+    for (let i = 0; i < count; i++) {
+      const entry = entries[i];
+      const files = Array.isArray(entry?.files) ? entry.files : [];
+      if (!files.length && !(entry?.paths || []).length) {
+        continue;
+      }
+      const nextFiles = files.length
+        ? files
+        : (entry.paths || []).map((path) => ({
+            path,
+            added: 0,
+            removed: 0,
+          }));
+      renderReviewCardBody(cards[i], nextFiles);
+    }
+
+    // Keep cache in sync so commit tags use remaining dirty paths.
+    let reviewIdx = 0;
+    for (let i = 0; i < uiMessagesCache.length; i++) {
+      const item = uiMessagesCache[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const entry = entries[reviewIdx++];
+      if (!entry) {
+        break;
+      }
+      const files = Array.isArray(entry.files)
+        ? entry.files
+        : (entry.paths || []).map((path) => ({
+            path,
+            added: 0,
+            removed: 0,
+          }));
+      uiMessagesCache[i] = {
+        ...item,
+        text: JSON.stringify({
+          files,
+          showScm: Boolean(entry.showScm),
+        }),
+      };
+    }
+  }
+
+  function syncComposerScmFromCache() {
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const parsed = parseReviewData(item.text);
+      const files = Array.isArray(parsed.files) ? parsed.files : [];
+      if (parsed.showScm && files.length) {
+        setComposerScmActions(files, true);
+        return;
+      }
+    }
+    setComposerScmActions([], false);
+  }
+
+  function applyScmButtons(reviews) {
+    const list = Array.isArray(reviews) ? reviews : [];
+    syncReviewCardsFromScm(list);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const entry = list[i];
+      const files = Array.isArray(entry?.files)
+        ? entry.files
+        : (entry?.paths || []).map((path) => ({
+            path: String(path),
+            added: 0,
+            removed: 0,
+          }));
+      const paths = files
+        .map((f) => String(f.path || ""))
+        .filter(Boolean);
+      if (entry?.showScm && paths.length) {
+        setComposerScmActions(
+          files.length ? files : findReviewFilesByPaths(paths),
+          true
+        );
+        return;
+      }
+    }
+    setComposerScmActions([], false);
   }
 
   function escapeHtml(value) {
@@ -6037,12 +6811,166 @@
     return null;
   }
 
+  const CODE_KEYWORDS = new Set([
+    "as",
+    "async",
+    "await",
+    "any",
+    "boolean",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "def",
+    "default",
+    "delete",
+    "do",
+    "elif",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "keyof",
+    "let",
+    "new",
+    "never",
+    "number",
+    "of",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "string",
+    "switch",
+    "throw",
+    "try",
+    "type",
+    "typeof",
+    "unknown",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+  ]);
+  const CODE_LITERALS = new Set([
+    "false",
+    "None",
+    "null",
+    "super",
+    "this",
+    "true",
+    "undefined",
+  ]);
+
+  function inferCodeLanguage(meta) {
+    const explicit = String(meta?.language || "").trim().toLowerCase();
+    if (explicit) {
+      return explicit;
+    }
+    const path = String(meta?.path || "").split(/[?#]/)[0];
+    const ext = path.match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase() || "";
+    const aliases = {
+      cjs: "javascript",
+      htm: "html",
+      js: "javascript",
+      jsonc: "json",
+      jsx: "javascript",
+      mjs: "javascript",
+      py: "python",
+      rb: "ruby",
+      sh: "shell",
+      ts: "typescript",
+      tsx: "typescript",
+      yml: "yaml",
+    };
+    return aliases[ext] || ext;
+  }
+
+  function codeTokenClass(token, language, precedingText, followingText) {
+    if (
+      token.startsWith("//") ||
+      token.startsWith("/*") ||
+      (language === "python" && token.startsWith("#"))
+    ) {
+      return "comment";
+    }
+    if (/^['"`]/.test(token)) {
+      return "string";
+    }
+    if (/^\d/.test(token)) {
+      return "number";
+    }
+    if (CODE_KEYWORDS.has(token)) {
+      return "keyword";
+    }
+    if (CODE_LITERALS.has(token)) {
+      return "literal";
+    }
+    if (/^[A-Z][A-Za-z0-9_$]*$/.test(token)) {
+      return "type";
+    }
+    if (/\.\s*$/.test(precedingText)) {
+      return "property";
+    }
+    if (/^\s*\(/.test(followingText)) {
+      return "function";
+    }
+    return "variable";
+  }
+
+  function highlightCode(text, language) {
+    const source = String(text || "");
+    const commentPattern =
+      language === "python" || language === "ruby" || language === "shell"
+        ? "#[^\\n]*"
+        : "\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/";
+    const tokenRe = new RegExp(
+      "(" +
+        commentPattern +
+        "|'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"|`(?:\\\\.|[^`\\\\])*`|\\b\\d+(?:\\.\\d+)?\\b|\\b[A-Za-z_$][\\w$]*\\b)",
+      "g"
+    );
+    let html = "";
+    let cursor = 0;
+    let match;
+    while ((match = tokenRe.exec(source))) {
+      html += escapeHtml(source.slice(cursor, match.index));
+      const token = match[0];
+      const kind = codeTokenClass(
+        token,
+        language,
+        source.slice(0, match.index),
+        source.slice(match.index + token.length)
+      );
+      html += kind
+        ? `<span class="syntax-${kind}">${escapeHtml(token)}</span>`
+        : escapeHtml(token);
+      cursor = match.index + token.length;
+    }
+    return html + escapeHtml(source.slice(cursor));
+  }
+
   function renderCodeBlockHtml(text, langRaw) {
     const inner = String(text || "").replace(/\n$/, "");
     if (isFilePath(inner.trim()) && !inner.includes("\n")) {
       return fileLinkHtml(inner.trim());
     }
     const meta = parseCodeFenceMeta(langRaw);
+    const language = inferCodeLanguage(meta);
     const lines = inner.split("\n");
     const showLines =
       meta.startLine > 0 &&
@@ -6055,15 +6983,22 @@
             return (
               `<span class="md-line">` +
               `<span class="md-ln" aria-hidden="true">${n}</span>` +
-              `<span class="md-line-text">${escapeHtml(line)}</span>` +
+              `<span class="md-line-text">${highlightCode(line, language)}</span>` +
               `</span>`
             );
           })
           .join("\n")
-      : escapeHtml(inner);
+      : highlightCode(inner, language);
 
     let metaHtml = "";
     if (meta.path || showLines) {
+      const fileType = selectionFileType({
+        path: meta.path,
+        language: meta.language,
+      });
+      const fileTypePart = meta.path
+        ? `<span class="selection-file-icon md-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(fileType.label)}</span>`
+        : "";
       const pathPart = meta.path
         ? isFilePath(meta.path) || meta.path.includes("/")
           ? fileLinkHtml(meta.path)
@@ -6077,19 +7012,39 @@
           }</span>`
         : "";
       metaHtml =
-        `<div class="md-pre-meta">` +
+        `<div class="md-pre-meta${showLines ? " md-pre-toggle" : ""}"` +
+        (showLines
+          ? ` role="button" tabindex="0" aria-expanded="false" aria-label="${
+              UI_LANG === "ru" ? "Показать или скрыть код" : "Show or hide code"
+            }">`
+          : `>`) +
+        `<span class="md-pre-meta-main">` +
+        fileTypePart +
         pathPart +
         (pathPart && linesPart ? `<span class="md-pre-meta-sep">·</span>` : "") +
         linesPart +
+        `</span>` +
+        (showLines
+          ? `<span class="material-symbols-outlined md-pre-chevron" aria-hidden="true">expand_more</span>`
+          : "") +
         `</div>`;
     }
 
     return (
-      `<div class="md-pre-wrap${showLines ? " has-lines" : ""}">` +
+      `<div class="md-pre-wrap${showLines ? " has-lines is-collapsible is-collapsed" : ""}">` +
       metaHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
       `</div>\n`
     );
+  }
+
+  function toggleCodeBlock(toggle) {
+    const wrap = toggle?.closest(".md-pre-wrap.is-collapsible");
+    if (!wrap) {
+      return;
+    }
+    const collapsed = wrap.classList.toggle("is-collapsed");
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
 
   let markdownReady = false;
@@ -6338,7 +7293,20 @@
       body.innerHTML = renderInlineMarkdown(raw);
       return;
     }
-    body.textContent = role === "tool" ? formatToolLine(raw) : raw;
+    if (role === "tool") {
+      const formatted = formatToolLine(raw);
+      // Сырой вывод (git remote, MR URL) — с кликабельными ссылками.
+      if (/https?:\/\//i.test(formatted) || /`[^`]+`/.test(formatted)) {
+        body.innerHTML = `<div class="tool-output">${linkifyPlainText(
+          formatted,
+          false
+        ).replace(/\n/g, "<br />")}</div>`;
+      } else {
+        body.textContent = formatted;
+      }
+      return;
+    }
+    body.textContent = raw;
   }
 
   function appendMessage(
@@ -6498,6 +7466,7 @@
       );
     }
     restoreAgentStatus();
+    syncComposerScmFromCache();
     focusEditingInput();
     requestAnimationFrame(() => {
       if (scrollMode === "restore") {
@@ -6523,23 +7492,7 @@
       : selectedModelId || t("noModels");
   }
 
-  function stripPendingImagesIfNeeded(notify) {
-    const before = pendingAttachments.length;
-    if (currentModelSupportsVision()) {
-      return;
-    }
-    pendingAttachments = pendingAttachments.filter((a) => a.kind !== "image");
-    if (pendingAttachments.length < before) {
-      renderAttachPreview();
-      if (notify) {
-        showCopyToast(t("modelNoImages"));
-      }
-    }
-  }
-
   function updateVisionUi() {
-    stripPendingImagesIfNeeded(true);
-    const visionOk = currentModelSupportsVision();
     if (!composerPlusMenu) {
       return;
     }
@@ -6549,12 +7502,10 @@
     if (!imageItem) {
       return;
     }
-    imageItem.disabled = !visionOk;
-    imageItem.classList.toggle("is-disabled", !visionOk);
-    imageItem.setAttribute("aria-disabled", visionOk ? "false" : "true");
-    imageItem.title = visionOk
-      ? t("attachImage")
-      : t("currentModelNoImages");
+    imageItem.disabled = false;
+    imageItem.classList.remove("is-disabled");
+    imageItem.setAttribute("aria-disabled", "false");
+    imageItem.title = t("attachImage");
   }
 
   function setSelectedModel(id, notify) {
@@ -6844,6 +7795,12 @@
     if (modeTrigger) {
       modeTrigger.disabled = busy;
     }
+    if (composerScmActionsEl) {
+      const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
+      if (commitBtn) {
+        commitBtn.disabled = busy;
+      }
+    }
     if (busy) {
       closeMenu();
       closePlusMenu();
@@ -7076,10 +8033,6 @@
       const action = item.getAttribute("data-action");
       closePlusMenu();
       if (action === "image") {
-        if (!currentModelSupportsVision()) {
-          showCopyToast(t("modelNoImages"));
-          return;
-        }
         vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });
@@ -7257,10 +8210,6 @@
     }
     event.preventDefault();
     event.stopPropagation();
-    if (!currentModelSupportsVision()) {
-      showCopyToast(t("modelNoImages"));
-      return;
-    }
     await ingestDroppedFiles(imageFiles);
     if (promptEl && typeof promptEl.focus === "function") {
       promptEl.focus();
@@ -7295,10 +8244,6 @@
     void (async () => {
       const imageFiles = await readClipboardImagesFallback();
       if (!imageFiles.length) {
-        return;
-      }
-      if (!currentModelSupportsVision()) {
-        showCopyToast(t("modelNoImages"));
         return;
       }
       event.preventDefault();
@@ -7362,9 +8307,37 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsCommitScope, #settingsCommitLanguage"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsSpeedRoutingEnabled, #settingsSpeedRoutingReadonlyOverride, #settingsSpeedRoutingAgentExplore, #settingsSpeedRoutingFastModels"
         )
       ) {
+        if (target.id === "settingsSpeedRoutingEnabled") {
+          syncSpeedRoutingControlsDisabled();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsSpeedRoutingFastModels input.settings-speed-fast-check[data-speed-fast-id]"
+          )
+        ) {
+          speedRoutingFastModelIds = readSpeedRoutingFastModelIdsFromDom();
+          renderSpeedRoutingFastModelsList();
+          syncSpeedRoutingControlsDisabled();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsSpeedRoutingFastModels input.settings-model-toggle[data-speed-model-id]"
+          )
+        ) {
+          const modelId = String(
+            target.getAttribute("data-speed-model-id") || ""
+          ).trim();
+          if (setModelEnabledById(modelId, target.checked)) {
+            renderSettingsModels();
+            renderSpeedRoutingFastModelsList();
+            syncSpeedRoutingControlsDisabled();
+          }
+        }
         persistSettingsNow();
       }
     });
@@ -8091,17 +9064,6 @@
         }
         return;
       }
-      const nameEl = event.target.closest(".agent-name");
-      if (nameEl && agentsListEl.contains(nameEl)) {
-        event.preventDefault();
-        event.stopPropagation();
-        const block = nameEl.closest("[data-agent]");
-        const agentId = block ? block.dataset.agent : "";
-        if (agentId) {
-          startAgentRename(agentId, nameEl);
-        }
-        return;
-      }
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
@@ -8160,6 +9122,17 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const codeToggle = event.target.closest(".md-pre-toggle");
+    if (
+      codeToggle &&
+      messagesEl.contains(codeToggle) &&
+      !event.target.closest("a.md-file")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCodeBlock(codeToggle);
+      return;
+    }
     const toolToggle = event.target.closest(".tool-group-toggle");
     if (toolToggle && messagesEl.contains(toolToggle)) {
       event.preventDefault();
@@ -8285,6 +9258,16 @@
   });
 
   messagesEl.addEventListener("keydown", (event) => {
+    const codeToggle = event.target.closest(".md-pre-toggle");
+    if (
+      codeToggle &&
+      event.target === codeToggle &&
+      (event.key === "Enter" || event.key === " ")
+    ) {
+      event.preventDefault();
+      toggleCodeBlock(codeToggle);
+      return;
+    }
     const input = event.target.closest(".msg-edit-input");
     if (!(input instanceof HTMLTextAreaElement)) {
       return;
@@ -8449,6 +9432,9 @@
       case "figmaStatus":
         renderFigmaStatus(msg.status || {});
         break;
+      case "providerConnStatus":
+        renderProviderConnStatus(msg.status || {});
+        break;
       case "mcpServers":
         mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
         renderMcpServersList();
@@ -8468,6 +9454,9 @@
         editingModelId = "";
         setCanRegenerate(msg.canRegenerate);
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
+        if (msg.providerConnStatus) {
+          renderProviderConnStatus(msg.providerConnStatus);
+        }
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages, "restore", msg.scrollTop);
         }
@@ -8562,6 +9551,9 @@
       case "copied":
         showCopyToast(t("copied"));
         break;
+      case "runFinished":
+        playRunFinishedSound(msg.outcome === "error" ? "error" : "success");
+        break;
       case "append":
         uiMessagesCache.push({
           role: msg.role,
@@ -8597,8 +9589,28 @@
           streamingEl.dataset.raw = "";
         }
         streamingEl.dataset.raw = (streamingEl.dataset.raw || "") + msg.text;
-        setMessageContent(streamingEl, "assistant", streamingEl.dataset.raw);
-        scrollToBottom();
+        if (!streamingRenderScheduled) {
+          streamingRenderScheduled = true;
+          requestAnimationFrame(() => {
+            streamingRenderScheduled = false;
+            if (streamingEl) {
+              setMessageContent(
+                streamingEl,
+                "assistant",
+                streamingEl.dataset.raw || ""
+              );
+              scrollToBottom();
+            }
+          });
+        }
+        break;
+      case "assistantStreamClear":
+        if (streamingEl) {
+          const wrap = streamingEl.closest(".msg-wrap-assistant");
+          (wrap || streamingEl).remove();
+          streamingEl = null;
+        }
+        streamingRenderScheduled = false;
         break;
       case "assistantDone":
         if (!streamingEl && msg.text) {
@@ -8616,6 +9628,7 @@
           streamingEl.dataset.index = String(uiMessagesCache.length - 1);
         }
         streamingEl = null;
+        streamingRenderScheduled = false;
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -8627,6 +9640,7 @@
           break;
         }
         streamingEl = null;
+        streamingRenderScheduled = false;
         setAgentStatus("", true);
         setBusy(false);
         break;
@@ -8634,7 +9648,7 @@
         if (msg.chatId && msg.chatId !== activeChatId) {
           break;
         }
-        streamingEl = null;
+        clearStoppedRunArtifacts();
         setAgentStatus("", true);
         setBusy(false);
         break;
