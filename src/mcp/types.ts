@@ -86,6 +86,19 @@ export function isMcpReadonlyTool(qualifiedName: string): boolean {
   return !WRITEISH_TOOL_RE.test(name);
 }
 
+/**
+ * MCP tools allowed in Plan/Ask: all Figma tools + non-write tools from other servers.
+ */
+export function isAllowedMcpInReadonlyMode(qualifiedName: string): boolean {
+  if (!String(qualifiedName || "").startsWith("mcp__")) {
+    return false;
+  }
+  if (qualifiedName.startsWith("mcp__figma__")) {
+    return true;
+  }
+  return isMcpReadonlyTool(qualifiedName);
+}
+
 export function formatTransportDetail(cfg: McpServerConfig): string {
   if (cfg.transport === "http") {
     return `http · ${cfg.url || ""}`;

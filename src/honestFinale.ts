@@ -6,9 +6,11 @@ import {
 } from "./claimedEdits";
 import { looksLikeHedgeOrUnfinishedAction } from "./hedgeReplies";
 import {
+  looksLikeDeniedSuccessfulEdit,
   looksLikeHollowStatusOrDeferral,
   looksLikeSharedLayoutChangeClaim,
 } from "./hollowReplies";
+import { looksLikeRefusedRequestedEdit } from "./versionBump";
 
 export const MISSING_WRITE_USER_NUDGE =
   "False: you described code changes but did NOT successfully call write_file or search_replace in this step. Editing tools ARE available. Do NOT claim you already returned/fixed/restored anything. Call search_replace for a focused edit or write_file for full content, then reply briefly.";
@@ -28,6 +30,12 @@ export const HOLLOW_USER_NUDGE =
 export const HOLLOW_USER_VISIBLE =
   "Модель ответила пустышкой («файл уже ок / я объяснил / скажи — перепишу») без реального объяснения в сообщении. Повторите запрос — нужен конкретный ответ или применение правки через инструмент.";
 
+export const DENIED_WRITE_USER_NUDGE =
+  "False: tool results show a successful search_replace or write_file THIS turn. Do NOT claim the file was already correct, already updated earlier, or that no editor changes were needed. State briefly what you changed (old → new). If you also synced package-lock, mention that as a follow-up, not as a substitute for the edit.";
+
+export const DENIED_WRITE_USER_VISIBLE =
+  "Модель успешно применила правку через инструмент, но в ответе отрицает это («уже было / правок не потребовалось»). Повторите запрос — нужен краткий отчёт о реальном изменении.";
+
 export const IMPACT_USER_NUDGE =
   "You changed (or claim to change) shared UI layout/structure. Before finishing: run_command with rg/grep to find imports and usages of this component, check whether other call sites break, update them if needed, and report the impact. Do NOT say «скажи — верну/переделаю». Prefer backwards-compatible API (optional props) over breaking shared components unilaterally.";
 
@@ -39,6 +47,7 @@ export type HonestFinaleDecision =
   | { kind: "nudge_write" }
   | { kind: "nudge_hedge" }
   | { kind: "nudge_hollow" }
+  | { kind: "nudge_denied_write" }
   | { kind: "nudge_impact" }
   | { kind: "replace"; text: string };
 
@@ -248,6 +257,26 @@ export function decideHonestFinale(input: {
 
   // Явная ложь «уже сделал» без успешного файлового edit
   if (!hadWrite && claimsEdit) {
+    if (allowNudgeWrite) {
+      return { kind: "nudge_write" };
+    }
+    return { kind: "replace", text: MISSING_WRITE_USER_VISIBLE };
+  }
+
+  // Успешный edit есть, но финал врёт «уже было / правок не потребовалось»
+  if (hadWrite && looksLikeDeniedSuccessfulEdit(text)) {
+    if (allowNudgeHollow) {
+      return { kind: "nudge_denied_write" };
+    }
+    return { kind: "replace", text: DENIED_WRITE_USER_VISIBLE };
+  }
+
+  // Пользователь просил изменить, а модель говорит «уже так / менять нечего» без write
+  if (
+    !hadWrite &&
+    userWantsEdit &&
+    looksLikeRefusedRequestedEdit(text)
+  ) {
     if (allowNudgeWrite) {
       return { kind: "nudge_write" };
     }

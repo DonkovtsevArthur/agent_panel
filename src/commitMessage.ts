@@ -14,7 +14,7 @@ import {
   resolveUiLanguage,
 } from "./i18n";
 import { selectUtilityModel } from "./modelRouting";
-import { OpenAICompatibleClient } from "./openaiClient";
+import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   capWorkspaceRuleText,
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
@@ -430,7 +430,7 @@ export async function composeCommitMessageText(
     data.source,
     instruction
   );
-  const client = new OpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
+  const client = getOpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
     rejectUnauthorized: config.rejectUnauthorized,
     caBundlePath: config.caBundlePath,
   });

@@ -7,11 +7,13 @@ const {
   looksLikeUtilityModel,
   modelFallbackEligibility,
   resolveSpeedRouting,
+  resolveVisionPreferenceIds,
   routeModel,
   selectFallbackModel,
   selectUtilityModel,
   shouldAbandonHelperModel,
   UTILITY_MODEL_PREFERENCE,
+  VISION_MODEL_PREFERENCE,
 } = require("../out/modelRouting.js");
 
 test("manual eligible selection always wins", () => {
@@ -64,6 +66,48 @@ test("ineligible, disabled, and excluded manual selections fall back", () => {
       },
     }),
     { modelId: "Gemini 2.5 Flash", reason: "fallback_after_failure" }
+  );
+});
+
+test("vision preference picks under-the-hood model when selection lacks vision", () => {
+  assert.deepEqual(resolveVisionPreferenceIds([]), [...VISION_MODEL_PREFERENCE]);
+  assert.deepEqual(resolveVisionPreferenceIds(["gpt-4.1", "gpt-4.1"]), [
+    "gpt-4.1",
+  ]);
+
+  const models = [
+    { id: "Qwen3-Coder-Next" },
+    { id: "claude-sonnet-4-5", supportsVision: true },
+    { id: "gpt-4.1", supportsVision: true },
+    { id: "Gemini 2.5 Flash", supportsVision: true },
+  ];
+
+  assert.deepEqual(
+    routeModel(models, {
+      userSelectedModelId: "Qwen3-Coder-Next",
+      hints: { vision_required: true, vision_preference: [] },
+    }),
+    { modelId: "Gemini 2.5 Flash", reason: "vision_preference" }
+  );
+  assert.deepEqual(
+    routeModel(models, {
+      userSelectedModelId: "Qwen3-Coder-Next",
+      hints: {
+        vision_required: true,
+        vision_preference: ["claude-sonnet-4-5", "gpt-4.1"],
+      },
+    }),
+    { modelId: "claude-sonnet-4-5", reason: "vision_preference" }
+  );
+  assert.deepEqual(
+    routeModel(models, {
+      userSelectedModelId: "gpt-4.1",
+      hints: {
+        vision_required: true,
+        vision_preference: ["claude-sonnet-4-5"],
+      },
+    }),
+    { modelId: "gpt-4.1", reason: "user_selected" }
   );
 });
 
@@ -202,6 +246,29 @@ test("fallback classification accepts only explicit transport, capability, and c
   );
 });
 
+test("fallback eligibility allows transport before side effects", () => {
+  const reset = Object.assign(new Error("connection reset"), {
+    code: "ECONNRESET",
+  });
+  const interrupted = new Error("SSE stream interrupted after partial response");
+  const serverError = Object.assign(new Error("service unavailable"), {
+    status: 503,
+  });
+  assert.equal(modelFallbackEligibility({ error: reset })?.kind, "transport");
+  assert.equal(
+    modelFallbackEligibility({ error: interrupted })?.kind,
+    "transport"
+  );
+  assert.equal(
+    modelFallbackEligibility({ error: serverError })?.kind,
+    "transport"
+  );
+  assert.equal(
+    modelFallbackEligibility({ error: reset, hadToolSideEffects: true }),
+    undefined
+  );
+});
+
 test("fallback eligibility rejects retries after effects, abort, or prior fallback", () => {
   const error = Object.assign(new Error("connection reset"), {
     code: "ECONNRESET",
@@ -227,6 +294,9 @@ test("fallback eligibility rejects retries after effects, abort, or prior fallba
     modelFallbackEligibility({ error, aborted: true }),
     undefined
   );
+
+  const context = new Error("API 400: context_length_exceeded: prompt is too long");
+  assert.equal(modelFallbackEligibility({ error: context })?.kind, "context");
 });
 
 test("fallback selection excludes failed model and preserves required capabilities", () => {

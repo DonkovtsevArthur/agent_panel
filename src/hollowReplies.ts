@@ -119,6 +119,50 @@ export function looksLikeHollowStatusOrDeferral(text: string): boolean {
   return false;
 }
 
+/**
+ * После успешного search_replace/write_file модель иногда врёт:
+ * «уже было / правок не потребовалось» — ловим и заставляем честно описать правку.
+ */
+export function looksLikeDeniedSuccessfulEdit(text: string): boolean {
+  const value = String(text || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!value) {
+    return false;
+  }
+  return hasAny(value, [
+    "уже была",
+    "уже было",
+    "уже стоит",
+    "уже установлена",
+    "уже обновлён",
+    "уже обновлен",
+    "был обновлён ранее",
+    "был обновлен ранее",
+    "обновлён ранее",
+    "обновлен ранее",
+    "изменений не потребовалось",
+    "изменения не потребовались",
+    "правок не потребовалось",
+    "через редактор в этом шаге не",
+    "не вносил изменений",
+    "ничего не менял",
+    "already was",
+    "was already",
+    "already at version",
+    "already set to",
+    "no editor changes",
+    "no changes were needed",
+    "no changes needed",
+    "did not need to change",
+    "didn't need to change",
+    "already updated earlier",
+    "updated earlier",
+  ]);
+}
+
 /** Описание правки shared UI без проверки потребителей. */
 export function looksLikeSharedLayoutChangeClaim(text: string): boolean {
   const value = String(text || "").trim().toLowerCase();

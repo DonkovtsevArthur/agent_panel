@@ -137,6 +137,14 @@ export interface AgentPanelConfig {
     /** Agent explore-then-edit on fast helper. */
     agentExplore: boolean;
   };
+  /**
+   * Under-the-hood model for image messages when the selected chat model
+   * lacks vision. Empty preferredModelIds → built-in VISION_MODEL_PREFERENCE.
+   */
+  visionRouting: {
+    /** Ordered preferred vision model ids; empty = auto. */
+    preferredModelIds: string[];
+  };
   soundNotifications: {
     enabled: boolean;
   };
@@ -433,6 +441,22 @@ export function getConfig(): AgentPanelConfig {
         readonlyOverride:
           cfg.get<boolean>("speedRouting.readonlyOverride") !== false,
         agentExplore: cfg.get<boolean>("speedRouting.agentExplore") !== false,
+      };
+    })(),
+    visionRouting: (() => {
+      const rawIds = cfg.get<unknown>("visionRouting.preferredModelIds");
+      const fromArray = Array.isArray(rawIds)
+        ? rawIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .filter((id, index, all) => all.indexOf(id) === index)
+        : [];
+      const legacy = String(
+        cfg.get<string>("visionRouting.preferredModelId") || ""
+      ).trim();
+      return {
+        preferredModelIds:
+          fromArray.length > 0 ? fromArray : legacy ? [legacy] : [],
       };
     })(),
     soundNotifications: {

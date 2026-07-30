@@ -136,3 +136,54 @@ test("decideHonestFinale replaces hollow after nudge exhausted", () => {
   assert.equal(decision.kind, "replace");
   assert.equal(decision.text, HOLLOW_USER_VISIBLE);
 });
+
+test("detects denied successful edit («уже была / правок не потребовалось»)", () => {
+  const { looksLikeDeniedSuccessfulEdit } = require("../out/hollowReplies.js");
+  assert.equal(
+    looksLikeDeniedSuccessfulEdit(
+      "Версия в package.json уже была 0.0.19. Я синхронизировал package-lock.json. Изменений через редактор в этом шаге не потребовалось — package.json был обновлён ранее."
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeDeniedSuccessfulEdit("Поднял версию с 0.0.18 до 0.0.19."),
+    false
+  );
+});
+
+test("honest finale nudges when successful write is denied in the reply", () => {
+  const { DENIED_WRITE_USER_VISIBLE } = require("../out/honestFinale.js");
+  const decision = decideHonestFinale({
+    text: "Версия в package.json уже была 0.0.19. Изменений через редактор в этом шаге не потребовалось.",
+    canEdit: true,
+    messages: [],
+    userText: "19",
+    hadSuccessfulWrite: true,
+    allowNudgeHollow: true,
+  });
+  assert.equal(decision.kind, "nudge_denied_write");
+
+  const replaced = decideHonestFinale({
+    text: "Версия уже была 0.0.19. Правок не потребовалось.",
+    canEdit: true,
+    messages: [],
+    userText: "19",
+    hadSuccessfulWrite: true,
+    allowNudgeHollow: false,
+  });
+  assert.equal(replaced.kind, "replace");
+  assert.equal(replaced.text, DENIED_WRITE_USER_VISIBLE);
+});
+
+test("honest finale does not treat «уже была» as denial without a write", () => {
+  const decision = decideHonestFinale({
+    text: "Версия уже была 0.0.19 — менять нечего.",
+    canEdit: true,
+    messages: [],
+    userText: "какая сейчас версия в package.json?",
+    hadSuccessfulWrite: false,
+    allowNudgeHollow: true,
+    allowNudgeWrite: false,
+  });
+  assert.equal(decision.kind, "ok");
+});

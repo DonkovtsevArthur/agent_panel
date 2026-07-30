@@ -6,6 +6,8 @@ import * as path from "path";
 import { URL } from "url";
 import {
   KIMI_MIN_MAX_TOKENS,
+  modelNeedsGatewayWorkarounds,
+  modelUsesMainLikeApi,
   resolveModelCapabilities,
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
@@ -229,6 +231,43 @@ export function isRetryableTransportError(error: unknown): boolean {
   ].includes(code);
 }
 
+/** Короткий фрагмент тела API-ошибки для UI (после 500 и т.п.). */
+export function formatApiErrorDetail(error: unknown, max = 280): string {
+  const message =
+    error instanceof Error ? error.message : String(error || "").trim();
+  if (!message) {
+    return "";
+  }
+  if (/SSE stream interrupted after partial/i.test(message)) {
+    return "";
+  }
+  const api = message.match(/API\s+(\d+)\s*:\s*([\s\S]*)/i);
+  if (api) {
+    const body = api[2].replace(/\s+/g, " ").trim();
+    return `API ${api[1]}: ${body.slice(0, max)}${body.length > max ? "…" : ""}`;
+  }
+  if (/API\s*5\d\d\b|internal server error/i.test(message)) {
+    return message.replace(/\s+/g, " ").trim().slice(0, max);
+  }
+  return "";
+}
+
+function shouldFallbackToNonStream(
+  modelId: string | undefined,
+  error: unknown
+): boolean {
+  if (!modelNeedsGatewayWorkarounds(String(modelId || ""))) {
+    return false;
+  }
+  if (
+    error instanceof Error &&
+    /SSE stream interrupted after partial/i.test(error.message)
+  ) {
+    return false;
+  }
+  return isRetryableTransportError(error);
+}
+
 function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
     return Promise.reject(abortError());
@@ -292,19 +331,67 @@ function expandHome(p: string): string {
   return p;
 }
 
-function buildHttpsAgent(tls: ClientTlsOptions): https.Agent {
-  const options: https.AgentOptions = {
-    rejectUnauthorized: tls.rejectUnauthorized,
-  };
+function tlsPoolKey(tls: ClientTlsOptions): string {
+  return `${tls.rejectUnauthorized ? "1" : "0"}|${String(tls.caBundlePath || "").trim()}`;
+}
 
-  if (tls.caBundlePath) {
-    const caPath = expandHome(tls.caBundlePath);
-    if (fs.existsSync(caPath)) {
-      options.ca = fs.readFileSync(caPath);
+function agentPoolKey(
+  protocol: string,
+  hostname: string,
+  port: string,
+  tls: ClientTlsOptions
+): string {
+  return `${protocol}|${hostname}|${port}|${tlsPoolKey(tls)}`;
+}
+
+const KEEP_ALIVE_MSECS = 30_000;
+const MAX_SOCKETS = 16;
+const MAX_FREE_SOCKETS = 8;
+
+const httpAgentPool = new Map<string, http.Agent | https.Agent>();
+// Populated after OpenAICompatibleClient is defined; typed loosely to avoid TDZ.
+const openAIClientPool = new Map<string, unknown>();
+
+function buildKeepAliveAgentOptions(
+  tls: ClientTlsOptions,
+  forHttps: boolean
+): http.AgentOptions | https.AgentOptions {
+  const options: http.AgentOptions & https.AgentOptions = {
+    keepAlive: true,
+    keepAliveMsecs: KEEP_ALIVE_MSECS,
+    maxSockets: MAX_SOCKETS,
+    maxFreeSockets: MAX_FREE_SOCKETS,
+  };
+  if (forHttps) {
+    (options as https.AgentOptions).rejectUnauthorized = tls.rejectUnauthorized;
+    if (tls.caBundlePath) {
+      const caPath = expandHome(tls.caBundlePath);
+      if (fs.existsSync(caPath)) {
+        (options as https.AgentOptions).ca = fs.readFileSync(caPath);
+      }
     }
   }
+  return options;
+}
 
-  return new https.Agent(options);
+/** Shared keep-alive agent for a host (tests may call {@link resetTransportPools}). */
+export function getOrCreateHttpAgent(
+  url: string | URL,
+  tls: ClientTlsOptions
+): http.Agent | https.Agent {
+  const parsed = typeof url === "string" ? new URL(url) : url;
+  const isHttps = parsed.protocol === "https:";
+  const port = parsed.port || (isHttps ? "443" : "80");
+  const key = agentPoolKey(parsed.protocol, parsed.hostname, port, tls);
+  const existing = httpAgentPool.get(key);
+  if (existing) {
+    return existing;
+  }
+  const agent = isHttps
+    ? new https.Agent(buildKeepAliveAgentOptions(tls, true))
+    : new http.Agent(buildKeepAliveAgentOptions(tls, false));
+  httpAgentPool.set(key, agent);
+  return agent;
 }
 
 export function resolveRequestMaxTokens(
@@ -354,7 +441,7 @@ function requestJson(
         path: `${parsed.pathname}${parsed.search}`,
         method: init.method,
         headers: init.headers,
-        agent: isHttps ? buildHttpsAgent(init.tls) : undefined,
+        agent: getOrCreateHttpAgent(parsed, init.tls),
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -411,7 +498,7 @@ function requestSse(
         path: `${parsed.pathname}${parsed.search}`,
         method: init.method,
         headers: init.headers,
-        agent: isHttps ? buildHttpsAgent(init.tls) : undefined,
+        agent: getOrCreateHttpAgent(parsed, init.tls),
       },
       (res) => {
         const status = res.statusCode ?? 0;
@@ -596,6 +683,94 @@ export class OpenAICompatibleClient {
   }
 
   async chatCompletions(
+    body: ChatCompletionRequest,
+    signal?: AbortSignal,
+    options?: { onDelta?: (delta: ChatCompletionDelta) => void }
+  ): Promise<ChatCompletionResult> {
+    // Все модели: как на main — простой non-stream JSON.
+    const result = await this.chatCompletionsMainLike(body, signal);
+    const text =
+      typeof result.message.content === "string"
+        ? result.message.content
+        : "";
+    if (text && options?.onDelta) {
+      options.onDelta({ content: text });
+    }
+    return result;
+  }
+
+  /**
+   * Транспорт один в один как на main: JSON.stringify(body), без stream/retry/toApiMessages.
+   */
+  private async chatCompletionsMainLike(
+    body: ChatCompletionRequest,
+    signal?: AbortSignal
+  ): Promise<ChatCompletionResult> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+    }
+
+    // Как на main: тело = model/messages[/tools]/tool_choice]/temperature]/max_tokens].
+    const requestBody: {
+      model: string;
+      messages: ChatMessage[];
+      tools?: ChatTool[];
+      tool_choice?: "auto" | "none";
+      temperature?: number;
+      max_tokens?: number;
+    } = {
+      model: body.model,
+      messages: body.messages.map((message) => {
+        const { attachments: _a, ...rest } = message;
+        return rest;
+      }),
+    };
+    if (body.tools) {
+      requestBody.tools = body.tools;
+    }
+    if (body.tool_choice) {
+      requestBody.tool_choice = body.tool_choice;
+    }
+    if (body.temperature !== undefined) {
+      requestBody.temperature = body.temperature;
+    }
+    if (body.max_tokens !== undefined) {
+      requestBody.max_tokens = body.max_tokens;
+    }
+
+    const payload = JSON.stringify(requestBody);
+    headers["Content-Length"] = Buffer.byteLength(payload).toString();
+
+    const response = await requestJson(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: payload,
+      signal,
+      tls: this.tls,
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(
+        `API ${response.status}: ${response.text.slice(0, 800)}`
+      );
+    }
+
+    const data = JSON.parse(response.text) as ChatCompletionResponse;
+    const message = data.choices?.[0]?.message;
+    if (!message) {
+      throw new Error("Пустой ответ от API");
+    }
+    return {
+      message,
+      usage: data.usage,
+      finishReason: data.choices?.[0]?.finish_reason,
+    };
+  }
+
+  private async chatCompletionsStreaming(
     body: ChatCompletionRequest,
     signal?: AbortSignal,
     options?: { onDelta?: (delta: ChatCompletionDelta) => void }
@@ -851,4 +1026,47 @@ export class OpenAICompatibleClient {
       return current;
     }, signal, this.retry);
   }
+}
+
+function clientPoolKey(
+  baseUrl: string,
+  apiKey: string,
+  tls: ClientTlsOptions
+): string {
+  return `${baseUrl.trim()}|${apiKey}|${tlsPoolKey(tls)}`;
+}
+
+/**
+ * Reuse OpenAI-compatible clients across turns / probes for the same endpoint.
+ * Tests may still construct {@link OpenAICompatibleClient} directly.
+ */
+export function getOpenAICompatibleClient(
+  baseUrl: string,
+  apiKey: string,
+  tls: ClientTlsOptions,
+  retry?: TransportRetryOptions
+): OpenAICompatibleClient {
+  // Custom retry options are for tests / one-offs — do not pool those instances.
+  if (retry) {
+    return new OpenAICompatibleClient(baseUrl, apiKey, tls, retry);
+  }
+  const key = clientPoolKey(baseUrl, apiKey, tls);
+  const existing = openAIClientPool.get(key) as
+    | OpenAICompatibleClient
+    | undefined;
+  if (existing) {
+    return existing;
+  }
+  const client = new OpenAICompatibleClient(baseUrl, apiKey, tls);
+  openAIClientPool.set(key, client);
+  return client;
+}
+
+/** Destroy pooled agents and clear client cache (unit tests). */
+export function resetTransportPools(): void {
+  for (const agent of httpAgentPool.values()) {
+    agent.destroy();
+  }
+  httpAgentPool.clear();
+  openAIClientPool.clear();
 }

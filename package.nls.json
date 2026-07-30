@@ -45,6 +45,8 @@
   "config.speedRouting.fastModelIds.description": "Ordered model ids used as fast helpers for Plan/Ask and Agent explore. Empty = auto-pick a lightweight enabled model.",
   "config.speedRouting.readonlyOverride.description": "In Plan/Ask, run heavy selections on the fast helper model.",
   "config.speedRouting.agentExplore.description": "In Agent mode, gather context on the fast helper, then edit/answer on the selected model.",
+  "config.visionRouting.preferredModelIds.description": "Ordered model ids used for image messages when the selected chat model has no vision. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5 among enabled vision models).",
+  "config.visionRouting.preferredModelId.description": "Deprecated. Use visionRouting.preferredModelIds.",
   "config.maxResponseChars.description": "Maximum chat response length; longer output is truncated. Repetitive loops are also trimmed.",
   "config.soundNotifications.enabled.description": "Play a sound when an agent run succeeds or fails.",
   "config.rejectUnauthorized.description": "Validate the TLS certificate. For corporate CAs, use false or true with caBundlePath.",

@@ -156,3 +156,17 @@ export function resolveModelRequestMaxTokens(
   }
   return minimum ? Math.max(requested, minimum) : requested;
 }
+
+/**
+ * Все модели: запрос как на ветке main — простой non-stream JSON без SSE.
+ */
+export function modelUsesMainLikeApi(_modelId?: string): boolean {
+  return true;
+}
+
+/**
+ * @deprecated Больше не используется: все модели идут через {@link modelUsesMainLikeApi}.
+ */
+export function modelNeedsGatewayWorkarounds(_modelId?: string): boolean {
+  return false;
+}

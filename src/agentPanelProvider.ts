@@ -23,12 +23,12 @@ import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage 
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import {
+  classifyModelFallbackError,
   modelFallbackEligibility,
   resolveSpeedRouting,
   routeModel,
   selectFallbackModel,
 } from "./modelRouting";
-import { looksLikeQuestionRequest } from "./claimedEdits";
 import type { FileEditStat } from "./diffStats";
 import { getEditorSelectionPayload } from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
@@ -42,7 +42,7 @@ import {
   parseCustomModes,
   type AgentModeDef,
 } from "./modes";
-import { OpenAICompatibleClient, type ChatMessage } from "./openaiClient";
+import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
 import { getMcpManager } from "./mcpBundle";
 import type { FigmaStatusPayload } from "./mcpBundle";
 import type { McpServerRuntimeStatus } from "./mcp/types";
@@ -110,6 +110,7 @@ type SettingsPayload = {
   speedRoutingFastModelIds?: string[];
   speedRoutingReadonlyOverride?: boolean;
   speedRoutingAgentExplore?: boolean;
+  visionRoutingPreferredModelIds?: string[];
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
@@ -152,6 +153,7 @@ type WebviewToHost =
   | { type: "restoreAgent"; agentId: string }
   | { type: "deleteAgent"; agentId: string }
   | { type: "modelChanged"; model: string }
+  | { type: "modeChanged"; mode: string }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
   | { type: "commitAndPush"; paths: string[] }
@@ -199,7 +201,16 @@ type WebviewToHost =
     }
   | { type: "mcpDeleteServer"; id: string }
   | { type: "mcpSetEnabled"; id: string; enabled: boolean }
-  | { type: "mcpConnectServer"; id: string };
+  | { type: "mcpConnectServer"; id: string }
+  | {
+      type: "listProviderModels";
+      requestId: string;
+      providerId: string;
+      baseUrl?: string;
+      apiKey?: string;
+      rejectUnauthorized?: boolean;
+      caBundlePath?: string;
+    };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -230,6 +241,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private history: ChatMessage[] = [];
   private uiMessages: UiMessage[] = [];
   private selectedModel = "";
+  private selectedMode = "agent";
   private lastTurnModel = "";
   private contextTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
@@ -597,6 +609,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.history = [];
       this.uiMessages = [];
       this.selectedModel = getConfig().defaultModel || "";
+      this.selectedMode = "agent";
       this.lastTurnModel = "";
       this.contextTokens = 0;
       return;
@@ -604,6 +617,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.history = chat.history || [];
     this.uiMessages = chat.uiMessages || [];
     this.selectedModel = chat.selectedModel || "";
+    this.selectedMode = getModeById(chat.selectedMode).id;
     this.lastTurnModel = chat.lastTurnModel || "";
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
@@ -624,6 +638,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     touchChat(this.store, chatId, {
       selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
       lastTurnModel: this.lastTurnModel,
       history: this.history,
       uiMessages: this.uiMessages.slice(-200),
@@ -1294,7 +1309,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         PROVIDER_PROBE_TIMEOUT_MS
       );
       try {
-        const client = new OpenAICompatibleClient(
+        const client = getOpenAICompatibleClient(
           endpoint.baseUrl || probeUrl,
           endpoint.apiKey,
           {
@@ -1351,6 +1366,89 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return await promise;
     } finally {
       this.providerProbePromises.delete(providerId);
+    }
+  }
+
+  private async handleListProviderModels(message: {
+    requestId: string;
+    providerId: string;
+    baseUrl?: string;
+    apiKey?: string;
+    rejectUnauthorized?: boolean;
+    caBundlePath?: string;
+  }): Promise<void> {
+    const requestId = String(message.requestId || "");
+    const providerId = String(message.providerId || "").trim();
+    const config = getConfig();
+    const saved = config.providers.find((p) => p.id === providerId);
+    const baseUrl = String(message.baseUrl || saved?.baseUrl || "")
+      .trim()
+      .replace(/\/$/, "");
+    const apiKey =
+      typeof message.apiKey === "string"
+        ? message.apiKey
+        : saved?.apiKey || "";
+    const rejectUnauthorized =
+      typeof message.rejectUnauthorized === "boolean"
+        ? message.rejectUnauthorized
+        : config.rejectUnauthorized;
+    const caBundlePath =
+      typeof message.caBundlePath === "string"
+        ? message.caBundlePath.trim()
+        : config.caBundlePath;
+
+    const reply = (payload: {
+      models?: string[];
+      error?: string;
+    }): void => {
+      this.settingsPanel?.webview.postMessage({
+        type: "providerModelsListed",
+        requestId,
+        providerId,
+        models: payload.models || [],
+        error: payload.error,
+      });
+    };
+
+    if (!providerId) {
+      reply({ error: "No provider id" });
+      return;
+    }
+    if (!baseUrl) {
+      reply({ error: "No base URL" });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      PROVIDER_PROBE_TIMEOUT_MS
+    );
+    try {
+      const client = getOpenAICompatibleClient(baseUrl, apiKey, {
+        rejectUnauthorized,
+        caBundlePath,
+      });
+      const models = await client.listModels(controller.signal);
+      const unique = Array.from(
+        new Set(
+          models
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
+      );
+      reply({ models: unique });
+    } catch (error) {
+      const aborted =
+        controller.signal.aborted ||
+        (error instanceof Error &&
+          (error.message === "aborted" || /abort/i.test(error.message)));
+      const raw = error instanceof Error ? error.message : String(error);
+      reply({ error: (aborted ? "Timeout" : raw).slice(0, 240) });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -1416,6 +1514,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "showChat",
       models,
       selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
@@ -1457,7 +1556,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       case "modelChanged":
-        this.selectedModel = message.model;
+        this.selectedModel = String(message.model || "").trim();
         if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
           touchChat(this.store, this.store.activeChatId, {
             selectedModel: this.selectedModel,
@@ -1466,7 +1565,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.saveSession();
         this.postContextUsage();
         this.postRegenerateState();
+        this.view?.webview.postMessage({
+          type: "modelsUpdated",
+          models: getEnabledModels(),
+          selectedModel: this.selectedModel,
+        });
         this.ensureProviderProbe(this.selectedModel);
+        break;
+      case "modeChanged":
+        this.selectedMode = getModeById(message.mode).id;
+        if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedMode: this.selectedMode,
+          });
+        }
+        this.saveSession();
         break;
       case "newChat":
         this.newChat();
@@ -1535,6 +1648,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "mcpConnectServer":
         await this.handleMcpConnect(message.id);
+        break;
+      case "listProviderModels":
+        await this.handleListProviderModels(message);
         break;
       case "openAgent":
         this.openAgent(message.agentId);
@@ -2107,17 +2223,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const hasImageAttachment = attachments.some(
       (attachment) => attachment.kind === "image"
     );
+    const visionPreferenceIds = hasImageAttachment
+      ? config.visionRouting.preferredModelIds
+      : undefined;
     const routed = routeModel(enabledModels, {
       userSelectedModelId: requestedModel,
-      hints: hasImageAttachment ? { vision_required: true } : undefined,
+      hints: hasImageAttachment
+        ? {
+            vision_required: true,
+            vision_preference: visionPreferenceIds ?? [],
+          }
+        : undefined,
     });
     let chosen = routed?.modelId || requestedModel;
-    const selectedMode = getModeById(options?.agentMode);
-    // In Agent mode, plain questions answer like Ask (readonly + Ask prompt).
-    const modeForRun =
-      selectedMode.id === "agent" && looksLikeQuestionRequest(trimmed)
-        ? getModeById("ask")
-        : selectedMode;
+    const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
+    // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask:
+    // иначе Figma MCP / write_file пропадают на вопросах вроде «посмотри макет».
+    const modeForRun = selectedMode;
+    this.selectedMode = modeForRun.id;
+    if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+      touchChat(this.store, this.store.activeChatId, {
+        selectedMode: this.selectedMode,
+      });
+    }
     const speed = resolveSpeedRouting({
       models: enabledModels,
       userSelectedModelId: chosen,
@@ -2134,14 +2262,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const lang = resolveUiLanguage(config.language);
       const fastLabel =
         enabledModels.find((item) => item.id === chosen)?.label || chosen;
-      const speedLabel =
-        modeForRun.id === "ask" && selectedMode.id === "agent"
-          ? selectedMode.label
-          : modeForRun.label;
       void vscode.window.showInformationMessage(
         lang === "ru"
-          ? `${speedLabel}: для скорости используется ${fastLabel}`
-          : `${speedLabel}: using ${fastLabel} for speed`
+          ? `${modeForRun.label}: для скорости используется ${fastLabel}`
+          : `${modeForRun.label}: using ${fastLabel} for speed`
       );
     } else if (speed.kind === "explore_then_edit" && speed.fastModelId) {
       exploreModel = speed.fastModelId;
@@ -2168,8 +2292,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (!this.isChatRunCurrent(runChatId, runRef)) {
         return;
       }
+      // Prefer the live picker choice if the user switched mid-run.
+      const modelForChat = this.selectedModel || selectedModelAfterRun;
       touchChat(this.store, runChatId, {
-        selectedModel: selectedModelAfterRun,
+        selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
         history: runHistory,
         uiMessages: runUiMessages.slice(-200),
@@ -2178,7 +2304,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.syncActiveSnapshotFromChat(runChatId, {
         history: runHistory,
         uiMessages: runUiMessages,
-        selectedModel: selectedModelAfterRun,
+        selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
       });
@@ -2432,6 +2558,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           const fallback = selectFallbackModel(enabledModels, {
             failedModelId: failedModel,
             visionRequired: hasImageAttachment,
+            visionPreferenceIds: hasImageAttachment
+              ? config.visionRouting.preferredModelIds
+              : undefined,
             minContextWindow: minimumContextWindow,
           });
           if (!fallback) {
@@ -2499,8 +2628,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (!this.isChatRunCurrent(runChatId, runRef)) {
         return;
       }
-      const messageText =
+      const rawMessage =
         error instanceof Error ? error.message : String(error);
+      const transportKind = classifyModelFallbackError(error)?.kind;
+      let messageText = rawMessage;
+      if (transportKind === "transport") {
+        const lang = resolveUiLanguage(getConfig().language);
+        const reason = rawMessage.replace(/\s+/g, " ").slice(0, 240);
+        const isHttpServerError = /\bAPI\s*5\d\d\b/i.test(reason);
+        if (lang === "ru") {
+          messageText = isHttpServerError
+            ? `Ошибка сервера модели: ${reason}. Отправьте запрос ещё раз.`
+            : `Соединение с моделью разорвано: ${reason}. Отправьте запрос ещё раз.`;
+        } else {
+          messageText = isHttpServerError
+            ? `Model server error: ${reason}. Send the request again.`
+            : `Connection to the model was interrupted: ${reason}. Send the request again.`;
+        }
+      }
       runUiMessages.push({ role: "error", text: messageText });
       syncRunChat();
       this.setRunStateForChat(runChatId, "error");
@@ -3009,6 +3154,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         speedRoutingFastModelIds: config.speedRouting.fastModelIds,
         speedRoutingReadonlyOverride: config.speedRouting.readonlyOverride,
         speedRoutingAgentExplore: config.speedRouting.agentExplore,
+        visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
         commitMessageLanguage: config.commitMessage.language,
@@ -3430,6 +3576,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       raw.speedRoutingAgentExplore !== false,
       target
     );
+    await cfg.update(
+      "visionRouting.preferredModelIds",
+      Array.isArray(raw.visionRoutingPreferredModelIds)
+        ? raw.visionRoutingPreferredModelIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+            .filter((id, index, all) => all.indexOf(id) === index)
+        : [],
+      target
+    );
+    await cfg.update("visionRouting.preferredModelId", "", target);
 
     await this.saveCommitMessageSettings(raw);
 
@@ -3570,6 +3727,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "init",
       models,
       selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
@@ -3930,6 +4088,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="settingsSpeedRoutingAgentExplore" type="checkbox" />
             <span class="settings-label" id="settingsSpeedRoutingAgentExploreLabel">Agent: explore on fast model first</span>
           </label>
+          <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
+          <p class="settings-section-note" id="settingsVisionRoutingNote">When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.</p>
+          <div class="settings-field">
+            <span class="settings-label" id="settingsVisionRoutingModelsLabel">Preferred vision models</span>
+            <p class="settings-hint" id="settingsVisionRoutingModelsHint">Checked models are preferred in list order for image messages. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).</p>
+            <div id="settingsVisionRoutingModels" class="settings-speed-models" role="group" aria-labelledby="settingsVisionRoutingModelsLabel"></div>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="advanced" hidden>
@@ -3956,6 +4121,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </div>
         <div class="settings-modal-tabs" id="modelEditTabs" hidden>
           <button type="button" class="settings-modal-tab is-active" data-model-mode="manual">Manual</button>
+          <button type="button" class="settings-modal-tab" data-model-mode="api">From API</button>
           <button type="button" class="settings-modal-tab" data-model-mode="json">JSON</button>
         </div>
         <div class="settings-modal-body" id="modelEditProviderBlock">
@@ -4016,9 +4182,49 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </div>
           <div id="settingsJsonHint" class="settings-hint" hidden></div>
         </div>
+        <div class="settings-modal-body" id="modelEditApiPane" hidden>
+          <p class="settings-section-note" id="modelEditApiNote">Loads model ids from the provider&apos;s <code>/models</code> endpoint.</p>
+          <div class="settings-json-actions">
+            <button type="button" class="text-btn" id="modelEditApiFetchBtn">Fetch models</button>
+            <button type="button" class="text-btn" id="modelEditApiSelectNewBtn" hidden>Select new</button>
+          </div>
+          <div id="modelEditApiStatus" class="settings-hint" hidden></div>
+          <label class="settings-field" id="modelEditApiSearchWrap" hidden>
+            <span class="settings-label" id="modelEditApiSearchLabel">Filter</span>
+            <input id="modelEditApiSearch" class="settings-input" type="search" autocomplete="off" />
+          </label>
+          <div id="modelEditApiList" class="settings-fetch-models-list" hidden></div>
+        </div>
         <div class="settings-modal-foot">
           <button type="button" class="text-btn" id="modelEditCancelBtn">Cancel</button>
           <button type="button" class="text-btn settings-modal-done" id="modelEditDoneBtn">Done</button>
+        </div>
+      </div>
+    </div>
+    <div id="fetchModelsModal" class="settings-modal" hidden>
+      <div class="settings-modal-backdrop" data-fetch-models-dismiss="1"></div>
+      <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="fetchModelsTitle">
+        <div class="settings-modal-head">
+          <h3 id="fetchModelsTitle" class="settings-modal-title">Fetch models</h3>
+          <button type="button" class="icon-btn" id="fetchModelsCloseBtn" title="Close" aria-label="Close">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+          </button>
+        </div>
+        <div class="settings-modal-body">
+          <p class="settings-section-note" id="fetchModelsNote">Select models to add from the provider API.</p>
+          <div id="fetchModelsStatus" class="settings-hint" hidden></div>
+          <label class="settings-field" id="fetchModelsSearchWrap" hidden>
+            <span class="settings-label" id="fetchModelsSearchLabel">Filter</span>
+            <input id="fetchModelsSearch" class="settings-input" type="search" autocomplete="off" />
+          </label>
+          <div class="settings-json-actions" id="fetchModelsSelectWrap" hidden>
+            <button type="button" class="text-btn" id="fetchModelsSelectNewBtn">Select new</button>
+          </div>
+          <div id="fetchModelsList" class="settings-fetch-models-list" hidden></div>
+        </div>
+        <div class="settings-modal-foot">
+          <button type="button" class="text-btn" id="fetchModelsCancelBtn">Cancel</button>
+          <button type="button" class="text-btn settings-modal-done" id="fetchModelsAddBtn">Add selected</button>
         </div>
       </div>
     </div>

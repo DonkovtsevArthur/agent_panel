@@ -4,6 +4,7 @@
     selectedModel: null,
     draftPrompt: "",
     modelByChat: {},
+    modeByChat: {},
     agentsRailOpen: false,
   };
   if (typeof state.draftPrompt !== "string") {
@@ -11,6 +12,9 @@
   }
   if (!state.modelByChat || typeof state.modelByChat !== "object") {
     state.modelByChat = {};
+  }
+  if (!state.modeByChat || typeof state.modeByChat !== "object") {
+    state.modeByChat = {};
   }
   if (typeof state.agentsRailOpen !== "boolean") {
     state.agentsRailOpen = false;
@@ -146,6 +150,13 @@
       speedRoutingFastModelEmpty: "No models in settings",
       speedRoutingReadonlyOverride: "Plan / Ask on fast model",
       speedRoutingAgentExplore: "Agent: explore on fast model first",
+      visionRoutingTitle: "Images (vision)",
+      visionRoutingNote:
+        "When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.",
+      visionRoutingModels: "Preferred vision models",
+      visionRoutingModelsHint:
+        "Checked models are preferred in list order for image messages. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
+      visionRoutingModelsEmpty: "No vision-capable models in settings",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -195,6 +206,33 @@
       modelsAddedFromJson: "Models from JSON were added.",
       modelIdRequired: "Enter a model id.",
       providerRequired: "Choose a provider (or add one first).",
+      fetchModels: "Fetch models",
+      fetchModelsTitle: "Fetch models",
+      fetchModelsNote: "Select models to add from the provider API.",
+      fetchModelsFromApi: "From API",
+      fetchModelsManual: "Manual",
+      fetchModelsJson: "JSON",
+      fetchModelsApiNote: "Loads model ids from the provider’s /models endpoint.",
+      fetchModelsLoading: "Loading models…",
+      fetchModelsEmpty: "No models returned by the API.",
+      fetchModelsNoneNew: (n) =>
+        n === 1
+          ? "The only model from the API is already in the list."
+          : `All ${n} models from the API are already in the list.`,
+      fetchModelsNoneSelected: "Select at least one new model.",
+      fetchModelsNeedProvider: "Choose a provider with a base URL first.",
+      fetchModelsNeedBaseUrl: "Set a base URL for this provider first.",
+      fetchModelsAlready: "Already added",
+      fetchModelsSelectNew: "Select new",
+      fetchModelsAddSelected: "Add selected",
+      fetchModelsFilter: "Filter",
+      fetchModelsCount: (total, neu) =>
+        neu > 0 ? `${neu} new · ${total} from API` : `${total} from API`,
+      fetchModelsDone: (a, skipped) =>
+        skipped > 0
+          ? `Added ${a} model(s). ${skipped} already in the list.`
+          : `Added ${a} model(s).`,
+      fetchModelsFailed: (msg) => `Could not fetch models: ${msg}`,
       name: "Name",
       contextInput: "Context (input)",
       responseOutput: "Response (output)",
@@ -245,6 +283,7 @@
       toolWorking: "Working…",
       toolReading: "Reading…",
       toolListing: "Listing…",
+      toolSearching: "Searching…",
       toolWriting: "Writing…",
       toolRunning: "Running…",
       toolFetching: "Fetching…",
@@ -254,6 +293,7 @@
       toolKindWrite: "write",
       toolKindReplace: "replace",
       toolKindList: "list",
+      toolKindSearch: "search",
       toolKindRun: "run",
       toolKindFetch: "fetch",
       toolKindOpen: "open",
@@ -269,9 +309,9 @@
       failedReadFile: "Failed to read file",
       slashModeSwitched: (label) => `Mode: ${label}`,
       slashInitDefault:
-        "Inspect this repository and write a short onboarding summary: what the project does, the stack, how to build/run it, the main entry points, key folders/files, and the best next steps for working on it.",
+        "Inspect this repository and create or update AGENTS.md at the workspace root. Keep exploration short: prefer package.json, README, and a quick src/ layout — do not read the whole tree. After 1–2 tool rounds, write AGENTS.md as a concise agent orientation guide: what the project does, stack, how to build/run, main entry points, key folders/files, important conventions/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.",
       slashInitWithTarget: (target) =>
-        `Inspect this repository with a focus on ${target}. Write a short onboarding summary: what this part does, the key files, how it fits into the project, important risks/constraints, and the best next steps for working on it.`,
+        `Inspect this repository with a focus on ${target} and create or update AGENTS.md at the workspace root. Keep exploration short — after 1–2 tool rounds, write the file. Cover what this part does, key files, how it fits the project, important risks/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.`,
       slashCompactDefault:
         "Compact this chat into a short working summary. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.",
       slashCompactWithTarget: (target) =>
@@ -404,6 +444,13 @@
       speedRoutingFastModelEmpty: "Нет моделей в настройках",
       speedRoutingReadonlyOverride: "Plan / Ask на быстрой",
       speedRoutingAgentExplore: "Agent: сначала explore на быстрой",
+      visionRoutingTitle: "Картинки (vision)",
+      visionRoutingNote:
+        "Если выбранная модель не видит изображения, Harbor под капотом переключает на vision-модель. Пустой список — автопредпочтение.",
+      visionRoutingModels: "Предпочтительные vision-модели",
+      visionRoutingModelsHint:
+        "Отмеченные модели предпочтительны по порядку для сообщений с картинками. Пусто = авто (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
+      visionRoutingModelsEmpty: "Нет vision-моделей в настройках",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
@@ -453,6 +500,33 @@
       modelsAddedFromJson: "Модели из JSON добавлены.",
       modelIdRequired: "Укажите id модели.",
       providerRequired: "Выберите провайдера (или сначала добавьте его).",
+      fetchModels: "Подтянуть модели",
+      fetchModelsTitle: "Подтянуть модели",
+      fetchModelsNote: "Выберите модели, которые добавить из API провайдера.",
+      fetchModelsFromApi: "Из API",
+      fetchModelsManual: "Вручную",
+      fetchModelsJson: "JSON",
+      fetchModelsApiNote: "Загружает id моделей с endpoint /models провайдера.",
+      fetchModelsLoading: "Загрузка моделей…",
+      fetchModelsEmpty: "API не вернул ни одной модели.",
+      fetchModelsNoneNew: (n) =>
+        n === 1
+          ? "Единственная модель из API уже в списке."
+          : `Все ${n} моделей из API уже в списке.`,
+      fetchModelsNoneSelected: "Выберите хотя бы одну новую модель.",
+      fetchModelsNeedProvider: "Сначала выберите провайдера с base URL.",
+      fetchModelsNeedBaseUrl: "Сначала укажите base URL у этого провайдера.",
+      fetchModelsAlready: "Уже есть",
+      fetchModelsSelectNew: "Выбрать новые",
+      fetchModelsAddSelected: "Добавить выбранные",
+      fetchModelsFilter: "Фильтр",
+      fetchModelsCount: (total, neu) =>
+        neu > 0 ? `${neu} новых · ${total} с API` : `${total} с API`,
+      fetchModelsDone: (a, skipped) =>
+        skipped > 0
+          ? `Добавлено: ${a}. Уже в списке: ${skipped}.`
+          : `Добавлено моделей: ${a}.`,
+      fetchModelsFailed: (msg) => `Не удалось загрузить модели: ${msg}`,
       name: "Название",
       contextInput: "Контекст (вход)",
       responseOutput: "Ответ (выход)",
@@ -503,6 +577,7 @@
       toolWorking: "Работаю…",
       toolReading: "Читаю…",
       toolListing: "Смотрю…",
+      toolSearching: "Ищу…",
       toolWriting: "Пишу…",
       toolRunning: "Запускаю…",
       toolFetching: "Загружаю…",
@@ -512,6 +587,7 @@
       toolKindWrite: "запись",
       toolKindReplace: "замена",
       toolKindList: "список",
+      toolKindSearch: "поиск",
       toolKindRun: "команда",
       toolKindFetch: "загрузка",
       toolKindOpen: "открытие",
@@ -527,9 +603,9 @@
       failedReadFile: "Не удалось прочитать файл",
       slashModeSwitched: (label) => `Режим: ${label}`,
       slashInitDefault:
-        "Изучи этот репозиторий и дай короткое onboarding-резюме: что делает проект, какой стек используется, как его собирать/запускать, где основные entry points, какие папки и файлы ключевые, и с чего лучше продолжать работу.",
+        "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко: хватит package.json, README и быстрого взгляда на src/ — не читай всё дерево. После 1–2 раундов инструментов сразу запиши AGENTS.md — краткий ориентир для агента: что делает проект, стек, как собирать/запускать, основные entry points, ключевые папки/файлы, важные соглашения/ограничения и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
       slashInitWithTarget: (target) =>
-        `Изучи этот репозиторий с фокусом на ${target}. Дай короткое onboarding-резюме: что делает эта часть проекта, какие файлы здесь ключевые, как она связана с остальным кодом, какие есть ограничения/риски, и с чего лучше продолжать работу.`,
+        `Изучи этот репозиторий с фокусом на ${target} и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко — после 1–2 раундов инструментов сразу пиши файл. Опиши, что делает эта часть, какие файлы ключевые, как она связана с остальным кодом, какие есть ограничения/риски и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.`,
       slashCompactDefault:
         "Сожми текущий чат в короткое рабочее резюме. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.",
       slashCompactWithTarget: (target) =>
@@ -591,6 +667,40 @@
   const importModelsJsonBtn = document.getElementById("importModelsJsonBtn");
   const exportModelsJsonBtn = document.getElementById("exportModelsJsonBtn");
   const settingsJsonHint = document.getElementById("settingsJsonHint");
+  const modelEditApiPane = document.getElementById("modelEditApiPane");
+  const modelEditApiNote = document.getElementById("modelEditApiNote");
+  const modelEditApiFetchBtn = document.getElementById("modelEditApiFetchBtn");
+  const modelEditApiSelectNewBtn = document.getElementById(
+    "modelEditApiSelectNewBtn"
+  );
+  const modelEditApiStatus = document.getElementById("modelEditApiStatus");
+  const modelEditApiSearchWrap = document.getElementById(
+    "modelEditApiSearchWrap"
+  );
+  const modelEditApiSearchLabel = document.getElementById(
+    "modelEditApiSearchLabel"
+  );
+  const modelEditApiSearch = document.getElementById("modelEditApiSearch");
+  const modelEditApiList = document.getElementById("modelEditApiList");
+  const fetchModelsModal = document.getElementById("fetchModelsModal");
+  const fetchModelsTitle = document.getElementById("fetchModelsTitle");
+  const fetchModelsNote = document.getElementById("fetchModelsNote");
+  const fetchModelsStatus = document.getElementById("fetchModelsStatus");
+  const fetchModelsSearchWrap = document.getElementById("fetchModelsSearchWrap");
+  const fetchModelsSearchLabel = document.getElementById(
+    "fetchModelsSearchLabel"
+  );
+  const fetchModelsSearch = document.getElementById("fetchModelsSearch");
+  const fetchModelsSelectWrap = document.getElementById(
+    "fetchModelsSelectWrap"
+  );
+  const fetchModelsSelectNewBtn = document.getElementById(
+    "fetchModelsSelectNewBtn"
+  );
+  const fetchModelsList = document.getElementById("fetchModelsList");
+  const fetchModelsCloseBtn = document.getElementById("fetchModelsCloseBtn");
+  const fetchModelsCancelBtn = document.getElementById("fetchModelsCancelBtn");
+  const fetchModelsAddBtn = document.getElementById("fetchModelsAddBtn");
   const modelEditModal = document.getElementById("modelEditModal");
   const modelEditTitle = document.getElementById("modelEditTitle");
   const modelEditTabs = document.getElementById("modelEditTabs");
@@ -670,8 +780,13 @@
   const settingsSpeedRoutingAgentExplore = document.getElementById(
     "settingsSpeedRoutingAgentExplore"
   );
+  const settingsVisionRoutingModels = document.getElementById(
+    "settingsVisionRoutingModels"
+  );
   /** Ordered ids enabled as fast helpers in the settings list. */
   let speedRoutingFastModelIds = [];
+  /** Ordered preferred vision model ids for image messages. */
+  let visionRoutingPreferredModelIds = [];
   const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsCommitScope = document.getElementById("settingsCommitScope");
@@ -807,6 +922,15 @@
   let modelEditIndex = null;
   let modelEditMode = "manual";
   let providerEditIndex = null;
+  let fetchModelsRequestId = 0;
+  let fetchModelsActiveRequestId = "";
+  let fetchModelsProviderId = "";
+  let fetchModelsIds = [];
+  let fetchModelsSelected = new Set();
+  let fetchModelsExisting = new Set();
+  let fetchModelsLoading = false;
+  let fetchModelsError = "";
+  let fetchModelsTarget = "modal"; // "modal" | "editApi"
   let settingsHydrating = false;
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
@@ -904,6 +1028,9 @@
 
   const SETTINGS_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
+
+  const CLOUD_DOWNLOAD_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">cloud_download</span>';
 
   const INFO_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">info</span>';
@@ -1039,6 +1166,36 @@
     if (modelEditProviderLabel) {
       modelEditProviderLabel.textContent = t("provider");
     }
+    if (modelEditTabs) {
+      const manualTab = modelEditTabs.querySelector('[data-model-mode="manual"]');
+      const apiTab = modelEditTabs.querySelector('[data-model-mode="api"]');
+      const jsonTab = modelEditTabs.querySelector('[data-model-mode="json"]');
+      if (manualTab) manualTab.textContent = t("fetchModelsManual");
+      if (apiTab) apiTab.textContent = t("fetchModelsFromApi");
+      if (jsonTab) jsonTab.textContent = t("fetchModelsJson");
+    }
+    if (modelEditApiNote) modelEditApiNote.textContent = t("fetchModelsApiNote");
+    if (modelEditApiFetchBtn) {
+      modelEditApiFetchBtn.textContent = t("fetchModels");
+    }
+    if (modelEditApiSelectNewBtn) {
+      modelEditApiSelectNewBtn.textContent = t("fetchModelsSelectNew");
+    }
+    if (modelEditApiSearchLabel) {
+      modelEditApiSearchLabel.textContent = t("fetchModelsFilter");
+    }
+    if (fetchModelsTitle) fetchModelsTitle.textContent = t("fetchModelsTitle");
+    if (fetchModelsNote) fetchModelsNote.textContent = t("fetchModelsNote");
+    if (fetchModelsSearchLabel) {
+      fetchModelsSearchLabel.textContent = t("fetchModelsFilter");
+    }
+    if (fetchModelsSelectNewBtn) {
+      fetchModelsSelectNewBtn.textContent = t("fetchModelsSelectNew");
+    }
+    if (fetchModelsAddBtn) {
+      fetchModelsAddBtn.textContent = t("fetchModelsAddSelected");
+    }
+    if (fetchModelsCancelBtn) fetchModelsCancelBtn.textContent = t("cancel");
     const settingsModesNote = document.getElementById("settingsModesNote");
     if (settingsModesNote) settingsModesNote.textContent = t("modesNote");
     const addModeBtnEl = document.getElementById("addModeBtn");
@@ -1148,6 +1305,30 @@
       settingsSpeedRoutingAgentExploreLabel.textContent = t(
         "speedRoutingAgentExplore"
       );
+    }
+    const settingsVisionRoutingTitle = document.getElementById(
+      "settingsVisionRoutingTitle"
+    );
+    if (settingsVisionRoutingTitle) {
+      settingsVisionRoutingTitle.textContent = t("visionRoutingTitle");
+    }
+    const settingsVisionRoutingNote = document.getElementById(
+      "settingsVisionRoutingNote"
+    );
+    if (settingsVisionRoutingNote) {
+      settingsVisionRoutingNote.textContent = t("visionRoutingNote");
+    }
+    const settingsVisionRoutingModelsLabel = document.getElementById(
+      "settingsVisionRoutingModelsLabel"
+    );
+    if (settingsVisionRoutingModelsLabel) {
+      settingsVisionRoutingModelsLabel.textContent = t("visionRoutingModels");
+    }
+    const settingsVisionRoutingModelsHint = document.getElementById(
+      "settingsVisionRoutingModelsHint"
+    );
+    if (settingsVisionRoutingModelsHint) {
+      settingsVisionRoutingModelsHint.textContent = t("visionRoutingModelsHint");
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
@@ -1409,7 +1590,7 @@
       case "init":
         return {
           kind: "prompt",
-          mode: "ask",
+          mode: "agent",
           sendText: buildSlashInitPrompt(args),
         };
       case "compact":
@@ -1457,8 +1638,8 @@
         label: "/init",
         description:
           UI_LANG === "ru"
-            ? "Короткий обзор проекта"
-            : "Quick project onboarding",
+            ? "Создать AGENTS.md — ориентир для агента"
+            : "Create AGENTS.md agent orientation guide",
         kind: "prompt",
       },
       {
@@ -2594,6 +2775,7 @@
       btn.className =
         "model-option" + (model.id === editingModelId ? " is-active" : "");
       btn.setAttribute("role", "option");
+      btn.setAttribute("data-model-id", model.id);
       btn.dataset.id = model.id;
 
       const label = document.createElement("span");
@@ -2624,21 +2806,172 @@
     return messagesEl.querySelector(".msg-edit-model-picker");
   }
 
+  const modelMenuHomes = new WeakMap();
+
+  function ensureModelMenuFloated(menu) {
+    if (!menu || menu.parentElement === document.body) {
+      return;
+    }
+    if (!modelMenuHomes.has(menu)) {
+      modelMenuHomes.set(menu, {
+        parent: menu.parentElement,
+        next: menu.nextSibling,
+      });
+    }
+    document.body.appendChild(menu);
+  }
+
+  function restoreModelMenuHome(menu) {
+    if (!menu) {
+      return;
+    }
+    const home = modelMenuHomes.get(menu);
+    modelMenuHomes.delete(menu);
+    if (!home || !home.parent || !home.parent.isConnected) {
+      return;
+    }
+    if (home.next && home.next.parentNode === home.parent) {
+      home.parent.insertBefore(menu, home.next);
+    } else {
+      home.parent.appendChild(menu);
+    }
+  }
+
+  function findEditModelMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-model-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-model-menu");
+  }
+
+  function clearModelMenuPlacementStyles(menu) {
+    if (!menu) {
+      return;
+    }
+    menu.classList.remove("opens-down", "is-fixed");
+    menu.style.position = "";
+    menu.style.top = "";
+    menu.style.left = "";
+    menu.style.right = "";
+    menu.style.bottom = "";
+    menu.style.width = "";
+    menu.style.minWidth = "";
+    menu.style.maxHeight = "";
+    menu.style.zIndex = "";
+    menu.style.visibility = "";
+  }
+
+  function resetModelMenuPlacement(picker, menu) {
+    if (picker) {
+      picker.classList.remove("opens-down");
+    }
+    clearModelMenuPlacementStyles(menu);
+    restoreModelMenuHome(menu);
+  }
+
+  /**
+   * Float the menu to document.body + position:fixed so #messages overflow
+   * and sticky stacking contexts cannot clip it.
+   */
+  function placeModelMenu(picker, menu, boundaryEl) {
+    if (!picker || !menu || menu.hidden) {
+      return;
+    }
+    if (picker) {
+      picker.classList.remove("opens-down");
+    }
+    clearModelMenuPlacementStyles(menu);
+
+    const gap = 6;
+    const cssMax = 240;
+    const edgePad = 8;
+    const boundary =
+      boundaryEl || chatScreen || document.documentElement;
+    const trigger =
+      picker.querySelector(".model-trigger") || picker;
+    const triggerRect = trigger.getBoundingClientRect();
+    const boundaryRect = boundary.getBoundingClientRect();
+
+    ensureModelMenuFloated(menu);
+    menu.classList.add("is-fixed");
+    menu.style.position = "fixed";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.visibility = "hidden";
+    menu.style.zIndex = "10000";
+    menu.style.minWidth =
+      Math.round(Math.max(220, triggerRect.width)) + "px";
+
+    const naturalHeight = Math.min(
+      Math.max(menu.scrollHeight, 1),
+      cssMax
+    );
+    const menuWidth = Math.min(
+      320,
+      Math.max(220, triggerRect.width, menu.offsetWidth || 0)
+    );
+
+    const availAbove =
+      Math.min(
+        triggerRect.top - boundaryRect.top,
+        triggerRect.top
+      ) - gap;
+    const availBelow =
+      Math.min(
+        boundaryRect.bottom - triggerRect.bottom,
+        window.innerHeight - triggerRect.bottom
+      ) - gap;
+    const openDown =
+      availAbove < naturalHeight && availBelow > availAbove;
+
+    let left = triggerRect.left;
+    const maxLeft = window.innerWidth - menuWidth - edgePad;
+    if (left > maxLeft) {
+      left = Math.max(edgePad, maxLeft);
+    }
+    if (left < edgePad) {
+      left = edgePad;
+    }
+
+    menu.style.visibility = "";
+    menu.style.left = Math.round(left) + "px";
+
+    if (openDown) {
+      picker.classList.add("opens-down");
+      menu.classList.add("opens-down");
+      menu.style.top = Math.round(triggerRect.bottom + gap) + "px";
+      menu.style.bottom = "auto";
+      menu.style.maxHeight =
+        Math.max(0, Math.min(cssMax, Math.floor(availBelow))) + "px";
+    } else {
+      menu.style.top = "auto";
+      menu.style.bottom =
+        Math.round(window.innerHeight - triggerRect.top + gap) + "px";
+      menu.style.maxHeight =
+        Math.max(0, Math.min(cssMax, Math.floor(availAbove))) + "px";
+    }
+  }
+
   function closeEditModelMenu() {
     editModelMenuOpen = false;
     const picker = getEditModelPicker();
-    if (!picker) {
-      return;
-    }
-    picker.classList.remove("is-open");
-    const trigger = picker.querySelector(".msg-edit-model-trigger");
-    const menu = picker.querySelector(".msg-edit-model-menu");
-    if (trigger) {
-      trigger.setAttribute("aria-expanded", "false");
+    const menu = findEditModelMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-model-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
     }
     if (menu) {
       menu.hidden = true;
     }
+    resetModelMenuPlacement(picker, menu);
   }
 
   function openEditModelMenu() {
@@ -2649,7 +2982,7 @@
     closeMenu();
     editModelMenuOpen = true;
     const trigger = picker.querySelector(".msg-edit-model-trigger");
-    const menu = picker.querySelector(".msg-edit-model-menu");
+    const menu = findEditModelMenu(picker);
     renderEditModelMenu(menu);
     picker.classList.add("is-open");
     if (trigger) {
@@ -2657,6 +2990,7 @@
     }
     if (menu) {
       menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
     }
   }
 
@@ -2669,10 +3003,12 @@
   }
 
   function selectEditingModel(id) {
-    if (!id || busy) {
+    const next = String(id || "").trim();
+    if (!next) {
+      closeEditModelMenu();
       return;
     }
-    editingModelId = id;
+    editingModelId = next;
     const picker = getEditModelPicker();
     const label = picker
       ? picker.querySelector(".msg-edit-model-label")
@@ -2681,6 +3017,33 @@
       label.textContent = modelDisplayName(editingModelId);
     }
     closeEditModelMenu();
+  }
+
+  function editingModelIdFromOption(option) {
+    if (!(option instanceof Element)) {
+      return "";
+    }
+    return (
+      option.getAttribute("data-model-id") ||
+      option.getAttribute("data-id") ||
+      option.dataset.id ||
+      ""
+    );
+  }
+
+  function selectEditingModelFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-model-menu .model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    selectEditingModel(editingModelIdFromOption(option));
+    return true;
   }
 
   function removeRegenerateButtons() {
@@ -2859,6 +3222,10 @@
         const path = args.relativePath || ".";
         return `${t("toolKindList")} · ${path}`;
       }
+      case "search_text":
+        return args.query
+          ? `${t("toolKindSearch")} · ${args.query}`
+          : t("toolKindSearch");
       case "fetch_url":
         return args.url
           ? `${t("toolKindFetch")} · ${args.url}`
@@ -2915,6 +3282,12 @@
       return "list_files";
     }
     if (
+      prefix === "search" ||
+      prefix === t("toolKindSearch").toLowerCase()
+    ) {
+      return "search_text";
+    }
+    if (
       prefix === "run" ||
       prefix === t("toolKindRun").toLowerCase()
     ) {
@@ -2951,6 +3324,9 @@
     }
     if (n === "list_files") {
       return "list";
+    }
+    if (n === "search_text") {
+      return "search";
     }
     if (n === "run_command") {
       return "run";
@@ -3162,12 +3538,49 @@
   function appendToolToGroup(text, index) {
     const group = ensureActiveToolGroup();
     const body = group.querySelector(".tool-group-body");
+    const toolName = parseToolName(text);
+    const formatted = formatToolLine(text);
+    const last = body?.lastElementChild;
+    // Схлопываем подряд идущие одинаковые read_file (модель часто перечитывает зря).
+    if (
+      last &&
+      last.classList.contains("msg") &&
+      last.classList.contains("tool") &&
+      last.dataset.toolName === "read_file" &&
+      toolName === "read_file"
+    ) {
+      const lastBase = String(last.dataset.toolBaseText || "")
+        .replace(/\s*×\d+\s*$/, "")
+        .trim();
+      const nextBase = String(formatted || "")
+        .replace(/\s*×\d+\s*$/, "")
+        .trim();
+      if (lastBase && lastBase === nextBase) {
+        const count = Number(last.dataset.toolRepeatCount || 1) + 1;
+        last.dataset.toolRepeatCount = String(count);
+        last.dataset.toolBaseText = lastBase;
+        if (typeof index === "number") {
+          last.dataset.index = String(index);
+        }
+        const msgBody = last.querySelector(".msg-body");
+        if (msgBody) {
+          msgBody.textContent = `${lastBase} ×${count}`;
+        }
+        last.dataset.raw = text;
+        updateToolGroupSummary(group);
+        keepStatusAtEnd();
+        scrollToBottom();
+        return last;
+      }
+    }
     const el = document.createElement("div");
     el.className = "msg tool";
     if (typeof index === "number") {
       el.dataset.index = String(index);
     }
-    el.dataset.toolName = parseToolName(text);
+    el.dataset.toolName = toolName;
+    el.dataset.toolRepeatCount = "1";
+    el.dataset.toolBaseText = formatted;
     const msgBody = document.createElement("div");
     msgBody.className = "msg-body";
     el.appendChild(msgBody);
@@ -3990,6 +4403,9 @@
       `</div>` +
       `<div class="settings-model-id"></div>` +
       `</div>` +
+      `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
+      CLOUD_DOWNLOAD_ICON +
+      `</button>` +
       `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
       SETTINGS_ICON +
       `</button>` +
@@ -4128,22 +4544,26 @@
 
     const used = new Set();
 
-    const appendModels = (entries, nested) => {
+    const appendModels = (entries, nested, parentEl) => {
+      const target = parentEl || settingsModelsList;
       for (const { model, index } of entries) {
         used.add(index);
-        appendModelRow(settingsModelsList, model, index, nested);
+        appendModelRow(target, model, index, nested);
       }
     };
 
     settingsProviders.forEach((provider, providerIndex) => {
-      appendProviderHead(settingsModelsList, provider, providerIndex);
+      const group = document.createElement("div");
+      group.className = "settings-provider-group";
+      appendProviderHead(group, provider, providerIndex);
       const pid = String(provider.id || "").trim();
       const entries = settingsModels
         .map((model, index) => ({ model, index }))
         .filter(
           ({ model }) => String(model.providerId || "").trim() === pid
         );
-      appendModels(entries, true);
+      appendModels(entries, true, group);
+      settingsModelsList.appendChild(group);
     });
 
     const orphans = settingsModels
@@ -4151,6 +4571,8 @@
       .filter(({ index }) => !used.has(index));
     if (orphans.length) {
       if (settingsProviders.length) {
+        const group = document.createElement("div");
+        group.className = "settings-provider-group";
         const orphanHead = document.createElement("div");
         orphanHead.className = "settings-provider-head";
         orphanHead.innerHTML =
@@ -4160,13 +4582,17 @@
           `</div>`;
         orphanHead.querySelector(".settings-model-name").textContent =
           t("otherProvider");
-        settingsModelsList.appendChild(orphanHead);
+        group.appendChild(orphanHead);
+        appendModels(orphans, true, group);
+        settingsModelsList.appendChild(group);
+      } else {
+        appendModels(orphans, false, settingsModelsList);
       }
-      appendModels(orphans, Boolean(settingsProviders.length));
     }
 
     syncDefaultModelSelect();
     renderSpeedRoutingFastModelsList();
+    renderVisionRoutingModelsList();
     syncSpeedRoutingControlsDisabled();
   }
 
@@ -4439,6 +4865,338 @@
     return { added, updated, total: settingsModels.filter((m) => m.id).length };
   }
 
+  function addMissingModelsFromIds(ids, providerId) {
+    const provider = String(providerId || "").trim();
+    const existing = new Set(
+      settingsModels.map((m) => String(m.id || "").trim()).filter(Boolean)
+    );
+    const incoming = [];
+    let skipped = 0;
+    for (const raw of ids) {
+      const id = String(raw || "").trim();
+      if (!id) {
+        continue;
+      }
+      if (existing.has(id)) {
+        skipped += 1;
+        continue;
+      }
+      incoming.push({
+        id,
+        label: id,
+        providerId: provider,
+        enabled: true,
+        supportsVision: guessModelSupportsVision(id),
+      });
+      existing.add(id);
+    }
+    if (!incoming.length) {
+      return { added: 0, skipped, total: settingsModels.filter((m) => m.id).length };
+    }
+    const result = upsertModels(incoming, provider);
+    return { added: result.added, skipped, total: result.total };
+  }
+
+  function providerById(providerId) {
+    const id = String(providerId || "").trim();
+    if (!id) {
+      return null;
+    }
+    return settingsProviders.find((p) => p.id === id) || null;
+  }
+
+  function setFetchModelsHint(el, text, isError) {
+    if (!el) {
+      return;
+    }
+    if (!text) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-error");
+      return;
+    }
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function resetFetchModelsState() {
+    fetchModelsIds = [];
+    fetchModelsSelected = new Set();
+    fetchModelsExisting = new Set();
+    fetchModelsLoading = false;
+    fetchModelsError = "";
+  }
+
+  function currentFetchListEls() {
+    if (fetchModelsTarget === "editApi") {
+      return {
+        list: modelEditApiList,
+        status: modelEditApiStatus,
+        searchWrap: modelEditApiSearchWrap,
+        search: modelEditApiSearch,
+        selectBtn: modelEditApiSelectNewBtn,
+        selectWrap: null,
+      };
+    }
+    return {
+      list: fetchModelsList,
+      status: fetchModelsStatus,
+      searchWrap: fetchModelsSearchWrap,
+      search: fetchModelsSearch,
+      selectBtn: fetchModelsSelectNewBtn,
+      selectWrap: fetchModelsSelectWrap,
+    };
+  }
+
+  function renderFetchModelsPicker() {
+    const els = currentFetchListEls();
+    const filter = String(els.search?.value || "")
+      .trim()
+      .toLowerCase();
+    const newIds = fetchModelsIds.filter((id) => !fetchModelsExisting.has(id));
+    const ids = (filter
+      ? newIds.filter((id) => id.toLowerCase().includes(filter))
+      : newIds.slice()
+    );
+    const hasNew = newIds.length > 0;
+    const showList = hasNew && !fetchModelsLoading && !fetchModelsError;
+
+    if (els.searchWrap) {
+      els.searchWrap.hidden = !showList;
+    }
+    if (els.selectWrap) {
+      els.selectWrap.hidden = !showList;
+    }
+    if (els.selectBtn) {
+      els.selectBtn.hidden = !showList;
+    }
+    if (els.list) {
+      els.list.hidden = !showList;
+      els.list.innerHTML = "";
+    }
+
+    if (fetchModelsLoading) {
+      setFetchModelsHint(els.status, t("fetchModelsLoading"), false);
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    if (fetchModelsError) {
+      setFetchModelsHint(
+        els.status,
+        t("fetchModelsFailed", fetchModelsError),
+        true
+      );
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    if (!fetchModelsIds.length) {
+      setFetchModelsHint(els.status, t("fetchModelsEmpty"), false);
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+
+    if (!hasNew) {
+      setFetchModelsHint(
+        els.status,
+        t("fetchModelsNoneNew", fetchModelsIds.length),
+        false
+      );
+      syncFetchModelsAddEnabled();
+      return;
+    }
+
+    setFetchModelsHint(
+      els.status,
+      t("fetchModelsCount", fetchModelsIds.length, newIds.length),
+      false
+    );
+
+    if (!els.list) {
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    for (const id of ids) {
+      const row = document.createElement("label");
+      row.className = "settings-fetch-model-row";
+      const checked = fetchModelsSelected.has(id);
+      row.innerHTML =
+        `<input type="checkbox" ${checked ? "checked" : ""} data-model-id="" />` +
+        `<span class="settings-fetch-model-id"></span>`;
+      const input = row.querySelector("input");
+      input.dataset.modelId = id;
+      row.querySelector(".settings-fetch-model-id").textContent = id;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          fetchModelsSelected.add(id);
+        } else {
+          fetchModelsSelected.delete(id);
+        }
+        syncFetchModelsAddEnabled();
+      });
+      els.list.appendChild(row);
+    }
+    syncFetchModelsAddEnabled();
+  }
+
+  function syncFetchModelsAddEnabled() {
+    const selectedNew = Array.from(fetchModelsSelected).filter(
+      (id) => !fetchModelsExisting.has(id)
+    );
+    if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+      fetchModelsAddBtn.disabled =
+        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+    }
+    if (modelEditDoneBtn && fetchModelsTarget === "editApi" && modelEditMode === "api") {
+      modelEditDoneBtn.disabled =
+        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+      if (!fetchModelsLoading && !fetchModelsError && fetchModelsIds.length === 0) {
+        modelEditDoneBtn.disabled = true;
+      }
+    }
+  }
+
+  function selectNewFetchModels() {
+    fetchModelsSelected = new Set(
+      fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
+    );
+    renderFetchModelsPicker();
+  }
+
+  function requestProviderModels(providerId, target) {
+    const provider = providerById(providerId);
+    if (!provider) {
+      setModelsHint(t("fetchModelsNeedProvider"), true);
+      return false;
+    }
+    const baseUrl = String(provider.baseUrl || "")
+      .trim()
+      .replace(/\/$/, "");
+    if (!baseUrl) {
+      setModelsHint(t("fetchModelsNeedBaseUrl"), true);
+      return false;
+    }
+
+    fetchModelsTarget = target === "editApi" ? "editApi" : "modal";
+    fetchModelsProviderId = provider.id;
+    fetchModelsRequestId += 1;
+    const requestId = `fetch-models-${fetchModelsRequestId}`;
+    fetchModelsActiveRequestId = requestId;
+    resetFetchModelsState();
+    fetchModelsLoading = true;
+    fetchModelsExisting = new Set(
+      settingsModels
+        .filter((m) => String(m.providerId || "").trim() === provider.id)
+        .map((m) => String(m.id || "").trim())
+        .filter(Boolean)
+    );
+    // Also treat same id under other providers as existing globally
+    for (const m of settingsModels) {
+      const id = String(m.id || "").trim();
+      if (id) {
+        fetchModelsExisting.add(id);
+      }
+    }
+    renderFetchModelsPicker();
+
+    vscode.postMessage({
+      type: "listProviderModels",
+      requestId,
+      providerId: provider.id,
+      baseUrl,
+      apiKey: provider.apiKey || "",
+      rejectUnauthorized: settingsRejectUnauthorized
+        ? settingsRejectUnauthorized.checked
+        : true,
+      caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
+    });
+    return requestId;
+  }
+
+  function openFetchModelsModal(providerIndex) {
+    if (!fetchModelsModal) {
+      return;
+    }
+    const provider = settingsProviders[providerIndex];
+    if (!provider) {
+      return;
+    }
+    if (fetchModelsTitle) {
+      const name = provider.name || provider.id || t("providerTitle");
+      fetchModelsTitle.textContent = `${t("fetchModelsTitle")} · ${name}`;
+    }
+    if (fetchModelsSearch) {
+      fetchModelsSearch.value = "";
+    }
+    fetchModelsModal.hidden = false;
+    if (!requestProviderModels(provider.id, "modal")) {
+      closeFetchModelsModal();
+    }
+  }
+
+  function closeFetchModelsModal() {
+    if (!fetchModelsModal) {
+      return;
+    }
+    fetchModelsModal.hidden = true;
+    if (fetchModelsTarget === "modal") {
+      resetFetchModelsState();
+      fetchModelsProviderId = "";
+    }
+  }
+
+  function applyFetchedModels() {
+    const selectedNew = Array.from(fetchModelsSelected).filter(
+      (id) => !fetchModelsExisting.has(id)
+    );
+    if (!selectedNew.length) {
+      if (fetchModelsTarget === "editApi") {
+        setFetchModelsHint(modelEditApiStatus, t("fetchModelsNoneSelected"), true);
+      } else {
+        setFetchModelsHint(fetchModelsStatus, t("fetchModelsNoneSelected"), true);
+      }
+      return false;
+    }
+    const result = addMissingModelsFromIds(selectedNew, fetchModelsProviderId);
+    setModelsHint(t("fetchModelsDone", result.added, result.skipped));
+    schedulePersistSettings(0);
+    return true;
+  }
+
+  function onProviderModelsListed(msg) {
+    const requestId = String(msg?.requestId || "");
+    if (!requestId || requestId !== fetchModelsActiveRequestId) {
+      return;
+    }
+    if (String(msg.providerId || "") !== fetchModelsProviderId) {
+      return;
+    }
+    fetchModelsLoading = false;
+    if (msg.error) {
+      fetchModelsError = String(msg.error);
+      fetchModelsIds = [];
+      fetchModelsSelected = new Set();
+    } else {
+      fetchModelsError = "";
+      fetchModelsIds = Array.isArray(msg.models)
+        ? msg.models.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      fetchModelsSelected = new Set(
+        fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
+      );
+    }
+    renderFetchModelsPicker();
+  }
+
   function looksLikeModelEntry(item) {
     if (typeof item === "string") {
       return Boolean(item.trim());
@@ -4623,7 +5381,8 @@
   }
 
   function setModelEditMode(mode) {
-    modelEditMode = mode === "json" ? "json" : "manual";
+    modelEditMode =
+      mode === "json" ? "json" : mode === "api" ? "api" : "manual";
     if (modelEditTabs) {
       modelEditTabs.querySelectorAll("[data-model-mode]").forEach((btn) => {
         btn.classList.toggle(
@@ -4638,9 +5397,42 @@
     if (modelEditJsonPane) {
       modelEditJsonPane.hidden = modelEditMode !== "json";
     }
+    if (modelEditApiPane) {
+      modelEditApiPane.hidden = modelEditMode !== "api";
+    }
     if (modelEditDoneBtn) {
-      modelEditDoneBtn.textContent =
-        modelEditMode === "json" ? t("apply") : t("done");
+      modelEditDoneBtn.disabled = false;
+      if (modelEditMode === "json") {
+        modelEditDoneBtn.textContent = t("apply");
+      } else if (modelEditMode === "api") {
+        modelEditDoneBtn.textContent = t("fetchModelsAddSelected");
+      } else {
+        modelEditDoneBtn.textContent = t("done");
+      }
+    }
+    if (modelEditMode === "api") {
+      fetchModelsTarget = "editApi";
+      if (modelEditApiSearch) {
+        modelEditApiSearch.value = "";
+      }
+      const providerId = modelEditProvider?.value?.trim() || "";
+      if (providerId && providerId !== NEW_PROVIDER_VALUE) {
+        requestProviderModels(providerId, "editApi");
+      } else {
+        resetFetchModelsState();
+        setFetchModelsHint(
+          modelEditApiStatus,
+          t("fetchModelsNeedProvider"),
+          true
+        );
+        if (modelEditApiList) {
+          modelEditApiList.hidden = true;
+          modelEditApiList.innerHTML = "";
+        }
+        if (modelEditApiSearchWrap) modelEditApiSearchWrap.hidden = true;
+        if (modelEditApiSelectNewBtn) modelEditApiSelectNewBtn.hidden = true;
+        if (modelEditDoneBtn) modelEditDoneBtn.disabled = true;
+      }
     }
   }
 
@@ -4717,6 +5509,10 @@
     setModelEditMode("manual");
     setJsonHint("");
     clearModelNewProviderFields();
+    if (modelEditDoneBtn) {
+      modelEditDoneBtn.disabled = false;
+      modelEditDoneBtn.textContent = t("done");
+    }
     if (modelEditNewProvider) {
       modelEditNewProvider.hidden = true;
     }
@@ -4728,6 +5524,12 @@
         closeModelEditModal();
         setModelsHint(t("modelsAddedFromJson"));
         schedulePersistSettings(0);
+      }
+      return;
+    }
+    if (modelEditIndex === -1 && modelEditMode === "api") {
+      if (applyFetchedModels()) {
+        closeModelEditModal();
       }
       return;
     }
@@ -5491,6 +6293,11 @@
       settingsSpeedRoutingAgentExplore.checked =
         settings.speedRoutingAgentExplore !== false;
     }
+    populateVisionRoutingModelsList(
+      Array.isArray(settings.visionRoutingPreferredModelIds)
+        ? settings.visionRoutingPreferredModelIds
+        : []
+    );
     syncSpeedRoutingControlsDisabled();
     closeModelEditModal();
     closeProviderEditModal();
@@ -5642,6 +6449,123 @@
     }
   }
 
+  function normalizeVisionRoutingPreferredModelIds(ids) {
+    return normalizeSpeedRoutingFastModelIds(ids);
+  }
+
+  function populateVisionRoutingModelsList(selectedIds) {
+    visionRoutingPreferredModelIds =
+      normalizeVisionRoutingPreferredModelIds(selectedIds);
+    renderVisionRoutingModelsList();
+  }
+
+  function renderVisionRoutingModelsList() {
+    if (!settingsVisionRoutingModels) {
+      return;
+    }
+    const models = (settingsModels || []).filter(
+      (m) =>
+        m &&
+        m.id &&
+        (typeof m.supportsVision === "boolean"
+          ? m.supportsVision
+          : guessModelSupportsVision(m.id))
+    );
+    const preferredSet = new Set(visionRoutingPreferredModelIds);
+    const modelOn = [];
+    const modelOff = [];
+    for (const model of models) {
+      if (model.enabled !== false) {
+        modelOn.push(model);
+      } else {
+        modelOff.push(model);
+      }
+    }
+    const sortPreferredFirst = (list) => {
+      const on = [];
+      const off = [];
+      for (const id of visionRoutingPreferredModelIds) {
+        const hit = list.find((m) => m.id === id);
+        if (hit) {
+          on.push(hit);
+        }
+      }
+      for (const model of list) {
+        if (!preferredSet.has(model.id)) {
+          off.push(model);
+        }
+      }
+      return [...on, ...off];
+    };
+    const ordered = [
+      ...sortPreferredFirst(modelOn),
+      ...sortPreferredFirst(modelOff),
+    ];
+    if (!ordered.length) {
+      settingsVisionRoutingModels.innerHTML =
+        `<div class="settings-speed-models-empty">${escapeHtml(
+          t("visionRoutingModelsEmpty")
+        )}</div>`;
+      return;
+    }
+    settingsVisionRoutingModels.innerHTML = ordered
+      .map((model) => {
+        const preferredOn = preferredSet.has(model.id);
+        const modelEnabled = model.enabled !== false;
+        const label = model.label || model.id;
+        const classes = [
+          "settings-speed-model-row",
+          modelEnabled ? "" : "is-model-off",
+          preferredOn ? "" : "is-fast-off",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          `<div class="${classes}">` +
+          `<input type="checkbox" class="settings-vision-pref-check" data-vision-pref-id="${escapeHtml(
+            model.id
+          )}" ${preferredOn ? "checked" : ""} title="${escapeHtml(
+            t("visionRoutingModels")
+          )}" />` +
+          `<span class="settings-speed-model-name" title="${escapeHtml(
+            label
+          )}">${escapeHtml(label)}</span>` +
+          `<label class="settings-model-switch" title="${escapeHtml(
+            modelEnabled ? t("disable") : t("enable")
+          )}">` +
+          `<input type="checkbox" class="settings-model-toggle" data-vision-model-id="${escapeHtml(
+            model.id
+          )}" ${modelEnabled ? "checked" : ""} />` +
+          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+          `</label>` +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  function readVisionRoutingPreferredModelIdsFromDom() {
+    if (!settingsVisionRoutingModels) {
+      return [...visionRoutingPreferredModelIds];
+    }
+    const checked = [];
+    settingsVisionRoutingModels
+      .querySelectorAll(
+        "input.settings-vision-pref-check[data-vision-pref-id]"
+      )
+      .forEach((input) => {
+        if (input instanceof HTMLInputElement && input.checked) {
+          const id = String(
+            input.getAttribute("data-vision-pref-id") || ""
+          ).trim();
+          if (id) {
+            checked.push(id);
+          }
+        }
+      });
+    return normalizeVisionRoutingPreferredModelIds(checked);
+  }
+
   function collectSettings() {
     const providers = settingsProviders
       .map((p) => cloneProvider(p))
@@ -5735,6 +6659,7 @@
       speedRoutingAgentExplore: settingsSpeedRoutingAgentExplore
         ? settingsSpeedRoutingAgentExplore.checked
         : true,
+      visionRoutingPreferredModelIds: readVisionRoutingPreferredModelIdsFromDom(),
       modes: collectCustomModesForSave(),
     };
   }
@@ -5889,8 +6814,9 @@
       keepSelection && chatModes.some((m) => m.id === agentMode)
         ? agentMode
         : chatModes[0]?.id || "agent";
+    const modeChanged = still !== agentMode;
     if (typeof setAgentMode === "function") {
-      setAgentMode(still, { close: false });
+      setAgentMode(still, { close: false, notify: modeChanged });
     } else {
       agentMode = still;
     }
@@ -7486,6 +8412,9 @@
   }
 
   function updateTriggerLabel() {
+    if (!modelLabel) {
+      return;
+    }
     const model = models.find((m) => m.id === selectedModelId);
     modelLabel.textContent = model
       ? model.label || model.id
@@ -7508,8 +8437,13 @@
     imageItem.title = t("attachImage");
   }
 
+  /** Ignore briefly-stale host selectedModel after a local picker change. */
+  let localModelChangeAt = 0;
+  const LOCAL_MODEL_GUARD_MS = 5000;
+
   function setSelectedModel(id, notify) {
-    selectedModelId = id || "";
+    const next = String(id || "").trim();
+    selectedModelId = next;
     state.selectedModel = selectedModelId;
     if (activeChatId) {
       state.modelByChat[activeChatId] = selectedModelId;
@@ -7517,16 +8451,22 @@
     vscode.setState(state);
     updateTriggerLabel();
     updateVisionUi();
-    if (menuOpen) {
-      renderMenu();
-    }
     if (notify && selectedModelId) {
+      localModelChangeAt = Date.now();
       vscode.postMessage({ type: "modelChanged", model: selectedModelId });
     }
   }
 
   function resolvePreferredModelId(preferredId) {
     const fromHost = String(preferredId || "").trim();
+    const localIsFresh =
+      localModelChangeAt > 0 &&
+      Date.now() - localModelChangeAt < LOCAL_MODEL_GUARD_MS &&
+      selectedModelId &&
+      models.some((m) => m.id === selectedModelId);
+    if (localIsFresh) {
+      return selectedModelId;
+    }
     if (fromHost && models.some((m) => m.id === fromHost)) {
       return fromHost;
     }
@@ -7535,6 +8475,9 @@
       if (fromChat && models.some((m) => m.id === fromChat)) {
         return fromChat;
       }
+    }
+    if (selectedModelId && models.some((m) => m.id === selectedModelId)) {
+      return selectedModelId;
     }
     if (fromHost) {
       return models[0]?.id || "";
@@ -7547,6 +8490,9 @@
     models = incoming.length ? incoming : DEFAULT_MODELS.slice();
     const preferred = resolvePreferredModelId(preferredId);
     setSelectedModel(preferred, false);
+    if (menuOpen) {
+      renderMenu();
+    }
   }
 
   function renderMenu() {
@@ -7565,6 +8511,7 @@
       btn.className =
         "model-option" + (model.id === selectedModelId ? " is-active" : "");
       btn.setAttribute("role", "option");
+      btn.setAttribute("data-model-id", model.id);
       btn.dataset.id = model.id;
 
       const label = document.createElement("span");
@@ -7592,15 +8539,14 @@
   }
 
   function openMenu() {
-    if (busy) {
-      return;
-    }
     closePlusMenu();
+    closeModeMenu();
     menuOpen = true;
     renderMenu();
     modelPicker.classList.add("is-open");
     modelTrigger.setAttribute("aria-expanded", "true");
     modelMenu.hidden = false;
+    placeModelMenu(modelPicker, modelMenu, chatScreen);
   }
 
   function closeMenu() {
@@ -7608,6 +8554,7 @@
     modelPicker.classList.remove("is-open");
     modelTrigger.setAttribute("aria-expanded", "false");
     modelMenu.hidden = true;
+    resetModelMenuPlacement(modelPicker, modelMenu);
   }
 
   function closePlusMenu() {
@@ -7749,7 +8696,7 @@
     }
   }
 
-  function setAgentMode(next, { focus = false, close = true } = {}) {
+  function setAgentMode(next, { focus = false, close = true, notify = true } = {}) {
     agentMode = normalizeAgentModeUi(next);
     const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
     const meta = localizeModeMeta(
@@ -7759,6 +8706,10 @@
       placeholder: t("taskPlaceholder"),
       }
     );
+    if (activeChatId) {
+      state.modeByChat[activeChatId] = agentMode;
+      vscode.setState(state);
+    }
     if (modePicker) {
       modePicker.dataset.mode = agentMode;
     }
@@ -7783,12 +8734,43 @@
     if (focus && promptEl && typeof promptEl.focus === "function") {
       promptEl.focus();
     }
+    if (notify && agentMode) {
+      vscode.postMessage({ type: "modeChanged", mode: agentMode });
+    }
+  }
+
+  function resolvePreferredModeId(preferredId) {
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    const fromHost = String(preferredId || "").trim();
+    if (fromHost && modes.some((m) => m.id === fromHost)) {
+      return fromHost;
+    }
+    if (activeChatId && state.modeByChat[activeChatId]) {
+      const fromChat = String(state.modeByChat[activeChatId] || "").trim();
+      if (fromChat && modes.some((m) => m.id === fromChat)) {
+        return fromChat;
+      }
+    }
+    if (fromHost) {
+      return modes[0]?.id || "agent";
+    }
+    return modes.some((m) => m.id === "agent")
+      ? "agent"
+      : modes[0]?.id || "agent";
+  }
+
+  function applySelectedMode(preferredId, { notify = false } = {}) {
+    setAgentMode(resolvePreferredModeId(preferredId), {
+      close: false,
+      notify,
+    });
   }
 
   function setBusy(nextBusy) {
     busy = nextBusy;
     promptEl.disabled = busy;
-    modelTrigger.disabled = busy;
+    // Model can always be changed for the next turn — even while a run is active.
+    modelTrigger.disabled = false;
     if (composerPlusBtn) {
       composerPlusBtn.disabled = busy;
     }
@@ -7802,7 +8784,6 @@
       }
     }
     if (busy) {
-      closeMenu();
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
@@ -7821,11 +8802,40 @@
   fillModels(DEFAULT_MODELS, "");
 
   function selectModelById(id) {
-    if (!id || busy) {
+    const next = String(id || "").trim();
+    if (!next) {
+      closeMenu();
       return;
     }
-    setSelectedModel(id, true);
+    setSelectedModel(next, true);
     closeMenu();
+  }
+
+  function modelIdFromOption(option) {
+    if (!(option instanceof Element)) {
+      return "";
+    }
+    return (
+      option.getAttribute("data-model-id") ||
+      option.getAttribute("data-id") ||
+      option.dataset.id ||
+      ""
+    );
+  }
+
+  function selectModelFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    selectModelById(modelIdFromOption(option));
+    return true;
   }
 
   modelTrigger.addEventListener("mousedown", (event) => {
@@ -7836,29 +8846,74 @@
   modelTrigger.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (busy) {
-      return;
-    }
     toggleMenu();
   });
 
+  // Do NOT preventDefault on mousedown/pointerdown: in VS Code webviews that
+  // often suppresses the following click. Only stopPropagation so the floated
+  // menu is not closed by the document outside-click handler.
   modelMenu.addEventListener("mousedown", (event) => {
+    event.stopPropagation();
+  });
+  modelMenu.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+
+  // Select on pointerup (primary). click remains for keyboard activation.
+  modelMenu.addEventListener("pointerup", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    const option = event.target.closest(".model-option");
-    if (!option || option.classList.contains("is-empty")) {
-      return;
-    }
-    selectModelById(option.dataset.id);
+    selectModelFromEvent(event);
   });
 
   modelMenu.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    selectModelFromEvent(event);
+  });
+
+  document.addEventListener("pointerup", (event) => {
+    if (!editModelMenuOpen) {
+      return;
+    }
+    if (selectEditingModelFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!editModelMenuOpen) {
+      return;
+    }
+    const editModelOption = event.target.closest(
+      ".msg-edit-model-menu .model-option"
+    );
+    if (!editModelOption) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!editModelOption.classList.contains("is-empty")) {
+      selectEditingModel(editingModelIdFromOption(editModelOption));
+    }
   });
 
   document.addEventListener("mousedown", (event) => {
-    if (menuOpen && !modelPicker.contains(event.target)) {
+    const target = event.target;
+    const targetNode = target instanceof Node ? target : null;
+    const inModelMenu =
+      Boolean(targetNode && modelMenu.contains(targetNode)) ||
+      Boolean(
+        target instanceof Element &&
+          target.closest("#modelMenu, .model-menu.is-fixed")
+      );
+    if (
+      menuOpen &&
+      targetNode &&
+      !modelPicker.contains(targetNode) &&
+      !inModelMenu
+    ) {
       closeMenu();
     }
     if (
@@ -7883,15 +8938,31 @@
     ) {
       closeMentionMenu();
     }
+    const editPicker = getEditModelPicker();
+    const editMenu = findEditModelMenu(editPicker);
+    const inEditMenu =
+      Boolean(editMenu && targetNode && editMenu.contains(targetNode)) ||
+      Boolean(
+        target instanceof Element &&
+          target.closest(".msg-edit-model-menu")
+      );
     if (editModelMenuOpen) {
-      const picker = getEditModelPicker();
-      if (!picker || !picker.contains(event.target)) {
+      const inPicker =
+        editPicker && targetNode && editPicker.contains(targetNode);
+      if (!inPicker && !inEditMenu) {
         closeEditModelMenu();
       }
     }
+    // Floated model menu lives on document.body — must not count as
+    // "outside composer" or the whole edit is cancelled before select.
     if (Number.isInteger(editingUserIndex) && !busy) {
       const composer = messagesEl.querySelector(".msg-edit-composer");
-      if (composer && !composer.contains(event.target)) {
+      if (
+        composer &&
+        targetNode &&
+        !composer.contains(targetNode) &&
+        !inEditMenu
+      ) {
         cancelEditingUserMessage();
       }
     }
@@ -8019,7 +9090,7 @@
     });
   }
 
-  setAgentMode(agentMode, { close: false });
+  setAgentMode(agentMode, { close: false, notify: false });
   renderModeMenu();
 
   if (composerPlusMenu) {
@@ -8307,7 +9378,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsSpeedRoutingEnabled, #settingsSpeedRoutingReadonlyOverride, #settingsSpeedRoutingAgentExplore, #settingsSpeedRoutingFastModels"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsSpeedRoutingEnabled, #settingsSpeedRoutingReadonlyOverride, #settingsSpeedRoutingAgentExplore, #settingsSpeedRoutingFastModels, #settingsVisionRoutingModels"
         )
       ) {
         if (target.id === "settingsSpeedRoutingEnabled") {
@@ -8335,6 +9406,33 @@
           if (setModelEnabledById(modelId, target.checked)) {
             renderSettingsModels();
             renderSpeedRoutingFastModelsList();
+            renderVisionRoutingModelsList();
+            syncSpeedRoutingControlsDisabled();
+          }
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsVisionRoutingModels input.settings-vision-pref-check[data-vision-pref-id]"
+          )
+        ) {
+          visionRoutingPreferredModelIds =
+            readVisionRoutingPreferredModelIdsFromDom();
+          renderVisionRoutingModelsList();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsVisionRoutingModels input.settings-model-toggle[data-vision-model-id]"
+          )
+        ) {
+          const modelId = String(
+            target.getAttribute("data-vision-model-id") || ""
+          ).trim();
+          if (setModelEnabledById(modelId, target.checked)) {
+            renderSettingsModels();
+            renderSpeedRoutingFastModelsList();
+            renderVisionRoutingModelsList();
             syncSpeedRoutingControlsDisabled();
           }
         }
@@ -8560,11 +9658,94 @@
       if (modelEditProvider.value === NEW_PROVIDER_VALUE) {
         modelEditNewProviderId?.focus();
       }
+      if (modelEditMode === "api" && modelEditIndex === -1) {
+        setModelEditMode("api");
+      }
+    });
+  }
+
+  if (modelEditApiFetchBtn) {
+    modelEditApiFetchBtn.addEventListener("click", () => {
+      const providerId = modelEditProvider?.value?.trim() || "";
+      if (!providerId || providerId === NEW_PROVIDER_VALUE) {
+        setFetchModelsHint(
+          modelEditApiStatus,
+          t("fetchModelsNeedProvider"),
+          true
+        );
+        return;
+      }
+      requestProviderModels(providerId, "editApi");
+    });
+  }
+
+  if (modelEditApiSelectNewBtn) {
+    modelEditApiSelectNewBtn.addEventListener("click", () => {
+      selectNewFetchModels();
+    });
+  }
+
+  if (modelEditApiSearch) {
+    modelEditApiSearch.addEventListener("input", () => {
+      renderFetchModelsPicker();
+    });
+  }
+
+  function bindFetchModelsDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeFetchModelsModal();
+    });
+  }
+
+  bindFetchModelsDismiss(fetchModelsCloseBtn);
+  bindFetchModelsDismiss(fetchModelsCancelBtn);
+
+  if (fetchModelsAddBtn) {
+    fetchModelsAddBtn.addEventListener("click", () => {
+      if (applyFetchedModels()) {
+        closeFetchModelsModal();
+      }
+    });
+  }
+
+  if (fetchModelsSelectNewBtn) {
+    fetchModelsSelectNewBtn.addEventListener("click", () => {
+      selectNewFetchModels();
+    });
+  }
+
+  if (fetchModelsSearch) {
+    fetchModelsSearch.addEventListener("input", () => {
+      renderFetchModelsPicker();
+    });
+  }
+
+  if (fetchModelsModal) {
+    fetchModelsModal.addEventListener("click", (event) => {
+      if (event.target?.getAttribute?.("data-fetch-models-dismiss") === "1") {
+        closeFetchModelsModal();
+      }
+    });
+    fetchModelsModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeFetchModelsModal();
+      }
     });
   }
 
   if (settingsProvidersList) {
     settingsProvidersList.addEventListener("click", (event) => {
+      const fetchBtn = event.target.closest(".settings-provider-fetch");
+      if (fetchBtn) {
+        const index = Number(fetchBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openFetchModelsModal(index);
+        }
+        return;
+      }
       const editBtn = event.target.closest(".settings-provider-edit");
       if (editBtn) {
         const index = Number(editBtn.dataset.index);
@@ -8622,6 +9803,8 @@
       setModelEditMode(tab.getAttribute("data-model-mode"));
       if (modelEditMode === "json") {
         settingsModelsJson?.focus();
+      } else if (modelEditMode === "api") {
+        modelEditApiFetchBtn?.focus();
       } else {
         modelEditId?.focus();
       }
@@ -9153,17 +10336,6 @@
       toggleEditModelMenu();
       return;
     }
-    const editModelOption = event.target.closest(
-      ".msg-edit-model-menu .model-option"
-    );
-    if (editModelOption && messagesEl.contains(editModelOption)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!editModelOption.classList.contains("is-empty")) {
-        selectEditingModel(editModelOption.dataset.id);
-      }
-      return;
-    }
     const saveEditBtn = event.target.closest(".msg-edit-save");
     if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
       event.preventDefault();
@@ -9309,6 +10481,9 @@
   messagesEl.addEventListener(
     "scroll",
     () => {
+      if (editModelMenuOpen) {
+        closeEditModelMenu();
+      }
       if (!restoringChatScroll && chatScreen && !chatScreen.hidden && activeChatId) {
         syncChatScroll(activeChatId);
       }
@@ -9349,6 +10524,7 @@
         if (msg.modes) {
           applyModes(msg.modes);
         }
+        applySelectedMode(msg.selectedMode, { notify: false });
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -9429,6 +10605,9 @@
           showScreen("settings");
         }
         break;
+      case "providerModelsListed":
+        onProviderModelsListed(msg);
+        break;
       case "figmaStatus":
         renderFigmaStatus(msg.status || {});
         break;
@@ -9449,6 +10628,7 @@
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel);
         }
+        applySelectedMode(msg.selectedMode, { notify: false });
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";

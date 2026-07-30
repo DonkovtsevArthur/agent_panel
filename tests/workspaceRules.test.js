@@ -113,4 +113,12 @@ test("loadWorkspaceRules loads AGENTS.md and sorted direct mdc rules", async (t)
   assert.ok(loaded.indexOf("AGENTS.md") < loaded.indexOf("a.mdc"));
   assert.ok(loaded.indexOf("a.mdc") < loaded.indexOf("b.mdc"));
   assert.doesNotMatch(loaded, /ignored\.md/);
+
+  const withoutAgents = await loadWorkspaceRules(root, {
+    targetPaths: ["src/main.ts"],
+    omitAgentsMd: true,
+  });
+  assert.ok(withoutAgents);
+  assert.doesNotMatch(withoutAgents, /Agent instructions/);
+  assert.match(withoutAgents, /A instructions/);
 });

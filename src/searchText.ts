@@ -1,24 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
+import { WORKSPACE_IGNORE_DIRS, isIgnoredDirName } from "./workspaceIgnore";
 
-/** Каталоги, которые никогда не ищем (зависимости, артефакты сборки). */
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  ".hg",
-  ".svn",
-  "dist",
-  "out",
-  "build",
-  ".next",
-  ".nuxt",
-  "coverage",
-  ".vscode-test",
-  ".idea",
-  "__pycache__",
-  "target",
-  "vendor",
-]);
+// Re-export list for tests / callers that want the canonical ignore set.
+export { WORKSPACE_IGNORE_DIRS };
 
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_RESULTS = 50;
@@ -171,13 +156,13 @@ export function searchTextFiles(options: SearchTextOptions): SearchTextResult {
         return;
       }
       if (entry.name.startsWith(".") && entry.name !== ".") {
-        if (entry.isDirectory() || SKIP_DIRS.has(entry.name)) {
+        if (entry.isDirectory() || isIgnoredDirName(entry.name)) {
           continue;
         }
       }
       const absolute = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name)) {
+        if (!isIgnoredDirName(entry.name)) {
           walk(absolute);
         }
         continue;
@@ -322,4 +307,274 @@ export function createReadFileCache(maxEntries = 40): ReadFileCache {
       return entries.size;
     },
   };
+}
+
+export interface ServedReadTracker {
+  /** Ключ: path + диапазон строк. Возвращает true, если то же чтение уже отдавали при том же mtime. */
+  wasServed(key: string, mtimeMs: number): boolean;
+  markServed(key: string, mtimeMs: number): void;
+  /** После write/search_replace — разрешить одно свежее чтение. */
+  invalidatePath(relativePath: string): void;
+  clear(): void;
+  readonly size: number;
+}
+
+export function servedReadKey(
+  relativePath: string,
+  startLine?: number,
+  endLine?: number
+): string {
+  const pathKey = String(relativePath || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .toLowerCase();
+  const from =
+    typeof startLine === "number" && Number.isFinite(startLine)
+      ? startLine
+      : "";
+  const to =
+    typeof endLine === "number" && Number.isFinite(endLine) ? endLine : "";
+  return `${pathKey}#${from}:${to}`;
+}
+
+/** Трекер полных read_file в рамках одного хода агента. */
+export function createServedReadTracker(): ServedReadTracker {
+  const served = new Map<string, number>();
+  return {
+    wasServed(key, mtimeMs) {
+      const prev = served.get(key);
+      return prev !== undefined && prev === mtimeMs && mtimeMs > 0;
+    },
+    markServed(key, mtimeMs) {
+      if (mtimeMs > 0) {
+        served.set(key, mtimeMs);
+      }
+    },
+    invalidatePath(relativePath) {
+      const pathKey = String(relativePath || "")
+        .replace(/\\/g, "/")
+        .replace(/^\.\//, "")
+        .toLowerCase();
+      if (!pathKey) {
+        return;
+      }
+      const prefix = `${pathKey}#`;
+      for (const key of [...served.keys()]) {
+        if (key.startsWith(prefix)) {
+          served.delete(key);
+        }
+      }
+    },
+    clear() {
+      served.clear();
+    },
+    get size() {
+      return served.size;
+    },
+  };
+}
+
+const IDENTIFIER_TOKEN = /[A-Za-z_$][\w$]{3,63}/g;
+const IDENTIFIER_STOPWORDS = new Set([
+  "function",
+  "return",
+  "const",
+  "export",
+  "import",
+  "string",
+  "number",
+  "boolean",
+  "true",
+  "false",
+  "undefined",
+  "null",
+  "this",
+  "await",
+  "async",
+  "interface",
+  "type",
+  "class",
+]);
+
+/**
+ * Кодовые идентификаторы из текста пользователя: camelCase/snake_case/PascalCase
+ * токены и всё в бэктиках. Обычные слова (нет регистровой границы и _) пропускаем.
+ */
+export function extractCodeIdentifiers(text: string): string[] {
+  const raw = String(text || "");
+  if (!raw) {
+    return [];
+  }
+  const found = new Map<string, number>();
+  const push = (token: string, weight: number): void => {
+    if (
+      token.length < 4 ||
+      IDENTIFIER_STOPWORDS.has(token.toLowerCase()) ||
+      /^\d+$/.test(token)
+    ) {
+      return;
+    }
+    const existing = found.get(token);
+    if (existing === undefined || weight > existing) {
+      found.set(token, weight);
+    }
+  };
+  // Бэктики — почти всегда точный идентификатор: наивысший приоритет.
+  for (const match of raw.matchAll(/`([^`\n]{2,80})`/g)) {
+    const inner = match[1].trim();
+    if (/^[A-Za-z_$][\w$]*(\.[\w$]+)*$/.test(inner)) {
+      push(inner.split(".").pop() || inner, 3);
+    }
+  }
+  for (const match of raw.matchAll(IDENTIFIER_TOKEN)) {
+    const token = match[0];
+    const isCodeShape =
+      token.includes("_") ||
+      token.includes("$") ||
+      /[a-z][A-Z]/.test(token) ||
+      /^[A-Z][a-z]/.test(token);
+    push(token, isCodeShape ? 2 : 0);
+  }
+  return [...found.entries()]
+    .filter(([, weight]) => weight > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "en"))
+    .map(([token]) => token)
+    .slice(0, 3);
+}
+
+/**
+ * Prefetch поиска по идентификаторам из user message до первого LLM-вызова:
+ * «найди, где X» отвечается за один раунд без search_text.
+ */
+export function buildSearchPrefetchMessage(
+  rootPath: string,
+  userText: string,
+  options?: { maxPerIdentifier?: number }
+): string {
+  const identifiers = extractCodeIdentifiers(userText);
+  if (!identifiers.length) {
+    return "";
+  }
+  const maxPerIdentifier = Math.max(1, options?.maxPerIdentifier ?? 8);
+  const sections: string[] = [];
+  for (const identifier of identifiers) {
+    const found = searchTextFiles({
+      rootPath,
+      query: identifier,
+      maxResults: maxPerIdentifier,
+    });
+    if (!found.matches.length) {
+      continue;
+    }
+    sections.push(
+      [
+        `"${identifier}" (${found.matches.length}${
+          found.truncated ? "+" : ""
+        } matches):`,
+        ...found.matches.map(
+          (match) => `- ${match.path}:${match.line}: ${match.text}`
+        ),
+      ].join("\n")
+    );
+  }
+  if (!sections.length) {
+    return "";
+  }
+  return [
+    "Prefetched search results for identifiers from the user message (already computed — do NOT call search_text again for these; answer directly if this is enough):",
+    ...sections,
+  ].join("\n");
+}
+
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Строка похожа на определение идентификатора, а не на обычное использование. */
+export function isLikelyDefinitionLine(line: string, identifier: string): boolean {
+  const text = String(line || "").trim();
+  const id = String(identifier || "").trim();
+  if (!text || !id) {
+    return false;
+  }
+  const escaped = escapeRegExp(id);
+  return new RegExp(
+    `(?:^|\\b)(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:function\\*?\\s+|class\\s+|type\\s+|interface\\s+|enum\\s+)${escaped}\\b` +
+      `|` +
+      `(?:^|\\b)(?:export\\s+)?(?:const|let|var)\\s+${escaped}\\s*=`,
+    "i"
+  ).test(text);
+}
+
+/**
+ * Достаёт path:line из уже полученных tool-результатов search_text
+ * (для ответа после обрыва модели по API 500).
+ */
+export function formatLocateAnswerFromToolMessages(
+  messages: Array<{ role?: string; name?: string; content?: unknown }>,
+  userText: string
+): string | undefined {
+  const identifiers = extractCodeIdentifiers(userText);
+  const byId = new Map<string, SearchTextMatch[]>();
+
+  for (const message of messages) {
+    if (message.role !== "tool" || message.name !== "search_text") {
+      continue;
+    }
+    let parsed: {
+      query?: unknown;
+      matches?: Array<{ path?: unknown; line?: unknown; text?: unknown }>;
+    };
+    try {
+      parsed = JSON.parse(String(message.content || "{}")) as typeof parsed;
+    } catch {
+      continue;
+    }
+    const query = String(parsed.query || "").trim();
+    const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
+    if (!matches.length) {
+      continue;
+    }
+    const key =
+      identifiers.find((id) => id === query || query.includes(id)) ||
+      query ||
+      identifiers[0] ||
+      "search";
+    const bucket = byId.get(key) || [];
+    for (const match of matches) {
+      const pathValue = String(match.path || "").trim();
+      const line = Number(match.line) || 0;
+      const text = String(match.text || "");
+      if (!pathValue || line < 1) {
+        continue;
+      }
+      bucket.push({ path: pathValue, line, text });
+    }
+    byId.set(key, bucket);
+  }
+
+  if (!byId.size) {
+    return undefined;
+  }
+
+  const sections: string[] = [];
+  for (const [identifier, matches] of byId) {
+    if (!matches.length) {
+      continue;
+    }
+    const definitions = matches.filter((match) =>
+      isLikelyDefinitionLine(match.text, identifier)
+    );
+    const picks = (definitions.length ? definitions : matches).slice(0, 12);
+    sections.push(
+      [
+        `**${identifier}** (${definitions.length ? "определение" : "совпадения"}):`,
+        ...picks.map(
+          (match) =>
+            `- \`${match.path}:${match.line}\` — ${match.text.trim().slice(0, 140)}`
+        ),
+      ].join("\n")
+    );
+  }
+  return sections.length ? sections.join("\n\n") : undefined;
 }

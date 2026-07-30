@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.176",
+  "version": "0.7.227",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -393,6 +393,20 @@
           "type": "boolean",
           "default": true,
           "description": "%config.speedRouting.agentExplore.description%"
+        },
+        "agentPanel.visionRouting.preferredModelIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.visionRouting.preferredModelIds.description%"
+        },
+        "agentPanel.visionRouting.preferredModelId": {
+          "type": "string",
+          "default": "",
+          "description": "%config.visionRouting.preferredModelId.description%",
+          "deprecationMessage": "Use agentPanel.visionRouting.preferredModelIds"
         },
         "agentPanel.maxResponseChars": {
           "type": "number",
