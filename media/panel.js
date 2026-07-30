@@ -2,8 +2,28 @@
   const vscode = acquireVsCodeApi();
   const state = vscode.getState() || {
     selectedModel: null,
+    draftPrompt: "",
+    modelByChat: {},
+    modeByChat: {},
+    agentsRailOpen: false,
   };
+  if (typeof state.draftPrompt !== "string") {
+    state.draftPrompt = "";
+  }
+  if (!state.modelByChat || typeof state.modelByChat !== "object") {
+    state.modelByChat = {};
+  }
+  if (!state.modeByChat || typeof state.modeByChat !== "object") {
+    state.modeByChat = {};
+  }
+  if (typeof state.agentsRailOpen !== "boolean") {
+    state.agentsRailOpen = false;
+  }
   const UI_LANG = document.documentElement.lang.startsWith("ru") ? "ru" : "en";
+  const UI_SURFACE =
+    document.documentElement.getAttribute("data-surface") === "settings"
+      ? "settings"
+      : "panel";
   const UI_STRINGS = {
     en: {
       agents: "Agents",
@@ -11,17 +31,132 @@
       archive: "Archive",
       newAgent: "New Agent",
       backToAgents: "Back to agents",
+      showAgentsList: "Show agents",
+      hideAgentsList: "Hide agents",
+      closeSettings: "Close settings",
       saved: "Saved",
       providers: "Providers",
+      providersNote:
+        "Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.",
+      addProvider: "+ Provider",
       models: "Models",
+      modelsProviders: "Models & providers",
       defaultModel: "Default model",
+      addModel: "+ Model",
+      newProviderOption: "+ New provider…",
+      providerIdLabel: "Provider ID",
+      providerNameLabel: "Provider name",
+      otherProvider: "Other",
+      noProvidersOrModels: "No providers yet — add a provider or a model.",
+      baseUrl: "Base URL",
+      statusUrl: "Status URL",
+      statusUrlHint: "Empty = Base URL + /models",
+      apiKey: "API Key",
       modes: "Modes",
+      modesNote:
+        "Agent, Plan, and Ask are built in and can also be edited. Custom modes can be added and removed.",
+      addModeShort: "+ Mode",
+      languageSection: "Language",
+      pluginUiLanguage: "Plugin UI language",
+      languageAuto: "Auto (follow VS Code)",
+      languageEn: "English",
+      languageRu: "Русский",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
+      caBundlePath: "CA bundle path",
       agentBehavior: "Agent behavior",
+      advancedSettings: "Advanced",
+      commitMessages: "Commit messages",
+      commitMessagesNote:
+        "Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.",
+      commitScope: "Apply to",
+      commitScopeGlobal: "All workspaces",
+      commitScopeWorkspace: "This workspace",
+      commitScopeWorkspaceNamed: (name) => name || "This workspace",
+      commitLanguage: "Commit message language",
+      commitLanguageAuto: "Auto (follow UI language)",
+      commitPrompt: "Commit prompt / rule",
+      commitPromptPlaceholder:
+        "Optional. Example: write short English commit messages focused on why.",
+      maxTokens: "max_tokens",
+      figma: "Figma",
+      mcpServers: "MCP Servers",
+      mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
+      mcpServersOpen: "Open connection list",
+      mcpSubtitle: "Manage MCP server configurations used by Harbor Agents.",
+      mcpSearchPlaceholder: "Search MCP servers...",
+      mcpConfigured: "Configured MCP servers",
+      mcpConfiguredCount: (n) => (n === 1 ? "1 item" : `${n} items`),
+      mcpEmpty: "No MCP servers yet.",
+      mcpBadgeUser: "User",
+      mcpBadgeTools: (n) => `${n} tools`,
+      mcpEditNote:
+        "Use a Personal Access Token. Remote OAuth from Figma is usually unavailable to Harbor Agents.",
+      mcpCustomTitleNew: "Add MCP server",
+      mcpCustomTitleEdit: "Edit MCP server",
+      mcpCustomName: "Name",
+      mcpCustomTransport: "Transport",
+      mcpCustomCommand: "Command",
+      mcpCustomArgs: "Args",
+      mcpCustomEnv: "Env (KEY=value per line)",
+      mcpCustomCwd: "Working directory (optional)",
+      mcpCustomUrl: "URL",
+      mcpCustomToken: "Bearer token (optional)",
+      mcpCustomSave: "Save & Connect",
+      mcpNameRequired: "Enter a server name.",
+      mcpCommandRequired: "Enter a command for stdio.",
+      mcpUrlRequired: "Enter a URL for HTTP.",
+      mcpEnable: "Enable",
+      mcpReconnect: "Reconnect",
+      figmaEnable: "Enable Figma MCP",
+      figmaStatusDisconnected: "Status: Disconnected",
+      figmaStatusConnecting: "Status: Connecting…",
+      figmaStatusConnected: (mode, n) =>
+        `Status: Connected (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
+      figmaStatusError: (msg) =>
+        msg ? `Status: Error — ${msg}` : "Status: Error",
+      providerConnUnknown: "Status: Unknown",
+      providerConnConnecting: "Status: Connecting…",
+      providerConnConnected: (name) =>
+        name ? `Status: Connected · ${name}` : "Status: Connected",
+      providerConnError: (msg) =>
+        msg ? `Status: Offline (${msg})` : "Status: Offline",
+      providerConnShortUnknown: "Unknown",
+      providerConnShortConnecting: "Connecting…",
+      providerConnShortConnected: "Connected",
+      providerConnShortError: (msg) =>
+        msg ? `Offline (${msg})` : "Offline",
+      figmaConnect: "Connect Figma",
+      figmaDisconnect: "Disconnect",
+      figmaPatNote:
+        "Create a token in Figma → Settings → Security → Personal access tokens, paste it here, then Connect with token.",
+      figmaPatLabel: "Personal Access Token",
+      figmaPatConnect: "Connect with token",
+      figmaNeedsConnectToast:
+        "Figma is not connected — open Settings → MCP Servers",
+      figmaOpenTokenHelp: "Open token settings",
+      backToSettings: "Back to settings",
       systemPrompt: "System prompt",
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
+      soundNotifications: "Sound notifications",
+      speedRoutingTitle: "Speed routing",
+      speedRoutingNote:
+        "When a heavy model is selected, use a fast helper for Plan/Ask and Agent context gathering.",
+      speedRoutingEnabled: "Speed up heavy models",
+      speedRoutingFastModel: "Fast models",
+      speedRoutingFastModelHint:
+        "Left: use as fast helper (enabled first). Right: turn the model on/off in Harbor. Disabled models cannot be used as helpers.",
+      speedRoutingFastModelEmpty: "No models in settings",
+      speedRoutingReadonlyOverride: "Plan / Ask on fast model",
+      speedRoutingAgentExplore: "Agent: explore on fast model first",
+      visionRoutingTitle: "Images (vision)",
+      visionRoutingNote:
+        "When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.",
+      visionRoutingModels: "Preferred vision models",
+      visionRoutingModelsHint:
+        "Checked models are preferred in list order for image messages. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
+      visionRoutingModelsEmpty: "No vision-capable models in settings",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -71,6 +206,33 @@
       modelsAddedFromJson: "Models from JSON were added.",
       modelIdRequired: "Enter a model id.",
       providerRequired: "Choose a provider (or add one first).",
+      fetchModels: "Fetch models",
+      fetchModelsTitle: "Fetch models",
+      fetchModelsNote: "Select models to add from the provider API.",
+      fetchModelsFromApi: "From API",
+      fetchModelsManual: "Manual",
+      fetchModelsJson: "JSON",
+      fetchModelsApiNote: "Loads model ids from the provider’s /models endpoint.",
+      fetchModelsLoading: "Loading models…",
+      fetchModelsEmpty: "No models returned by the API.",
+      fetchModelsNoneNew: (n) =>
+        n === 1
+          ? "The only model from the API is already in the list."
+          : `All ${n} models from the API are already in the list.`,
+      fetchModelsNoneSelected: "Select at least one new model.",
+      fetchModelsNeedProvider: "Choose a provider with a base URL first.",
+      fetchModelsNeedBaseUrl: "Set a base URL for this provider first.",
+      fetchModelsAlready: "Already added",
+      fetchModelsSelectNew: "Select new",
+      fetchModelsAddSelected: "Add selected",
+      fetchModelsFilter: "Filter",
+      fetchModelsCount: (total, neu) =>
+        neu > 0 ? `${neu} new · ${total} from API` : `${total} from API`,
+      fetchModelsDone: (a, skipped) =>
+        skipped > 0
+          ? `Added ${a} model(s). ${skipped} already in the list.`
+          : `Added ${a} model(s).`,
+      fetchModelsFailed: (msg) => `Could not fetch models: ${msg}`,
       name: "Name",
       contextInput: "Context (input)",
       responseOutput: "Response (output)",
@@ -100,11 +262,10 @@
       noAgentsYet: "No agents yet. Click + to create one.",
       rename: "Rename",
       openFile: "Open file",
+      openChanges: "Open changes",
       openSourceControl: "Open Source Control",
-      copyCode: "Copy code",
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
-      copy: "Copy",
       attachImage: "Attach image",
       currentModelNoImages: "Current model does not support images",
       addMode: "+ Add mode",
@@ -119,16 +280,38 @@
       hideSteps: "Hide steps",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
+      toolWorking: "Working…",
+      toolReading: "Reading…",
+      toolListing: "Listing…",
+      toolSearching: "Searching…",
+      toolWriting: "Writing…",
+      toolRunning: "Running…",
+      toolFetching: "Fetching…",
+      toolOpening: "Opening…",
+      toolMcp: "MCP…",
+      toolKindRead: "read",
+      toolKindWrite: "write",
+      toolKindReplace: "replace",
+      toolKindList: "list",
+      toolKindSearch: "search",
+      toolKindRun: "run",
+      toolKindFetch: "fetch",
+      toolKindOpen: "open",
+      toolKindMcp: "mcp",
+      toolKindTool: "tool",
+      toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
+      commitAndPush: "Commit and push",
+      changesTag: "Changes",
       taskForMode: (label) => `Task (${label})... (@ for file)`,
       modePlaceholder: (label) => `${label}... (@ for file)`,
       failedReadFile: "Failed to read file",
       slashModeSwitched: (label) => `Mode: ${label}`,
       slashInitDefault:
-        "Inspect this repository and write a short onboarding summary: what the project does, the stack, how to build/run it, the main entry points, key folders/files, and the best next steps for working on it.",
+        "Inspect this repository and create or update AGENTS.md at the workspace root. Keep exploration short: prefer package.json, README, and a quick src/ layout — do not read the whole tree. After 1–2 tool rounds, write AGENTS.md as a concise agent orientation guide: what the project does, stack, how to build/run, main entry points, key folders/files, important conventions/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.",
       slashInitWithTarget: (target) =>
-        `Inspect this repository with a focus on ${target}. Write a short onboarding summary: what this part does, the key files, how it fits into the project, important risks/constraints, and the best next steps for working on it.`,
+        `Inspect this repository with a focus on ${target} and create or update AGENTS.md at the workspace root. Keep exploration short — after 1–2 tool rounds, write the file. Cover what this part does, key files, how it fits the project, important risks/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.`,
       slashCompactDefault:
         "Compact this chat into a short working summary. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.",
       slashCompactWithTarget: (target) =>
@@ -140,17 +323,134 @@
       archive: "Архив",
       newAgent: "Новый агент",
       backToAgents: "К списку агентов",
+      showAgentsList: "Показать агентов",
+      hideAgentsList: "Скрыть агентов",
+      closeSettings: "Закрыть настройки",
       saved: "Сохранено",
       providers: "Провайдеры",
+      providersNote:
+        "Base URL и API key для каждого OpenAI-compatible API. Модели сгруппированы по провайдеру.",
+      addProvider: "+ Провайдер",
       models: "Модели",
+      modelsProviders: "Модели и провайдеры",
       defaultModel: "Модель по умолчанию",
+      addModel: "+ Модель",
+      newProviderOption: "+ Новый провайдер…",
+      providerIdLabel: "ID провайдера",
+      providerNameLabel: "Имя провайдера",
+      otherProvider: "Другое",
+      noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
+      baseUrl: "Base URL",
+      statusUrl: "URL проверки статуса",
+      statusUrlHint: "Пусто = Base URL + /models",
+      apiKey: "API Key",
       modes: "Режимы",
+      modesNote:
+        "Agent, Plan и Ask встроены и тоже редактируются. Можно добавлять и удалять свои режимы.",
+      addModeShort: "+ Режим",
+      languageSection: "Язык",
+      pluginUiLanguage: "Язык интерфейса плагина",
+      languageAuto: "Авто (как в VS Code)",
+      languageEn: "English",
+      languageRu: "Русский",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
+      caBundlePath: "Путь к CA bundle",
       agentBehavior: "Поведение агента",
+      advancedSettings: "Доп. настройки",
+      commitMessages: "Сообщения коммитов",
+      commitMessagesNote:
+        "Промпт для генерации сообщений коммита в SCM. Пусто — правила проекта, затем встроенный дефолт.",
+      commitScope: "Применить к",
+      commitScopeGlobal: "Всем workspace",
+      commitScopeWorkspace: "Текущему workspace",
+      commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
+      commitLanguage: "Язык сообщения коммита",
+      commitLanguageAuto: "Авто (как язык интерфейса)",
+      commitPrompt: "Промпт / правило коммита",
+      commitPromptPlaceholder:
+        "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
+      maxTokens: "max_tokens",
+      figma: "Figma",
+      mcpServers: "MCP Servers",
+      mcpServersNote:
+        "Управление MCP-подключениями Harbor Agents (Figma и другие).",
+      mcpServersOpen: "Открыть список подключений",
+      mcpSubtitle: "Управление конфигурациями MCP-серверов для Harbor Agents.",
+      mcpSearchPlaceholder: "Поиск MCP-серверов...",
+      mcpConfigured: "Настроенные MCP-серверы",
+      mcpConfiguredCount: (n) =>
+        n === 1 ? "1 шт." : n < 5 ? `${n} шт.` : `${n} шт.`,
+      mcpEmpty: "Пока нет MCP-серверов.",
+      mcpBadgeUser: "User",
+      mcpBadgeTools: (n) => `${n} tools`,
+      mcpEditNote:
+        "Подключайте через Personal Access Token. Remote OAuth у Figma для Harbor Agents обычно недоступен.",
+      mcpCustomTitleNew: "Добавить MCP-сервер",
+      mcpCustomTitleEdit: "Редактировать MCP-сервер",
+      mcpCustomName: "Имя",
+      mcpCustomTransport: "Транспорт",
+      mcpCustomCommand: "Команда",
+      mcpCustomArgs: "Аргументы",
+      mcpCustomEnv: "Env (KEY=value по строкам)",
+      mcpCustomCwd: "Рабочая папка (опционально)",
+      mcpCustomUrl: "URL",
+      mcpCustomToken: "Bearer token (опционально)",
+      mcpCustomSave: "Сохранить и подключить",
+      mcpNameRequired: "Укажите имя сервера.",
+      mcpCommandRequired: "Укажите команду для stdio.",
+      mcpUrlRequired: "Укажите URL для HTTP.",
+      mcpEnable: "Включить",
+      mcpReconnect: "Переподключить",
+      figmaEnable: "Включить Figma MCP",
+      figmaStatusDisconnected: "Статус: не подключено",
+      figmaStatusConnecting: "Статус: подключение…",
+      figmaStatusConnected: (mode, n) =>
+        `Статус: подключено (${mode || "MCP"}${typeof n === "number" ? `, ${n} tools` : ""})`,
+      figmaStatusError: (msg) =>
+        msg ? `Статус: ошибка — ${msg}` : "Статус: ошибка",
+      providerConnUnknown: "Статус: не проверено",
+      providerConnConnecting: "Статус: подключение…",
+      providerConnConnected: (name) =>
+        name ? `Статус: подключено · ${name}` : "Статус: подключено",
+      providerConnError: (msg) =>
+        msg ? `Статус: не в сети (${msg})` : "Статус: не в сети",
+      providerConnShortUnknown: "Не проверено",
+      providerConnShortConnecting: "Подключение…",
+      providerConnShortConnected: "Подключено",
+      providerConnShortError: (msg) =>
+        msg ? `Не в сети (${msg})` : "Не в сети",
+      figmaConnect: "Connect Figma",
+      figmaDisconnect: "Отключить",
+      figmaPatNote:
+        "Создайте токен в Figma → Settings → Security → Personal access tokens, вставьте сюда и нажмите «Подключить по токену».",
+      figmaPatLabel: "Personal Access Token",
+      figmaPatConnect: "Подключить по токену",
+      figmaNeedsConnectToast:
+        "Figma не подключён — откройте Settings → MCP Servers",
+      figmaOpenTokenHelp: "Открыть настройки токена",
+      backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
+      soundNotifications: "Звуковые уведомления",
+      speedRoutingTitle: "Ускорение тяжёлых моделей",
+      speedRoutingNote:
+        "Если выбрана тяжёлая модель — Plan/Ask и сбор контекста в Agent идут на быстрой.",
+      speedRoutingEnabled: "Ускорять тяжёлые модели",
+      speedRoutingFastModel: "Быстрые модели",
+      speedRoutingFastModelHint:
+        "Слева: использовать как быструю (включённые сверху). Справа: вкл/выкл модели в Harbor. Выключенная модель не работает как helper.",
+      speedRoutingFastModelEmpty: "Нет моделей в настройках",
+      speedRoutingReadonlyOverride: "Plan / Ask на быстрой",
+      speedRoutingAgentExplore: "Agent: сначала explore на быстрой",
+      visionRoutingTitle: "Картинки (vision)",
+      visionRoutingNote:
+        "Если выбранная модель не видит изображения, Harbor под капотом переключает на vision-модель. Пустой список — автопредпочтение.",
+      visionRoutingModels: "Предпочтительные vision-модели",
+      visionRoutingModelsHint:
+        "Отмеченные модели предпочтительны по порядку для сообщений с картинками. Пусто = авто (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
+      visionRoutingModelsEmpty: "Нет vision-моделей в настройках",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
@@ -200,6 +500,33 @@
       modelsAddedFromJson: "Модели из JSON добавлены.",
       modelIdRequired: "Укажите id модели.",
       providerRequired: "Выберите провайдера (или сначала добавьте его).",
+      fetchModels: "Подтянуть модели",
+      fetchModelsTitle: "Подтянуть модели",
+      fetchModelsNote: "Выберите модели, которые добавить из API провайдера.",
+      fetchModelsFromApi: "Из API",
+      fetchModelsManual: "Вручную",
+      fetchModelsJson: "JSON",
+      fetchModelsApiNote: "Загружает id моделей с endpoint /models провайдера.",
+      fetchModelsLoading: "Загрузка моделей…",
+      fetchModelsEmpty: "API не вернул ни одной модели.",
+      fetchModelsNoneNew: (n) =>
+        n === 1
+          ? "Единственная модель из API уже в списке."
+          : `Все ${n} моделей из API уже в списке.`,
+      fetchModelsNoneSelected: "Выберите хотя бы одну новую модель.",
+      fetchModelsNeedProvider: "Сначала выберите провайдера с base URL.",
+      fetchModelsNeedBaseUrl: "Сначала укажите base URL у этого провайдера.",
+      fetchModelsAlready: "Уже есть",
+      fetchModelsSelectNew: "Выбрать новые",
+      fetchModelsAddSelected: "Добавить выбранные",
+      fetchModelsFilter: "Фильтр",
+      fetchModelsCount: (total, neu) =>
+        neu > 0 ? `${neu} новых · ${total} с API` : `${total} с API`,
+      fetchModelsDone: (a, skipped) =>
+        skipped > 0
+          ? `Добавлено: ${a}. Уже в списке: ${skipped}.`
+          : `Добавлено моделей: ${a}.`,
+      fetchModelsFailed: (msg) => `Не удалось загрузить модели: ${msg}`,
       name: "Название",
       contextInput: "Контекст (вход)",
       responseOutput: "Ответ (выход)",
@@ -229,11 +556,10 @@
       noAgentsYet: "Нет агентов. Нажмите +, чтобы создать.",
       rename: "Переименовать",
       openFile: "Открыть файл",
+      openChanges: "Открыть изменения",
       openSourceControl: "Открыть Source Control",
-      copyCode: "Копировать код",
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
-      copy: "Копировать",
       attachImage: "Прикрепить изображение",
       currentModelNoImages: "Текущая модель не поддерживает изображения",
       addMode: "+ Добавить режим",
@@ -248,16 +574,38 @@
       hideSteps: "Скрыть шаги",
       stepsOne: "1 шаг",
       stepsMany: (n) => `${n} шагов`,
+      toolWorking: "Работаю…",
+      toolReading: "Читаю…",
+      toolListing: "Смотрю…",
+      toolSearching: "Ищу…",
+      toolWriting: "Пишу…",
+      toolRunning: "Запускаю…",
+      toolFetching: "Загружаю…",
+      toolOpening: "Открываю…",
+      toolMcp: "MCP…",
+      toolKindRead: "чтение",
+      toolKindWrite: "запись",
+      toolKindReplace: "замена",
+      toolKindList: "список",
+      toolKindSearch: "поиск",
+      toolKindRun: "команда",
+      toolKindFetch: "загрузка",
+      toolKindOpen: "открытие",
+      toolKindMcp: "mcp",
+      toolKindTool: "tool",
+      toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
+      commitAndPush: "Закоммитить и запушить",
+      changesTag: "Изменения",
       taskForMode: (label) => `Задача (${label})… (@ — файл)`,
       modePlaceholder: (label) => `${label}… (@ — файл)`,
       failedReadFile: "Не удалось прочитать файл",
       slashModeSwitched: (label) => `Режим: ${label}`,
       slashInitDefault:
-        "Изучи этот репозиторий и дай короткое onboarding-резюме: что делает проект, какой стек используется, как его собирать/запускать, где основные entry points, какие папки и файлы ключевые, и с чего лучше продолжать работу.",
+        "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко: хватит package.json, README и быстрого взгляда на src/ — не читай всё дерево. После 1–2 раундов инструментов сразу запиши AGENTS.md — краткий ориентир для агента: что делает проект, стек, как собирать/запускать, основные entry points, ключевые папки/файлы, важные соглашения/ограничения и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
       slashInitWithTarget: (target) =>
-        `Изучи этот репозиторий с фокусом на ${target}. Дай короткое onboarding-резюме: что делает эта часть проекта, какие файлы здесь ключевые, как она связана с остальным кодом, какие есть ограничения/риски, и с чего лучше продолжать работу.`,
+        `Изучи этот репозиторий с фокусом на ${target} и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко — после 1–2 раундов инструментов сразу пиши файл. Опиши, что делает эта часть, какие файлы ключевые, как она связана с остальным кодом, какие есть ограничения/риски и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.`,
       slashCompactDefault:
         "Сожми текущий чат в короткое рабочее резюме. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.",
       slashCompactWithTarget: (target) =>
@@ -285,6 +633,7 @@
   const mentionMenuEl = document.getElementById("mentionMenu");
   const composerEl = document.getElementById("composer");
   const composerWrapEl = document.getElementById("composerWrap");
+  const composerScmActionsEl = document.getElementById("composerScmActions");
   const composerDropHintEl = document.getElementById("composerDropHint");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
@@ -293,6 +642,8 @@
 
   let agentStatusEl = null;
   let agentStatusState = { text: "", hidden: true, phase: "" };
+  const workspaceShell = document.getElementById("workspaceShell");
+  const agentsRailBackdrop = document.getElementById("agentsRailBackdrop");
   const agentsScreen = document.getElementById("agentsScreen");
   const archiveScreen = document.getElementById("archiveScreen");
   const settingsScreen = document.getElementById("settingsScreen");
@@ -300,12 +651,15 @@
   const chatBranchesEl = document.getElementById("chatBranches");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
-  const settingsModelsList = document.getElementById("settingsModelsList");
+  const settingsModelsList = document.getElementById(
+    "settingsProvidersModelsList"
+  );
+  const settingsProvidersList = settingsModelsList;
   const newAgentBtn = document.getElementById("newAgentBtn");
+  const chatNewAgentBtn = document.getElementById("chatNewAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
   const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
-  const backFromSettingsBtn = document.getElementById("backFromSettingsBtn");
   const settingsSaveStatus = document.getElementById("settingsSaveStatus");
   const addModelBtn = document.getElementById("addModelBtn");
   const settingsModelsHint = document.getElementById("settingsModelsHint");
@@ -313,6 +667,40 @@
   const importModelsJsonBtn = document.getElementById("importModelsJsonBtn");
   const exportModelsJsonBtn = document.getElementById("exportModelsJsonBtn");
   const settingsJsonHint = document.getElementById("settingsJsonHint");
+  const modelEditApiPane = document.getElementById("modelEditApiPane");
+  const modelEditApiNote = document.getElementById("modelEditApiNote");
+  const modelEditApiFetchBtn = document.getElementById("modelEditApiFetchBtn");
+  const modelEditApiSelectNewBtn = document.getElementById(
+    "modelEditApiSelectNewBtn"
+  );
+  const modelEditApiStatus = document.getElementById("modelEditApiStatus");
+  const modelEditApiSearchWrap = document.getElementById(
+    "modelEditApiSearchWrap"
+  );
+  const modelEditApiSearchLabel = document.getElementById(
+    "modelEditApiSearchLabel"
+  );
+  const modelEditApiSearch = document.getElementById("modelEditApiSearch");
+  const modelEditApiList = document.getElementById("modelEditApiList");
+  const fetchModelsModal = document.getElementById("fetchModelsModal");
+  const fetchModelsTitle = document.getElementById("fetchModelsTitle");
+  const fetchModelsNote = document.getElementById("fetchModelsNote");
+  const fetchModelsStatus = document.getElementById("fetchModelsStatus");
+  const fetchModelsSearchWrap = document.getElementById("fetchModelsSearchWrap");
+  const fetchModelsSearchLabel = document.getElementById(
+    "fetchModelsSearchLabel"
+  );
+  const fetchModelsSearch = document.getElementById("fetchModelsSearch");
+  const fetchModelsSelectWrap = document.getElementById(
+    "fetchModelsSelectWrap"
+  );
+  const fetchModelsSelectNewBtn = document.getElementById(
+    "fetchModelsSelectNewBtn"
+  );
+  const fetchModelsList = document.getElementById("fetchModelsList");
+  const fetchModelsCloseBtn = document.getElementById("fetchModelsCloseBtn");
+  const fetchModelsCancelBtn = document.getElementById("fetchModelsCancelBtn");
+  const fetchModelsAddBtn = document.getElementById("fetchModelsAddBtn");
   const modelEditModal = document.getElementById("modelEditModal");
   const modelEditTitle = document.getElementById("modelEditTitle");
   const modelEditTabs = document.getElementById("modelEditTabs");
@@ -324,10 +712,23 @@
   const modelEditOutput = document.getElementById("modelEditOutput");
   const modelEditVision = document.getElementById("modelEditVision");
   const modelEditProvider = document.getElementById("modelEditProvider");
+  const modelEditNewProvider = document.getElementById("modelEditNewProvider");
+  const modelEditNewProviderId = document.getElementById(
+    "modelEditNewProviderId"
+  );
+  const modelEditNewProviderName = document.getElementById(
+    "modelEditNewProviderName"
+  );
+  const modelEditNewProviderUrl = document.getElementById(
+    "modelEditNewProviderUrl"
+  );
+  const modelEditNewProviderKey = document.getElementById(
+    "modelEditNewProviderKey"
+  );
+  const NEW_PROVIDER_VALUE = "__new__";
   const modelEditCloseBtn = document.getElementById("modelEditCloseBtn");
   const modelEditCancelBtn = document.getElementById("modelEditCancelBtn");
   const modelEditDoneBtn = document.getElementById("modelEditDoneBtn");
-  const settingsProvidersList = document.getElementById("settingsProvidersList");
   const settingsProvidersHint = document.getElementById("settingsProvidersHint");
   const addProviderBtn = document.getElementById("addProviderBtn");
   const providerEditModal = document.getElementById("providerEditModal");
@@ -335,13 +736,15 @@
   const providerEditId = document.getElementById("providerEditId");
   const providerEditName = document.getElementById("providerEditName");
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
+  const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
   const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
-  const backToAgentsBtn = document.getElementById("backToAgentsBtn");
+  const toggleAgentsRailBtn = document.getElementById("toggleAgentsRailBtn");
   const chatAgentNameEl = document.getElementById("chatAgentName");
   const chatTitleEl = document.getElementById("chatTitle");
+  const providerConnStatusEl = document.getElementById("providerConnStatus");
   const openChatSearchBtn = document.getElementById("openChatSearchBtn");
   const chatSearchPanel = document.getElementById("chatSearchPanel");
   const chatSearchInput = document.getElementById("chatSearchInput");
@@ -353,13 +756,137 @@
     : null;
   const contextTipEl = document.getElementById("contextTip");
 
+  let agentsRailOpen = Boolean(state.agentsRailOpen);
+  let workspaceNarrow = false;
+  let currentScreen = "chat";
+
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
   const settingsLanguage = document.getElementById("settingsLanguage");
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
+  const settingsSoundNotificationsEnabled = document.getElementById(
+    "settingsSoundNotificationsEnabled"
+  );
+  const settingsSpeedRoutingEnabled = document.getElementById(
+    "settingsSpeedRoutingEnabled"
+  );
+  const settingsSpeedRoutingFastModels = document.getElementById(
+    "settingsSpeedRoutingFastModels"
+  );
+  const settingsSpeedRoutingReadonlyOverride = document.getElementById(
+    "settingsSpeedRoutingReadonlyOverride"
+  );
+  const settingsSpeedRoutingAgentExplore = document.getElementById(
+    "settingsSpeedRoutingAgentExplore"
+  );
+  const settingsVisionRoutingModels = document.getElementById(
+    "settingsVisionRoutingModels"
+  );
+  /** Ordered ids enabled as fast helpers in the settings list. */
+  let speedRoutingFastModelIds = [];
+  /** Ordered preferred vision model ids for image messages. */
+  let visionRoutingPreferredModelIds = [];
   const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
+  const settingsCommitScope = document.getElementById("settingsCommitScope");
+  const settingsCommitLanguage = document.getElementById(
+    "settingsCommitLanguage"
+  );
+  const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
+  const settingsCommitNote = document.getElementById("settingsCommitNote");
+  const settingsCommitScopeLabel = document.getElementById(
+    "settingsCommitScopeLabel"
+  );
+  const settingsCommitLanguageLabel = document.getElementById(
+    "settingsCommitLanguageLabel"
+  );
+  const settingsCommitPromptLabel = document.getElementById(
+    "settingsCommitPromptLabel"
+  );
+  const settingsFigmaTitle = null;
+  const settingsMcpTitle = document.getElementById("settingsMcpTitle");
+  const settingsMcpNote = document.getElementById("settingsMcpNote");
+  const settingsMcpEntryTitle = document.getElementById(
+    "settingsMcpEntryTitle"
+  );
+  const settingsMcpEntrySub = document.getElementById("settingsMcpEntrySub");
+  const openMcpServersBtn = document.getElementById("openMcpServersBtn");
+  const mcpScreen = document.getElementById("mcpScreen");
+  const backFromMcpBtn = document.getElementById("backFromMcpBtn");
+  const mcpScreenTitle = document.getElementById("mcpScreenTitle");
+  const mcpSubtitle = document.getElementById("mcpSubtitle");
+  const mcpSearchInput = document.getElementById("mcpSearchInput");
+  const mcpAddBtn = document.getElementById("mcpAddBtn");
+  const mcpConfiguredTitle = document.getElementById("mcpConfiguredTitle");
+  const mcpConfiguredCount = document.getElementById("mcpConfiguredCount");
+  const mcpServersList = document.getElementById("mcpServersList");
+  const mcpEmpty = document.getElementById("mcpEmpty");
+  const mcpEditModal = document.getElementById("mcpEditModal");
+  const mcpEditTitle = document.getElementById("mcpEditTitle");
+  const mcpEditCloseBtn = document.getElementById("mcpEditCloseBtn");
+  const mcpEditNote = document.getElementById("mcpEditNote");
+  const mcpEditStatus = document.getElementById("mcpEditStatus");
+  const mcpCustomEditModal = document.getElementById("mcpCustomEditModal");
+  const mcpCustomEditTitle = document.getElementById("mcpCustomEditTitle");
+  const mcpCustomEditCloseBtn = document.getElementById(
+    "mcpCustomEditCloseBtn"
+  );
+  const mcpCustomEditCancelBtn = document.getElementById(
+    "mcpCustomEditCancelBtn"
+  );
+  const mcpCustomEditSaveBtn = document.getElementById("mcpCustomEditSaveBtn");
+  const mcpCustomEditId = document.getElementById("mcpCustomEditId");
+  const mcpCustomName = document.getElementById("mcpCustomName");
+  const mcpCustomTransport = document.getElementById("mcpCustomTransport");
+  const mcpCustomStdioFields = document.getElementById("mcpCustomStdioFields");
+  const mcpCustomHttpFields = document.getElementById("mcpCustomHttpFields");
+  const mcpCustomCommand = document.getElementById("mcpCustomCommand");
+  const mcpCustomArgs = document.getElementById("mcpCustomArgs");
+  const mcpCustomEnv = document.getElementById("mcpCustomEnv");
+  const mcpCustomCwd = document.getElementById("mcpCustomCwd");
+  const mcpCustomUrl = document.getElementById("mcpCustomUrl");
+  const mcpCustomToken = document.getElementById("mcpCustomToken");
+  const mcpCustomNameLabel = document.getElementById("mcpCustomNameLabel");
+  const mcpCustomTransportLabel = document.getElementById(
+    "mcpCustomTransportLabel"
+  );
+  const mcpCustomCommandLabel = document.getElementById(
+    "mcpCustomCommandLabel"
+  );
+  const mcpCustomArgsLabel = document.getElementById("mcpCustomArgsLabel");
+  const mcpCustomEnvLabel = document.getElementById("mcpCustomEnvLabel");
+  const mcpCustomCwdLabel = document.getElementById("mcpCustomCwdLabel");
+  const mcpCustomUrlLabel = document.getElementById("mcpCustomUrlLabel");
+  const mcpCustomTokenLabel = document.getElementById("mcpCustomTokenLabel");
+  let mcpServersCache = [];
+  const settingsFigmaEnabled = null;
+  const settingsFigmaEnabledLabel = null;
+  const settingsFigmaStatus = mcpEditStatus;
+  const settingsFigmaNote = null;
+  const settingsFigmaConnectBtn = document.getElementById(
+    "settingsFigmaConnectBtn"
+  );
+  const settingsFigmaDisconnectBtn = document.getElementById(
+    "settingsFigmaDisconnectBtn"
+  );
+  const settingsFigmaPatBlock = document.getElementById(
+    "settingsFigmaPatBlock"
+  );
+  const settingsFigmaPatNote = document.getElementById("settingsFigmaPatNote");
+  const settingsFigmaPatLabel = document.getElementById(
+    "settingsFigmaPatLabel"
+  );
+  const settingsFigmaPat = document.getElementById("settingsFigmaPat");
+  const settingsFigmaPatConnectBtn = document.getElementById(
+    "settingsFigmaPatConnectBtn"
+  );
+  const settingsFigmaPatHelpBtn = document.getElementById(
+    "settingsFigmaPatHelpBtn"
+  );
+  let figmaStatus = { state: "disconnected", enabled: true };
+  let mcpSearchQuery = "";
+  let mcpScreenOpen = false;
   const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
   const settingsMaxTokens = document.getElementById("settingsMaxTokens");
   const settingsMaxResponseChars = document.getElementById(
@@ -385,13 +912,25 @@
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
+  /** @type {Record<string, { providerId?: string, providerName?: string, state?: string, message?: string }>} */
+  let providerConnById = {};
   let settingsModes = [];
   let settingsDefaultModelId = "";
   let settingsLanguageValue = "auto";
+  let settingsWorkspaceName = "";
   let settingsDefaultContextWindow = 128000;
   let modelEditIndex = null;
   let modelEditMode = "manual";
   let providerEditIndex = null;
+  let fetchModelsRequestId = 0;
+  let fetchModelsActiveRequestId = "";
+  let fetchModelsProviderId = "";
+  let fetchModelsIds = [];
+  let fetchModelsSelected = new Set();
+  let fetchModelsExisting = new Set();
+  let fetchModelsLoading = false;
+  let fetchModelsError = "";
+  let fetchModelsTarget = "modal"; // "modal" | "editApi"
   let settingsHydrating = false;
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
@@ -401,6 +940,76 @@
   let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
+  let notificationAudioContext = null;
+
+  function ensureNotificationAudioContext() {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {
+      return null;
+    }
+    if (
+      !notificationAudioContext ||
+      notificationAudioContext.state === "closed"
+    ) {
+      notificationAudioContext = new AudioContextCtor();
+    }
+    return notificationAudioContext;
+  }
+
+  function unlockNotificationAudio() {
+    const ctx = ensureNotificationAudioContext();
+    if (ctx && ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+  }
+
+  function scheduleNotificationTone(ctx, frequency, start, duration) {
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      start + Math.max(0.05, duration)
+    );
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(start);
+    oscillator.stop(start + duration + 0.02);
+  }
+
+  function playRunFinishedSound(outcome) {
+    const ctx = ensureNotificationAudioContext();
+    if (!ctx) {
+      return;
+    }
+    const play = () => {
+      const start = ctx.currentTime + 0.02;
+      if (outcome === "error") {
+        scheduleNotificationTone(ctx, 220, start, 0.16);
+        scheduleNotificationTone(ctx, 165, start + 0.17, 0.24);
+      } else {
+        scheduleNotificationTone(ctx, 523.25, start, 0.12);
+        scheduleNotificationTone(ctx, 659.25, start + 0.13, 0.2);
+      }
+    };
+    if (ctx.state === "suspended") {
+      void ctx.resume().then(play).catch(() => {});
+    } else {
+      play();
+    }
+  }
+
+  document.addEventListener("pointerdown", unlockNotificationAudio, {
+    once: true,
+    capture: true,
+  });
+  document.addEventListener("keydown", unlockNotificationAudio, {
+    once: true,
+    capture: true,
+  });
 
   const ARCHIVE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>';
@@ -420,23 +1029,20 @@
   const SETTINGS_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">settings</span>';
 
+  const CLOUD_DOWNLOAD_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">cloud_download</span>';
+
   const INFO_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">info</span>';
 
   const HEART_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">favorite</span>';
 
-  const COPY_ICON =
-    '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
-
   const REGENERATE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">refresh</span>';
 
   const BRANCH_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">fork_right</span>';
-
-  const SCM_ICON =
-    '<span class="material-symbols-outlined" aria-hidden="true">account_tree</span>';
 
   let chatSearchOpen = false;
   let chatSearchScope = "current";
@@ -455,16 +1061,34 @@
 
   function localizeStaticUi() {
     document.title = "Harbor Agents";
-    document.querySelectorAll(".agents-title")[0].textContent = t("agents");
-    document.querySelectorAll(".agents-title")[1].textContent = t("archive");
-    document.querySelectorAll(".agents-title")[2].textContent = t("settings");
-    openSettingsBtn.title = openSettingsBtn.setAttribute("aria-label", t("settings")) || t("settings");
-    openArchiveBtn.title = openArchiveBtn.setAttribute("aria-label", t("archive")) || t("archive");
-    newAgentBtn.title = newAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
-    backFromArchiveBtn.title = backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    backFromSettingsBtn.title = backFromSettingsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    backToAgentsBtn.title = backToAgentsBtn.setAttribute("aria-label", t("backToAgents")) || t("backToAgents");
-    settingsSaveStatus.textContent = t("saved");
+    const agentTitles = document.querySelectorAll(".agents-title");
+    if (agentTitles[0]) agentTitles[0].textContent = t("agents");
+    if (agentTitles[1]) agentTitles[1].textContent = t("archive");
+    if (openSettingsBtn) {
+      openSettingsBtn.title =
+        openSettingsBtn.setAttribute("aria-label", t("settings")) || t("settings");
+    }
+    if (openArchiveBtn) {
+      openArchiveBtn.title =
+        openArchiveBtn.setAttribute("aria-label", t("archive")) || t("archive");
+    }
+    if (newAgentBtn) {
+      newAgentBtn.title =
+        newAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
+    }
+    if (chatNewAgentBtn) {
+      chatNewAgentBtn.title =
+        chatNewAgentBtn.setAttribute("aria-label", t("newAgent")) || t("newAgent");
+    }
+    if (backFromArchiveBtn) {
+      backFromArchiveBtn.title =
+        backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) ||
+        t("backToAgents");
+    }
+    syncAgentsRailToggleUi();
+    if (settingsSaveStatus) {
+      settingsSaveStatus.textContent = t("saved");
+    }
     openChatSearchBtn.title = openChatSearchBtn.setAttribute("aria-label", t("searchChat")) || t("searchChat");
     closeChatSearchBtn.title = closeChatSearchBtn.setAttribute("aria-label", t("close")) || t("close");
     chatBranchesEl.setAttribute("aria-label", UI_LANG === "ru" ? "Ветки диалога" : "Conversation branches");
@@ -483,18 +1107,297 @@
       UI_LANG === "ru" ? "Отпустите файл, чтобы прикрепить" : "Drop file to attach";
     contextRingEl.setAttribute("aria-label", t("contextUsage"));
     chatAgentNameEl.textContent = t("agent");
-    const sectionTitles = settingsScreen.querySelectorAll(".settings-section-title");
-    if (sectionTitles[0]) sectionTitles[0].textContent = t("providers");
-    if (sectionTitles[1]) sectionTitles[1].textContent = t("models");
-    if (sectionTitles[2]) sectionTitles[2].textContent = t("modes");
-    if (sectionTitles[3]) sectionTitles[3].textContent =
-      UI_LANG === "ru" ? "Язык" : "Language";
-    if (sectionTitles[4]) sectionTitles[4].textContent = t("tls");
-    if (sectionTitles[5]) sectionTitles[5].textContent = t("agentBehavior");
-    const labels = settingsScreen.querySelectorAll(".settings-label");
-    if (labels[0]) labels[0].textContent = t("defaultModel");
-    if (labels[1]) labels[1].textContent =
-      UI_LANG === "ru" ? "Язык интерфейса плагина" : "Plugin UI language";
+    const setText = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = t(key);
+    };
+    setText("settingsModelsProvidersTitle", "modelsProviders");
+    setText("settingsModesTitle", "modes");
+    setText("settingsLanguageTitle", "languageSection");
+    setText("settingsCommitTitle", "commitMessages");
+    setText("settingsMcpTitle", "mcpServers");
+    setText("settingsAgentTitle", "agentBehavior");
+    setText("settingsAdvancedTitle", "advancedSettings");
+    document.querySelectorAll("[data-i18n-nav]").forEach((el) => {
+      const key = el.getAttribute("data-i18n-nav");
+      if (key && t(key)) el.textContent = t(key);
+    });
+    const settingsProvidersNote = document.getElementById(
+      "settingsProvidersNote"
+    );
+    if (settingsProvidersNote) {
+      settingsProvidersNote.textContent = t("providersNote");
+    }
+    if (addProviderBtn) addProviderBtn.textContent = t("addProvider");
+    if (addModelBtn) addModelBtn.textContent = t("addModel");
+    const newProviderIdLabel = document.getElementById(
+      "modelEditNewProviderIdLabel"
+    );
+    const newProviderNameLabel = document.getElementById(
+      "modelEditNewProviderNameLabel"
+    );
+    const newProviderUrlLabel = document.getElementById(
+      "modelEditNewProviderUrlLabel"
+    );
+    const newProviderKeyLabel = document.getElementById(
+      "modelEditNewProviderKeyLabel"
+    );
+    if (newProviderIdLabel) newProviderIdLabel.textContent = t("providerIdLabel");
+    if (newProviderNameLabel) {
+      newProviderNameLabel.textContent = t("providerNameLabel");
+    }
+    if (newProviderUrlLabel) newProviderUrlLabel.textContent = t("baseUrl");
+    if (newProviderKeyLabel) newProviderKeyLabel.textContent = t("apiKey");
+    const providerEditStatusUrlLabel = document.getElementById(
+      "providerEditStatusUrlLabel"
+    );
+    const providerEditStatusUrlHint = document.getElementById(
+      "providerEditStatusUrlHint"
+    );
+    if (providerEditStatusUrlLabel) {
+      providerEditStatusUrlLabel.textContent = t("statusUrl");
+    }
+    if (providerEditStatusUrlHint) {
+      providerEditStatusUrlHint.textContent = t("statusUrlHint");
+    }
+    const modelEditProviderLabel = document.getElementById(
+      "modelEditProviderLabel"
+    );
+    if (modelEditProviderLabel) {
+      modelEditProviderLabel.textContent = t("provider");
+    }
+    if (modelEditTabs) {
+      const manualTab = modelEditTabs.querySelector('[data-model-mode="manual"]');
+      const apiTab = modelEditTabs.querySelector('[data-model-mode="api"]');
+      const jsonTab = modelEditTabs.querySelector('[data-model-mode="json"]');
+      if (manualTab) manualTab.textContent = t("fetchModelsManual");
+      if (apiTab) apiTab.textContent = t("fetchModelsFromApi");
+      if (jsonTab) jsonTab.textContent = t("fetchModelsJson");
+    }
+    if (modelEditApiNote) modelEditApiNote.textContent = t("fetchModelsApiNote");
+    if (modelEditApiFetchBtn) {
+      modelEditApiFetchBtn.textContent = t("fetchModels");
+    }
+    if (modelEditApiSelectNewBtn) {
+      modelEditApiSelectNewBtn.textContent = t("fetchModelsSelectNew");
+    }
+    if (modelEditApiSearchLabel) {
+      modelEditApiSearchLabel.textContent = t("fetchModelsFilter");
+    }
+    if (fetchModelsTitle) fetchModelsTitle.textContent = t("fetchModelsTitle");
+    if (fetchModelsNote) fetchModelsNote.textContent = t("fetchModelsNote");
+    if (fetchModelsSearchLabel) {
+      fetchModelsSearchLabel.textContent = t("fetchModelsFilter");
+    }
+    if (fetchModelsSelectNewBtn) {
+      fetchModelsSelectNewBtn.textContent = t("fetchModelsSelectNew");
+    }
+    if (fetchModelsAddBtn) {
+      fetchModelsAddBtn.textContent = t("fetchModelsAddSelected");
+    }
+    if (fetchModelsCancelBtn) fetchModelsCancelBtn.textContent = t("cancel");
+    const settingsModesNote = document.getElementById("settingsModesNote");
+    if (settingsModesNote) settingsModesNote.textContent = t("modesNote");
+    const addModeBtnEl = document.getElementById("addModeBtn");
+    if (addModeBtnEl) addModeBtnEl.textContent = t("addModeShort");
+    const settingsLanguageLabel = document.getElementById(
+      "settingsLanguageLabel"
+    );
+    if (settingsLanguageLabel) {
+      settingsLanguageLabel.textContent = t("pluginUiLanguage");
+    }
+    if (settingsLanguage) {
+      const autoOpt = settingsLanguage.querySelector('option[value="auto"]');
+      const enOpt = settingsLanguage.querySelector('option[value="en"]');
+      const ruOpt = settingsLanguage.querySelector('option[value="ru"]');
+      if (autoOpt) autoOpt.textContent = t("languageAuto");
+      if (enOpt) enOpt.textContent = t("languageEn");
+      if (ruOpt) ruOpt.textContent = t("languageRu");
+    }
+    const settingsTlsValidateLabel = document.getElementById(
+      "settingsTlsValidateLabel"
+    );
+    if (settingsTlsValidateLabel) {
+      settingsTlsValidateLabel.textContent = t("validateTls");
+    }
+    const settingsCaBundleLabel = document.getElementById(
+      "settingsCaBundleLabel"
+    );
+    if (settingsCaBundleLabel) {
+      settingsCaBundleLabel.textContent = t("caBundlePath");
+    }
+    const settingsSystemPromptLabel = document.getElementById(
+      "settingsSystemPromptLabel"
+    );
+    if (settingsSystemPromptLabel) {
+      settingsSystemPromptLabel.textContent = t("systemPrompt");
+    }
+    const settingsMaxToolRoundsLabel = document.getElementById(
+      "settingsMaxToolRoundsLabel"
+    );
+    if (settingsMaxToolRoundsLabel) {
+      settingsMaxToolRoundsLabel.textContent = t("maxToolRounds");
+    }
+    const settingsMaxTokensLabel = document.getElementById(
+      "settingsMaxTokensLabel"
+    );
+    if (settingsMaxTokensLabel) {
+      settingsMaxTokensLabel.textContent = t("maxTokens");
+    }
+    const settingsMaxResponseCharsLabel = document.getElementById(
+      "settingsMaxResponseCharsLabel"
+    );
+    if (settingsMaxResponseCharsLabel) {
+      settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
+    }
+    const settingsSoundNotificationsLabel = document.getElementById(
+      "settingsSoundNotificationsLabel"
+    );
+    if (settingsSoundNotificationsLabel) {
+      settingsSoundNotificationsLabel.textContent = t("soundNotifications");
+    }
+    const settingsSpeedRoutingTitle = document.getElementById(
+      "settingsSpeedRoutingTitle"
+    );
+    if (settingsSpeedRoutingTitle) {
+      settingsSpeedRoutingTitle.textContent = t("speedRoutingTitle");
+    }
+    const settingsSpeedRoutingNote = document.getElementById(
+      "settingsSpeedRoutingNote"
+    );
+    if (settingsSpeedRoutingNote) {
+      settingsSpeedRoutingNote.textContent = t("speedRoutingNote");
+    }
+    const settingsSpeedRoutingEnabledLabel = document.getElementById(
+      "settingsSpeedRoutingEnabledLabel"
+    );
+    if (settingsSpeedRoutingEnabledLabel) {
+      settingsSpeedRoutingEnabledLabel.textContent = t("speedRoutingEnabled");
+    }
+    const settingsSpeedRoutingFastModelLabel = document.getElementById(
+      "settingsSpeedRoutingFastModelLabel"
+    );
+    if (settingsSpeedRoutingFastModelLabel) {
+      settingsSpeedRoutingFastModelLabel.textContent = t(
+        "speedRoutingFastModel"
+      );
+    }
+    const settingsSpeedRoutingFastModelHint = document.getElementById(
+      "settingsSpeedRoutingFastModelHint"
+    );
+    if (settingsSpeedRoutingFastModelHint) {
+      settingsSpeedRoutingFastModelHint.textContent = t(
+        "speedRoutingFastModelHint"
+      );
+    }
+    const settingsSpeedRoutingReadonlyOverrideLabel = document.getElementById(
+      "settingsSpeedRoutingReadonlyOverrideLabel"
+    );
+    if (settingsSpeedRoutingReadonlyOverrideLabel) {
+      settingsSpeedRoutingReadonlyOverrideLabel.textContent = t(
+        "speedRoutingReadonlyOverride"
+      );
+    }
+    const settingsSpeedRoutingAgentExploreLabel = document.getElementById(
+      "settingsSpeedRoutingAgentExploreLabel"
+    );
+    if (settingsSpeedRoutingAgentExploreLabel) {
+      settingsSpeedRoutingAgentExploreLabel.textContent = t(
+        "speedRoutingAgentExplore"
+      );
+    }
+    const settingsVisionRoutingTitle = document.getElementById(
+      "settingsVisionRoutingTitle"
+    );
+    if (settingsVisionRoutingTitle) {
+      settingsVisionRoutingTitle.textContent = t("visionRoutingTitle");
+    }
+    const settingsVisionRoutingNote = document.getElementById(
+      "settingsVisionRoutingNote"
+    );
+    if (settingsVisionRoutingNote) {
+      settingsVisionRoutingNote.textContent = t("visionRoutingNote");
+    }
+    const settingsVisionRoutingModelsLabel = document.getElementById(
+      "settingsVisionRoutingModelsLabel"
+    );
+    if (settingsVisionRoutingModelsLabel) {
+      settingsVisionRoutingModelsLabel.textContent = t("visionRoutingModels");
+    }
+    const settingsVisionRoutingModelsHint = document.getElementById(
+      "settingsVisionRoutingModelsHint"
+    );
+    if (settingsVisionRoutingModelsHint) {
+      settingsVisionRoutingModelsHint.textContent = t("visionRoutingModelsHint");
+    }
+    if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
+    if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
+    if (mcpSearchInput) {
+      mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
+    }
+    if (mcpAddBtn) {
+      mcpAddBtn.title = mcpAddBtn.setAttribute("aria-label", t("add")) || t("add");
+    }
+    if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
+    if (settingsFigmaConnectBtn) {
+      settingsFigmaConnectBtn.textContent = t("figmaConnect");
+    }
+    if (settingsFigmaDisconnectBtn) {
+      settingsFigmaDisconnectBtn.textContent = t("figmaDisconnect");
+    }
+    if (settingsFigmaPatNote) {
+      settingsFigmaPatNote.textContent = t("figmaPatNote");
+    }
+    if (settingsFigmaPatLabel) {
+      settingsFigmaPatLabel.textContent = t("figmaPatLabel");
+    }
+    if (settingsFigmaPatConnectBtn) {
+      settingsFigmaPatConnectBtn.textContent = t("figmaPatConnect");
+    }
+    if (settingsFigmaPatHelpBtn) {
+      settingsFigmaPatHelpBtn.textContent = t("figmaOpenTokenHelp");
+    }
+    renderFigmaStatus(figmaStatus);
+    if (settingsCommitNote) {
+      settingsCommitNote.textContent = t("commitMessagesNote");
+    }
+    if (settingsCommitScopeLabel) {
+      settingsCommitScopeLabel.textContent = t("commitScope");
+    }
+    if (settingsCommitLanguageLabel) {
+      settingsCommitLanguageLabel.textContent = t("commitLanguage");
+    }
+    if (settingsCommitPromptLabel) {
+      settingsCommitPromptLabel.textContent = t("commitPrompt");
+    }
+    if (settingsCommitPrompt) {
+      settingsCommitPrompt.placeholder = t("commitPromptPlaceholder");
+    }
+    if (settingsCommitScope) {
+      const globalOpt = settingsCommitScope.querySelector(
+        'option[value="global"]'
+      );
+      const workspaceOpt = settingsCommitScope.querySelector(
+        'option[value="workspace"]'
+      );
+      if (globalOpt) globalOpt.textContent = t("commitScopeGlobal");
+      if (workspaceOpt) {
+        workspaceOpt.textContent = t(
+          "commitScopeWorkspaceNamed",
+          settingsWorkspaceName
+        );
+      }
+    }
+    if (settingsCommitLanguage) {
+      const autoOpt = settingsCommitLanguage.querySelector(
+        'option[value="auto"]'
+      );
+      const enOpt = settingsCommitLanguage.querySelector('option[value="en"]');
+      const ruOpt = settingsCommitLanguage.querySelector('option[value="ru"]');
+      if (autoOpt) autoOpt.textContent = t("commitLanguageAuto");
+      if (enOpt) enOpt.textContent = t("languageEn");
+      if (ruOpt) ruOpt.textContent = t("languageRu");
+    }
   }
 
   localizeStaticUi();
@@ -616,12 +1519,6 @@
     return guessModelSupportsVision(model.id);
   }
 
-  function currentModelSupportsVision() {
-    return resolveModelSupportsVision(
-      models.find((m) => m.id === selectedModelId) || selectedModelId
-    );
-  }
-
   let busy = false;
   let canRegenerate = false;
   let uiMessagesCache = [];
@@ -644,10 +1541,12 @@
   let editingUserIndex = null;
   let editingUserText = "";
   let editingModelId = "";
+  let editingModeId = "";
   let editingAttachments = [];
   let editModelMenuOpen = false;
+  let editModeMenuOpen = false;
   let models = DEFAULT_MODELS.slice();
-  let selectedModelId = state.selectedModel || DEFAULT_MODELS[0].id;
+  let selectedModelId = "";
   let menuOpen = false;
   let plusMenuOpen = false;
   let modeMenuOpen = false;
@@ -656,6 +1555,7 @@
   let modeEditSource = "settings";
   let chatModes = [];
   let streamingEl = null;
+  let streamingRenderScheduled = false;
   let composerDragDepth = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
@@ -692,7 +1592,7 @@
       case "init":
         return {
           kind: "prompt",
-          mode: "ask",
+          mode: "agent",
           sendText: buildSlashInitPrompt(args),
         };
       case "compact":
@@ -740,8 +1640,8 @@
         label: "/init",
         description:
           UI_LANG === "ru"
-            ? "Короткий обзор проекта"
-            : "Quick project onboarding",
+            ? "Создать AGENTS.md — ориентир для агента"
+            : "Create AGENTS.md agent orientation guide",
         kind: "prompt",
       },
       {
@@ -773,8 +1673,6 @@
     if (!Array.isArray(list) || !list.length) {
       return;
     }
-    const visionOk = currentModelSupportsVision();
-    let skippedImages = 0;
     for (const item of list) {
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
@@ -786,10 +1684,6 @@
       const kind =
         item.kind ||
         (String(item.mime || "").startsWith("image/") ? "image" : "file");
-      if (kind === "image" && !visionOk) {
-        skippedImages += 1;
-        continue;
-      }
       pendingAttachments.push({
         id,
         kind,
@@ -801,9 +1695,6 @@
         dataBase64: item.dataBase64,
         previewDataUrl: item.previewDataUrl,
       });
-    }
-    if (skippedImages) {
-      showCopyToast(t("modelNoImages"));
     }
     renderAttachPreview();
   }
@@ -832,6 +1723,42 @@
       return path;
     }
     return start === end ? `${path}:${start}` : `${path}:${start}–${end}`;
+  }
+
+  function selectionFileType(sel) {
+    const path = String(sel.path || "");
+    const fileName = path.split(/[\\/]/).pop() || "";
+    const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
+    const languageAliases = {
+      typescript: "ts",
+      typescriptreact: "tsx",
+      javascript: "js",
+      javascriptreact: "jsx",
+      shellscript: "sh",
+      plaintext: "txt",
+      markdown: "md",
+      python: "py",
+      rust: "rs",
+      csharp: "cs",
+    };
+    const language = String(sel.language || "").toLowerCase();
+    const extension =
+      (match && match[1]) || languageAliases[language] || language || "code";
+    const normalized = extension.replace(/[^a-z0-9]/g, "").slice(0, 8) || "code";
+    const labels = {
+      javascript: "JS",
+      javascriptreact: "JSX",
+      typescript: "TS",
+      typescriptreact: "TSX",
+      markdown: "MD",
+      plaintext: "TXT",
+      shellscript: "SH",
+      yaml: "YML",
+    };
+    return {
+      className: normalized,
+      label: (labels[normalized] || normalized).slice(0, 4).toUpperCase(),
+    };
   }
 
   function selectionToFence(sel) {
@@ -902,13 +1829,14 @@
     selectionPreviewEl.innerHTML = pendingSelections
       .map((sel) => {
         const label = escapeHtml(formatSelectionLabel(sel));
+        const fileType = selectionFileType(sel);
         const lines =
           sel.startLine === sel.endLine
             ? `line ${sel.startLine}`
             : `lines ${sel.startLine}–${sel.endLine}`;
         return (
           `<div class="selection-chip" data-id="${escapeHtml(sel.id)}" title="${label}">` +
-          `<span class="material-symbols-outlined selection-chip-icon" aria-hidden="true">code</span>` +
+          `<span class="selection-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(fileType.label)}</span>` +
           `<span class="selection-chip-body">` +
           `<span class="selection-chip-path">${escapeHtml(sel.path || "file")}</span>` +
           `<span class="selection-chip-lines">${escapeHtml(lines)}</span>` +
@@ -1102,10 +2030,16 @@
     if (!match) {
       return null;
     }
+    const query = match[2] || "";
+    // Не рассматриваем @https://... / @...:... как упоминание файла.
+    // Иначе появляется mention-панель с файлами (searchFiles по "https://...").
+    if (query.includes("://") || query.includes(":")) {
+      return null;
+    }
     const atIndex = before.length - match[2].length - 1;
     return {
       start: atIndex,
-      query: match[2],
+      query,
       end: cursor,
     };
   }
@@ -1148,6 +2082,7 @@
     closePlusMenu();
     closeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     renderSlashMenu();
   }
 
@@ -1362,10 +2297,11 @@
     while ((match = re.exec(raw))) {
       html += escapeHtml(raw.slice(last, match.index));
       const filePath = match[1];
+      const label = pathBasename(filePath);
       html +=
         `<button type="button" class="msg-mention" data-path="${escapeHtml(
           filePath
-        )}" title="${escapeHtml(filePath)}">@${escapeHtml(filePath)}</button>`;
+        )}" title="${escapeHtml(filePath)}">@${escapeHtml(label)}</button>`;
       last = match.index + match[0].length;
     }
     html += escapeHtml(raw.slice(last));
@@ -1603,6 +2539,29 @@
     vscode.setState(state);
   }
 
+  function persistDraftPrompt() {
+    if (!promptEl) {
+      return;
+    }
+    state.draftPrompt = promptEl.value || "";
+    persistUiState();
+  }
+
+  function restoreDraftPrompt() {
+    if (!promptEl || UI_SURFACE !== "panel") {
+      return;
+    }
+    const draft = typeof state.draftPrompt === "string" ? state.draftPrompt : "";
+    if (draft && !promptEl.value) {
+      promptEl.value = draft;
+    }
+  }
+
+  function clearDraftPrompt() {
+    state.draftPrompt = "";
+    persistUiState();
+  }
+
   function syncChatScroll(chatId) {
     if (!chatId || !messagesEl || restoringChatScroll) {
       return;
@@ -1744,24 +2703,30 @@
     if (!item || item.role !== "user" || busy) {
       return;
     }
+    const preservedScrollTop = messagesEl.scrollTop;
     closeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
+    editingModeId = agentMode || "agent";
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
-    renderMessages(uiMessagesCache);
+    renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
 
   function cancelEditingUserMessage() {
+    const preservedScrollTop = messagesEl.scrollTop;
     closeEditModelMenu();
+    closeEditModeMenu();
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
-    renderMessages(uiMessagesCache);
+    renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
 
   function submitEditedUserMessage() {
@@ -1775,28 +2740,48 @@
     }
     const model =
       editingModelId || selectedModelId || models[0]?.id || "";
+    const mode = normalizeAgentModeUi(editingModeId || agentMode);
     if (model && model !== selectedModelId) {
       setSelectedModel(model, true);
     }
+    if (mode && mode !== agentMode) {
+      setAgentMode(mode, { close: true, notify: true, focus: false });
+    }
     closeEditModelMenu();
+    closeEditModeMenu();
     setBusy(true);
     vscode.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
       text: nextText,
       model,
-      agentMode,
+      agentMode: mode,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
   }
 
   function modelDisplayName(id) {
     const model = models.find((m) => m.id === id);
     return model ? model.label || model.id : id || t("noModels");
+  }
+
+  function modeDisplayName(id) {
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    const wanted = String(id || "").trim();
+    const raw =
+      modes.find((m) => m.id === wanted) ||
+      modes.find((m) => m.id === "agent") ||
+      modes[0];
+    if (!raw) {
+      return t("mode");
+    }
+    const mode = localizeModeMeta(raw);
+    return mode.label || mode.id || t("mode");
   }
 
   function renderEditModelMenu(menuEl) {
@@ -1817,6 +2802,7 @@
       btn.className =
         "model-option" + (model.id === editingModelId ? " is-active" : "");
       btn.setAttribute("role", "option");
+      btn.setAttribute("data-model-id", model.id);
       btn.dataset.id = model.id;
 
       const label = document.createElement("span");
@@ -1847,21 +2833,172 @@
     return messagesEl.querySelector(".msg-edit-model-picker");
   }
 
+  const modelMenuHomes = new WeakMap();
+
+  function ensureModelMenuFloated(menu) {
+    if (!menu || menu.parentElement === document.body) {
+      return;
+    }
+    if (!modelMenuHomes.has(menu)) {
+      modelMenuHomes.set(menu, {
+        parent: menu.parentElement,
+        next: menu.nextSibling,
+      });
+    }
+    document.body.appendChild(menu);
+  }
+
+  function restoreModelMenuHome(menu) {
+    if (!menu) {
+      return;
+    }
+    const home = modelMenuHomes.get(menu);
+    modelMenuHomes.delete(menu);
+    if (!home || !home.parent || !home.parent.isConnected) {
+      return;
+    }
+    if (home.next && home.next.parentNode === home.parent) {
+      home.parent.insertBefore(menu, home.next);
+    } else {
+      home.parent.appendChild(menu);
+    }
+  }
+
+  function findEditModelMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-model-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-model-menu");
+  }
+
+  function clearModelMenuPlacementStyles(menu) {
+    if (!menu) {
+      return;
+    }
+    menu.classList.remove("opens-down", "is-fixed");
+    menu.style.position = "";
+    menu.style.top = "";
+    menu.style.left = "";
+    menu.style.right = "";
+    menu.style.bottom = "";
+    menu.style.width = "";
+    menu.style.minWidth = "";
+    menu.style.maxHeight = "";
+    menu.style.zIndex = "";
+    menu.style.visibility = "";
+  }
+
+  function resetModelMenuPlacement(picker, menu) {
+    if (picker) {
+      picker.classList.remove("opens-down");
+    }
+    clearModelMenuPlacementStyles(menu);
+    restoreModelMenuHome(menu);
+  }
+
+  /**
+   * Float the menu to document.body + position:fixed so #messages overflow
+   * and sticky stacking contexts cannot clip it.
+   */
+  function placeModelMenu(picker, menu, boundaryEl) {
+    if (!picker || !menu || menu.hidden) {
+      return;
+    }
+    if (picker) {
+      picker.classList.remove("opens-down");
+    }
+    clearModelMenuPlacementStyles(menu);
+
+    const gap = 6;
+    const cssMax = 240;
+    const edgePad = 8;
+    const boundary =
+      boundaryEl || chatScreen || document.documentElement;
+    const trigger =
+      picker.querySelector(".model-trigger") || picker;
+    const triggerRect = trigger.getBoundingClientRect();
+    const boundaryRect = boundary.getBoundingClientRect();
+
+    ensureModelMenuFloated(menu);
+    menu.classList.add("is-fixed");
+    menu.style.position = "fixed";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.visibility = "hidden";
+    menu.style.zIndex = "10000";
+    menu.style.minWidth =
+      Math.round(Math.max(220, triggerRect.width)) + "px";
+
+    const naturalHeight = Math.min(
+      Math.max(menu.scrollHeight, 1),
+      cssMax
+    );
+    const menuWidth = Math.min(
+      320,
+      Math.max(220, triggerRect.width, menu.offsetWidth || 0)
+    );
+
+    const availAbove =
+      Math.min(
+        triggerRect.top - boundaryRect.top,
+        triggerRect.top
+      ) - gap;
+    const availBelow =
+      Math.min(
+        boundaryRect.bottom - triggerRect.bottom,
+        window.innerHeight - triggerRect.bottom
+      ) - gap;
+    const openDown =
+      availAbove < naturalHeight && availBelow > availAbove;
+
+    let left = triggerRect.left;
+    const maxLeft = window.innerWidth - menuWidth - edgePad;
+    if (left > maxLeft) {
+      left = Math.max(edgePad, maxLeft);
+    }
+    if (left < edgePad) {
+      left = edgePad;
+    }
+
+    menu.style.visibility = "";
+    menu.style.left = Math.round(left) + "px";
+
+    if (openDown) {
+      picker.classList.add("opens-down");
+      menu.classList.add("opens-down");
+      menu.style.top = Math.round(triggerRect.bottom + gap) + "px";
+      menu.style.bottom = "auto";
+      menu.style.maxHeight =
+        Math.max(0, Math.min(cssMax, Math.floor(availBelow))) + "px";
+    } else {
+      menu.style.top = "auto";
+      menu.style.bottom =
+        Math.round(window.innerHeight - triggerRect.top + gap) + "px";
+      menu.style.maxHeight =
+        Math.max(0, Math.min(cssMax, Math.floor(availAbove))) + "px";
+    }
+  }
+
   function closeEditModelMenu() {
     editModelMenuOpen = false;
     const picker = getEditModelPicker();
-    if (!picker) {
-      return;
-    }
-    picker.classList.remove("is-open");
-    const trigger = picker.querySelector(".msg-edit-model-trigger");
-    const menu = picker.querySelector(".msg-edit-model-menu");
-    if (trigger) {
-      trigger.setAttribute("aria-expanded", "false");
+    const menu = findEditModelMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-model-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
     }
     if (menu) {
       menu.hidden = true;
     }
+    resetModelMenuPlacement(picker, menu);
   }
 
   function openEditModelMenu() {
@@ -1870,9 +3007,10 @@
       return;
     }
     closeMenu();
+    closeEditModeMenu();
     editModelMenuOpen = true;
     const trigger = picker.querySelector(".msg-edit-model-trigger");
-    const menu = picker.querySelector(".msg-edit-model-menu");
+    const menu = findEditModelMenu(picker);
     renderEditModelMenu(menu);
     picker.classList.add("is-open");
     if (trigger) {
@@ -1880,6 +3018,7 @@
     }
     if (menu) {
       menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
     }
   }
 
@@ -1892,10 +3031,12 @@
   }
 
   function selectEditingModel(id) {
-    if (!id || busy) {
+    const next = String(id || "").trim();
+    if (!next) {
+      closeEditModelMenu();
       return;
     }
-    editingModelId = id;
+    editingModelId = next;
     const picker = getEditModelPicker();
     const label = picker
       ? picker.querySelector(".msg-edit-model-label")
@@ -1904,6 +3045,174 @@
       label.textContent = modelDisplayName(editingModelId);
     }
     closeEditModelMenu();
+  }
+
+  function editingModelIdFromOption(option) {
+    if (!(option instanceof Element)) {
+      return "";
+    }
+    return (
+      option.getAttribute("data-model-id") ||
+      option.getAttribute("data-id") ||
+      option.dataset.id ||
+      ""
+    );
+  }
+
+  function selectEditingModelFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-model-menu .model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    selectEditingModel(editingModelIdFromOption(option));
+    return true;
+  }
+
+  function getEditModePicker() {
+    return messagesEl.querySelector(".msg-edit-mode-picker");
+  }
+
+  function findEditModeMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-mode-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-mode-menu");
+  }
+
+  function renderEditModeMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    if (!modes.length) {
+      const empty = document.createElement("div");
+      empty.className = "model-option is-empty";
+      empty.textContent = t("noModes");
+      menuEl.appendChild(empty);
+      return;
+    }
+    const activeId = normalizeAgentModeUi(editingModeId || agentMode);
+    for (const sourceMode of modes) {
+      const mode = localizeModeMeta(sourceMode);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (mode.id === activeId ? " is-active" : "");
+      btn.dataset.mode = mode.id;
+      btn.setAttribute("role", "option");
+      const text = document.createElement("span");
+      text.className = "mode-option-text";
+      const title = document.createElement("span");
+      title.className = "model-option-label";
+      title.textContent = mode.label || mode.id;
+      text.appendChild(title);
+      if (mode.description) {
+        const desc = document.createElement("span");
+        desc.className = "mode-option-desc";
+        desc.textContent = mode.description;
+        text.appendChild(desc);
+      }
+      btn.appendChild(text);
+      if (mode.id === activeId) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function closeEditModeMenu() {
+    editModeMenuOpen = false;
+    const picker = getEditModePicker();
+    const menu = findEditModeMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-mode-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditModeMenu() {
+    const picker = getEditModePicker();
+    if (!picker || busy) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeEditModelMenu();
+    editModeMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-mode-trigger");
+    const menu = findEditModeMenu(picker);
+    renderEditModeMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditModeMenu() {
+    if (editModeMenuOpen) {
+      closeEditModeMenu();
+    } else {
+      openEditModeMenu();
+    }
+  }
+
+  function selectEditingMode(id) {
+    const next = normalizeAgentModeUi(id);
+    editingModeId = next;
+    const picker = getEditModePicker();
+    const label = picker
+      ? picker.querySelector(".msg-edit-mode-label")
+      : null;
+    if (label) {
+      label.textContent = modeDisplayName(editingModeId);
+    }
+    if (picker) {
+      picker.dataset.mode = editingModeId;
+    }
+    closeEditModeMenu();
+  }
+
+  function selectEditingModeFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-mode-menu .model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    const modeId = String(option.dataset.mode || "").trim();
+    if (!modeId) {
+      return false;
+    }
+    selectEditingMode(modeId);
+    return true;
   }
 
   function removeRegenerateButtons() {
@@ -1919,6 +3228,16 @@
     );
   }
 
+  function assistantActionsHtml(index, showRegen) {
+    const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
+    const regenHtml = showRegen
+      ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
+        REGENERATE_ICON +
+        `</button>`
+      : "";
+    return branchHtml + regenHtml;
+  }
+
   function ensureRegenerateButton() {
     removeRegenerateButtons();
     if (!canRegenerate) {
@@ -1930,11 +3249,7 @@
       return;
     }
     const index = Number(last.dataset.index);
-    const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
-    const regenHtml =
-      `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
-      REGENERATE_ICON +
-      `</button>`;
+    const actionsHtml = assistantActionsHtml(index, true);
 
     const parent = last.parentElement;
     if (parent && parent.classList.contains("msg-wrap-assistant")) {
@@ -1942,21 +3257,21 @@
       if (!actions) {
         actions = document.createElement("div");
         actions.className = "msg-actions";
-        parent.insertBefore(actions, last);
+        parent.appendChild(actions);
       }
-      actions.innerHTML = branchHtml + regenHtml;
+      actions.innerHTML = actionsHtml;
       return;
     }
 
     const actions = document.createElement("div");
     actions.className = "msg-actions";
-    actions.innerHTML = branchHtml + regenHtml;
+    actions.innerHTML = actionsHtml;
 
     const wrap = document.createElement("div");
     wrap.className = "msg-wrap msg-wrap-assistant";
     (parent || messagesEl).insertBefore(wrap, last);
-    wrap.appendChild(actions);
     wrap.appendChild(last);
+    wrap.appendChild(actions);
   }
 
   function renderChatBranches(list) {
@@ -2057,36 +3372,222 @@
 
     switch (name) {
       case "run_command":
-        return args.command ? `run · ${args.command}` : "run_command";
+        return args.command
+          ? `${t("toolKindRun")} · ${args.command}`
+          : t("toolKindRun");
       case "read_file":
         return args.relativePath
-          ? `read · ${args.relativePath}`
-          : "read_file";
+          ? `${t("toolKindRead")} · ${args.relativePath}`
+          : t("toolKindRead");
       case "write_file":
         return args.relativePath
-          ? `write · ${args.relativePath}`
-          : "write_file";
+          ? `${t("toolKindWrite")} · ${args.relativePath}`
+          : t("toolKindWrite");
+      case "search_replace":
+        return args.relativePath
+          ? `${t("toolKindReplace")} · ${args.relativePath}`
+          : t("toolKindReplace");
       case "list_files": {
         const path = args.relativePath || ".";
-        return `list · ${path}`;
+        return `${t("toolKindList")} · ${path}`;
       }
+      case "search_text":
+        return args.query
+          ? `${t("toolKindSearch")} · ${args.query}`
+          : t("toolKindSearch");
+      case "fetch_url":
+        return args.url
+          ? `${t("toolKindFetch")} · ${args.url}`
+          : t("toolKindFetch");
+      case "open_external":
+        return args.url
+          ? `${t("toolKindOpen")} · ${args.url}`
+          : t("toolKindOpen");
       default: {
+        if (String(name).startsWith("mcp__")) {
+          const short = name.replace(/^mcp__[^_]+__/, "") || name;
+          return `${t("toolKindMcp")} · ${short}`;
+        }
         const values = Object.values(args)
           .filter((v) => typeof v === "string" || typeof v === "number")
           .slice(0, 2);
-        return values.length ? `${name} · ${values.join(" · ")}` : name;
+        return values.length
+          ? `${t("toolKindTool")} · ${values.join(" · ")}`
+          : t("toolKindTool");
       }
     }
   }
 
-  function toolStepsLabel(count) {
-    if (count === 1) {
-      return t("stepsOne");
+  function parseToolName(text) {
+    const raw = String(text || "").replace(/^⚙\s*/, "").trim();
+    const match = raw.match(/^([a-zA-Z0-9_]+)\(/);
+    if (match) {
+      return match[1];
     }
-    if (count > 1 && count < 5) {
-    return t("stepsMany", count);
+    const line = String(text || "");
+    const prefix = line.split("·")[0].trim().toLowerCase();
+    if (
+      prefix === "read" ||
+      prefix === t("toolKindRead").toLowerCase()
+    ) {
+      return "read_file";
     }
-    return t("stepsMany", count);
+    if (
+      prefix === "write" ||
+      prefix === t("toolKindWrite").toLowerCase()
+    ) {
+      return "write_file";
+    }
+    if (
+      prefix === "replace" ||
+      prefix === t("toolKindReplace").toLowerCase()
+    ) {
+      return "search_replace";
+    }
+    if (
+      prefix === "list" ||
+      prefix === t("toolKindList").toLowerCase()
+    ) {
+      return "list_files";
+    }
+    if (
+      prefix === "search" ||
+      prefix === t("toolKindSearch").toLowerCase()
+    ) {
+      return "search_text";
+    }
+    if (
+      prefix === "run" ||
+      prefix === t("toolKindRun").toLowerCase()
+    ) {
+      return "run_command";
+    }
+    if (
+      prefix === "fetch" ||
+      prefix === t("toolKindFetch").toLowerCase()
+    ) {
+      return "fetch_url";
+    }
+    if (
+      prefix === "open" ||
+      prefix === t("toolKindOpen").toLowerCase()
+    ) {
+      return "open_external";
+    }
+    if (prefix === "mcp" || prefix === t("toolKindMcp").toLowerCase()) {
+      return "mcp__tool";
+    }
+    return "";
+  }
+
+  function toolKind(name) {
+    const n = String(name || "");
+    if (n === "read_file") {
+      return "read";
+    }
+    if (n === "write_file") {
+      return "write";
+    }
+    if (n === "search_replace") {
+      return "replace";
+    }
+    if (n === "list_files") {
+      return "list";
+    }
+    if (n === "search_text") {
+      return "search";
+    }
+    if (n === "run_command") {
+      return "run";
+    }
+    if (n === "fetch_url") {
+      return "fetch";
+    }
+    if (n === "open_external") {
+      return "open";
+    }
+    if (n.startsWith("mcp__")) {
+      return "mcp";
+    }
+    return n ? "tool" : "";
+  }
+
+  function toolKindLabel(kind) {
+    switch (kind) {
+      case "read":
+        return t("toolKindRead");
+      case "list":
+        return t("toolKindList");
+      case "write":
+        return t("toolKindWrite");
+      case "replace":
+        return t("toolKindReplace");
+      case "run":
+        return t("toolKindRun");
+      case "fetch":
+        return t("toolKindFetch");
+      case "open":
+        return t("toolKindOpen");
+      case "mcp":
+        return t("toolKindMcp");
+      default:
+        return t("toolKindTool");
+    }
+  }
+
+  function toolWorkingLabel(kind) {
+    switch (kind) {
+      case "read":
+        return t("toolReading");
+      case "list":
+        return t("toolListing");
+      case "write":
+      case "replace":
+        return t("toolWriting");
+      case "run":
+        return t("toolRunning");
+      case "fetch":
+        return t("toolFetching");
+      case "open":
+        return t("toolOpening");
+      case "mcp":
+        return t("toolMcp");
+      default:
+        return t("toolWorking");
+    }
+  }
+
+  function toolTypesSummary(group) {
+    const counts = new Map();
+    for (const el of group.querySelectorAll(".msg.tool")) {
+      const name = el.dataset.toolName || parseToolName(el.dataset.raw || "");
+      const kind = toolKind(name) || "tool";
+      counts.set(kind, (counts.get(kind) || 0) + 1);
+    }
+    const order = [
+      "read",
+      "list",
+      "write",
+      "replace",
+      "run",
+      "fetch",
+      "open",
+      "mcp",
+      "tool",
+    ];
+    const parts = [];
+    for (const kind of order) {
+      const n = counts.get(kind);
+      if (n) {
+        parts.push(t("toolTypeCount", toolKindLabel(kind), n));
+      }
+    }
+    for (const [kind, n] of counts) {
+      if (!order.includes(kind) && n) {
+        parts.push(t("toolTypeCount", toolKindLabel(kind), n));
+      }
+    }
+    return parts.length ? parts.join(" · ") : t("stepsZero");
   }
 
   function sealToolGroups() {
@@ -2094,6 +3595,41 @@
       ".tool-group:not([data-sealed])"
     )) {
       group.dataset.sealed = "1";
+      updateToolGroupSummary(group);
+    }
+  }
+
+  function clearStoppedRunArtifacts() {
+    if (streamingEl) {
+      const wrap = streamingEl.closest(".msg-wrap-assistant");
+      (wrap || streamingEl).remove();
+      streamingEl = null;
+    }
+    streamingRenderScheduled = false;
+
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    if (turn) {
+      for (const group of turn.querySelectorAll(".tool-group")) {
+        group.remove();
+      }
+    } else {
+      // Fallback для старой/восстановленной разметки: незапечатанная группа
+      // всегда относится к текущему незавершённому запуску.
+      for (const group of messagesEl.querySelectorAll(
+        ".tool-group:not([data-sealed])"
+      )) {
+        group.remove();
+      }
+    }
+
+    while (
+      uiMessagesCache.length &&
+      uiMessagesCache[uiMessagesCache.length - 1]?.role === "tool"
+    ) {
+      uiMessagesCache.pop();
     }
   }
 
@@ -2101,10 +3637,20 @@
     if (!group) {
       return;
     }
-    const count = group.querySelectorAll(".msg.tool").length;
+    const tools = group.querySelectorAll(".msg.tool");
+    const count = tools.length;
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
-      summary.textContent = toolStepsLabel(count);
+      if (!count) {
+        summary.textContent = t("toolWorking");
+      } else if (group.dataset.sealed === "1") {
+        summary.textContent = toolTypesSummary(group);
+      } else {
+        const last = tools[tools.length - 1];
+        const name =
+          last.dataset.toolName || parseToolName(last.dataset.raw || "");
+        summary.textContent = toolWorkingLabel(toolKind(name));
+      }
     }
     group.title = group.classList.contains("is-collapsed")
       ? t("showSteps")
@@ -2117,7 +3663,7 @@
     group.innerHTML =
       `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
-      `<span class="tool-group-summary">0 steps</span>` +
+      `<span class="tool-group-summary">${escapeHtml(t("toolWorking"))}</span>` +
       `</button>` +
       `<div class="tool-group-body"></div>`;
     return group;
@@ -2133,8 +3679,7 @@
     while (
       node &&
       (node.id === "agentStatus" ||
-        node.classList.contains("agent-status") ||
-        node.classList.contains("review-actions"))
+        node.classList.contains("agent-status"))
     ) {
       node = node.previousElementSibling;
     }
@@ -2162,11 +3707,49 @@
   function appendToolToGroup(text, index) {
     const group = ensureActiveToolGroup();
     const body = group.querySelector(".tool-group-body");
+    const toolName = parseToolName(text);
+    const formatted = formatToolLine(text);
+    const last = body?.lastElementChild;
+    // Схлопываем подряд идущие одинаковые read_file (модель часто перечитывает зря).
+    if (
+      last &&
+      last.classList.contains("msg") &&
+      last.classList.contains("tool") &&
+      last.dataset.toolName === "read_file" &&
+      toolName === "read_file"
+    ) {
+      const lastBase = String(last.dataset.toolBaseText || "")
+        .replace(/\s*×\d+\s*$/, "")
+        .trim();
+      const nextBase = String(formatted || "")
+        .replace(/\s*×\d+\s*$/, "")
+        .trim();
+      if (lastBase && lastBase === nextBase) {
+        const count = Number(last.dataset.toolRepeatCount || 1) + 1;
+        last.dataset.toolRepeatCount = String(count);
+        last.dataset.toolBaseText = lastBase;
+        if (typeof index === "number") {
+          last.dataset.index = String(index);
+        }
+        const msgBody = last.querySelector(".msg-body");
+        if (msgBody) {
+          msgBody.textContent = `${lastBase} ×${count}`;
+        }
+        last.dataset.raw = text;
+        updateToolGroupSummary(group);
+        keepStatusAtEnd();
+        scrollToBottom();
+        return last;
+      }
+    }
     const el = document.createElement("div");
     el.className = "msg tool";
     if (typeof index === "number") {
       el.dataset.index = String(index);
     }
+    el.dataset.toolName = toolName;
+    el.dataset.toolRepeatCount = "1";
+    el.dataset.toolBaseText = formatted;
     const msgBody = document.createElement("div");
     msgBody.className = "msg-body";
     el.appendChild(msgBody);
@@ -2178,28 +3761,151 @@
     return el;
   }
 
+  function showSettingsCategory(category) {
+    const allowed = [
+      "models",
+      "modes",
+      "language",
+      "commit",
+      "mcp",
+      "agent",
+      "advanced",
+    ];
+    const cat = allowed.includes(category) ? category : "models";
+    const nav = document.getElementById("settingsNav");
+    if (nav) {
+      nav.querySelectorAll(".settings-nav-item").forEach((btn) => {
+        btn.classList.toggle(
+          "is-active",
+          btn.getAttribute("data-settings-cat") === cat
+        );
+      });
+    }
+    document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+      panel.hidden = panel.getAttribute("data-settings-panel") !== cat;
+    });
+    mcpScreenOpen = cat === "mcp";
+    if (cat === "mcp") {
+      renderMcpServersList();
+      vscode.postMessage({ type: "figmaRefreshStatus" });
+      vscode.postMessage({ type: "mcpRefreshList" });
+    } else {
+      closeMcpEditModal();
+      closeMcpCustomEditModal();
+    }
+    if (settingsBody) {
+      settingsBody.scrollTop = 0;
+    }
+  }
+
+  function syncAgentsRailToggleUi() {
+    if (!toggleAgentsRailBtn) {
+      return;
+    }
+    const label = agentsRailOpen ? t("hideAgentsList") : t("showAgentsList");
+    toggleAgentsRailBtn.title = label;
+    toggleAgentsRailBtn.setAttribute("aria-label", label);
+    toggleAgentsRailBtn.setAttribute(
+      "aria-pressed",
+      agentsRailOpen ? "true" : "false"
+    );
+    const icon = toggleAgentsRailBtn.querySelector(".material-symbols-outlined");
+    if (icon) {
+      icon.textContent = agentsRailOpen ? "menu_open" : "menu";
+    }
+  }
+
+  function persistAgentsRailOpen() {
+    state.agentsRailOpen = agentsRailOpen;
+    vscode.setState(state);
+  }
+
+  function applyAgentsRailVisibility() {
+    if (workspaceShell) {
+      workspaceShell.classList.toggle("is-rail-open", agentsRailOpen);
+      workspaceShell.classList.toggle("is-narrow", workspaceNarrow);
+    }
+    if (agentsScreen) {
+      agentsScreen.hidden = !(currentScreen === "chat" && agentsRailOpen);
+    }
+    if (agentsRailBackdrop) {
+      agentsRailBackdrop.hidden = !(
+        currentScreen === "chat" &&
+        agentsRailOpen &&
+        workspaceNarrow
+      );
+    }
+    syncAgentsRailToggleUi();
+  }
+
+  function setAgentsRailOpen(open, opts) {
+    const next = Boolean(open);
+    if (agentsRailOpen === next && !(opts && opts.force)) {
+      applyAgentsRailVisibility();
+      return;
+    }
+    agentsRailOpen = next;
+    persistAgentsRailOpen();
+    applyAgentsRailVisibility();
+  }
+
+  function updateWorkspaceNarrow() {
+    if (!workspaceShell) {
+      return;
+    }
+    const width = workspaceShell.getBoundingClientRect().width;
+    const nextNarrow = width > 0 && width < 600;
+    if (nextNarrow === workspaceNarrow) {
+      return;
+    }
+    workspaceNarrow = nextNarrow;
+    applyAgentsRailVisibility();
+  }
+
   function showScreen(name) {
-    const screen =
-      name === "chat" || name === "archive" || name === "settings"
+    let screen =
+      name === "chat" ||
+      name === "archive" ||
+      name === "settings" ||
+      name === "mcp"
         ? name
         : "agents";
-    if (agentsScreen) {
-      agentsScreen.hidden = screen !== "agents";
+    if (screen === "agents") {
+      setAgentsRailOpen(true);
+      screen = "chat";
+    }
+    currentScreen = screen;
+    const settingsVisible = screen === "settings" || screen === "mcp";
+    mcpScreenOpen = screen === "mcp";
+    if (workspaceShell) {
+      workspaceShell.hidden = screen !== "chat";
     }
     if (archiveScreen) {
       archiveScreen.hidden = screen !== "archive";
     }
     if (settingsScreen) {
-      settingsScreen.hidden = screen !== "settings";
+      settingsScreen.hidden = !settingsVisible;
+    }
+    if (mcpScreen) {
+      // Modals only — never show as a full screen.
+      mcpScreen.hidden = true;
     }
     if (chatScreen) {
       chatScreen.hidden = screen !== "chat";
     }
+    applyAgentsRailVisibility();
     if (screen === "chat") {
       setContextUsage(contextUsed, contextMax);
       if (!chatSearchOpen) {
         focusPrompt();
       }
+      updateWorkspaceNarrow();
+    }
+    if (settingsVisible) {
+      showSettingsCategory(screen === "mcp" ? "mcp" : "models");
+    } else {
+      closeMcpEditModal();
+      closeMcpCustomEditModal();
     }
     if (screen !== "chat" && chatSearchOpen) {
       closeChatSearch();
@@ -2659,6 +4365,7 @@
       name: provider.name || "",
       baseUrl: provider.baseUrl || "",
       apiKey: provider.apiKey || "",
+      statusUrl: provider.statusUrl || "",
     };
   }
 
@@ -2667,15 +4374,8 @@
       return;
     }
     const fallback = primaryProviderId();
-    const current = selectedId || fallback;
+    const current = selectedId || fallback || NEW_PROVIDER_VALUE;
     modelEditProvider.innerHTML = "";
-    if (!settingsProviders.length) {
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = t("addProviderFirst");
-      modelEditProvider.appendChild(empty);
-      return;
-    }
     for (const provider of settingsProviders) {
       const id = String(provider.id || "").trim();
       if (!id) {
@@ -2686,6 +4386,10 @@
       option.textContent = provider.name ? `${provider.name} (${id})` : id;
       modelEditProvider.appendChild(option);
     }
+    const createOpt = document.createElement("option");
+    createOpt.value = NEW_PROVIDER_VALUE;
+    createOpt.textContent = t("newProviderOption");
+    modelEditProvider.appendChild(createOpt);
     if (
       current &&
       Array.from(modelEditProvider.options).some((o) => o.value === current)
@@ -2694,6 +4398,61 @@
     } else if (modelEditProvider.options.length) {
       modelEditProvider.selectedIndex = 0;
     }
+    syncModelNewProviderFields();
+  }
+
+  function syncModelNewProviderFields() {
+    const show =
+      Boolean(modelEditNewProvider) &&
+      modelEditProvider &&
+      modelEditProvider.value === NEW_PROVIDER_VALUE;
+    if (modelEditNewProvider) {
+      modelEditNewProvider.hidden = !show;
+    }
+  }
+
+  function clearModelNewProviderFields() {
+    if (modelEditNewProviderId) modelEditNewProviderId.value = "";
+    if (modelEditNewProviderName) modelEditNewProviderName.value = "";
+    if (modelEditNewProviderUrl) modelEditNewProviderUrl.value = "";
+    if (modelEditNewProviderKey) modelEditNewProviderKey.value = "";
+  }
+
+  function createProviderFromModelForm() {
+    const id = modelEditNewProviderId
+      ? modelEditNewProviderId.value.trim()
+      : "";
+    const baseUrl = modelEditNewProviderUrl
+      ? modelEditNewProviderUrl.value.trim().replace(/\/$/, "")
+      : "";
+    const fail = (msg) => {
+      setModelsHint(msg, true);
+      setJsonHint(msg, true);
+    };
+    if (!id) {
+      fail(t("providerIdRequired"));
+      modelEditNewProviderId?.focus();
+      return null;
+    }
+    if (!baseUrl) {
+      fail(t("providerBaseUrlRequired"));
+      modelEditNewProviderUrl?.focus();
+      return null;
+    }
+    if (settingsProviders.some((p) => p.id === id)) {
+      fail(t("providerExists", id));
+      modelEditNewProviderId?.focus();
+      return null;
+    }
+    const name = modelEditNewProviderName
+      ? modelEditNewProviderName.value.trim()
+      : "";
+    const apiKey = modelEditNewProviderKey
+      ? modelEditNewProviderKey.value
+      : "";
+    const next = { id, name: name || id, baseUrl, apiKey };
+    settingsProviders.push(next);
+    return id;
   }
 
   function openProviderEditModal(index, preset) {
@@ -2703,12 +4462,13 @@
     providerEditIndex = index;
     const isNew = index === -1;
     const provider = isNew
-      ? preset || { id: "", name: "", baseUrl: "", apiKey: "" }
+      ? preset || { id: "", name: "", baseUrl: "", apiKey: "", statusUrl: "" }
       : settingsProviders[index] || {
           id: "",
           name: "",
           baseUrl: "",
           apiKey: "",
+          statusUrl: "",
         };
     if (providerEditTitle) {
       providerEditTitle.textContent = isNew ? t("newProvider") : t("providerTitle");
@@ -2722,6 +4482,12 @@
     }
     if (providerEditBaseUrl) {
       providerEditBaseUrl.value = provider.baseUrl || "";
+    }
+    if (providerEditStatusUrl) {
+      providerEditStatusUrl.value = provider.statusUrl || "";
+      providerEditStatusUrl.placeholder = provider.baseUrl
+        ? `${String(provider.baseUrl).replace(/\/$/, "")}/models`
+        : "https://…/models";
     }
     if (providerEditApiKey) {
       providerEditApiKey.value = provider.apiKey || "";
@@ -2755,7 +4521,13 @@
     }
     const name = providerEditName ? providerEditName.value.trim() : "";
     const apiKey = providerEditApiKey ? providerEditApiKey.value : "";
+    const statusUrl = providerEditStatusUrl
+      ? providerEditStatusUrl.value.trim().replace(/\/$/, "")
+      : "";
     const next = { id, name: name || id, baseUrl, apiKey };
+    if (statusUrl && statusUrl !== baseUrl) {
+      next.statusUrl = statusUrl;
+    }
 
     if (providerEditIndex === -1) {
       if (settingsProviders.some((p) => p.id === id)) {
@@ -2779,36 +4551,222 @@
   }
 
   function renderSettingsProviders() {
-    if (!settingsProvidersList) {
+    renderSettingsCatalog();
+  }
+
+  function appendProviderHead(listEl, provider, index) {
+    const row = document.createElement("div");
+    row.className = "settings-provider-head";
+    row.dataset.providerIndex = String(index);
+    const providerId = String(provider.id || "").trim();
+    if (providerId) {
+      row.dataset.providerId = providerId;
+    }
+    const title = provider.name || provider.id || t("providerTitle");
+    row.innerHTML =
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-name">` +
+      `<span class="provider-status-dot" data-state="unknown" aria-hidden="true"></span>` +
+      `<span class="provider-status-title"></span>` +
+      `<span class="provider-status-text" data-state="unknown"></span>` +
+      `</div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
+      CLOUD_DOWNLOAD_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
+      SETTINGS_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
+      DELETE_ICON +
+      `</button>`;
+    row.querySelector(".provider-status-title").textContent = title;
+    row.querySelector(".settings-model-id").textContent =
+      provider.baseUrl || provider.id || "";
+    listEl.appendChild(row);
+    applyProviderHeadStatus(row, providerConnById[providerId]);
+  }
+
+  function providerConnShortLabel(state, message) {
+    if (state === "connecting") {
+      return t("providerConnShortConnecting");
+    }
+    if (state === "connected") {
+      return t("providerConnShortConnected");
+    }
+    if (state === "error") {
+      return t("providerConnShortError", message || "");
+    }
+    return t("providerConnShortUnknown");
+  }
+
+  function applyProviderHeadStatus(row, status) {
+    if (!row) {
       return;
     }
-    settingsProvidersList.innerHTML = "";
-    if (!settingsProviders.length) {
-      settingsProvidersList.innerHTML =
-        `<div class="settings-models-empty">${t("noProvidersYet")}</div>`;
+    const state = status?.state || "unknown";
+    const message = status?.message || "";
+    const label = providerConnShortLabel(state, message);
+    const dot = row.querySelector(".provider-status-dot");
+    const text = row.querySelector(".provider-status-text");
+    if (dot) {
+      dot.dataset.state = state;
+    }
+    if (text) {
+      text.dataset.state = state;
+      text.textContent = label;
+    }
+    row.title = label;
+  }
+
+  function applyProviderStatusDots() {
+    document
+      .querySelectorAll(".settings-provider-head[data-provider-id]")
+      .forEach((row) => {
+        const id = row.dataset.providerId || "";
+        applyProviderHeadStatus(row, providerConnById[id]);
+      });
+  }
+
+  function ingestProviderConnStatuses(list) {
+    if (!Array.isArray(list)) {
       return;
     }
-    settingsProviders.forEach((provider, index) => {
-      const row = document.createElement("div");
-      row.className = "settings-model-row";
-      row.dataset.index = String(index);
-      const title = provider.name || provider.id || t("providerTitle");
-      row.innerHTML =
-        `<div class="settings-model-info">` +
-        `<div class="settings-model-name"></div>` +
-        `<div class="settings-model-id"></div>` +
-        `</div>` +
-        `<button type="button" class="icon-btn settings-provider-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
-        SETTINGS_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-provider-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
-        DELETE_ICON +
-        `</button>`;
-      row.querySelector(".settings-model-name").textContent = title;
-      row.querySelector(".settings-model-id").textContent =
-        provider.baseUrl || provider.id || "";
-      settingsProvidersList.appendChild(row);
+    for (const status of list) {
+      const id = String(status?.providerId || "").trim();
+      if (!id) {
+        continue;
+      }
+      providerConnById[id] = status;
+    }
+    applyProviderStatusDots();
+  }
+
+  function appendModelRow(listEl, model, index, nested) {
+    const row = document.createElement("div");
+    const enabled = model.enabled !== false;
+    const favorite = model.favorite === true;
+    row.className =
+      "settings-model-row" +
+      (enabled ? "" : " is-disabled") +
+      (nested ? " is-under-provider" : "");
+    row.dataset.index = String(index);
+    const title = model.label || model.id || t("noId");
+    const parts = [];
+    if (model.label && model.id && model.label !== model.id) {
+      parts.push(model.id);
+    }
+    if (!nested) {
+      parts.push(providerLabel(model.providerId));
+    }
+    const subtitle = parts.join(" · ");
+    row.innerHTML =
+      `<label class="settings-model-switch" title="${enabled ? t("disable") : t("enable")}">` +
+      `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
+        enabled ? "checked" : ""
+      } />` +
+      `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+      `</label>` +
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-title">` +
+      `<div class="settings-model-name"></div>` +
+      `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="${t("modelParameters")}" aria-label="${t("modelParameters")}">` +
+      INFO_ICON +
+      `</button>` +
+      `</div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<button type="button" class="icon-btn settings-model-fav${
+        favorite ? " is-on" : ""
+      }" data-index="${index}" title="${
+        favorite ? t("removeFromFavorites") : t("addToFavorites")
+      }" aria-label="${
+        favorite ? t("removeFromFavorites") : t("addToFavorites")
+      }" aria-pressed="${favorite ? "true" : "false"}">` +
+      HEART_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
+      SETTINGS_ICON +
+      `</button>` +
+      `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
+      DELETE_ICON +
+      `</button>`;
+    row.querySelector(".settings-model-name").textContent = title;
+    row.querySelector(".settings-model-id").textContent = subtitle;
+    listEl.appendChild(row);
+  }
+
+  function renderSettingsCatalog() {
+    if (!settingsModelsList) {
+      return;
+    }
+    hideSettingsModelTip();
+    sortSettingsModels();
+    settingsModelsList.innerHTML = "";
+    if (!settingsProviders.length && !settingsModels.length) {
+      settingsModelsList.innerHTML =
+        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      syncDefaultModelSelect();
+      return;
+    }
+
+    const used = new Set();
+
+    const appendModels = (entries, nested, parentEl) => {
+      const target = parentEl || settingsModelsList;
+      for (const { model, index } of entries) {
+        used.add(index);
+        appendModelRow(target, model, index, nested);
+      }
+    };
+
+    settingsProviders.forEach((provider, providerIndex) => {
+      const group = document.createElement("div");
+      group.className = "settings-provider-group";
+      appendProviderHead(group, provider, providerIndex);
+      const pid = String(provider.id || "").trim();
+      const entries = settingsModels
+        .map((model, index) => ({ model, index }))
+        .filter(
+          ({ model }) => String(model.providerId || "").trim() === pid
+        );
+      appendModels(entries, true, group);
+      settingsModelsList.appendChild(group);
     });
+
+    const orphans = settingsModels
+      .map((model, index) => ({ model, index }))
+      .filter(({ index }) => !used.has(index));
+    if (orphans.length) {
+      if (settingsProviders.length) {
+        const group = document.createElement("div");
+        group.className = "settings-provider-group";
+        const orphanHead = document.createElement("div");
+        orphanHead.className = "settings-provider-head";
+        orphanHead.innerHTML =
+          `<div class="settings-model-info">` +
+          `<div class="settings-model-name"></div>` +
+          `<div class="settings-model-id"></div>` +
+          `</div>`;
+        orphanHead.querySelector(".settings-model-name").textContent =
+          t("otherProvider");
+        group.appendChild(orphanHead);
+        appendModels(orphans, true, group);
+        settingsModelsList.appendChild(group);
+      } else {
+        appendModels(orphans, false, settingsModelsList);
+      }
+    }
+
+    syncDefaultModelSelect();
+    renderSpeedRoutingFastModelsList();
+    renderVisionRoutingModelsList();
+    syncSpeedRoutingControlsDisabled();
+  }
+
+  function renderSettingsModels() {
+    renderSettingsCatalog();
   }
 
   function setJsonHint(text, isError) {
@@ -2956,7 +4914,18 @@
       "vision",
       "multimodal",
     ]);
+    const providerId = String(
+      pickField(raw, [
+        "providerId",
+        "provider_id",
+        "provider",
+        "providerID",
+      ]) || ""
+    ).trim();
     const model = { id, label, enabled: true };
+    if (providerId) {
+      model.providerId = providerId;
+    }
     if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
       model.contextWindow = Math.floor(contextWindow);
     }
@@ -3014,7 +4983,8 @@
     });
   }
 
-  function upsertModels(incoming) {
+  function upsertModels(incoming, defaultProviderId) {
+    const fallbackProvider = String(defaultProviderId || "").trim();
     const byId = new Map();
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
@@ -3029,12 +4999,14 @@
       if (!model) {
         continue;
       }
+      const providerId =
+        String(model.providerId || "").trim() || fallbackProvider;
       if (byId.has(model.id)) {
         const prev = byId.get(model.id);
         byId.set(model.id, {
           id: model.id,
           label: model.label || prev.label || model.id,
-          providerId: prev.providerId || "",
+          providerId: providerId || prev.providerId || "",
           contextWindow:
             model.contextWindow || prev.contextWindow || undefined,
           maxOutputTokens:
@@ -3050,7 +5022,9 @@
         });
         updated += 1;
       } else {
-        byId.set(model.id, cloneModel(model));
+        const next = cloneModel(model);
+        next.providerId = providerId || next.providerId || "";
+        byId.set(model.id, next);
         added += 1;
       }
     }
@@ -3058,6 +5032,338 @@
     sortSettingsModels();
     renderSettingsModels();
     return { added, updated, total: settingsModels.filter((m) => m.id).length };
+  }
+
+  function addMissingModelsFromIds(ids, providerId) {
+    const provider = String(providerId || "").trim();
+    const existing = new Set(
+      settingsModels.map((m) => String(m.id || "").trim()).filter(Boolean)
+    );
+    const incoming = [];
+    let skipped = 0;
+    for (const raw of ids) {
+      const id = String(raw || "").trim();
+      if (!id) {
+        continue;
+      }
+      if (existing.has(id)) {
+        skipped += 1;
+        continue;
+      }
+      incoming.push({
+        id,
+        label: id,
+        providerId: provider,
+        enabled: true,
+        supportsVision: guessModelSupportsVision(id),
+      });
+      existing.add(id);
+    }
+    if (!incoming.length) {
+      return { added: 0, skipped, total: settingsModels.filter((m) => m.id).length };
+    }
+    const result = upsertModels(incoming, provider);
+    return { added: result.added, skipped, total: result.total };
+  }
+
+  function providerById(providerId) {
+    const id = String(providerId || "").trim();
+    if (!id) {
+      return null;
+    }
+    return settingsProviders.find((p) => p.id === id) || null;
+  }
+
+  function setFetchModelsHint(el, text, isError) {
+    if (!el) {
+      return;
+    }
+    if (!text) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-error");
+      return;
+    }
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function resetFetchModelsState() {
+    fetchModelsIds = [];
+    fetchModelsSelected = new Set();
+    fetchModelsExisting = new Set();
+    fetchModelsLoading = false;
+    fetchModelsError = "";
+  }
+
+  function currentFetchListEls() {
+    if (fetchModelsTarget === "editApi") {
+      return {
+        list: modelEditApiList,
+        status: modelEditApiStatus,
+        searchWrap: modelEditApiSearchWrap,
+        search: modelEditApiSearch,
+        selectBtn: modelEditApiSelectNewBtn,
+        selectWrap: null,
+      };
+    }
+    return {
+      list: fetchModelsList,
+      status: fetchModelsStatus,
+      searchWrap: fetchModelsSearchWrap,
+      search: fetchModelsSearch,
+      selectBtn: fetchModelsSelectNewBtn,
+      selectWrap: fetchModelsSelectWrap,
+    };
+  }
+
+  function renderFetchModelsPicker() {
+    const els = currentFetchListEls();
+    const filter = String(els.search?.value || "")
+      .trim()
+      .toLowerCase();
+    const newIds = fetchModelsIds.filter((id) => !fetchModelsExisting.has(id));
+    const ids = (filter
+      ? newIds.filter((id) => id.toLowerCase().includes(filter))
+      : newIds.slice()
+    );
+    const hasNew = newIds.length > 0;
+    const showList = hasNew && !fetchModelsLoading && !fetchModelsError;
+
+    if (els.searchWrap) {
+      els.searchWrap.hidden = !showList;
+    }
+    if (els.selectWrap) {
+      els.selectWrap.hidden = !showList;
+    }
+    if (els.selectBtn) {
+      els.selectBtn.hidden = !showList;
+    }
+    if (els.list) {
+      els.list.hidden = !showList;
+      els.list.innerHTML = "";
+    }
+
+    if (fetchModelsLoading) {
+      setFetchModelsHint(els.status, t("fetchModelsLoading"), false);
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    if (fetchModelsError) {
+      setFetchModelsHint(
+        els.status,
+        t("fetchModelsFailed", fetchModelsError),
+        true
+      );
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    if (!fetchModelsIds.length) {
+      setFetchModelsHint(els.status, t("fetchModelsEmpty"), false);
+      if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+        fetchModelsAddBtn.disabled = true;
+      }
+      syncFetchModelsAddEnabled();
+      return;
+    }
+
+    if (!hasNew) {
+      setFetchModelsHint(
+        els.status,
+        t("fetchModelsNoneNew", fetchModelsIds.length),
+        false
+      );
+      syncFetchModelsAddEnabled();
+      return;
+    }
+
+    setFetchModelsHint(
+      els.status,
+      t("fetchModelsCount", fetchModelsIds.length, newIds.length),
+      false
+    );
+
+    if (!els.list) {
+      syncFetchModelsAddEnabled();
+      return;
+    }
+    for (const id of ids) {
+      const row = document.createElement("label");
+      row.className = "settings-fetch-model-row";
+      const checked = fetchModelsSelected.has(id);
+      row.innerHTML =
+        `<input type="checkbox" ${checked ? "checked" : ""} data-model-id="" />` +
+        `<span class="settings-fetch-model-id"></span>`;
+      const input = row.querySelector("input");
+      input.dataset.modelId = id;
+      row.querySelector(".settings-fetch-model-id").textContent = id;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          fetchModelsSelected.add(id);
+        } else {
+          fetchModelsSelected.delete(id);
+        }
+        syncFetchModelsAddEnabled();
+      });
+      els.list.appendChild(row);
+    }
+    syncFetchModelsAddEnabled();
+  }
+
+  function syncFetchModelsAddEnabled() {
+    const selectedNew = Array.from(fetchModelsSelected).filter(
+      (id) => !fetchModelsExisting.has(id)
+    );
+    if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
+      fetchModelsAddBtn.disabled =
+        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+    }
+    if (modelEditDoneBtn && fetchModelsTarget === "editApi" && modelEditMode === "api") {
+      modelEditDoneBtn.disabled =
+        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+      if (!fetchModelsLoading && !fetchModelsError && fetchModelsIds.length === 0) {
+        modelEditDoneBtn.disabled = true;
+      }
+    }
+  }
+
+  function selectNewFetchModels() {
+    fetchModelsSelected = new Set(
+      fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
+    );
+    renderFetchModelsPicker();
+  }
+
+  function requestProviderModels(providerId, target) {
+    const provider = providerById(providerId);
+    if (!provider) {
+      setModelsHint(t("fetchModelsNeedProvider"), true);
+      return false;
+    }
+    const baseUrl = String(provider.baseUrl || "")
+      .trim()
+      .replace(/\/$/, "");
+    if (!baseUrl) {
+      setModelsHint(t("fetchModelsNeedBaseUrl"), true);
+      return false;
+    }
+
+    fetchModelsTarget = target === "editApi" ? "editApi" : "modal";
+    fetchModelsProviderId = provider.id;
+    fetchModelsRequestId += 1;
+    const requestId = `fetch-models-${fetchModelsRequestId}`;
+    fetchModelsActiveRequestId = requestId;
+    resetFetchModelsState();
+    fetchModelsLoading = true;
+    fetchModelsExisting = new Set(
+      settingsModels
+        .filter((m) => String(m.providerId || "").trim() === provider.id)
+        .map((m) => String(m.id || "").trim())
+        .filter(Boolean)
+    );
+    // Also treat same id under other providers as existing globally
+    for (const m of settingsModels) {
+      const id = String(m.id || "").trim();
+      if (id) {
+        fetchModelsExisting.add(id);
+      }
+    }
+    renderFetchModelsPicker();
+
+    vscode.postMessage({
+      type: "listProviderModels",
+      requestId,
+      providerId: provider.id,
+      baseUrl,
+      apiKey: provider.apiKey || "",
+      rejectUnauthorized: settingsRejectUnauthorized
+        ? settingsRejectUnauthorized.checked
+        : true,
+      caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
+    });
+    return requestId;
+  }
+
+  function openFetchModelsModal(providerIndex) {
+    if (!fetchModelsModal) {
+      return;
+    }
+    const provider = settingsProviders[providerIndex];
+    if (!provider) {
+      return;
+    }
+    if (fetchModelsTitle) {
+      const name = provider.name || provider.id || t("providerTitle");
+      fetchModelsTitle.textContent = `${t("fetchModelsTitle")} · ${name}`;
+    }
+    if (fetchModelsSearch) {
+      fetchModelsSearch.value = "";
+    }
+    fetchModelsModal.hidden = false;
+    if (!requestProviderModels(provider.id, "modal")) {
+      closeFetchModelsModal();
+    }
+  }
+
+  function closeFetchModelsModal() {
+    if (!fetchModelsModal) {
+      return;
+    }
+    fetchModelsModal.hidden = true;
+    if (fetchModelsTarget === "modal") {
+      resetFetchModelsState();
+      fetchModelsProviderId = "";
+    }
+  }
+
+  function applyFetchedModels() {
+    const selectedNew = Array.from(fetchModelsSelected).filter(
+      (id) => !fetchModelsExisting.has(id)
+    );
+    if (!selectedNew.length) {
+      if (fetchModelsTarget === "editApi") {
+        setFetchModelsHint(modelEditApiStatus, t("fetchModelsNoneSelected"), true);
+      } else {
+        setFetchModelsHint(fetchModelsStatus, t("fetchModelsNoneSelected"), true);
+      }
+      return false;
+    }
+    const result = addMissingModelsFromIds(selectedNew, fetchModelsProviderId);
+    setModelsHint(t("fetchModelsDone", result.added, result.skipped));
+    schedulePersistSettings(0);
+    return true;
+  }
+
+  function onProviderModelsListed(msg) {
+    const requestId = String(msg?.requestId || "");
+    if (!requestId || requestId !== fetchModelsActiveRequestId) {
+      return;
+    }
+    if (String(msg.providerId || "") !== fetchModelsProviderId) {
+      return;
+    }
+    fetchModelsLoading = false;
+    if (msg.error) {
+      fetchModelsError = String(msg.error);
+      fetchModelsIds = [];
+      fetchModelsSelected = new Set();
+    } else {
+      fetchModelsError = "";
+      fetchModelsIds = Array.isArray(msg.models)
+        ? msg.models.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      fetchModelsSelected = new Set(
+        fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
+      );
+    }
+    renderFetchModelsPicker();
   }
 
   function looksLikeModelEntry(item) {
@@ -3157,8 +5463,32 @@
     return items;
   }
 
+  function resolveProviderFromModelForm() {
+    let providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    if (providerId === NEW_PROVIDER_VALUE) {
+      const createdId = createProviderFromModelForm();
+      if (!createdId) {
+        return null;
+      }
+      providerId = createdId;
+      clearModelNewProviderFields();
+      fillModelProviderSelect(providerId);
+    }
+    if (!providerId) {
+      return null;
+    }
+    return providerId;
+  }
+
   function importModelsFromJson() {
     try {
+      const providerId = resolveProviderFromModelForm();
+      if (!providerId) {
+        if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+          return false;
+        }
+        throw new Error(t("providerRequired"));
+      }
       const items = parseModelsJson(settingsModelsJson?.value || "");
       const normalized = items
         .map((item) => normalizeModelEntry(item))
@@ -3166,10 +5496,8 @@
       if (!normalized.length) {
         throw new Error(t("noModelsWithId"));
       }
-      const result = upsertModels(normalized);
-      setJsonHint(
-        `Done: +${result.added}, updated ${result.updated}, total ${result.total}.`
-      );
+      const result = upsertModels(normalized, providerId);
+      setJsonHint(t("doneImport", result.added, result.updated, result.total));
       return true;
     } catch (error) {
       setJsonHint(error.message || t("importFailed"), true);
@@ -3210,37 +5538,20 @@
     }
   }
 
+  function firstEnabledSettingsModelId() {
+    const model = settingsModels.find(
+      (m) => String(m.id || "").trim() && m.enabled !== false
+    );
+    return model ? String(model.id).trim() : "";
+  }
+
   function syncDefaultModelSelect() {
-    if (!settingsDefaultModel) {
-      return;
-    }
-    const current = settingsDefaultModelId;
-    settingsDefaultModel.innerHTML = "";
-    for (const model of settingsModels) {
-      const id = String(model.id || "").trim();
-      if (!id || model.enabled === false) {
-        continue;
-      }
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = model.label ? `${model.label} (${id})` : id;
-      settingsDefaultModel.appendChild(option);
-    }
-    if (
-      current &&
-      Array.from(settingsDefaultModel.options).some((o) => o.value === current)
-    ) {
-      settingsDefaultModel.value = current;
-    } else if (settingsDefaultModel.options.length) {
-      settingsDefaultModel.selectedIndex = 0;
-      settingsDefaultModelId = settingsDefaultModel.value;
-    } else {
-      settingsDefaultModelId = "";
-    }
+    settingsDefaultModelId = firstEnabledSettingsModelId();
   }
 
   function setModelEditMode(mode) {
-    modelEditMode = mode === "json" ? "json" : "manual";
+    modelEditMode =
+      mode === "json" ? "json" : mode === "api" ? "api" : "manual";
     if (modelEditTabs) {
       modelEditTabs.querySelectorAll("[data-model-mode]").forEach((btn) => {
         btn.classList.toggle(
@@ -3255,9 +5566,42 @@
     if (modelEditJsonPane) {
       modelEditJsonPane.hidden = modelEditMode !== "json";
     }
+    if (modelEditApiPane) {
+      modelEditApiPane.hidden = modelEditMode !== "api";
+    }
     if (modelEditDoneBtn) {
-      modelEditDoneBtn.textContent =
-        modelEditMode === "json" ? t("apply") : t("done");
+      modelEditDoneBtn.disabled = false;
+      if (modelEditMode === "json") {
+        modelEditDoneBtn.textContent = t("apply");
+      } else if (modelEditMode === "api") {
+        modelEditDoneBtn.textContent = t("fetchModelsAddSelected");
+      } else {
+        modelEditDoneBtn.textContent = t("done");
+      }
+    }
+    if (modelEditMode === "api") {
+      fetchModelsTarget = "editApi";
+      if (modelEditApiSearch) {
+        modelEditApiSearch.value = "";
+      }
+      const providerId = modelEditProvider?.value?.trim() || "";
+      if (providerId && providerId !== NEW_PROVIDER_VALUE) {
+        requestProviderModels(providerId, "editApi");
+      } else {
+        resetFetchModelsState();
+        setFetchModelsHint(
+          modelEditApiStatus,
+          t("fetchModelsNeedProvider"),
+          true
+        );
+        if (modelEditApiList) {
+          modelEditApiList.hidden = true;
+          modelEditApiList.innerHTML = "";
+        }
+        if (modelEditApiSearchWrap) modelEditApiSearchWrap.hidden = true;
+        if (modelEditApiSelectNewBtn) modelEditApiSelectNewBtn.hidden = true;
+        if (modelEditDoneBtn) modelEditDoneBtn.disabled = true;
+      }
     }
   }
 
@@ -3284,13 +5628,18 @@
     }
     setModelEditMode("manual");
     setJsonHint("");
+    clearModelNewProviderFields();
     if (modelEditId) {
       modelEditId.value = model.id || "";
     }
     if (modelEditLabel) {
       modelEditLabel.value = model.label || "";
     }
-    fillModelProviderSelect(model.providerId || primaryProviderId());
+    const preferredProvider = isNew
+      ? primaryProviderId() || NEW_PROVIDER_VALUE
+      : model.providerId || primaryProviderId() || NEW_PROVIDER_VALUE;
+    fillModelProviderSelect(preferredProvider);
+    syncModelNewProviderFields();
     if (modelEditContext) {
       modelEditContext.value =
         model.contextWindow && Number(model.contextWindow) > 0
@@ -3313,8 +5662,8 @@
       settingsModelsJson.value = "";
     }
     modelEditModal.hidden = false;
-    if (isNew) {
-      modelEditId?.focus();
+    if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+      modelEditNewProviderId?.focus();
     } else {
       modelEditId?.focus();
     }
@@ -3328,6 +5677,14 @@
     modelEditIndex = null;
     setModelEditMode("manual");
     setJsonHint("");
+    clearModelNewProviderFields();
+    if (modelEditDoneBtn) {
+      modelEditDoneBtn.disabled = false;
+      modelEditDoneBtn.textContent = t("done");
+    }
+    if (modelEditNewProvider) {
+      modelEditNewProvider.hidden = true;
+    }
   }
 
   function applyModelEditModal() {
@@ -3339,6 +5696,12 @@
       }
       return;
     }
+    if (modelEditIndex === -1 && modelEditMode === "api") {
+      if (applyFetchedModels()) {
+        closeModelEditModal();
+      }
+      return;
+    }
 
     const id = modelEditId ? modelEditId.value.trim() : "";
     if (!id) {
@@ -3347,14 +5710,18 @@
       modelEditId?.focus();
       return;
     }
-    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
-    const providerId = modelEditProvider ? modelEditProvider.value.trim() : "";
+    const providerId = resolveProviderFromModelForm();
     if (!providerId) {
       setModelsHint(t("providerRequired"), true);
       setModelEditMode("manual");
-      modelEditProvider?.focus();
+      if (modelEditProvider?.value === NEW_PROVIDER_VALUE) {
+        modelEditNewProviderId?.focus();
+      } else {
+        modelEditProvider?.focus();
+      }
       return;
     }
+    const label = modelEditLabel ? modelEditLabel.value.trim() : "";
     const contextWindow = Number(modelEditContext?.value);
     const maxOutputTokens = Number(modelEditOutput?.value);
     const next = {
@@ -3404,8 +5771,9 @@
     }
     closeModelEditModal();
     setModelsHint("");
+    setProvidersHint("");
     sortSettingsModels();
-    renderSettingsModels();
+    renderSettingsCatalog();
     schedulePersistSettings(0);
   }
 
@@ -3527,71 +5895,6 @@
     }, 40);
   }
 
-  function renderSettingsModels() {
-    if (!settingsModelsList) {
-      return;
-    }
-    hideSettingsModelTip();
-    sortSettingsModels();
-    settingsModelsList.innerHTML = "";
-    if (!settingsModels.length) {
-      settingsModelsList.innerHTML =
-        `<div class="settings-models-empty">${t("listEmptyAddModel")}</div>`;
-      syncDefaultModelSelect();
-      return;
-    }
-    settingsModels.forEach((model, index) => {
-      const row = document.createElement("div");
-      const enabled = model.enabled !== false;
-      const favorite = model.favorite === true;
-      row.className =
-        "settings-model-row" + (enabled ? "" : " is-disabled");
-      row.dataset.index = String(index);
-      const title = model.label || model.id || t("noId");
-      const parts = [];
-      if (model.label && model.id && model.label !== model.id) {
-        parts.push(model.id);
-      }
-      parts.push(providerLabel(model.providerId));
-      const subtitle = parts.join(" · ");
-      row.innerHTML =
-        `<label class="settings-model-switch" title="${enabled ? t("disable") : t("enable")}">` +
-        `<input type="checkbox" class="settings-model-toggle" data-index="${index}" ${
-          enabled ? "checked" : ""
-        } />` +
-        `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
-        `</label>` +
-        `<div class="settings-model-info">` +
-        `<div class="settings-model-title">` +
-        `<div class="settings-model-name"></div>` +
-        `<button type="button" class="icon-btn settings-model-info-btn" data-index="${index}" title="${t("modelParameters")}" aria-label="${t("modelParameters")}">` +
-        INFO_ICON +
-        `</button>` +
-        `</div>` +
-        `<div class="settings-model-id"></div>` +
-        `</div>` +
-        `<button type="button" class="icon-btn settings-model-fav${
-          favorite ? " is-on" : ""
-        }" data-index="${index}" title="${
-          favorite ? t("removeFromFavorites") : t("addToFavorites")
-        }" aria-label="${
-          favorite ? t("removeFromFavorites") : t("addToFavorites")
-        }" aria-pressed="${favorite ? "true" : "false"}">` +
-        HEART_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-model-edit" data-index="${index}" title="${t("settings")}" aria-label="${t("settings")}">` +
-        SETTINGS_ICON +
-        `</button>` +
-        `<button type="button" class="icon-btn settings-model-remove" data-index="${index}" title="${t("delete")}" aria-label="${t("delete")}">` +
-        DELETE_ICON +
-        `</button>`;
-      row.querySelector(".settings-model-name").textContent = title;
-      row.querySelector(".settings-model-id").textContent = subtitle;
-      settingsModelsList.appendChild(row);
-    });
-    syncDefaultModelSelect();
-  }
-
   function readModelsFromDom() {
     return settingsModels
       .map((m) => cloneModel(m))
@@ -3609,6 +5912,385 @@
     settingsSaveStatusTimer = setTimeout(() => {
       settingsSaveStatus.hidden = true;
     }, 1200);
+  }
+
+  function renderProviderConnStatus(status) {
+    const id = String(status?.providerId || "").trim();
+    if (id) {
+      providerConnById[id] = status || providerConnById[id] || {};
+      applyProviderStatusDots();
+    }
+    if (!providerConnStatusEl) {
+      return;
+    }
+    const state = status?.state || "unknown";
+    const name = String(status?.providerName || status?.providerId || "").trim();
+    let text = t("providerConnUnknown");
+    if (state === "connecting") {
+      text = t("providerConnConnecting");
+    } else if (state === "connected") {
+      text = t("providerConnConnected", name);
+    } else if (state === "error") {
+      text = t("providerConnError", status?.message || "");
+    }
+    providerConnStatusEl.hidden = false;
+    providerConnStatusEl.dataset.state = state;
+    providerConnStatusEl.textContent = text;
+    providerConnStatusEl.title = name
+      ? `${name}${status?.message ? ` — ${status.message}` : ""}`
+      : text;
+  }
+
+  function renderFigmaStatus(status) {
+    figmaStatus = status || figmaStatus || { state: "disconnected", enabled: true };
+    const state = figmaStatus.state || "disconnected";
+    const mode = figmaStatus.mode || "";
+    const toolCount = figmaStatus.toolCount;
+    if (settingsFigmaStatus) {
+      if (state === "connected") {
+        settingsFigmaStatus.textContent = t(
+          "figmaStatusConnected",
+          mode,
+          toolCount
+        );
+      } else if (state === "connecting") {
+        settingsFigmaStatus.textContent = t("figmaStatusConnecting");
+      } else if (state === "error") {
+        settingsFigmaStatus.textContent = t(
+          "figmaStatusError",
+          figmaStatus.message || ""
+        );
+      } else {
+        settingsFigmaStatus.textContent = t("figmaStatusDisconnected");
+      }
+    }
+    const connected = state === "connected";
+    const connecting = state === "connecting";
+    // Remote OAuth usually returns 403 for Harbor Agents — keep PAT as primary.
+    const preferPat =
+      Boolean(figmaStatus.preferPat) ||
+      Boolean(figmaStatus.showPatFallback) ||
+      figmaStatus.mode === "pat" ||
+      Boolean(figmaStatus.hasPat) ||
+      state === "error" ||
+      state === "disconnected";
+    if (settingsFigmaConnectBtn) {
+      settingsFigmaConnectBtn.hidden = connected || preferPat;
+      settingsFigmaConnectBtn.disabled = connecting;
+    }
+    if (settingsFigmaDisconnectBtn) {
+      settingsFigmaDisconnectBtn.hidden = !connected && state !== "error";
+      settingsFigmaDisconnectBtn.disabled = connecting;
+    }
+    if (settingsFigmaPatBlock) {
+      settingsFigmaPatBlock.hidden = false;
+    }
+    if (settingsFigmaPatConnectBtn) {
+      settingsFigmaPatConnectBtn.disabled = connecting;
+    }
+    renderMcpServersList();
+  }
+
+  function getMcpServers() {
+    if (Array.isArray(mcpServersCache) && mcpServersCache.length) {
+      return mcpServersCache.map((s) => ({
+        id: s.id,
+        name: s.name || s.id,
+        enabled: s.enabled !== false,
+        state: s.state || "disconnected",
+        mode: s.transport || "",
+        tools: Number(s.toolCount) || 0,
+        transport: s.detail || String(s.transport || ""),
+        error: s.state === "error" ? s.message || "" : "",
+        builtin: Boolean(s.builtin),
+        hasCredentials: Boolean(s.hasCredentials),
+      }));
+    }
+    const tools = Number(figmaStatus.toolCount) || 0;
+    const state = figmaStatus.state || "disconnected";
+    const mode = figmaStatus.mode || "remote";
+    const transport =
+      mode === "pat"
+        ? "stdio · figma-developer-mcp"
+        : "http · https://mcp.figma.com/mcp";
+    return [
+      {
+        id: "figma",
+        name: t("figma"),
+        enabled: figmaStatus.enabled !== false,
+        state,
+        mode,
+        tools,
+        transport,
+        error: state === "error" ? figmaStatus.message || "" : "",
+        builtin: true,
+        hasCredentials: Boolean(figmaStatus.hasPat),
+      },
+    ];
+  }
+
+  function renderMcpServersList() {
+    if (!mcpServersList) {
+      return;
+    }
+    const q = String(mcpSearchQuery || "")
+      .trim()
+      .toLowerCase();
+    const servers = getMcpServers().filter((s) => {
+      if (!q) {
+        return true;
+      }
+      return (
+        s.name.toLowerCase().includes(q) ||
+        s.transport.toLowerCase().includes(q) ||
+        String(s.error || "")
+          .toLowerCase()
+          .includes(q)
+      );
+    });
+    if (mcpConfiguredCount) {
+      mcpConfiguredCount.textContent = t("mcpConfiguredCount", servers.length);
+    }
+    if (mcpEmpty) {
+      mcpEmpty.hidden = servers.length > 0;
+      mcpEmpty.textContent = t("mcpEmpty");
+    }
+    mcpServersList.innerHTML = "";
+    for (const server of servers) {
+      const card = document.createElement("article");
+      card.className = "mcp-server-card";
+      card.dataset.id = server.id;
+
+      const statusClass =
+        server.state === "connected"
+          ? "is-connected"
+          : server.state === "error"
+            ? "is-error"
+            : server.state === "connecting"
+              ? "is-connecting"
+              : "";
+
+      const switchOn =
+        server.state === "connected" || server.state === "connecting";
+
+      card.innerHTML =
+        `<div class="mcp-server-icon"><span class="material-symbols-outlined" aria-hidden="true">electrical_services</span></div>` +
+        `<div class="mcp-server-main">` +
+        `<div class="mcp-server-title-row">` +
+        `<span class="mcp-status-dot ${statusClass}" aria-hidden="true"></span>` +
+        `<span class="mcp-server-name"></span>` +
+        `<span class="mcp-badge"></span>` +
+        `<span class="mcp-badge mcp-badge-tools"></span>` +
+        `</div>` +
+        `<p class="mcp-server-meta"></p>` +
+        `<p class="mcp-server-error" hidden></p>` +
+        `</div>` +
+        `<div class="mcp-server-actions">` +
+        `<label class="mcp-switch" title="${escapeHtml(t("mcpEnable"))}">` +
+        `<input type="checkbox" class="mcp-enable-toggle" data-id="${escapeHtml(
+          server.id
+        )}" ${switchOn ? "checked" : ""} />` +
+        `<span class="mcp-switch-track"></span>` +
+        `</label>` +
+        `<button type="button" class="icon-btn mcp-edit-btn" data-id="${escapeHtml(
+          server.id
+        )}" title="${escapeHtml(t("settings"))}" aria-label="${escapeHtml(
+          t("settings")
+        )}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">settings</span>` +
+        `</button>` +
+        `<button type="button" class="icon-btn mcp-delete-btn" data-id="${escapeHtml(
+          server.id
+        )}" title="${escapeHtml(t("delete"))}" aria-label="${escapeHtml(
+          t("delete")
+        )}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">delete</span>` +
+        `</button>` +
+        `</div>`;
+
+      card.querySelector(".mcp-server-name").textContent = server.name;
+      const badges = card.querySelectorAll(".mcp-badge");
+      if (badges[0]) badges[0].textContent = t("mcpBadgeUser");
+      if (badges[1]) badges[1].textContent = t("mcpBadgeTools", server.tools);
+      card.querySelector(".mcp-server-meta").textContent = server.transport;
+      const errEl = card.querySelector(".mcp-server-error");
+      if (server.error) {
+        errEl.hidden = false;
+        errEl.textContent = server.error;
+      }
+      mcpServersList.appendChild(card);
+    }
+  }
+
+  function openMcpEditModal(serverId) {
+    if (serverId && serverId !== "figma") {
+      openMcpCustomEditModal(serverId);
+      return;
+    }
+    if (!mcpEditModal) {
+      return;
+    }
+    if (mcpEditTitle) {
+      mcpEditTitle.textContent = t("figma");
+    }
+    renderFigmaStatus(figmaStatus);
+    mcpEditModal.hidden = false;
+  }
+
+  function closeMcpEditModal() {
+    if (mcpEditModal) {
+      mcpEditModal.hidden = true;
+    }
+  }
+
+  function syncMcpCustomTransportFields() {
+    const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    if (mcpCustomStdioFields) {
+      mcpCustomStdioFields.hidden = Boolean(isHttp);
+    }
+    if (mcpCustomHttpFields) {
+      mcpCustomHttpFields.hidden = !isHttp;
+    }
+  }
+
+  function openMcpCustomEditModal(serverId) {
+    if (!mcpCustomEditModal) {
+      return;
+    }
+    const existing = (mcpServersCache || []).find((s) => s.id === serverId);
+    if (mcpCustomEditTitle) {
+      mcpCustomEditTitle.textContent = existing
+        ? t("mcpCustomTitleEdit")
+        : t("mcpCustomTitleNew");
+    }
+    if (mcpCustomEditId) {
+      mcpCustomEditId.value = existing ? existing.id : "";
+    }
+    if (mcpCustomName) {
+      mcpCustomName.value = existing ? existing.name || "" : "";
+    }
+    if (mcpCustomTransport) {
+      mcpCustomTransport.value =
+        existing && existing.transport === "http" ? "http" : "stdio";
+    }
+    if (mcpCustomCommand) {
+      mcpCustomCommand.value = existing?.command || "";
+    }
+    if (mcpCustomArgs) {
+      mcpCustomArgs.value = Array.isArray(existing?.args)
+        ? existing.args.join(" ")
+        : "";
+    }
+    if (mcpCustomEnv) {
+      const env = existing?.env || {};
+      mcpCustomEnv.value = Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+    }
+    if (mcpCustomCwd) {
+      mcpCustomCwd.value = existing?.cwd || "";
+    }
+    if (mcpCustomUrl) {
+      mcpCustomUrl.value = existing?.url || "";
+    }
+    if (mcpCustomToken) {
+      mcpCustomToken.value = "";
+    }
+    if (existing) {
+      if (mcpCustomTransport) {
+        mcpCustomTransport.value =
+          existing.transport === "http" ? "http" : "stdio";
+      }
+    } else if (mcpCustomTransport) {
+      mcpCustomTransport.value = "stdio";
+    }
+    // Prefill from detail string when config fields are missing
+    if (existing?.detail && !existing.command && !existing.url) {
+      if (String(existing.transport) === "http" || existing.detail.startsWith("http")) {
+        const url = existing.detail.replace(/^http\s*·\s*/i, "").trim();
+        if (mcpCustomUrl) mcpCustomUrl.value = url;
+        if (mcpCustomTransport) mcpCustomTransport.value = "http";
+      } else {
+        const rest = existing.detail.replace(/^stdio\s*·\s*/i, "").trim();
+        const parts = rest.split(/\s+/).filter(Boolean);
+        if (mcpCustomCommand) mcpCustomCommand.value = parts[0] || "";
+        if (mcpCustomArgs) mcpCustomArgs.value = parts.slice(1).join(" ");
+        if (mcpCustomTransport) mcpCustomTransport.value = "stdio";
+      }
+    }
+    if (mcpCustomNameLabel) mcpCustomNameLabel.textContent = t("mcpCustomName");
+    if (mcpCustomTransportLabel) {
+      mcpCustomTransportLabel.textContent = t("mcpCustomTransport");
+    }
+    if (mcpCustomCommandLabel) {
+      mcpCustomCommandLabel.textContent = t("mcpCustomCommand");
+    }
+    if (mcpCustomArgsLabel) mcpCustomArgsLabel.textContent = t("mcpCustomArgs");
+    if (mcpCustomEnvLabel) mcpCustomEnvLabel.textContent = t("mcpCustomEnv");
+    if (mcpCustomCwdLabel) mcpCustomCwdLabel.textContent = t("mcpCustomCwd");
+    if (mcpCustomUrlLabel) mcpCustomUrlLabel.textContent = t("mcpCustomUrl");
+    if (mcpCustomTokenLabel) {
+      mcpCustomTokenLabel.textContent = t("mcpCustomToken");
+    }
+    if (mcpCustomEditSaveBtn) {
+      mcpCustomEditSaveBtn.textContent = t("mcpCustomSave");
+    }
+    if (mcpCustomEditCancelBtn) {
+      mcpCustomEditCancelBtn.textContent = t("cancel");
+    }
+    syncMcpCustomTransportFields();
+    mcpCustomEditModal.hidden = false;
+    if (mcpCustomName) {
+      mcpCustomName.focus();
+    }
+  }
+
+  function closeMcpCustomEditModal() {
+    if (mcpCustomEditModal) {
+      mcpCustomEditModal.hidden = true;
+    }
+  }
+
+  function saveMcpCustomServer() {
+    const name = mcpCustomName ? mcpCustomName.value.trim() : "";
+    if (!name) {
+      showCopyToast(t("mcpNameRequired"));
+      return;
+    }
+    const transport =
+      mcpCustomTransport && mcpCustomTransport.value === "http"
+        ? "http"
+        : "stdio";
+    if (transport === "stdio") {
+      const command = mcpCustomCommand ? mcpCustomCommand.value.trim() : "";
+      if (!command) {
+        showCopyToast(t("mcpCommandRequired"));
+        return;
+      }
+    } else {
+      const url = mcpCustomUrl ? mcpCustomUrl.value.trim() : "";
+      if (!url) {
+        showCopyToast(t("mcpUrlRequired"));
+        return;
+      }
+    }
+    vscode.postMessage({
+      type: "mcpUpsertServer",
+      server: {
+        id: mcpCustomEditId ? mcpCustomEditId.value.trim() : "",
+        name,
+        transport,
+        command: mcpCustomCommand ? mcpCustomCommand.value.trim() : "",
+        argsText: mcpCustomArgs ? mcpCustomArgs.value : "",
+        envText: mcpCustomEnv ? mcpCustomEnv.value : "",
+        cwd: mcpCustomCwd ? mcpCustomCwd.value.trim() : "",
+        url: mcpCustomUrl ? mcpCustomUrl.value.trim() : "",
+        bearerToken: mcpCustomToken ? mcpCustomToken.value : "",
+        enabled: true,
+        connect: true,
+      },
+    });
+    closeMcpCustomEditModal();
   }
 
   function persistSettingsNow() {
@@ -3657,6 +6339,7 @@
           name: p.name || "",
           baseUrl: p.baseUrl || "",
           apiKey: p.apiKey || "",
+          statusUrl: p.statusUrl || "",
         }))
       : [];
     if (
@@ -3668,6 +6351,7 @@
         name: t("defaultProviderName"),
         baseUrl: String(settings.baseUrl || "").replace(/\/$/, ""),
         apiKey: settings.apiKey || "",
+        statusUrl: "",
       });
     }
     const primaryId = primaryProviderId();
@@ -3687,6 +6371,7 @@
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
+    settingsWorkspaceName = String(settings.workspaceName || "").trim();
     settingsLanguageValue =
       settings.language === "ru"
         ? "ru"
@@ -3695,6 +6380,19 @@
           : "auto";
     if (settingsLanguage) {
       settingsLanguage.value = settingsLanguageValue;
+    }
+    if (settingsCommitScope) {
+      settingsCommitScope.value =
+        settings.commitMessageScope === "workspace" ? "workspace" : "global";
+      const workspaceOpt = settingsCommitScope.querySelector(
+        'option[value="workspace"]'
+      );
+      if (workspaceOpt) {
+        workspaceOpt.textContent = t(
+          "commitScopeWorkspaceNamed",
+          settingsWorkspaceName
+        );
+      }
     }
     settingsDefaultContextWindow =
       Number(settings.defaultContextWindow) > 0
@@ -3709,6 +6407,28 @@
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
     }
+    if (settingsCommitLanguage) {
+      settingsCommitLanguage.value =
+        settings.commitMessageLanguage === "ru"
+          ? "ru"
+          : settings.commitMessageLanguage === "en"
+            ? "en"
+            : "auto";
+    }
+    if (settingsCommitPrompt) {
+      settingsCommitPrompt.value = settings.commitMessagePrompt || "";
+    }
+    if (typeof settings.figmaEnabled === "boolean") {
+      figmaStatus = {
+        ...figmaStatus,
+        enabled: settings.figmaEnabled === true,
+      };
+    }
+    if (settings.figma) {
+      renderFigmaStatus({ ...figmaStatus, ...settings.figma });
+    } else {
+      vscode.postMessage({ type: "figmaRefreshStatus" });
+    }
     applyModes(settings.modes);
     if (settingsMaxToolRounds) {
       settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
@@ -3721,13 +6441,298 @@
         settings.maxResponseChars || 12000
       );
     }
+    if (settingsSoundNotificationsEnabled) {
+      settingsSoundNotificationsEnabled.checked =
+        settings.soundNotificationsEnabled !== false;
+    }
+    populateSpeedRoutingFastModelsList(
+      Array.isArray(settings.speedRoutingFastModelIds)
+        ? settings.speedRoutingFastModelIds
+        : []
+    );
+    if (settingsSpeedRoutingEnabled) {
+      settingsSpeedRoutingEnabled.checked =
+        settings.speedRoutingEnabled !== false;
+    }
+    if (settingsSpeedRoutingReadonlyOverride) {
+      settingsSpeedRoutingReadonlyOverride.checked =
+        settings.speedRoutingReadonlyOverride !== false;
+    }
+    if (settingsSpeedRoutingAgentExplore) {
+      settingsSpeedRoutingAgentExplore.checked =
+        settings.speedRoutingAgentExplore !== false;
+    }
+    populateVisionRoutingModelsList(
+      Array.isArray(settings.visionRoutingPreferredModelIds)
+        ? settings.visionRoutingPreferredModelIds
+        : []
+    );
+    syncSpeedRoutingControlsDisabled();
     closeModelEditModal();
     closeProviderEditModal();
+    ingestProviderConnStatuses(settings.providerConnStatuses);
     renderSettingsProviders();
     renderSettingsModels();
     } finally {
       settingsHydrating = false;
     }
+  }
+
+  function normalizeSpeedRoutingFastModelIds(ids) {
+    const list = Array.isArray(ids) ? ids : [];
+    return list
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index);
+  }
+
+  function populateSpeedRoutingFastModelsList(selectedIds) {
+    speedRoutingFastModelIds = normalizeSpeedRoutingFastModelIds(selectedIds);
+    renderSpeedRoutingFastModelsList();
+  }
+
+  function renderSpeedRoutingFastModelsList() {
+    if (!settingsSpeedRoutingFastModels) {
+      return;
+    }
+    const models = (settingsModels || []).filter((m) => m && m.id);
+    const fastSet = new Set(speedRoutingFastModelIds);
+    const modelOn = [];
+    const modelOff = [];
+    for (const model of models) {
+      if (model.enabled !== false) {
+        modelOn.push(model);
+      } else {
+        modelOff.push(model);
+      }
+    }
+    const sortFastFirst = (list) => {
+      const on = [];
+      const off = [];
+      for (const id of speedRoutingFastModelIds) {
+        const hit = list.find((m) => m.id === id);
+        if (hit) {
+          on.push(hit);
+        }
+      }
+      for (const model of list) {
+        if (!fastSet.has(model.id)) {
+          off.push(model);
+        }
+      }
+      return [...on, ...off];
+    };
+    const ordered = [...sortFastFirst(modelOn), ...sortFastFirst(modelOff)];
+    if (!ordered.length) {
+      settingsSpeedRoutingFastModels.innerHTML =
+        `<div class="settings-speed-models-empty">${escapeHtml(
+          t("speedRoutingFastModelEmpty")
+        )}</div>`;
+      return;
+    }
+    settingsSpeedRoutingFastModels.innerHTML = ordered
+      .map((model) => {
+        const fastOn = fastSet.has(model.id);
+        const modelEnabled = model.enabled !== false;
+        const label = model.label || model.id;
+        const classes = [
+          "settings-speed-model-row",
+          modelEnabled ? "" : "is-model-off",
+          fastOn ? "" : "is-fast-off",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          `<div class="${classes}">` +
+          `<input type="checkbox" class="settings-speed-fast-check" data-speed-fast-id="${escapeHtml(
+            model.id
+          )}" ${fastOn ? "checked" : ""} title="${escapeHtml(
+            t("speedRoutingFastModel")
+          )}" />` +
+          `<span class="settings-speed-model-name" title="${escapeHtml(
+            label
+          )}">${escapeHtml(label)}</span>` +
+          `<label class="settings-model-switch" title="${escapeHtml(
+            modelEnabled ? t("disable") : t("enable")
+          )}">` +
+          `<input type="checkbox" class="settings-model-toggle" data-speed-model-id="${escapeHtml(
+            model.id
+          )}" ${modelEnabled ? "checked" : ""} />` +
+          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+          `</label>` +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  function readSpeedRoutingFastModelIdsFromDom() {
+    if (!settingsSpeedRoutingFastModels) {
+      return [...speedRoutingFastModelIds];
+    }
+    const checked = [];
+    settingsSpeedRoutingFastModels
+      .querySelectorAll('input.settings-speed-fast-check[data-speed-fast-id]')
+      .forEach((input) => {
+        if (input instanceof HTMLInputElement && input.checked) {
+          const id = String(input.getAttribute("data-speed-fast-id") || "").trim();
+          if (id) {
+            checked.push(id);
+          }
+        }
+      });
+    return normalizeSpeedRoutingFastModelIds(checked);
+  }
+
+  function setModelEnabledById(modelId, enabled) {
+    const id = String(modelId || "").trim();
+    if (!id) {
+      return false;
+    }
+    const index = settingsModels.findIndex((m) => m && m.id === id);
+    if (index < 0) {
+      return false;
+    }
+    settingsModels[index].enabled = enabled !== false;
+    return true;
+  }
+
+  function syncSpeedRoutingControlsDisabled() {
+    const on = settingsSpeedRoutingEnabled
+      ? settingsSpeedRoutingEnabled.checked
+      : true;
+    if (settingsSpeedRoutingFastModels) {
+      settingsSpeedRoutingFastModels
+        .querySelectorAll("input.settings-speed-fast-check")
+        .forEach((el) => {
+          if (el instanceof HTMLInputElement) {
+            el.disabled = !on;
+          }
+        });
+    }
+    if (settingsSpeedRoutingReadonlyOverride) {
+      settingsSpeedRoutingReadonlyOverride.disabled = !on;
+    }
+    if (settingsSpeedRoutingAgentExplore) {
+      settingsSpeedRoutingAgentExplore.disabled = !on;
+    }
+  }
+
+  function normalizeVisionRoutingPreferredModelIds(ids) {
+    return normalizeSpeedRoutingFastModelIds(ids);
+  }
+
+  function populateVisionRoutingModelsList(selectedIds) {
+    visionRoutingPreferredModelIds =
+      normalizeVisionRoutingPreferredModelIds(selectedIds);
+    renderVisionRoutingModelsList();
+  }
+
+  function renderVisionRoutingModelsList() {
+    if (!settingsVisionRoutingModels) {
+      return;
+    }
+    const models = (settingsModels || []).filter(
+      (m) =>
+        m &&
+        m.id &&
+        (typeof m.supportsVision === "boolean"
+          ? m.supportsVision
+          : guessModelSupportsVision(m.id))
+    );
+    const preferredSet = new Set(visionRoutingPreferredModelIds);
+    const modelOn = [];
+    const modelOff = [];
+    for (const model of models) {
+      if (model.enabled !== false) {
+        modelOn.push(model);
+      } else {
+        modelOff.push(model);
+      }
+    }
+    const sortPreferredFirst = (list) => {
+      const on = [];
+      const off = [];
+      for (const id of visionRoutingPreferredModelIds) {
+        const hit = list.find((m) => m.id === id);
+        if (hit) {
+          on.push(hit);
+        }
+      }
+      for (const model of list) {
+        if (!preferredSet.has(model.id)) {
+          off.push(model);
+        }
+      }
+      return [...on, ...off];
+    };
+    const ordered = [
+      ...sortPreferredFirst(modelOn),
+      ...sortPreferredFirst(modelOff),
+    ];
+    if (!ordered.length) {
+      settingsVisionRoutingModels.innerHTML =
+        `<div class="settings-speed-models-empty">${escapeHtml(
+          t("visionRoutingModelsEmpty")
+        )}</div>`;
+      return;
+    }
+    settingsVisionRoutingModels.innerHTML = ordered
+      .map((model) => {
+        const preferredOn = preferredSet.has(model.id);
+        const modelEnabled = model.enabled !== false;
+        const label = model.label || model.id;
+        const classes = [
+          "settings-speed-model-row",
+          modelEnabled ? "" : "is-model-off",
+          preferredOn ? "" : "is-fast-off",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return (
+          `<div class="${classes}">` +
+          `<input type="checkbox" class="settings-vision-pref-check" data-vision-pref-id="${escapeHtml(
+            model.id
+          )}" ${preferredOn ? "checked" : ""} title="${escapeHtml(
+            t("visionRoutingModels")
+          )}" />` +
+          `<span class="settings-speed-model-name" title="${escapeHtml(
+            label
+          )}">${escapeHtml(label)}</span>` +
+          `<label class="settings-model-switch" title="${escapeHtml(
+            modelEnabled ? t("disable") : t("enable")
+          )}">` +
+          `<input type="checkbox" class="settings-model-toggle" data-vision-model-id="${escapeHtml(
+            model.id
+          )}" ${modelEnabled ? "checked" : ""} />` +
+          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
+          `</label>` +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  function readVisionRoutingPreferredModelIdsFromDom() {
+    if (!settingsVisionRoutingModels) {
+      return [...visionRoutingPreferredModelIds];
+    }
+    const checked = [];
+    settingsVisionRoutingModels
+      .querySelectorAll(
+        "input.settings-vision-pref-check[data-vision-pref-id]"
+      )
+      .forEach((input) => {
+        if (input instanceof HTMLInputElement && input.checked) {
+          const id = String(
+            input.getAttribute("data-vision-pref-id") || ""
+          ).trim();
+          if (id) {
+            checked.push(id);
+          }
+        }
+      });
+    return normalizeVisionRoutingPreferredModelIds(checked);
   }
 
   function collectSettings() {
@@ -3744,6 +6749,10 @@
         }
         if (p.apiKey) {
           row.apiKey = p.apiKey;
+        }
+        const statusUrl = String(p.statusUrl || "").replace(/\/$/, "");
+        if (statusUrl && statusUrl !== row.baseUrl) {
+          row.statusUrl = statusUrl;
         }
         return row;
       });
@@ -3782,9 +6791,7 @@
       providers,
       models,
       language: settingsLanguage ? settingsLanguage.value : settingsLanguageValue,
-      defaultModel: settingsDefaultModel
-        ? settingsDefaultModel.value
-        : settingsDefaultModelId,
+      defaultModel: firstEnabledSettingsModelId() || settingsDefaultModelId,
       defaultContextWindow: settingsDefaultContextWindow,
       baseUrl: primary ? String(primary.baseUrl || "").replace(/\/$/, "") : "",
       apiKey: primary ? primary.apiKey || "" : "",
@@ -3793,9 +6800,35 @@
         : false,
       caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
       systemPrompt: settingsSystemPrompt ? settingsSystemPrompt.value : "",
+      commitMessagePrompt: settingsCommitPrompt
+        ? settingsCommitPrompt.value
+        : "",
+      commitMessageLanguage: settingsCommitLanguage
+        ? settingsCommitLanguage.value
+        : "auto",
+      commitMessageScope: settingsCommitScope
+        ? settingsCommitScope.value === "workspace"
+          ? "workspace"
+          : "global"
+        : "global",
+      figmaEnabled: figmaStatus.enabled === true,
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
+      soundNotificationsEnabled: settingsSoundNotificationsEnabled
+        ? settingsSoundNotificationsEnabled.checked
+        : true,
+      speedRoutingEnabled: settingsSpeedRoutingEnabled
+        ? settingsSpeedRoutingEnabled.checked
+        : true,
+      speedRoutingFastModelIds: readSpeedRoutingFastModelIdsFromDom(),
+      speedRoutingReadonlyOverride: settingsSpeedRoutingReadonlyOverride
+        ? settingsSpeedRoutingReadonlyOverride.checked
+        : true,
+      speedRoutingAgentExplore: settingsSpeedRoutingAgentExplore
+        ? settingsSpeedRoutingAgentExplore.checked
+        : true,
+      visionRoutingPreferredModelIds: readVisionRoutingPreferredModelIdsFromDom(),
       modes: collectCustomModesForSave(),
     };
   }
@@ -3950,8 +6983,9 @@
       keepSelection && chatModes.some((m) => m.id === agentMode)
         ? agentMode
         : chatModes[0]?.id || "agent";
+    const modeChanged = still !== agentMode;
     if (typeof setAgentMode === "function") {
-      setAgentMode(still, { close: false });
+      setAgentMode(still, { close: false, notify: modeChanged });
     } else {
       agentMode = still;
     }
@@ -4139,7 +7173,9 @@
         return;
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
-      block.querySelector(".agent-preview").textContent = a.preview || "";
+      block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
+        a.preview
+      );
       block.querySelector(".agent-time").textContent = a.time || "";
     });
   }
@@ -4149,6 +7185,7 @@
       return;
     }
     if (renamingAgentId) {
+      syncActiveAgentHighlight();
       return;
     }
     const list = agentsData;
@@ -4182,7 +7219,7 @@
           `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
           `<span class="agent-main">` +
           statusHtml +
-          `<div class="agent-name-row"><div class="agent-name" title="${t("rename")}"></div></div>` +
+          `<div class="agent-name-row"><div class="agent-name"></div></div>` +
           `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
           `</span>` +
           `</div>` +
@@ -4203,8 +7240,25 @@
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
       block.querySelector(".agent-chip").textContent = a.model || "—";
-      block.querySelector(".agent-preview").textContent = a.preview || "";
+      block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
+        a.preview
+      );
       block.querySelector(".agent-time").textContent = a.time || "";
+    });
+  }
+
+  function syncActiveAgentHighlight() {
+    if (!agentsListEl) {
+      return;
+    }
+    for (const a of agentsData) {
+      a.active = Boolean(activeAgentId) && a.id === activeAgentId;
+    }
+    agentsListEl.querySelectorAll(".agent-block[data-agent]").forEach((el) => {
+      el.classList.toggle(
+        "is-active",
+        Boolean(activeAgentId) && el.getAttribute("data-agent") === activeAgentId
+      );
     });
   }
 
@@ -4404,7 +7458,7 @@
       const row = document.createElement("button");
       row.type = "button";
       row.className = "review-file";
-      row.title = t("openFile");
+      row.title = t("openChanges");
       row.innerHTML =
         `<span class="review-file-path"></span>` +
         `<span class="review-file-stats">` +
@@ -4413,7 +7467,7 @@
         `</span>`;
       row.querySelector(".review-file-path").textContent = file.path;
       row.addEventListener("click", () => {
-        vscode.postMessage({ type: "openFile", path: file.path });
+        vscode.postMessage({ type: "openFileDiff", path: file.path });
       });
       fileList.appendChild(row);
     }
@@ -4421,42 +7475,234 @@
     card.dataset.paths = list.map((f) => f.path).join("\n");
     const mount = ensureChatTurn();
     mount.appendChild(card);
-
-    const actions = document.createElement("div");
-    actions.className = "review-actions";
-    actions.dataset.paths = list.map((f) => f.path).join("\n");
-    actions.hidden = !parsed.showScm;
-    const scmBtn = document.createElement("button");
-    scmBtn.type = "button";
-    scmBtn.className = "review-scm";
-    scmBtn.title = t("openSourceControl");
-    scmBtn.setAttribute("aria-label", t("openSourceControl"));
-    scmBtn.innerHTML = SCM_ICON;
-    scmBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "openScm" });
-    });
-    actions.appendChild(scmBtn);
-    mount.appendChild(actions);
+    setComposerScmActions(list, Boolean(parsed.showScm));
     keepStatusAtEnd();
     scrollToBottom();
   }
 
-  function applyScmButtons(reviews) {
-    const list = Array.isArray(reviews) ? reviews : [];
-    const entries = list.map((r) => ({
-      key: [...(r.paths || [])].map(String).sort().join("\n"),
-      show: Boolean(r.showScm),
-    }));
-    for (const el of messagesEl.querySelectorAll(".review-actions")) {
-      const key = (el.dataset.paths || "")
-        .split("\n")
+  function setComposerScmActions(filesOrPaths, show) {
+    if (!composerScmActionsEl) {
+      return;
+    }
+    const files = [];
+    const seen = new Set();
+    for (const item of Array.isArray(filesOrPaths) ? filesOrPaths : []) {
+      if (!item) {
+        continue;
+      }
+      const path =
+        typeof item === "string"
+          ? item
+          : String(item.path || "").trim();
+      if (!path || seen.has(path)) {
+        continue;
+      }
+      seen.add(path);
+      files.push({
+        path,
+        added: Number(item.added) || 0,
+        removed: Number(item.removed) || 0,
+      });
+    }
+    composerScmActionsEl.replaceChildren();
+    if (!show || !files.length) {
+      composerScmActionsEl.hidden = true;
+      composerScmActionsEl.dataset.paths = "";
+      return;
+    }
+
+    const paths = files.map((f) => f.path);
+    const totalAdd = files.reduce((s, f) => s + (f.added || 0), 0);
+    const totalDel = files.reduce((s, f) => s + (f.removed || 0), 0);
+
+    composerScmActionsEl.hidden = false;
+    composerScmActionsEl.dataset.paths = paths.join("\n");
+
+    const commitPushBtn = document.createElement("button");
+    commitPushBtn.type = "button";
+    commitPushBtn.className = "review-commit-push";
+    commitPushBtn.title = t("commitAndPush");
+    commitPushBtn.disabled = busy;
+    commitPushBtn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">commit</span>` +
+      `<span>${escapeHtml(t("commitAndPush"))}</span>`;
+    commitPushBtn.addEventListener("click", () => {
+      if (busy) {
+        return;
+      }
+      setBusy(true);
+      vscode.postMessage({
+        type: "commitAndPush",
+        paths,
+      });
+    });
+    composerScmActionsEl.appendChild(commitPushBtn);
+
+    const scmBtn = document.createElement("button");
+    scmBtn.type = "button";
+    scmBtn.className = "review-scm-stats";
+    scmBtn.title = t("openSourceControl");
+    scmBtn.setAttribute("aria-label", t("openSourceControl"));
+    scmBtn.innerHTML =
+      `<span class="label">${escapeHtml(t("changesTag"))}</span>` +
+      `<span class="add">+${totalAdd}</span>` +
+      `<span class="del">−${totalDel}</span>`;
+    scmBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "openScm" });
+    });
+    composerScmActionsEl.appendChild(scmBtn);
+  }
+
+  function findReviewFilesByPaths(paths) {
+    const wanted = [...new Set((paths || []).map(String).filter(Boolean))]
+      .slice()
+      .sort()
+      .join("\n");
+    if (!wanted) {
+      return [];
+    }
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const parsed = parseReviewData(item.text);
+      const files = Array.isArray(parsed.files) ? parsed.files : [];
+      const key = files
+        .map((f) => String(f.path || ""))
         .filter(Boolean)
         .sort()
         .join("\n");
-      const hit = entries.find((e) => e.key === key);
-      // если не нашли соответствие — прячем (безопаснее, чем оставлять кнопку)
-      el.hidden = hit ? !hit.show : true;
+      if (key === wanted) {
+        return files;
+      }
     }
+    return (paths || []).map((path) => ({ path, added: 0, removed: 0 }));
+  }
+
+  function renderReviewCardBody(card, files) {
+    const list = Array.isArray(files) ? files : [];
+    const title = card.querySelector(".review-title");
+    const fileList = card.querySelector(".review-files");
+    if (!title || !fileList) {
+      return;
+    }
+    const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
+    const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
+    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
+    fileList.replaceChildren();
+    for (const file of list) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "review-file";
+      row.title = t("openChanges");
+      row.innerHTML =
+        `<span class="review-file-path"></span>` +
+        `<span class="review-file-stats">` +
+        `<span class="add">+${file.added || 0}</span> ` +
+        `<span class="del">−${file.removed || 0}</span>` +
+        `</span>`;
+      row.querySelector(".review-file-path").textContent = file.path;
+      row.addEventListener("click", () => {
+        vscode.postMessage({ type: "openFileDiff", path: file.path });
+      });
+      fileList.appendChild(row);
+    }
+    card.dataset.paths = list.map((f) => f.path).join("\n");
+  }
+
+  function syncReviewCardsFromScm(reviews) {
+    const cards = Array.from(
+      document.querySelectorAll(".review-card")
+    );
+    const entries = Array.isArray(reviews) ? reviews : [];
+    const count = Math.min(cards.length, entries.length);
+    for (let i = 0; i < count; i++) {
+      const entry = entries[i];
+      const files = Array.isArray(entry?.files) ? entry.files : [];
+      if (!files.length && !(entry?.paths || []).length) {
+        continue;
+      }
+      const nextFiles = files.length
+        ? files
+        : (entry.paths || []).map((path) => ({
+            path,
+            added: 0,
+            removed: 0,
+          }));
+      renderReviewCardBody(cards[i], nextFiles);
+    }
+
+    // Keep cache in sync so commit tags use remaining dirty paths.
+    let reviewIdx = 0;
+    for (let i = 0; i < uiMessagesCache.length; i++) {
+      const item = uiMessagesCache[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const entry = entries[reviewIdx++];
+      if (!entry) {
+        break;
+      }
+      const files = Array.isArray(entry.files)
+        ? entry.files
+        : (entry.paths || []).map((path) => ({
+            path,
+            added: 0,
+            removed: 0,
+          }));
+      uiMessagesCache[i] = {
+        ...item,
+        text: JSON.stringify({
+          files,
+          showScm: Boolean(entry.showScm),
+        }),
+      };
+    }
+  }
+
+  function syncComposerScmFromCache() {
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i];
+      if (item?.role !== "review") {
+        continue;
+      }
+      const parsed = parseReviewData(item.text);
+      const files = Array.isArray(parsed.files) ? parsed.files : [];
+      if (parsed.showScm && files.length) {
+        setComposerScmActions(files, true);
+        return;
+      }
+    }
+    setComposerScmActions([], false);
+  }
+
+  function applyScmButtons(reviews) {
+    const list = Array.isArray(reviews) ? reviews : [];
+    syncReviewCardsFromScm(list);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const entry = list[i];
+      const files = Array.isArray(entry?.files)
+        ? entry.files
+        : (entry?.paths || []).map((path) => ({
+            path: String(path),
+            added: 0,
+            removed: 0,
+          }));
+      const paths = files
+        .map((f) => String(f.path || ""))
+        .filter(Boolean);
+      if (entry?.showScm && paths.length) {
+        setComposerScmActions(
+          files.length ? files : findReviewFilesByPaths(paths),
+          true
+        );
+        return;
+      }
+    }
+    setComposerScmActions([], false);
   }
 
   function escapeHtml(value) {
@@ -4491,8 +7737,10 @@
   }
 
   function fileLinkHtml(path) {
-    const safe = escapeHtml(path);
-    return `<a class="md-file" href="#" data-path="${safe}">${safe}</a>`;
+    const full = String(path || "");
+    const safePath = escapeHtml(full);
+    const label = escapeHtml(pathBasename(full));
+    return `<a class="md-file" href="#" data-path="${safePath}" title="${safePath}">${label}</a>`;
   }
 
   function splitTrailingPunctuation(url) {
@@ -4511,10 +7759,11 @@
 
     text = text.replace(/@([^\s@]+)/g, (full, path) => {
       const id = tokens.length;
+      const label = pathBasename(path);
       tokens.push(
         `<button type="button" class="msg-mention" data-path="${escapeHtml(
           path
-        )}" title="${escapeHtml(path)}">@${escapeHtml(path)}</button>`
+        )}" title="${escapeHtml(path)}">@${escapeHtml(label)}</button>`
       );
       return `\u0001T${id}\u0001`;
     });
@@ -4649,11 +7898,165 @@
     if (marked && typeof marked.marked === "function") {
       return {
         parse: marked.marked.parse || marked.marked,
+        parseInline: marked.marked.parseInline || marked.parseInline,
         Renderer: marked.Renderer || marked.marked.Renderer,
         use: marked.use || marked.marked.use,
       };
     }
     return null;
+  }
+
+  const CODE_KEYWORDS = new Set([
+    "as",
+    "async",
+    "await",
+    "any",
+    "boolean",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "def",
+    "default",
+    "delete",
+    "do",
+    "elif",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "keyof",
+    "let",
+    "new",
+    "never",
+    "number",
+    "of",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "string",
+    "switch",
+    "throw",
+    "try",
+    "type",
+    "typeof",
+    "unknown",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+  ]);
+  const CODE_LITERALS = new Set([
+    "false",
+    "None",
+    "null",
+    "super",
+    "this",
+    "true",
+    "undefined",
+  ]);
+
+  function inferCodeLanguage(meta) {
+    const explicit = String(meta?.language || "").trim().toLowerCase();
+    if (explicit) {
+      return explicit;
+    }
+    const path = String(meta?.path || "").split(/[?#]/)[0];
+    const ext = path.match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase() || "";
+    const aliases = {
+      cjs: "javascript",
+      htm: "html",
+      js: "javascript",
+      jsonc: "json",
+      jsx: "javascript",
+      mjs: "javascript",
+      py: "python",
+      rb: "ruby",
+      sh: "shell",
+      ts: "typescript",
+      tsx: "typescript",
+      yml: "yaml",
+    };
+    return aliases[ext] || ext;
+  }
+
+  function codeTokenClass(token, language, precedingText, followingText) {
+    if (
+      token.startsWith("//") ||
+      token.startsWith("/*") ||
+      (language === "python" && token.startsWith("#"))
+    ) {
+      return "comment";
+    }
+    if (/^['"`]/.test(token)) {
+      return "string";
+    }
+    if (/^\d/.test(token)) {
+      return "number";
+    }
+    if (CODE_KEYWORDS.has(token)) {
+      return "keyword";
+    }
+    if (CODE_LITERALS.has(token)) {
+      return "literal";
+    }
+    if (/^[A-Z][A-Za-z0-9_$]*$/.test(token)) {
+      return "type";
+    }
+    if (/\.\s*$/.test(precedingText)) {
+      return "property";
+    }
+    if (/^\s*\(/.test(followingText)) {
+      return "function";
+    }
+    return "variable";
+  }
+
+  function highlightCode(text, language) {
+    const source = String(text || "");
+    const commentPattern =
+      language === "python" || language === "ruby" || language === "shell"
+        ? "#[^\\n]*"
+        : "\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/";
+    const tokenRe = new RegExp(
+      "(" +
+        commentPattern +
+        "|'(?:\\\\.|[^'\\\\])*'|\"(?:\\\\.|[^\"\\\\])*\"|`(?:\\\\.|[^`\\\\])*`|\\b\\d+(?:\\.\\d+)?\\b|\\b[A-Za-z_$][\\w$]*\\b)",
+      "g"
+    );
+    let html = "";
+    let cursor = 0;
+    let match;
+    while ((match = tokenRe.exec(source))) {
+      html += escapeHtml(source.slice(cursor, match.index));
+      const token = match[0];
+      const kind = codeTokenClass(
+        token,
+        language,
+        source.slice(0, match.index),
+        source.slice(match.index + token.length)
+      );
+      html += kind
+        ? `<span class="syntax-${kind}">${escapeHtml(token)}</span>`
+        : escapeHtml(token);
+      cursor = match.index + token.length;
+    }
+    return html + escapeHtml(source.slice(cursor));
   }
 
   function renderCodeBlockHtml(text, langRaw) {
@@ -4662,6 +8065,7 @@
       return fileLinkHtml(inner.trim());
     }
     const meta = parseCodeFenceMeta(langRaw);
+    const language = inferCodeLanguage(meta);
     const lines = inner.split("\n");
     const showLines =
       meta.startLine > 0 &&
@@ -4674,15 +8078,22 @@
             return (
               `<span class="md-line">` +
               `<span class="md-ln" aria-hidden="true">${n}</span>` +
-              `<span class="md-line-text">${escapeHtml(line)}</span>` +
+              `<span class="md-line-text">${highlightCode(line, language)}</span>` +
               `</span>`
             );
           })
           .join("\n")
-      : escapeHtml(inner);
+      : highlightCode(inner, language);
 
     let metaHtml = "";
     if (meta.path || showLines) {
+      const fileType = selectionFileType({
+        path: meta.path,
+        language: meta.language,
+      });
+      const fileTypePart = meta.path
+        ? `<span class="selection-file-icon md-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(fileType.label)}</span>`
+        : "";
       const pathPart = meta.path
         ? isFilePath(meta.path) || meta.path.includes("/")
           ? fileLinkHtml(meta.path)
@@ -4696,22 +8107,39 @@
           }</span>`
         : "";
       metaHtml =
-        `<div class="md-pre-meta">` +
+        `<div class="md-pre-meta${showLines ? " md-pre-toggle" : ""}"` +
+        (showLines
+          ? ` role="button" tabindex="0" aria-expanded="false" aria-label="${
+              UI_LANG === "ru" ? "Показать или скрыть код" : "Show or hide code"
+            }">`
+          : `>`) +
+        `<span class="md-pre-meta-main">` +
+        fileTypePart +
         pathPart +
         (pathPart && linesPart ? `<span class="md-pre-meta-sep">·</span>` : "") +
         linesPart +
+        `</span>` +
+        (showLines
+          ? `<span class="material-symbols-outlined md-pre-chevron" aria-hidden="true">expand_more</span>`
+          : "") +
         `</div>`;
     }
 
     return (
-      `<div class="md-pre-wrap${showLines ? " has-lines" : ""}">` +
+      `<div class="md-pre-wrap${showLines ? " has-lines is-collapsible is-collapsed" : ""}">` +
       metaHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
-      `<button type="button" class="icon-btn md-pre-copy" title="${t("copyCode")}" aria-label="${t("copyCode")}">` +
-      COPY_ICON +
-      `</button>` +
       `</div>\n`
     );
+  }
+
+  function toggleCodeBlock(toggle) {
+    const wrap = toggle?.closest(".md-pre-wrap.is-collapsible");
+    if (!wrap) {
+      return;
+    }
+    const collapsed = wrap.classList.toggle("is-collapsed");
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
 
   let markdownReady = false;
@@ -4902,6 +8330,23 @@
     )}</div>`;
   }
 
+  /** Однострочный Markdown для короткого описания агента. */
+  function renderPreviewMarkdown(text) {
+    const raw = String(text || "");
+    if (!raw) {
+      return "";
+    }
+    const api = getMarkedApi();
+    if (ensureMarkdownRenderer() && api && typeof api.parseInline === "function") {
+      try {
+        return api.parseInline(raw, { async: false });
+      } catch {
+        // fallback below
+      }
+    }
+    return escapeHtml(raw);
+  }
+
   let copyToastEl = null;
   let copyToastTimer = null;
 
@@ -4929,13 +8374,6 @@
     }, 1200);
   }
 
-  function requestCopyText(text) {
-    const value = String(text || "");
-    if (!value) {
-      return;
-    }
-    vscode.postMessage({ type: "copyText", text: value });
-  }
 
   function setMessageContent(el, role, text) {
     const raw = text || "";
@@ -4950,7 +8388,20 @@
       body.innerHTML = renderInlineMarkdown(raw);
       return;
     }
-    body.textContent = role === "tool" ? formatToolLine(raw) : raw;
+    if (role === "tool") {
+      const formatted = formatToolLine(raw);
+      // Сырой вывод (git remote, MR URL) — с кликабельными ссылками.
+      if (/https?:\/\//i.test(formatted) || /`[^`]+`/.test(formatted)) {
+        body.innerHTML = `<div class="tool-output">${linkifyPlainText(
+          formatted,
+          false
+        ).replace(/\n/g, "<br />")}</div>`;
+      } else {
+        body.textContent = formatted;
+      }
+      return;
+    }
+    body.textContent = raw;
   }
 
   function appendMessage(
@@ -4997,6 +8448,8 @@
           : [];
       if (isEditing) {
         el.classList.add("is-editing");
+        const editModeId = normalizeAgentModeUi(editingModeId || agentMode);
+        const editModeLabel = modeDisplayName(editModeId);
         const editModelLabel = modelDisplayName(
           editingModelId || selectedModelId
         );
@@ -5008,6 +8461,17 @@
           `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="${t("editMessage")}"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
+          `<div class="model-picker mode-picker msg-edit-mode-picker" data-mode="${escapeHtml(
+            editModeId
+          )}">` +
+          `<button type="button" class="model-trigger msg-edit-mode-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("mode")}">` +
+          `<span class="model-label msg-edit-mode-label">${escapeHtml(
+            editModeLabel
+          )}</span>` +
+          `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+          `</button>` +
+          `<div class="model-menu msg-edit-mode-menu" role="listbox" hidden></div>` +
+          `</div>` +
           `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
           `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("model")}">` +
           `<span class="model-label msg-edit-model-label">${escapeHtml(
@@ -5037,16 +8501,6 @@
       }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
-      if (!isEditing) {
-        const actions = document.createElement("div");
-        actions.className = "msg-actions";
-        actions.innerHTML =
-          `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="${t("copy")}" aria-label="${t("copy")}">` +
-          COPY_ICON +
-          `</button>` +
-          branchButtonHtml(index);
-        wrap.appendChild(actions);
-      }
       wrap.appendChild(el);
       startChatTurn().appendChild(wrap);
       keepStatusAtEnd();
@@ -5065,15 +8519,9 @@
         regenAssistantIndex >= 0 &&
         index === regenAssistantIndex &&
         canRegenerate;
-      actions.innerHTML =
-        branchButtonHtml(index) +
-        (showRegen
-          ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
-            REGENERATE_ICON +
-            `</button>`
-          : "");
-      wrap.appendChild(actions);
+      actions.innerHTML = assistantActionsHtml(index, showRegen);
       wrap.appendChild(el);
+      wrap.appendChild(actions);
       ensureChatTurn().appendChild(wrap);
       keepStatusAtEnd();
       if (shouldScroll) {
@@ -5126,6 +8574,7 @@
       );
     }
     restoreAgentStatus();
+    syncComposerScmFromCache();
     focusEditingInput();
     requestAnimationFrame(() => {
       if (scrollMode === "restore") {
@@ -5145,29 +8594,16 @@
   }
 
   function updateTriggerLabel() {
+    if (!modelLabel) {
+      return;
+    }
     const model = models.find((m) => m.id === selectedModelId);
     modelLabel.textContent = model
       ? model.label || model.id
       : selectedModelId || t("noModels");
   }
 
-  function stripPendingImagesIfNeeded(notify) {
-    const before = pendingAttachments.length;
-    if (currentModelSupportsVision()) {
-      return;
-    }
-    pendingAttachments = pendingAttachments.filter((a) => a.kind !== "image");
-    if (pendingAttachments.length < before) {
-      renderAttachPreview();
-      if (notify) {
-        showCopyToast(t("modelNoImages"));
-      }
-    }
-  }
-
   function updateVisionUi() {
-    stripPendingImagesIfNeeded(true);
-    const visionOk = currentModelSupportsVision();
     if (!composerPlusMenu) {
       return;
     }
@@ -5177,25 +8613,67 @@
     if (!imageItem) {
       return;
     }
-    imageItem.disabled = !visionOk;
-    imageItem.classList.toggle("is-disabled", !visionOk);
-    imageItem.setAttribute("aria-disabled", visionOk ? "false" : "true");
-    imageItem.title = visionOk
-      ? t("attachImage")
-      : t("currentModelNoImages");
+    imageItem.disabled = false;
+    imageItem.classList.remove("is-disabled");
+    imageItem.setAttribute("aria-disabled", "false");
+    imageItem.title = t("attachImage");
   }
 
+  /** Ignore briefly-stale host selectedModel after a local picker change. */
+  let localModelChangeAt = 0;
+  const LOCAL_MODEL_GUARD_MS = 5000;
+
   function setSelectedModel(id, notify) {
-    selectedModelId = id || "";
+    const next = String(id || "").trim();
+    selectedModelId = next;
     state.selectedModel = selectedModelId;
+    if (activeChatId) {
+      state.modelByChat[activeChatId] = selectedModelId;
+    }
     vscode.setState(state);
     updateTriggerLabel();
     updateVisionUi();
+    if (notify && selectedModelId) {
+      localModelChangeAt = Date.now();
+      vscode.postMessage({ type: "modelChanged", model: selectedModelId });
+    }
+  }
+
+  function resolvePreferredModelId(preferredId) {
+    const fromHost = String(preferredId || "").trim();
+    const localIsFresh =
+      localModelChangeAt > 0 &&
+      Date.now() - localModelChangeAt < LOCAL_MODEL_GUARD_MS &&
+      selectedModelId &&
+      models.some((m) => m.id === selectedModelId);
+    if (localIsFresh) {
+      return selectedModelId;
+    }
+    if (fromHost && models.some((m) => m.id === fromHost)) {
+      return fromHost;
+    }
+    if (activeChatId && state.modelByChat[activeChatId]) {
+      const fromChat = String(state.modelByChat[activeChatId] || "").trim();
+      if (fromChat && models.some((m) => m.id === fromChat)) {
+        return fromChat;
+      }
+    }
+    if (selectedModelId && models.some((m) => m.id === selectedModelId)) {
+      return selectedModelId;
+    }
+    if (fromHost) {
+      return models[0]?.id || "";
+    }
+    return models[0]?.id || "";
+  }
+
+  function fillModels(nextModels, preferredId) {
+    const incoming = Array.isArray(nextModels) ? nextModels : [];
+    models = incoming.length ? incoming : DEFAULT_MODELS.slice();
+    const preferred = resolvePreferredModelId(preferredId);
+    setSelectedModel(preferred, false);
     if (menuOpen) {
       renderMenu();
-    }
-    if (notify && selectedModelId) {
-      vscode.postMessage({ type: "modelChanged", model: selectedModelId });
     }
   }
 
@@ -5215,6 +8693,7 @@
       btn.className =
         "model-option" + (model.id === selectedModelId ? " is-active" : "");
       btn.setAttribute("role", "option");
+      btn.setAttribute("data-model-id", model.id);
       btn.dataset.id = model.id;
 
       const label = document.createElement("span");
@@ -5242,15 +8721,14 @@
   }
 
   function openMenu() {
-    if (busy) {
-      return;
-    }
     closePlusMenu();
+    closeModeMenu();
     menuOpen = true;
     renderMenu();
     modelPicker.classList.add("is-open");
     modelTrigger.setAttribute("aria-expanded", "true");
     modelMenu.hidden = false;
+    placeModelMenu(modelPicker, modelMenu, chatScreen);
   }
 
   function closeMenu() {
@@ -5258,6 +8736,7 @@
     modelPicker.classList.remove("is-open");
     modelTrigger.setAttribute("aria-expanded", "false");
     modelMenu.hidden = true;
+    resetModelMenuPlacement(modelPicker, modelMenu);
   }
 
   function closePlusMenu() {
@@ -5277,6 +8756,7 @@
     closeMenu();
     closeModeMenu();
     closeEditModelMenu();
+    closeEditModeMenu();
     plusMenuOpen = true;
     if (composerPlusEl) {
       composerPlusEl.classList.add("is-open");
@@ -5378,6 +8858,8 @@
   function openModeMenu() {
     closeMenu();
     closePlusMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
     renderModeMenu();
     modeMenuOpen = true;
     if (modePicker) {
@@ -5399,7 +8881,7 @@
     }
   }
 
-  function setAgentMode(next, { focus = false, close = true } = {}) {
+  function setAgentMode(next, { focus = false, close = true, notify = true } = {}) {
     agentMode = normalizeAgentModeUi(next);
     const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
     const meta = localizeModeMeta(
@@ -5409,6 +8891,10 @@
       placeholder: t("taskPlaceholder"),
       }
     );
+    if (activeChatId) {
+      state.modeByChat[activeChatId] = agentMode;
+      vscode.setState(state);
+    }
     if (modePicker) {
       modePicker.dataset.mode = agentMode;
     }
@@ -5433,20 +8919,56 @@
     if (focus && promptEl && typeof promptEl.focus === "function") {
       promptEl.focus();
     }
+    if (notify && agentMode) {
+      vscode.postMessage({ type: "modeChanged", mode: agentMode });
+    }
+  }
+
+  function resolvePreferredModeId(preferredId) {
+    const modes = chatModes.length ? chatModes : DEFAULT_CHAT_MODES;
+    const fromHost = String(preferredId || "").trim();
+    if (fromHost && modes.some((m) => m.id === fromHost)) {
+      return fromHost;
+    }
+    if (activeChatId && state.modeByChat[activeChatId]) {
+      const fromChat = String(state.modeByChat[activeChatId] || "").trim();
+      if (fromChat && modes.some((m) => m.id === fromChat)) {
+        return fromChat;
+      }
+    }
+    if (fromHost) {
+      return modes[0]?.id || "agent";
+    }
+    return modes.some((m) => m.id === "agent")
+      ? "agent"
+      : modes[0]?.id || "agent";
+  }
+
+  function applySelectedMode(preferredId, { notify = false } = {}) {
+    setAgentMode(resolvePreferredModeId(preferredId), {
+      close: false,
+      notify,
+    });
   }
 
   function setBusy(nextBusy) {
     busy = nextBusy;
     promptEl.disabled = busy;
-    modelTrigger.disabled = busy;
+    // Model can always be changed for the next turn — even while a run is active.
+    modelTrigger.disabled = false;
     if (composerPlusBtn) {
       composerPlusBtn.disabled = busy;
     }
     if (modeTrigger) {
       modeTrigger.disabled = busy;
     }
+    if (composerScmActionsEl) {
+      const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
+      if (commitBtn) {
+        commitBtn.disabled = busy;
+      }
+    }
     if (busy) {
-      closeMenu();
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
@@ -5461,28 +8983,44 @@
     }
   }
 
-  function fillModels(nextModels, preferredId) {
-    const incoming = Array.isArray(nextModels) ? nextModels : [];
-    models = incoming.length ? incoming : DEFAULT_MODELS.slice();
-    const preferred =
-      preferredId ||
-      selectedModelId ||
-      state.selectedModel ||
-      models[0]?.id ||
-      "";
-    const exists = models.some((m) => m.id === preferred);
-    setSelectedModel(exists ? preferred : models[0]?.id || "", false);
-  }
-
   // сразу показать модель, не дожидаясь init
-  fillModels(DEFAULT_MODELS, selectedModelId);
+  fillModels(DEFAULT_MODELS, "");
 
   function selectModelById(id) {
-    if (!id || busy) {
+    const next = String(id || "").trim();
+    if (!next) {
+      closeMenu();
       return;
     }
-    setSelectedModel(id, true);
+    setSelectedModel(next, true);
     closeMenu();
+  }
+
+  function modelIdFromOption(option) {
+    if (!(option instanceof Element)) {
+      return "";
+    }
+    return (
+      option.getAttribute("data-model-id") ||
+      option.getAttribute("data-id") ||
+      option.dataset.id ||
+      ""
+    );
+  }
+
+  function selectModelFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".model-option")
+        : null;
+    if (!option || option.classList.contains("is-empty")) {
+      return false;
+    }
+    selectModelById(modelIdFromOption(option));
+    return true;
   }
 
   modelTrigger.addEventListener("mousedown", (event) => {
@@ -5493,29 +9031,90 @@
   modelTrigger.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (busy) {
-      return;
-    }
     toggleMenu();
   });
 
+  // Do NOT preventDefault on mousedown/pointerdown: in VS Code webviews that
+  // often suppresses the following click. Only stopPropagation so the floated
+  // menu is not closed by the document outside-click handler.
   modelMenu.addEventListener("mousedown", (event) => {
+    event.stopPropagation();
+  });
+  modelMenu.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+
+  // Select on pointerup (primary). click remains for keyboard activation.
+  modelMenu.addEventListener("pointerup", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    const option = event.target.closest(".model-option");
-    if (!option || option.classList.contains("is-empty")) {
-      return;
-    }
-    selectModelById(option.dataset.id);
+    selectModelFromEvent(event);
   });
 
   modelMenu.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
+    selectModelFromEvent(event);
+  });
+
+  document.addEventListener("pointerup", (event) => {
+    if (editModeMenuOpen && selectEditingModeFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!editModelMenuOpen) {
+      return;
+    }
+    if (selectEditingModelFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (editModeMenuOpen) {
+      const editModeOption = event.target.closest(
+        ".msg-edit-mode-menu .model-option"
+      );
+      if (editModeOption && !editModeOption.classList.contains("is-empty")) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectEditingMode(String(editModeOption.dataset.mode || "").trim());
+        return;
+      }
+    }
+    if (!editModelMenuOpen) {
+      return;
+    }
+    const editModelOption = event.target.closest(
+      ".msg-edit-model-menu .model-option"
+    );
+    if (!editModelOption) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!editModelOption.classList.contains("is-empty")) {
+      selectEditingModel(editingModelIdFromOption(editModelOption));
+    }
   });
 
   document.addEventListener("mousedown", (event) => {
-    if (menuOpen && !modelPicker.contains(event.target)) {
+    const target = event.target;
+    const targetNode = target instanceof Node ? target : null;
+    const inModelMenu =
+      Boolean(targetNode && modelMenu.contains(targetNode)) ||
+      Boolean(
+        target instanceof Element &&
+          target.closest("#modelMenu, .model-menu.is-fixed")
+      );
+    if (
+      menuOpen &&
+      targetNode &&
+      !modelPicker.contains(targetNode) &&
+      !inModelMenu
+    ) {
       closeMenu();
     }
     if (
@@ -5540,15 +9139,52 @@
     ) {
       closeMentionMenu();
     }
+    const editModelPickerEl = getEditModelPicker();
+    const editModelMenuEl = findEditModelMenu(editModelPickerEl);
+    const editModePickerEl = getEditModePicker();
+    const editModeMenuEl = findEditModeMenu(editModePickerEl);
+    const inEditModelMenu =
+      Boolean(
+        editModelMenuEl && targetNode && editModelMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-model-menu")
+      );
+    const inEditModeMenu =
+      Boolean(
+        editModeMenuEl && targetNode && editModeMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-mode-menu")
+      );
     if (editModelMenuOpen) {
-      const picker = getEditModelPicker();
-      if (!picker || !picker.contains(event.target)) {
+      const inPicker =
+        editModelPickerEl &&
+        targetNode &&
+        editModelPickerEl.contains(targetNode);
+      if (!inPicker && !inEditModelMenu) {
         closeEditModelMenu();
       }
     }
+    if (editModeMenuOpen) {
+      const inPicker =
+        editModePickerEl &&
+        targetNode &&
+        editModePickerEl.contains(targetNode);
+      if (!inPicker && !inEditModeMenu) {
+        closeEditModeMenu();
+      }
+    }
+    // Floated edit menus live on document.body — must not cancel the edit.
     if (Number.isInteger(editingUserIndex) && !busy) {
       const composer = messagesEl.querySelector(".msg-edit-composer");
-      if (composer && !composer.contains(event.target)) {
+      if (
+        composer &&
+        targetNode &&
+        !composer.contains(targetNode) &&
+        !inEditModelMenu &&
+        !inEditModeMenu
+      ) {
         cancelEditingUserMessage();
       }
     }
@@ -5570,6 +9206,9 @@
     if (event.key === "Escape" && editModelMenuOpen) {
       closeEditModelMenu();
     }
+    if (event.key === "Escape" && editModeMenuOpen) {
+      closeEditModeMenu();
+    }
   });
 
 
@@ -5583,6 +9222,7 @@
       modeForSend = normalizeAgentModeUi(command.mode);
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
+        clearDraftPrompt();
         closeMentionMenu();
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
         focusPrompt();
@@ -5598,10 +9238,12 @@
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
+    editingModeId = "";
     editingAttachments = [];
     uiMessagesCache.push({ role: "user", text, attachments });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
+    clearDraftPrompt();
     clearPendingAttachments();
     clearPendingSelections();
     closeSlashMenu();
@@ -5674,7 +9316,7 @@
     });
   }
 
-  setAgentMode(agentMode, { close: false });
+  setAgentMode(agentMode, { close: false, notify: false });
   renderModeMenu();
 
   if (composerPlusMenu) {
@@ -5688,10 +9330,6 @@
       const action = item.getAttribute("data-action");
       closePlusMenu();
       if (action === "image") {
-        if (!currentModelSupportsVision()) {
-          showCopyToast(t("modelNoImages"));
-          return;
-        }
         vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });
@@ -5869,10 +9507,6 @@
     }
     event.preventDefault();
     event.stopPropagation();
-    if (!currentModelSupportsVision()) {
-      showCopyToast(t("modelNoImages"));
-      return;
-    }
     await ingestDroppedFiles(imageFiles);
     if (promptEl && typeof promptEl.focus === "function") {
       promptEl.focus();
@@ -5909,10 +9543,6 @@
       if (!imageFiles.length) {
         return;
       }
-      if (!currentModelSupportsVision()) {
-        showCopyToast(t("modelNoImages"));
-        return;
-      }
       event.preventDefault();
       await ingestDroppedFiles(imageFiles);
       if (promptEl && typeof promptEl.focus === "function") {
@@ -5923,6 +9553,12 @@
 
   if (newAgentBtn) {
     newAgentBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "newAgent" });
+    });
+  }
+
+  if (chatNewAgentBtn) {
+    chatNewAgentBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "newAgent" });
     });
   }
@@ -5945,12 +9581,6 @@
     });
   }
 
-  if (backFromSettingsBtn) {
-    backFromSettingsBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showAgents" });
-    });
-  }
-
   const settingsBody = document.getElementById("settingsBody");
   if (settingsBody) {
     settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
@@ -5961,7 +9591,7 @@
       }
       if (
         target.closest(
-          "#settingsCaBundle, #settingsSystemPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
+          "#settingsCaBundle, #settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
         )
       ) {
         schedulePersistSettings();
@@ -5972,9 +9602,210 @@
       if (!(target instanceof HTMLElement)) {
         return;
       }
-      if (target.closest("#settingsRejectUnauthorized")) {
+      if (
+        target.closest(
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsSpeedRoutingEnabled, #settingsSpeedRoutingReadonlyOverride, #settingsSpeedRoutingAgentExplore, #settingsSpeedRoutingFastModels, #settingsVisionRoutingModels"
+        )
+      ) {
+        if (target.id === "settingsSpeedRoutingEnabled") {
+          syncSpeedRoutingControlsDisabled();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsSpeedRoutingFastModels input.settings-speed-fast-check[data-speed-fast-id]"
+          )
+        ) {
+          speedRoutingFastModelIds = readSpeedRoutingFastModelIdsFromDom();
+          renderSpeedRoutingFastModelsList();
+          syncSpeedRoutingControlsDisabled();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsSpeedRoutingFastModels input.settings-model-toggle[data-speed-model-id]"
+          )
+        ) {
+          const modelId = String(
+            target.getAttribute("data-speed-model-id") || ""
+          ).trim();
+          if (setModelEnabledById(modelId, target.checked)) {
+            renderSettingsModels();
+            renderSpeedRoutingFastModelsList();
+            renderVisionRoutingModelsList();
+            syncSpeedRoutingControlsDisabled();
+          }
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsVisionRoutingModels input.settings-vision-pref-check[data-vision-pref-id]"
+          )
+        ) {
+          visionRoutingPreferredModelIds =
+            readVisionRoutingPreferredModelIdsFromDom();
+          renderVisionRoutingModelsList();
+        }
+        if (
+          target instanceof HTMLInputElement &&
+          target.matches(
+            "#settingsVisionRoutingModels input.settings-model-toggle[data-vision-model-id]"
+          )
+        ) {
+          const modelId = String(
+            target.getAttribute("data-vision-model-id") || ""
+          ).trim();
+          if (setModelEnabledById(modelId, target.checked)) {
+            renderSettingsModels();
+            renderSpeedRoutingFastModelsList();
+            renderVisionRoutingModelsList();
+            syncSpeedRoutingControlsDisabled();
+          }
+        }
         persistSettingsNow();
       }
+    });
+  }
+
+  if (openMcpServersBtn) {
+    openMcpServersBtn.addEventListener("click", () => {
+      showScreen("settings");
+      showSettingsCategory("mcp");
+    });
+  }
+  const settingsNav = document.getElementById("settingsNav");
+  if (settingsNav) {
+    settingsNav.addEventListener("click", (event) => {
+      const btn = event.target.closest(".settings-nav-item");
+      if (!btn) {
+        return;
+      }
+      const cat = btn.getAttribute("data-settings-cat");
+      if (cat) {
+        showSettingsCategory(cat);
+      }
+    });
+  }
+  if (backFromMcpBtn) {
+    backFromMcpBtn.addEventListener("click", () => {
+      closeMcpEditModal();
+      showSettingsCategory("models");
+    });
+  }
+  if (mcpSearchInput) {
+    mcpSearchInput.addEventListener("input", () => {
+      mcpSearchQuery = mcpSearchInput.value || "";
+      renderMcpServersList();
+    });
+  }
+  if (mcpAddBtn) {
+    mcpAddBtn.addEventListener("click", () => {
+      openMcpCustomEditModal("");
+    });
+  }
+  if (mcpServersList) {
+    mcpServersList.addEventListener("click", (event) => {
+      const editBtn = event.target.closest(".mcp-edit-btn");
+      if (editBtn) {
+        openMcpEditModal(editBtn.dataset.id || "figma");
+        return;
+      }
+      const deleteBtn = event.target.closest(".mcp-delete-btn");
+      if (deleteBtn) {
+        const id = deleteBtn.dataset.id || "";
+        vscode.postMessage({ type: "mcpDeleteServer", id });
+      }
+    });
+    mcpServersList.addEventListener("change", (event) => {
+      const toggle = event.target.closest(".mcp-enable-toggle");
+      if (!toggle) {
+        return;
+      }
+      const id = toggle.dataset.id || "";
+      const enabled = Boolean(toggle.checked);
+      if (!enabled) {
+        if (id === "figma") {
+          figmaStatus = { ...figmaStatus, enabled: false };
+        }
+        vscode.postMessage({ type: "mcpSetEnabled", id, enabled: false });
+        return;
+      }
+      if (id === "figma") {
+        const server = getMcpServers().find((s) => s.id === "figma");
+        const hasCreds =
+          Boolean(server && server.hasCredentials) ||
+          Boolean(figmaStatus.hasPat);
+        if (!hasCreds) {
+          toggle.checked = false;
+          openMcpEditModal("figma");
+          return;
+        }
+        figmaStatus = { ...figmaStatus, enabled: true };
+      }
+      vscode.postMessage({ type: "mcpSetEnabled", id, enabled: true });
+    });
+  }
+  if (mcpEditCloseBtn) {
+    mcpEditCloseBtn.addEventListener("click", () => closeMcpEditModal());
+  }
+  if (mcpEditModal) {
+    mcpEditModal.addEventListener("click", (event) => {
+      if (event.target?.dataset?.mcpDismiss === "1") {
+        closeMcpEditModal();
+      }
+    });
+  }
+  if (mcpCustomEditCloseBtn) {
+    mcpCustomEditCloseBtn.addEventListener("click", () =>
+      closeMcpCustomEditModal()
+    );
+  }
+  if (mcpCustomEditCancelBtn) {
+    mcpCustomEditCancelBtn.addEventListener("click", () =>
+      closeMcpCustomEditModal()
+    );
+  }
+  if (mcpCustomEditSaveBtn) {
+    mcpCustomEditSaveBtn.addEventListener("click", () => saveMcpCustomServer());
+  }
+  if (mcpCustomTransport) {
+    mcpCustomTransport.addEventListener("change", () =>
+      syncMcpCustomTransportFields()
+    );
+  }
+  if (mcpCustomEditModal) {
+    mcpCustomEditModal.addEventListener("click", (event) => {
+      if (event.target?.dataset?.mcpCustomDismiss === "1") {
+        closeMcpCustomEditModal();
+      }
+    });
+  }
+
+  if (settingsFigmaConnectBtn) {
+    settingsFigmaConnectBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "figmaConnect" });
+    });
+  }
+  if (settingsFigmaDisconnectBtn) {
+    settingsFigmaDisconnectBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "figmaDisconnect" });
+    });
+  }
+  if (settingsFigmaPatConnectBtn) {
+    settingsFigmaPatConnectBtn.addEventListener("click", () => {
+      const token = settingsFigmaPat ? settingsFigmaPat.value.trim() : "";
+      vscode.postMessage({ type: "figmaConnectPat", token });
+      if (settingsFigmaPat) {
+        settingsFigmaPat.value = "";
+      }
+    });
+  }
+  if (settingsFigmaPatHelpBtn) {
+    settingsFigmaPatHelpBtn.addEventListener("click", () => {
+      vscode.postMessage({
+        type: "openExternal",
+        url: "https://www.figma.com/settings",
+      });
     });
   }
 
@@ -6047,8 +9878,100 @@
     });
   }
 
+  if (modelEditProvider) {
+    modelEditProvider.addEventListener("change", () => {
+      syncModelNewProviderFields();
+      if (modelEditProvider.value === NEW_PROVIDER_VALUE) {
+        modelEditNewProviderId?.focus();
+      }
+      if (modelEditMode === "api" && modelEditIndex === -1) {
+        setModelEditMode("api");
+      }
+    });
+  }
+
+  if (modelEditApiFetchBtn) {
+    modelEditApiFetchBtn.addEventListener("click", () => {
+      const providerId = modelEditProvider?.value?.trim() || "";
+      if (!providerId || providerId === NEW_PROVIDER_VALUE) {
+        setFetchModelsHint(
+          modelEditApiStatus,
+          t("fetchModelsNeedProvider"),
+          true
+        );
+        return;
+      }
+      requestProviderModels(providerId, "editApi");
+    });
+  }
+
+  if (modelEditApiSelectNewBtn) {
+    modelEditApiSelectNewBtn.addEventListener("click", () => {
+      selectNewFetchModels();
+    });
+  }
+
+  if (modelEditApiSearch) {
+    modelEditApiSearch.addEventListener("input", () => {
+      renderFetchModelsPicker();
+    });
+  }
+
+  function bindFetchModelsDismiss(el) {
+    if (!el) {
+      return;
+    }
+    el.addEventListener("click", () => {
+      closeFetchModelsModal();
+    });
+  }
+
+  bindFetchModelsDismiss(fetchModelsCloseBtn);
+  bindFetchModelsDismiss(fetchModelsCancelBtn);
+
+  if (fetchModelsAddBtn) {
+    fetchModelsAddBtn.addEventListener("click", () => {
+      if (applyFetchedModels()) {
+        closeFetchModelsModal();
+      }
+    });
+  }
+
+  if (fetchModelsSelectNewBtn) {
+    fetchModelsSelectNewBtn.addEventListener("click", () => {
+      selectNewFetchModels();
+    });
+  }
+
+  if (fetchModelsSearch) {
+    fetchModelsSearch.addEventListener("input", () => {
+      renderFetchModelsPicker();
+    });
+  }
+
+  if (fetchModelsModal) {
+    fetchModelsModal.addEventListener("click", (event) => {
+      if (event.target?.getAttribute?.("data-fetch-models-dismiss") === "1") {
+        closeFetchModelsModal();
+      }
+    });
+    fetchModelsModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeFetchModelsModal();
+      }
+    });
+  }
+
   if (settingsProvidersList) {
     settingsProvidersList.addEventListener("click", (event) => {
+      const fetchBtn = event.target.closest(".settings-provider-fetch");
+      if (fetchBtn) {
+        const index = Number(fetchBtn.dataset.index);
+        if (Number.isFinite(index)) {
+          openFetchModelsModal(index);
+        }
+        return;
+      }
       const editBtn = event.target.closest(".settings-provider-edit");
       if (editBtn) {
         const index = Number(editBtn.dataset.index);
@@ -6106,6 +10029,8 @@
       setModelEditMode(tab.getAttribute("data-model-mode"));
       if (modelEditMode === "json") {
         settingsModelsJson?.focus();
+      } else if (modelEditMode === "api") {
+        modelEditApiFetchBtn?.focus();
       } else {
         modelEditId?.focus();
       }
@@ -6299,29 +10224,36 @@
     });
   }
 
-  if (settingsDefaultModel) {
-    settingsDefaultModel.addEventListener("change", () => {
-      settingsDefaultModelId = settingsDefaultModel.value;
-      schedulePersistSettings(0);
-    });
-  }
   if (settingsLanguage) {
     settingsLanguage.addEventListener("change", () => {
       settingsLanguageValue = settingsLanguage.value || "auto";
       schedulePersistSettings(0);
       showCopyToast(
-        UI_LANG === "ru"
-          ? "Перезагрузите окно VS Code, чтобы язык панели обновился"
-          : "Reload the VS Code window to apply the panel language"
+        UI_LANG === "ru" ? "Перезагрузка окна…" : "Reloading window…"
       );
     });
   }
 
-  if (backToAgentsBtn) {
-    backToAgentsBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showAgents" });
+  if (toggleAgentsRailBtn) {
+    toggleAgentsRailBtn.addEventListener("click", () => {
+      setAgentsRailOpen(!agentsRailOpen);
     });
   }
+
+  if (agentsRailBackdrop) {
+    agentsRailBackdrop.addEventListener("click", () => {
+      setAgentsRailOpen(false);
+    });
+  }
+
+  if (workspaceShell && typeof ResizeObserver === "function") {
+    const shellRo = new ResizeObserver(() => {
+      updateWorkspaceNarrow();
+    });
+    shellRo.observe(workspaceShell);
+  }
+  updateWorkspaceNarrow();
+  applyAgentsRailVisibility();
 
   if (chatBranchesEl) {
     chatBranchesEl.addEventListener("click", (event) => {
@@ -6541,20 +10473,12 @@
         }
         return;
       }
-      const nameEl = event.target.closest(".agent-name");
-      if (nameEl && agentsListEl.contains(nameEl)) {
-        event.preventDefault();
-        event.stopPropagation();
-        const block = nameEl.closest("[data-agent]");
-        const agentId = block ? block.dataset.agent : "";
-        if (agentId) {
-          startAgentRename(agentId, nameEl);
-        }
-        return;
-      }
       const agentRow = event.target.closest(".agent-row");
       if (agentRow) {
         event.preventDefault();
+        if (workspaceNarrow) {
+          setAgentsRailOpen(false);
+        }
         vscode.postMessage({
           type: "openAgent",
           agentId: agentRow.dataset.agent,
@@ -6573,6 +10497,9 @@
         return;
       }
       event.preventDefault();
+      if (workspaceNarrow) {
+        setAgentsRailOpen(false);
+      }
       vscode.postMessage({
         type: "openAgent",
         agentId: agentRow.dataset.agent,
@@ -6604,6 +10531,17 @@
   }
 
   messagesEl.addEventListener("click", (event) => {
+    const codeToggle = event.target.closest(".md-pre-toggle");
+    if (
+      codeToggle &&
+      messagesEl.contains(codeToggle) &&
+      !event.target.closest("a.md-file")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCodeBlock(codeToggle);
+      return;
+    }
     const toolToggle = event.target.closest(".tool-group-toggle");
     if (toolToggle && messagesEl.contains(toolToggle)) {
       event.preventDefault();
@@ -6617,22 +10555,18 @@
       updateToolGroupSummary(group);
       return;
     }
+    const editModeTrigger = event.target.closest(".msg-edit-mode-trigger");
+    if (editModeTrigger && messagesEl.contains(editModeTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleEditModeMenu();
+      return;
+    }
     const editModelTrigger = event.target.closest(".msg-edit-model-trigger");
     if (editModelTrigger && messagesEl.contains(editModelTrigger)) {
       event.preventDefault();
       event.stopPropagation();
       toggleEditModelMenu();
-      return;
-    }
-    const editModelOption = event.target.closest(
-      ".msg-edit-model-menu .model-option"
-    );
-    if (editModelOption && messagesEl.contains(editModelOption)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!editModelOption.classList.contains("is-empty")) {
-        selectEditingModel(editModelOption.dataset.id);
-      }
       return;
     }
     const saveEditBtn = event.target.closest(".msg-edit-save");
@@ -6665,35 +10599,6 @@
         return;
       }
       vscode.postMessage({ type: "branchFromMessage", messageIndex: index });
-      return;
-    }
-    const copyCodeBtn = event.target.closest(".md-pre-copy");
-    if (copyCodeBtn && messagesEl.contains(copyCodeBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const wrap = copyCodeBtn.closest(".md-pre-wrap");
-      let text = "";
-      if (wrap && wrap.classList.contains("has-lines")) {
-        text = Array.from(wrap.querySelectorAll(".md-line-text"))
-          .map((el) => el.textContent || "")
-          .join("\n");
-      } else {
-        const code = wrap ? wrap.querySelector("code") : null;
-        text = code ? code.textContent || "" : "";
-      }
-      requestCopyText(text);
-      return;
-    }
-    const copyMsgBtn = event.target.closest(".msg-copy");
-    if (copyMsgBtn && messagesEl.contains(copyMsgBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const wrap = copyMsgBtn.closest(".msg-wrap");
-      const msg = wrap
-        ? wrap.querySelector(".msg")
-        : copyMsgBtn.closest(".msg");
-      const text = msg ? msg.dataset.raw || "" : "";
-      requestCopyText(text);
       return;
     }
     const mentionBtn = event.target.closest(".msg-mention");
@@ -6758,6 +10663,16 @@
   });
 
   messagesEl.addEventListener("keydown", (event) => {
+    const codeToggle = event.target.closest(".md-pre-toggle");
+    if (
+      codeToggle &&
+      event.target === codeToggle &&
+      (event.key === "Enter" || event.key === " ")
+    ) {
+      event.preventDefault();
+      toggleCodeBlock(codeToggle);
+      return;
+    }
     const input = event.target.closest(".msg-edit-input");
     if (!(input instanceof HTMLTextAreaElement)) {
       return;
@@ -6770,6 +10685,11 @@
       submitEditedUserMessage();
       return;
     }
+    if (event.key === "Escape" && editModeMenuOpen) {
+      event.preventDefault();
+      closeEditModeMenu();
+      return;
+    }
     if (event.key === "Escape" && editModelMenuOpen) {
       event.preventDefault();
       closeEditModelMenu();
@@ -6777,6 +10697,7 @@
   });
 
   promptEl.addEventListener("input", () => {
+    persistDraftPrompt();
     if (!onSlashInput(promptEl)) {
       onMentionInput(promptEl);
     }
@@ -6798,6 +10719,9 @@
   messagesEl.addEventListener(
     "scroll",
     () => {
+      if (editModelMenuOpen) {
+        closeEditModelMenu();
+      }
       if (!restoringChatScroll && chatScreen && !chatScreen.hidden && activeChatId) {
         syncChatScroll(activeChatId);
       }
@@ -6831,19 +10755,21 @@
     const msg = event.data;
     switch (msg.type) {
       case "init":
+        if (msg.chatId) {
+          activeChatId = msg.chatId;
+        }
         fillModels(msg.models, msg.selectedModel);
         if (msg.modes) {
           applyModes(msg.modes);
         }
+        applySelectedMode(msg.selectedMode, { notify: false });
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         editingAttachments = [];
         clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
-        if (msg.chatId) {
-          activeChatId = msg.chatId;
-        }
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
         renderMessages(msg.uiMessages || [], "restore", msg.scrollTop);
         if (msg.agentId) {
@@ -6909,30 +10835,55 @@
         break;
       case "showSettings":
         showScreen("settings");
+        showSettingsCategory(msg.openMcp ? "mcp" : "models");
         setBusy(Boolean(msg.busy));
         break;
       case "settings":
         fillSettings(msg.settings);
-        showScreen("settings");
+        if (UI_SURFACE === "settings" && settingsScreen && settingsScreen.hidden) {
+          showScreen("settings");
+        }
+        break;
+      case "providerModelsListed":
+        onProviderModelsListed(msg);
+        break;
+      case "figmaStatus":
+        renderFigmaStatus(msg.status || {});
+        break;
+      case "providerConnStatus":
+        renderProviderConnStatus(msg.status || {});
+        break;
+      case "mcpServers":
+        mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
+        renderMcpServersList();
+        break;
+      case "figmaNeedsConnect":
+        showCopyToast(t("figmaNeedsConnectToast"));
         break;
       case "showChat":
-        if (msg.models) {
-          fillModels(msg.models, msg.selectedModel);
-        }
-        editingUserIndex = null;
-        editingUserText = "";
-        editingModelId = "";
-        setCanRegenerate(msg.canRegenerate);
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
+        if (msg.models) {
+          fillModels(msg.models, msg.selectedModel);
+        }
+        applySelectedMode(msg.selectedMode, { notify: false });
+        editingUserIndex = null;
+        editingUserText = "";
+        editingModelId = "";
+        editingModeId = "";
+        setCanRegenerate(msg.canRegenerate);
         applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
+        if (msg.providerConnStatus) {
+          renderProviderConnStatus(msg.providerConnStatus);
+        }
         if (msg.uiMessages) {
           renderMessages(msg.uiMessages, "restore", msg.scrollTop);
         }
         if (msg.agentId) {
           activeAgentId = msg.agentId;
         }
+        syncActiveAgentHighlight();
         renderChatBranches(msg.branches);
         if (
           chatAgentNameEl &&
@@ -6994,7 +10945,7 @@
         setContextUsage(msg.used || 0, msg.max || contextMax);
         break;
       case "modelsUpdated":
-        fillModels(msg.models, getSelectedModel() || msg.selectedModel);
+        fillModels(msg.models, msg.selectedModel);
         break;
       case "modesUpdated":
         applyModes(msg.modes);
@@ -7013,12 +10964,16 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         editingAttachments = [];
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;
       case "copied":
         showCopyToast(t("copied"));
+        break;
+      case "runFinished":
+        playRunFinishedSound(msg.outcome === "error" ? "error" : "success");
         break;
       case "append":
         uiMessagesCache.push({
@@ -7055,8 +11010,28 @@
           streamingEl.dataset.raw = "";
         }
         streamingEl.dataset.raw = (streamingEl.dataset.raw || "") + msg.text;
-        setMessageContent(streamingEl, "assistant", streamingEl.dataset.raw);
-        scrollToBottom();
+        if (!streamingRenderScheduled) {
+          streamingRenderScheduled = true;
+          requestAnimationFrame(() => {
+            streamingRenderScheduled = false;
+            if (streamingEl) {
+              setMessageContent(
+                streamingEl,
+                "assistant",
+                streamingEl.dataset.raw || ""
+              );
+              scrollToBottom();
+            }
+          });
+        }
+        break;
+      case "assistantStreamClear":
+        if (streamingEl) {
+          const wrap = streamingEl.closest(".msg-wrap-assistant");
+          (wrap || streamingEl).remove();
+          streamingEl = null;
+        }
+        streamingRenderScheduled = false;
         break;
       case "assistantDone":
         if (!streamingEl && msg.text) {
@@ -7074,9 +11049,11 @@
           streamingEl.dataset.index = String(uiMessagesCache.length - 1);
         }
         streamingEl = null;
+        streamingRenderScheduled = false;
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         setBusy(false);
         ensureRegenerateButton();
         break;
@@ -7085,6 +11062,7 @@
           break;
         }
         streamingEl = null;
+        streamingRenderScheduled = false;
         setAgentStatus("", true);
         setBusy(false);
         break;
@@ -7092,7 +11070,7 @@
         if (msg.chatId && msg.chatId !== activeChatId) {
           break;
         }
-        streamingEl = null;
+        clearStoppedRunArtifacts();
         setAgentStatus("", true);
         setBusy(false);
         break;
@@ -7102,6 +11080,7 @@
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
+        editingModeId = "";
         streamingEl = null;
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
@@ -7110,13 +11089,14 @@
     }
   });
 
-  vscode.postMessage({ type: "ready" });
+  vscode.postMessage({ type: "ready", surface: UI_SURFACE });
   setContextUsage(0, contextMax);
+  restoreDraftPrompt();
 
   // если init потерялся — перезапросим модели
   setTimeout(() => {
-    if (!models.length) {
-      vscode.postMessage({ type: "ready" });
+    if (UI_SURFACE === "panel" && !models.length) {
+      vscode.postMessage({ type: "ready", surface: UI_SURFACE });
     }
   }, 400);
 })();

@@ -21,6 +21,8 @@ export interface ChatSession {
   id: string;
   title: string;
   selectedModel: string;
+  /** Agent / Plan / Ask (или custom mode id) для этого чата. */
+  selectedMode?: string;
   lastTurnModel?: string;
   history: ChatMessage[];
   uiMessages: UiMessage[];
@@ -99,13 +101,77 @@ export function chatHasMessages(uiMessages: UiMessage[] | undefined): boolean {
   );
 }
 
+function selectionFenceLabel(info: string): string {
+  const match = String(info || "")
+    .trim()
+    .match(/^(\d+):(\d+):(\S+)/);
+  if (!match) {
+    return "";
+  }
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const file = match[3];
+  return start === end ? `${file}:${start}` : `${file}:${start}–${end}`;
+}
+
+/** Короткий plain-text текст для названий и превью в списках. */
+export function summarizeMarkdownText(value: string): string {
+  const source = String(value || "").replace(/\r\n?/g, "\n").trim();
+  if (!source) {
+    return "";
+  }
+
+  let fenceFallback = "";
+  const withoutFences = source.replace(
+    /```([^\n`]*)\n([\s\S]*?)```/g,
+    (_match, info: string, body: string) => {
+      if (!fenceFallback) {
+        fenceFallback =
+          selectionFenceLabel(info) ||
+          String(body || "")
+            .split("\n")
+            .map((line) => line.trim())
+            .find(Boolean) ||
+          "";
+      }
+      return "\n";
+    }
+  );
+
+  // Старые автозаголовки могли сохраниться уже обрезанными посреди code fence.
+  const unmatchedSelection = withoutFences.match(
+    /^\s*```(\d+:\d+:\S+)(?:\s+|$)/
+  );
+  if (unmatchedSelection && !fenceFallback) {
+    fenceFallback = selectionFenceLabel(unmatchedSelection[1]);
+  }
+
+  const plain = withoutFences
+    .replace(/^\s*```\d+:\d+:\S+(?:\s+|$)/, "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, "")
+    .replace(/[*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return plain || fenceFallback;
+}
+
+function truncateSummary(value: string, maxLength: number): string {
+  const text = summarizeMarkdownText(value);
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
 function previewFromMessages(uiMessages: UiMessage[]): string {
   for (let i = uiMessages.length - 1; i >= 0; i--) {
     const msg = uiMessages[i];
     if (msg.role === "assistant" || msg.role === "user") {
-      const text = String(msg.text || "").replace(/\s+/g, " ").trim();
+      const text = truncateSummary(msg.text, 80);
       if (text) {
-        return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+        return text;
       }
     }
   }
@@ -126,8 +192,24 @@ function titleFromMessages(uiMessages: UiMessage[]): string {
   if (!firstUser) {
     return "New Agent";
   }
-  const text = firstUser.text.replace(/\s+/g, " ").trim();
-  return text.length > 48 ? `${text.slice(0, 48)}…` : text;
+  return truncateSummary(firstUser.text, 48) || "New Agent";
+}
+
+export function getAgentDisplayName(
+  agent: AgentRecord,
+  chat: ChatSession | undefined
+): string {
+  const rawName = String(agent.name || "");
+  if (rawName.includes("```") && chat) {
+    return titleFromMessages(chat.uiMessages);
+  }
+  return truncateSummary(rawName, 48) || "New Agent";
+}
+
+/** Нормализует id режима чата; пустое → agent. */
+export function normalizeSelectedMode(mode: unknown): string {
+  const id = typeof mode === "string" ? mode.trim() : "";
+  return id || "agent";
 }
 
 function createEmptyChat(selectedModel = ""): ChatSession {
@@ -136,6 +218,7 @@ function createEmptyChat(selectedModel = ""): ChatSession {
     id: uid("chat"),
     title: "New Agent",
     selectedModel,
+    selectedMode: "agent",
     history: [],
     uiMessages: [],
     updatedAt: now,
@@ -211,6 +294,7 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
     ...chat,
     title: chat.title || titleFromMessages(chat.uiMessages || []),
     selectedModel: chat.selectedModel || fallbackModel,
+    selectedMode: normalizeSelectedMode(chat.selectedMode),
     history: Array.isArray(chat.history) ? chat.history : [],
     uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
     updatedAt: chat.updatedAt || Date.now(),
@@ -346,6 +430,7 @@ export function migrateToStoreV2(
       id: uid("chat"),
       title: titleFromMessages(v1.uiMessages || []),
       selectedModel: v1.selectedModel || fallbackModel,
+      selectedMode: "agent",
       history: Array.isArray(v1.history) ? v1.history : [],
       uiMessages: Array.isArray(v1.uiMessages) ? v1.uiMessages : [],
       updatedAt: v1.updatedAt || Date.now(),
@@ -380,6 +465,10 @@ export function createDefaultStore(fallbackModel = ""): AgentsStoreV2 {
     activeChatId: chat.id,
     screen: "chat",
   };
+}
+
+export function cloneStore(store: AgentsStoreV2): AgentsStoreV2 {
+  return JSON.parse(JSON.stringify(store)) as AgentsStoreV2;
 }
 
 export function getActiveChat(store: AgentsStoreV2): ChatSession | undefined {
@@ -434,7 +523,7 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
       return {
         id: agent.id,
         chatId: agent.chatId,
-        name: agent.name,
+        name: getAgentDisplayName(agent, chat),
         model: chat?.selectedModel || "",
         preview: chat ? previewFromMessages(chat.uiMessages) : "Empty chat",
         updatedAt: agent.updatedAt,
@@ -532,7 +621,7 @@ export function buildArchiveList(store: AgentsStoreV2): ArchiveAgentItem[] {
       const chat = store.chats[agent.chatId];
       return {
         id: agent.id,
-        name: agent.name,
+        name: getAgentDisplayName(agent, chat),
         preview: chat ? previewFromMessages(chat.uiMessages) : "",
         archivedAt: agent.archivedAt || chat?.archivedAt || agent.updatedAt,
       };
@@ -762,6 +851,7 @@ export function branchChatFromMessage(
     id: uid("chat"),
     title: `${agentName} · ${branchIndex}`,
     selectedModel: source.selectedModel || "",
+    selectedMode: normalizeSelectedMode(source.selectedMode),
     history: prefix.history,
     uiMessages: prefix.uiMessages,
     updatedAt: now,

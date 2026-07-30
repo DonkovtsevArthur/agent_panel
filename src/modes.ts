@@ -18,19 +18,27 @@ export interface AgentModeDef {
   placeholder?: string;
 }
 
-const PLAN_MODE_SYSTEM_PROMPT = `Plan mode is active.
+function planModeSystemPrompt(_lang?: "en" | "ru"): string {
+  return `Plan mode is active.
 Your task is to inspect the context and produce a clear implementation plan.
-Only read-only tools are allowed: list_files, read_file.
-Do not modify files, run shell commands, or implement code in the repository.
+Read-only repo tools are allowed: list_files, read_file, fetch_url, open_external.
+Connected MCP tools are available in Plan mode — including all Figma MCP tools when connected.
+You CAN read http(s) links via fetch_url and Figma designs via MCP when connected — never say you cannot open external URLs or Figma, and never say MCP is unavailable in this mode.
+Do not modify repository files, run shell commands, or implement code in the repository.
 Reply with a structured plan in English: goal, ordered steps, affected files, risks, and open questions.
-Do not start implementation. If you need more data, read the relevant files first and then write the plan.`;
+Do not start implementation. If you need more data, read the relevant files / call fetch_url or Figma MCP first and then write the plan.`;
+}
 
-const ASK_MODE_SYSTEM_PROMPT = `Ask mode is active.
+function askModeSystemPrompt(_lang?: "en" | "ru"): string {
+  return `Ask mode is active.
 Answer the user's questions: explain code, investigate causes, give advice and examples.
-Only read-only tools are allowed: list_files, read_file.
-Do not modify files, run shell commands, implement features, or edit the repository.
+Read-only repo tools are allowed: list_files, read_file, fetch_url, open_external.
+Connected MCP tools are available in Ask mode — including all Figma MCP tools when connected.
+You CAN read http(s) links via fetch_url and Figma designs via MCP when connected — never say you cannot open external URLs or Figma, and never say MCP is unavailable in this mode.
+Do not modify repository files, run shell commands, implement features, or edit the repository.
 Do not turn the answer into a large implementation plan or jump straight to "I can make the change" — answer the question directly.
-If you need more data, read the relevant files and ground your answer in facts from the code.`;
+If you need more data, read the relevant files / call fetch_url or Figma MCP and ground your answer in facts from the tools.`;
+}
 
 export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
 
@@ -48,7 +56,7 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     label: "Plan",
     description: "Plan only, no edits",
     tools: "readonly",
-    prompt: PLAN_MODE_SYSTEM_PROMPT,
+    prompt: planModeSystemPrompt("en"),
     builtin: true,
     placeholder:
       "Describe the task — the agent will draft a plan without edits... (@ for file)",
@@ -58,7 +66,7 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     label: "Ask",
     description: "Answers and explanations",
     tools: "readonly",
-    prompt: ASK_MODE_SYSTEM_PROMPT,
+    prompt: askModeSystemPrompt("en"),
     builtin: true,
     placeholder: "Ask about code or a task... (@ for file)",
   },
@@ -190,10 +198,17 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
   const byId = new Map(
     custom.filter((m) => m.id).map((m) => [m.id, m] as const)
   );
+  const lang = currentUiLanguage();
   const builtins = BUILTIN_MODES.map((base) => {
     const override = byId.get(base.id);
+    const basePrompt =
+      base.id === "plan"
+        ? planModeSystemPrompt(lang)
+        : base.id === "ask"
+          ? askModeSystemPrompt(lang)
+          : base.prompt;
     if (!override) {
-      return { ...base };
+      return { ...base, prompt: basePrompt };
     }
     const merged: AgentModeDef = {
       ...base,
@@ -206,6 +221,8 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
     }
     if (override.prompt !== undefined) {
       merged.prompt = override.prompt;
+    } else if (basePrompt) {
+      merged.prompt = basePrompt;
     }
     if (override.placeholder !== undefined) {
       merged.placeholder = override.placeholder;
@@ -235,13 +252,19 @@ export function isReadonlyPolicy(tools: ModeToolsPolicy): boolean {
   return tools === "readonly";
 }
 
-export function toolsForPolicy(tools: ModeToolsPolicy): ChatTool[] {
-  if (!isReadonlyPolicy(tools)) {
-    return agentTools;
+export function toolsForPolicy(
+  tools: ModeToolsPolicy,
+  extraTools: ChatTool[] = []
+): ChatTool[] {
+  const base = !isReadonlyPolicy(tools)
+    ? agentTools
+    : agentTools.filter((tool) =>
+        READONLY_TOOL_NAMES.has(tool.function.name)
+      );
+  if (!extraTools.length) {
+    return base;
   }
-  return agentTools.filter((tool) =>
-    READONLY_TOOL_NAMES.has(tool.function.name)
-  );
+  return [...base, ...extraTools];
 }
 
 export function modeThinkingLabel(mode: AgentModeDef): string {
