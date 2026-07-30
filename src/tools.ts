@@ -84,7 +84,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для commit/push сначала проверь git status и добавляй только относящиеся к задаче пути; git add --all/-A/. запрещён без явной просьбы включить все изменения. После успешного git push не читай файлы и заверши ответ. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: git log, сборка, тесты.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Для commit/push сначала проверь git status и добавляй только относящиеся к задаче пути; git add --all/-A/. запрещён без явной просьбы включить все изменения. После успешного git push не читай файлы и заверши ответ. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: git log, сборка, тесты.",
       parameters: {
         type: "object",
         properties: {

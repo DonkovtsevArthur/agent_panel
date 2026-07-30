@@ -14,12 +14,18 @@ export function looksLikeDiscardAllChangesRequest(text: string): boolean {
   ) {
     return false;
   }
-  if (/(не|не надо|не нужно)\s+(убир|убер|убр|откат|сброс|удал)/.test(value)) {
+  if (
+    /(не|не надо|не нужно)\s+(убир|убер|убр|откат|отмен|сброс|удал)/.test(
+      value
+    )
+  ) {
     return false;
   }
 
   const action =
-    /(убир|убер|убр|откат|сброс|discard|revert|restore|reset)/.test(value);
+    /(убир|убер|убр|откат|отмен|сброс|discard|revert|restore|reset|undo)/.test(
+      value
+    );
   const all = /(все|всё|all)/.test(value);
   const changes = /(измен|правк|change|local change)/.test(value);
   return action && all && changes;
@@ -33,7 +39,7 @@ export function looksLikeAmbiguousRestoreRequest(text: string): boolean {
     .replace(/[.!?]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  return /^(верни|вернуть|верни назад|откати|откатить|восстанови|восстановить|restore|revert|undo)$/.test(
+  return /^(верни|вернуть|верни назад|откати|откатить|отмени|отменить|восстанови|восстановить|restore|revert|undo)$/.test(
     value
   );
 }
