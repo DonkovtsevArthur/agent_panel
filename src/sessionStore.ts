@@ -11,10 +11,28 @@ export type UiMessageRole =
 
 export type { MessageAttachment };
 
+/** Persisted structured step for tool / compaction / retry replay in the webview. */
+export interface UiMessageStep {
+  stepId: string;
+  kind: "tool" | "compaction" | "retry" | "thinking" | "text";
+  toolCallId?: string;
+  name?: string;
+  argsPreview?: string;
+  status?: "queued" | "running" | "done" | "error";
+  resultPreview?: string;
+  text?: string;
+  attempt?: number;
+  maxAttempts?: number;
+}
+
 export interface UiMessage {
   role: UiMessageRole;
   text: string;
   attachments?: MessageAttachment[];
+  /** Thinking / reasoning text (Kimi etc.), shown as a collapsible block. */
+  reasoning?: string;
+  /** Structured agent step (tool cards, compaction, retry) for history replay. */
+  step?: UiMessageStep;
 }
 
 export interface ChatSession {
@@ -714,6 +732,9 @@ function cloneUiMessage(msg: UiMessage): UiMessage {
   const next: UiMessage = { role: msg.role, text: msg.text };
   if (msg.attachments?.length) {
     next.attachments = msg.attachments.map((a) => ({ ...a }));
+  }
+  if (msg.reasoning) {
+    next.reasoning = msg.reasoning;
   }
   return next;
 }

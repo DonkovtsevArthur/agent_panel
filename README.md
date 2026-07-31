@@ -17,14 +17,14 @@
 - **Режимы:** Agent · Plan · Ask (плюс кастомные режимы)
 - **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (страница по ссылке: title/текст/цвета), `open_external` (`Plan`/`Ask` работают только на чтение)
 - **MCP tools** — tools с подключённых MCP-серверов доступны агенту в том же loop (`mcp__<id>__…`)
-- **Стриминг** с остановкой, edit & resend, regenerate
+- Остановка хода, edit & resend, regenerate
 - **@file**, вложения и картинки (vision, если модель поддерживает)
 - **Контекст редактора** и индикатор использования context window
 - **Карточка diff review** с переходом в Source Control
 - **Генерация commit message** в Source Control (по вашему API); промпт и язык — для всех workspace или для текущего
 - **Figma MCP** — Personal Access Token в Settings → MCP Servers; агент читает дизайн по ссылке figma.com
 - **Ветки ответов** без потери основной нити диалога
-- **Поиск** по агентам в текущем workspace
+- **Поиск** по сообщениям чата
 - Сессии хранятся **локально для каждого workspace**
 
 ## MCP Servers
@@ -123,14 +123,14 @@ Marketplace and UI name: **Harbor Agents**.
 - **Modes:** Agent · Plan · Ask (plus custom modes)
 - **Tools:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (page by URL: title/text/colors), `open_external` (Plan/Ask are read-only)
 - **MCP tools** — tools from connected MCP servers are available in the same agent loop (`mcp__<id>__…`)
-- **Streaming** with stop; edit & resend; regenerate
+- Stop a run; edit & resend; regenerate
 - **@file** mentions, attachments and images (vision when the model supports it)
 - **Editor context** and context-window usage indicator
 - **Diff review** card with jump to Source Control
 - **Generate commit messages** in Source Control via your API; prompt and language can be saved for all workspaces or the current one
 - **Figma MCP** — Personal Access Token in Settings → MCP Servers; the agent reads designs from figma.com links
 - **Branches** without losing the main thread
-- **Search** across agents in the workspace
+- **Search** within the chat
 - Sessions stored **locally per workspace**
 
 ### MCP Servers

@@ -5,11 +5,38 @@ export interface ModelCapabilities {
   omitTemperature: boolean;
   requiresReasoningContentForToolCalls: boolean;
   minimumOutputTokens?: number;
+  /**
+   * Модель принимает OpenAI-style `reasoning_effort` на chat/completions
+   * (Claude 3.5+/4 через корпоративный гейтвей). Гейтвей включает extended
+   * thinking и стримит `reasoning_content` в дельтах.
+   */
+  supportsReasoningEffort: boolean;
+  /** Значение reasoning_effort по умолчанию, если не задано в конфиге. */
+  reasoningEffortDefault?: string;
+  /**
+   * Anthropic extended thinking: thinking-блоки несут криптографическую
+   * signature, которую OpenAI-style `reasoning_content` не передаёт. Эхо
+   * reasoning_content на assistant tool-call turn гейтвей переводит в
+   * thinking без signature → Anthropic 400/500 на re-entry. Поэтому для
+   * Claude reasoning-моделей reasoning_content с assistant-сообщений
+   * при возврате истории снимается (гейтвей сам регенерирует thinking).
+   * Противоположность Kimi (где thinking нужен в эхе).
+   */
+  stripReasoningOnEcho: boolean;
+  /**
+   * Kimi-гейтвей возвращает 400, если у assistant tool-call turn-а есть
+   * поле `content` (даже null). Для Kimi content опускается полностью.
+   * Все прочие модели (DeepSeek, OpenAI, Anthropic-compat) требуют
+   * `content: null` на assistant tool-call turn — без него строгие
+   * гейтвеи отвечают 500 на re-entry после tool-result.
+   */
+  omitContentForToolCalls: boolean;
 }
 
 export interface ModelCapabilityOverrides {
   contextWindow?: number;
   supportsVision?: boolean;
+  reasoningEffort?: string;
 }
 
 interface ModelCapabilityRule {
@@ -57,6 +84,25 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
       omitTemperature: true,
       requiresReasoningContentForToolCalls: true,
       minimumOutputTokens: KIMI_MIN_MAX_TOKENS,
+      omitContentForToolCalls: true,
+    },
+  },
+  {
+    // Claude 3.5+ / 4.x (и новее) поддерживают extended thinking через
+    // OpenAI-style `reasoning_effort` на корпоративном гейтвее. Исключаем
+    // Claude 3.0 (opus/sonnet/haiku) — там thinking нет.
+    // Extended thinking требует default temperature (1) — опускаем поле,
+    // иначе гейтвей возвращает 500 на re-entry после tool results.
+    // max_tokens должен превышать thinking-бюджет: при reasoning_effort "high"
+    // дефолт config.maxTokens (4096) слишком мал → Anthropic 400 → гейтвей 500.
+    // Ставим минимум 16000, поверх которого берётся max из конфига/модели.
+    pattern: /claude.*(?:3[-.][5-9]|[4-9])/i,
+    capabilities: {
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: "high",
+      omitTemperature: true,
+      minimumOutputTokens: 16_000,
+      stripReasoningOnEcho: true,
     },
   },
   {
@@ -113,6 +159,12 @@ export function resolveModelCapabilities(
   if (typeof overrides.supportsVision === "boolean") {
     resolved.supportsVision = overrides.supportsVision;
   }
+  if (
+    typeof overrides.reasoningEffort === "string" &&
+    overrides.reasoningEffort.trim()
+  ) {
+    resolved.reasoningEffortDefault = overrides.reasoningEffort.trim();
+  }
 
   return {
     ...(isPositiveInteger(resolved.contextWindow)
@@ -122,10 +174,16 @@ export function resolveModelCapabilities(
     ...(isPositiveInteger(resolved.minimumOutputTokens)
       ? { minimumOutputTokens: resolved.minimumOutputTokens }
       : {}),
+    ...(typeof resolved.reasoningEffortDefault === "string"
+      ? { reasoningEffortDefault: resolved.reasoningEffortDefault }
+      : {}),
     supportsVision: resolved.supportsVision === true,
     omitTemperature: resolved.omitTemperature === true,
     requiresReasoningContentForToolCalls:
       resolved.requiresReasoningContentForToolCalls === true,
+    supportsReasoningEffort: resolved.supportsReasoningEffort === true,
+    stripReasoningOnEcho: resolved.stripReasoningOnEcho === true,
+    omitContentForToolCalls: resolved.omitContentForToolCalls === true,
   };
 }
 

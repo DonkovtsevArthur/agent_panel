@@ -104,6 +104,9 @@ test("distinguishes mutating Git commands from status verification", () => {
     isGitStatusCommand("git restore src/model.ts && git status --short"),
     true
   );
+  assert.equal(isGitMutationCommand("git checkout -- AGENTS.md package.json"), true);
+  assert.equal(isGitMutationCommand("git checkout main"), true);
+  assert.equal(isGitMutationCommand("git checkout -b feature"), true);
 });
 
 test("blocks broad discard unless all changes were requested explicitly", () => {
