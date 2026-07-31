@@ -5,6 +5,10 @@ const {
   MAX_DIAGNOSTIC_FIX_ATTEMPTS,
   MAX_DIAGNOSTICS_CHECKS,
   MAX_PROJECT_COMMANDS_PER_TURN,
+  applyGetDiagnosticsToVerification,
+  applyWriteFileToVerification,
+  buildVerificationNudge,
+  createVerificationState,
   decideVerificationStep,
   isProjectVerificationCommand,
   isTargetedTestCommand,
@@ -87,6 +91,69 @@ test("runs at most one project command after clean diagnostics", () => {
       })
     ).kind,
     "none"
+  );
+});
+
+test("metadata-only edits skip project-wide lint/typecheck", () => {
+  const {
+    isMetadataOnlyVerificationScope,
+    isMetadataVerificationPath,
+  } = require("../out/verificationLoop.js");
+  assert.equal(isMetadataVerificationPath("package.json"), true);
+  assert.equal(isMetadataOnlyVerificationScope(["package.json"]), true);
+  assert.equal(
+    decideVerificationStep(
+      state({
+        editedPaths: ["package.json"],
+        diagnosticsCheckedAfterLastEdit: true,
+        projectCommand: "npm run lint",
+      })
+    ).kind,
+    "none"
+  );
+  assert.equal(
+    decideVerificationStep(
+      state({
+        editedPaths: ["src/a.ts", "package.json"],
+        diagnosticsCheckedAfterLastEdit: true,
+        projectCommand: "npm run lint",
+      })
+    ).kind,
+    "run_project_command"
+  );
+});
+
+test("project command failure scope detects edited vs unrelated paths", () => {
+  const {
+    projectCommandFailureTouchesScope,
+    pathsMentionedInCommandOutput,
+  } = require("../out/verificationLoop.js");
+  const lintOut = [
+    "src/features/foo/__tests__/a.test.tsx",
+    "  81:5  error  Unexpected require",
+    "src/entities/bar/model.ts",
+    "  12:1  warning  @ts-ignore",
+  ].join("\n");
+  assert.ok(
+    pathsMentionedInCommandOutput(lintOut).includes(
+      "src/features/foo/__tests__/a.test.tsx"
+    )
+  );
+  assert.equal(
+    projectCommandFailureTouchesScope(lintOut, ["package.json"]),
+    false
+  );
+  assert.equal(
+    projectCommandFailureTouchesScope(lintOut, [
+      "src/features/foo/__tests__/a.test.tsx",
+    ]),
+    true
+  );
+  assert.equal(
+    projectCommandFailureTouchesScope("Command failed with exit code 1", [
+      "src/a.ts",
+    ]),
+    false
   );
 });
 
@@ -182,4 +249,60 @@ test("recognizes a single test file separately from project-wide gates", () => {
     ),
     false
   );
+});
+
+test("buildVerificationNudge covers each gate step", () => {
+  assert.match(
+    buildVerificationNudge({
+      kind: "request_diagnostics",
+      paths: ["src/a.ts"],
+    }),
+    /get_diagnostics/
+  );
+  assert.match(
+    buildVerificationNudge({
+      kind: "fix_diagnostics",
+      errors: ["src/a.ts:1: broken"],
+    }),
+    /broken/
+  );
+  assert.match(
+    buildVerificationNudge({
+      kind: "run_project_command",
+      command: "npm run lint",
+    }),
+    /npm run lint/
+  );
+  assert.equal(buildVerificationNudge({ kind: "none" }), undefined);
+});
+
+test("applyWriteFileToVerification tracks edits and attached diagnostics", () => {
+  const s = createVerificationState({
+    agentMode: true,
+    projectCommand: "npm run lint",
+  });
+  applyWriteFileToVerification(s, {
+    ok: true,
+    path: "src/a.ts",
+    diagnostics: [
+      {
+        path: "src/a.ts",
+        severity: "error",
+        message: "Cannot find name 'x'",
+        startLine: 3,
+      },
+    ],
+  });
+  assert.deepEqual(s.editedPaths, ["src/a.ts"]);
+  assert.equal(s.diagnosticsCheckedAfterLastEdit, true);
+  assert.equal(s.diagnosticErrors.length, 1);
+  assert.equal(decideVerificationStep(s).kind, "fix_diagnostics");
+});
+
+test("applyGetDiagnosticsToVerification clears the request gate", () => {
+  const s = createVerificationState({ agentMode: true });
+  applyWriteFileToVerification(s, { ok: true, path: "src/a.ts" });
+  assert.equal(decideVerificationStep(s).kind, "request_diagnostics");
+  applyGetDiagnosticsToVerification(s, { diagnostics: [] });
+  assert.equal(decideVerificationStep(s).kind, "none");
 });
