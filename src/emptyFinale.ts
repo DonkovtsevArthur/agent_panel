@@ -1,6 +1,7 @@
 import type { ChatMessage } from "./openaiClient";
 import type { FileEditStat } from "./diffStats";
 import { sanitizeAssistantText } from "./sanitize";
+import { stripThinkTagBlock } from "./thinkTagFilter";
 
 export const EMPTY_ASSISTANT_PLACEHOLDER = "(пустой ответ)";
 
@@ -70,7 +71,11 @@ export function finalizeAssistantText(
   maxChars: number,
   messages?: ChatMessage[]
 ): string {
-  const trimmed = String(raw || "").trim();
+  // Defense-in-depth: платформа может оставить stray thinking-тег (`</welcome>` /
+  // `</thought>`) в content. Срезаем ведущий блок/огрызок до sanitize, чтобы тег
+  // не протёк в финальный ответ (см. thinkTagFilter.ts). Для текста без тега
+  // stripThinkTagBlock возвращает его как есть — поведение не меняется.
+  const trimmed = stripThinkTagBlock(String(raw ?? "")).text.trim();
   if (trimmed && trimmed !== EMPTY_ASSISTANT_PLACEHOLDER) {
     return sanitizeAssistantText(trimmed, { maxChars });
   }
