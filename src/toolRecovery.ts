@@ -173,9 +173,96 @@ export function shrinkOlderToolResults(
   return changed;
 }
 
+/**
+ * Kimi на корпоративном gateway: перед каждым chat/completions ужимаем
+ * старые read_file и аргументы завершённых write_file.
+ */
+export function prepareKimiGatewayMessages(messages: ChatMessage[]): boolean {
+  const older = shrinkOlderToolResults(messages, {
+    keepRecent: 3,
+    maxOldChars: 2_500,
+  });
+  const edits = compactCompletedEditToolArguments(messages);
+  const reasoning = dropOlderReasoningBlocks(messages, { keepRecent: 2 });
+  return older || edits || reasoning;
+}
+
+/**
+ * Zed-like `drop_reasoning_blocks`: reasoning_content на старых assistant-
+ * раундах (tool-call и text) — мёртвый груз. API Kimi требует лишь наличие
+ * (непустого) reasoning_content для tool-call раундов; `toApiMessages`
+ * подставит placeholder « » автоматически. Оставляем полным reasoning
+ * только у `keepRecent` последних раундов — модель видит свежую мысль.
+ */
+export function dropOlderReasoningBlocks(
+  messages: ChatMessage[],
+  options?: { keepRecent?: number }
+): boolean {
+  const keepRecent = Math.max(1, Math.floor(options?.keepRecent ?? 2));
+  const reasoningIdx: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== "assistant") {
+      continue;
+    }
+    const r =
+      typeof m.reasoning_content === "string" ? m.reasoning_content : "";
+    if (!r.trim()) {
+      continue;
+    }
+    reasoningIdx.push(i);
+  }
+  if (reasoningIdx.length <= keepRecent) {
+    return false;
+  }
+  let changed = false;
+  const dropUntil = reasoningIdx.length - keepRecent;
+  for (let i = 0; i < dropUntil; i++) {
+    const m = messages[reasoningIdx[i]];
+    if (m.reasoning_content && m.reasoning_content.trim()) {
+      m.reasoning_content = undefined;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * DeepSeek / Haiku / flash / mini: даже один свежий read_file (package.json)
+ * часто даёт gateway 500 на следующем completion. Ужимаем старые и капим все
+ * tool-payloads, включая последний.
+ */
+export function prepareFragileGatewayMessages(
+  messages: ChatMessage[]
+): boolean {
+  const older = shrinkOlderToolResults(messages, {
+    keepRecent: 2,
+    maxOldChars: 2_000,
+  });
+  const all = shrinkToolMessageContents(messages, 2_800);
+  const edits = compactCompletedEditToolArguments(messages);
+  return older || all || edits;
+}
+
+/**
+ * Перед forced empty-finale reply — жёстче: иначе 500 на «функционал недоступен».
+ */
+export function prepareKimiEmptyFinaleMessages(
+  messages: ChatMessage[]
+): boolean {
+  const older = shrinkOlderToolResults(messages, {
+    keepRecent: 2,
+    maxOldChars: 1_200,
+  });
+  const all = shrinkToolMessageContents(messages, 1_500);
+  const edits = compactCompletedEditToolArguments(messages);
+  return older || all || edits;
+}
+
 /** Модели, у которых gateway чаще роняет огромный tool-контекст. */
 export function modelNeedsAggressiveToolBudget(modelId: string): boolean {
   // Qwen — main-like API (без aggressive shrink). gpt-4.1 — отдельный gateway path.
+  // Kimi — prepareKimiGatewayMessages; DeepSeek/Haiku — prepareFragileGatewayMessages.
   return /deepseek|flash|mini|haiku|lite|small|gemma/i.test(
     String(modelId || "")
   );

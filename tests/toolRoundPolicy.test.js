@@ -4,13 +4,17 @@ const assert = require("node:assert/strict");
 const {
   EXPLORE_SOFT_NUDGE_ROUNDS,
   EXPLORE_HARD_CUT_ROUNDS,
+  KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
+  KIMI_EXPLORE_HARD_CUT_ROUNDS,
   ROUND_EXTENSION_SIZE,
   MAX_ROUND_EXTENSIONS,
   isExploreOnlyTool,
   roundWasExploreOnly,
   shouldExtendToolRounds,
+  exploreRoundLimits,
   buildExploreSoftNudge,
   buildExploreHardNudge,
+  buildKimiWorkspaceFollowHint,
 } = require("../out/toolRoundPolicy.js");
 
 test("explore-only detection", () => {
@@ -52,6 +56,23 @@ test("round extension policy", () => {
   assert.equal(EXPLORE_HARD_CUT_ROUNDS, 4);
 });
 
+test("Kimi explore limits allow more reads then strip explore on soft", () => {
+  assert.equal(KIMI_EXPLORE_SOFT_NUDGE_ROUNDS, 4);
+  assert.equal(KIMI_EXPLORE_HARD_CUT_ROUNDS, 6);
+  const defaultLimits = exploreRoundLimits({ kimi: false });
+  assert.deepEqual(defaultLimits, {
+    softNudgeRounds: 2,
+    hardCutRounds: 4,
+    stripExploreOnSoftNudge: true,
+  });
+  const kimiLimits = exploreRoundLimits({ kimi: true });
+  assert.deepEqual(kimiLimits, {
+    softNudgeRounds: 4,
+    hardCutRounds: 6,
+    stripExploreOnSoftNudge: true,
+  });
+});
+
 test("explore nudges mention AGENTS.md when needed", () => {
   const soft = buildExploreSoftNudge({ agentsMd: true, readonly: false });
   assert.match(soft, /AGENTS\.md/);
@@ -62,4 +83,24 @@ test("explore nudges mention AGENTS.md when needed", () => {
   const ask = buildExploreSoftNudge({ agentsMd: false, readonly: true });
   assert.match(ask, /Reply to the user/);
   assert.doesNotMatch(ask, /write_file/);
+});
+
+test("Kimi soft nudge stops explore and asks to write by analogy", () => {
+  const soft = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: false,
+    kimi: true,
+  });
+  assert.match(soft, /analogous|already read/i);
+  assert.match(soft, /write_file/);
+  assert.match(soft, /no longer available|Stop exploring/i);
+});
+
+test("Kimi workspace follow hint requires reading analogous UI first", () => {
+  const hint = buildKimiWorkspaceFollowHint();
+  assert.match(hint, /AGENTS\.md/);
+  assert.match(hint, /read_file/);
+  assert.match(hint, /analog|similar|pattern/i);
+  assert.match(hint, /write_file/);
+  assert.match(hint, /same tool round|parallel/i);
 });

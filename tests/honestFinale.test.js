@@ -209,3 +209,98 @@ test("ordinary Q&A is ok without write", () => {
   });
   assert.equal(decision.kind, "ok");
 });
+
+test("implement-plan ask + future announcement without write nudges write", () => {
+  const decision = decideHonestFinale({
+    text: "Создаю файлы. Начну с обновления путей, затем feature и страницу.",
+    canEdit: true,
+    messages: [],
+    userText: "давай приступик к реализации по этому плану",
+    hadSuccessfulWrite: false,
+    allowNudgeWrite: true,
+    allowNudgeHedge: true,
+  });
+  assert.equal(decision.kind, "nudge_write");
+});
+
+test("Kimi: version clarifying question is ok without write", () => {
+  assert.equal(looksLikeUserEditRequest("давай поменяем?"), true);
+
+  const decision = decideHonestFinale({
+    text: "Какую версию установить? Например:\n- **0.0.20** — patch\n- **0.1.0** — minor\n- **1.0.0** — major",
+    canEdit: true,
+    messages: [],
+    userText: "давай поменяем?",
+    hadSuccessfulWrite: false,
+    kimi: true,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("non-Kimi: clarifying question still nudges write", () => {
+  const decision = decideHonestFinale({
+    text: "Какую версию установить? Например 0.0.20 или 1.0.0?",
+    canEdit: true,
+    messages: [],
+    userText: "давай поменяем?",
+    hadSuccessfulWrite: false,
+    kimi: false,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "nudge_write");
+});
+
+test("Kimi: укажи версию — clarifying, not missing write", () => {
+  const decision = decideHonestFinale({
+    text: "Укажи, на какую версию меняем (например, `0.0.19`, `0.1.0` или другую) — сразу применю в `package.json`.",
+    canEdit: true,
+    messages: [],
+    userText: "давай поменяем?",
+    hadSuccessfulWrite: false,
+    kimi: true,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("fake claimed version bump still nudges write", () => {
+  const decision = decideHonestFinale({
+    text: "Я обновил версию в package.json до 0.0.20.",
+    canEdit: true,
+    messages: [],
+    userText: "давай поменяем?",
+    hadSuccessfulWrite: false,
+    kimi: true,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "nudge_write");
+});
+
+test("Kimi: git checkout revert is ok without write_file", () => {
+  const decision = decideHonestFinale({
+    text: "Откатил изменения через git checkout -- AGENTS.md package.json. Файлы возвращены к версии 0.0.18.",
+    canEdit: true,
+    messages: [],
+    userText: "верни как было",
+    hadSuccessfulWrite: false,
+    kimi: true,
+    gitOperationCompleted: true,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("Kimi: git revert claim without gitOperationCompleted still nudges", () => {
+  const decision = decideHonestFinale({
+    text: "Я откатил файлы через git checkout. Готово.",
+    canEdit: true,
+    messages: [],
+    userText: "верни как было",
+    hadSuccessfulWrite: false,
+    kimi: true,
+    gitOperationCompleted: false,
+    allowNudgeWrite: true,
+  });
+  assert.equal(decision.kind, "nudge_write");
+});

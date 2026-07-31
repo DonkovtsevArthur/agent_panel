@@ -26,3 +26,22 @@ test("does not flag normal factual replies", () => {
     false
   );
 });
+
+test("detects future-work announcements without tool calls", () => {
+  assert.equal(
+    looksLikeHedgeOrUnfinishedAction(
+      "Создаю файлы. Начну с обновления путей, затем feature и страницу."
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeHedgeOrUnfinishedAction("I'll start by updating paths.ts"),
+    true
+  );
+  assert.equal(
+    looksLikeHedgeOrUnfinishedAction(
+      "Готово. Создал feature и страницу, пути обновлены."
+    ),
+    false
+  );
+});

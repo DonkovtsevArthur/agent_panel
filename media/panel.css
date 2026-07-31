@@ -858,6 +858,248 @@ body.vscode-dark .md-pre .syntax-property {
   display: none;
 }
 
+.tool-group.agent-timeline {
+  gap: 0;
+  margin: 4px 0 8px;
+  padding-left: 2px;
+  border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.tool-group.agent-timeline .tool-group-toggle {
+  display: none !important;
+}
+
+.tool-group.agent-timeline .tool-group-body,
+.agent-timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding: 0 0 0 10px;
+}
+
+.agent-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  opacity: 0.95;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground, #888);
+  padding: 0;
+  max-width: 100%;
+}
+
+.agent-step-thinking {
+  flex-direction: column;
+  gap: 4px;
+  color: var(--vscode-foreground);
+  opacity: 0.88;
+}
+
+.agent-step-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+}
+
+.agent-step-thinking-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-left: 22px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.agent-step-thinking.is-thinking-collapsed .agent-step-thinking-text {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+
+.agent-step-thinking.is-thinking-collapsed .agent-step-thinking-text::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 22px;
+  right: 0;
+  height: 36px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--vscode-editor-background, #1e1e1e)
+  );
+  pointer-events: none;
+}
+
+.agent-step-thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 22px;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 11.5px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.agent-step-thinking-toggle:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+}
+
+.agent-step-thinking-toggle[hidden] {
+  display: none;
+}
+
+.agent-step-thinking-chevron {
+  font-size: 15px;
+  transition: transform 0.15s ease;
+}
+
+.agent-step-thinking:not(.is-thinking-collapsed)
+  .agent-step-thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.agent-step[data-step-kind="tool"] .agent-step-label {
+  color: var(--vscode-foreground);
+  opacity: 0.9;
+}
+
+.agent-step-icon {
+  font-size: 15px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.agent-step[data-status="running"] .agent-step-icon {
+  animation: agent-step-spin 0.9s linear infinite;
+}
+
+.agent-step[data-status="done"] {
+  opacity: 0.85;
+}
+
+.agent-step[data-status="error"] {
+  color: var(--vscode-errorForeground, #f44747);
+  opacity: 1;
+}
+
+.agent-step[data-step-kind="compaction"],
+.agent-step[data-step-kind="retry"] {
+  opacity: 0.85;
+  font-style: italic;
+}
+
+.agent-step-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@keyframes agent-step-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.reasoning-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 2px 0 4px;
+}
+
+.reasoning-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #888);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.reasoning-group-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.reasoning-group-chevron {
+  font-size: 14px;
+  transition: transform 0.12s ease;
+  flex-shrink: 0;
+}
+
+.reasoning-group:not(.is-collapsed) .reasoning-group-chevron {
+  transform: rotate(180deg);
+}
+
+.reasoning-group-icon {
+  font-size: 14px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.reasoning-group-summary {
+  font-weight: 500;
+}
+
+.reasoning-group-body {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 4px 4px 22px;
+  box-sizing: border-box;
+}
+
+.reasoning-group.is-collapsed .reasoning-group-body {
+  display: none;
+}
+
+.reasoning-text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground, #888);
+  opacity: 0.95;
+}
+
+
 .msg.error {
   background: transparent;
   border: none;
@@ -895,6 +1137,11 @@ body.vscode-dark .md-pre .syntax-property {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.agent-status-model {
+  color: var(--vscode-disabledForeground, #6e6e6e);
+  font-weight: 400;
 }
 
 .agent-status:not([hidden])::before {

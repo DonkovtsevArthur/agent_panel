@@ -142,7 +142,7 @@
       soundNotifications: "Sound notifications",
       speedRoutingTitle: "Speed routing",
       speedRoutingNote:
-        "When a heavy model is selected, use a fast helper for Plan/Ask and Agent context gathering.",
+        "When a heavy model is selected, use a fast helper for Plan/Ask.",
       speedRoutingEnabled: "Speed up heavy models",
       speedRoutingFastModel: "Fast models",
       speedRoutingFastModelHint:
@@ -278,8 +278,23 @@
       stepsZero: "0 steps",
       showSteps: "Show steps",
       hideSteps: "Hide steps",
+      showThinking: "Show thinking",
+      hideThinking: "Hide thinking",
+      thinkingLabel: "Thinking",
+      thinkingWorking: "Thinking…",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
+      toolHumanRead: (path) => (path ? `Read file ${path}` : "Read file"),
+      toolHumanWrite: (path) => (path ? `Write file ${path}` : "Write file"),
+      toolHumanReplace: (path) => (path ? `Edit file ${path}` : "Edit file"),
+      toolHumanList: (path) => (path ? `List ${path}` : "List directory"),
+      toolHumanSearch: (query) => (query ? `Search ${query}` : "Search"),
+      toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
+      toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
+      toolHumanDiagnostics: "Diagnostics",
+      toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
+      toolHumanTool: (name) => name || "Tool",
       toolWorking: "Working…",
       toolReading: "Reading…",
       toolListing: "Listing…",
@@ -436,7 +451,7 @@
       soundNotifications: "Звуковые уведомления",
       speedRoutingTitle: "Ускорение тяжёлых моделей",
       speedRoutingNote:
-        "Если выбрана тяжёлая модель — Plan/Ask и сбор контекста в Agent идут на быстрой.",
+        "Если выбрана тяжёлая модель — Plan/Ask идут на быстрой.",
       speedRoutingEnabled: "Ускорять тяжёлые модели",
       speedRoutingFastModel: "Быстрые модели",
       speedRoutingFastModelHint:
@@ -572,8 +587,23 @@
       stepsZero: "0 шагов",
       showSteps: "Показать шаги",
       hideSteps: "Скрыть шаги",
+      showThinking: "Показать размышление",
+      hideThinking: "Скрыть размышление",
+      thinkingLabel: "Thinking",
+      thinkingWorking: "Thinking…",
       stepsOne: "1 шаг",
       stepsMany: (n) => `${n} шагов`,
+      toolHumanRead: (path) => (path ? `Read file ${path}` : "Read file"),
+      toolHumanWrite: (path) => (path ? `Write file ${path}` : "Write file"),
+      toolHumanReplace: (path) => (path ? `Edit file ${path}` : "Edit file"),
+      toolHumanList: (path) => (path ? `List ${path}` : "List directory"),
+      toolHumanSearch: (query) => (query ? `Search ${query}` : "Search"),
+      toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
+      toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
+      toolHumanDiagnostics: "Diagnostics",
+      toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
+      toolHumanTool: (name) => name || "Tool",
       toolWorking: "Работаю…",
       toolReading: "Читаю…",
       toolListing: "Смотрю…",
@@ -641,7 +671,7 @@
   const modelMenu = document.getElementById("modelMenu");
 
   let agentStatusEl = null;
-  let agentStatusState = { text: "", hidden: true, phase: "" };
+  let agentStatusState = { text: "", hidden: true, phase: "", modelLabel: "" };
   const workspaceShell = document.getElementById("workspaceShell");
   const agentsRailBackdrop = document.getElementById("agentsRailBackdrop");
   const agentsScreen = document.getElementById("agentsScreen");
@@ -2624,17 +2654,38 @@
     return agentStatusEl;
   }
 
-  function applyAgentStatusState(text, hidden, phase) {
+  function applyAgentStatusState(text, hidden, phase, modelLabel) {
     const nextHidden = Boolean(hidden || !text);
     agentStatusState = {
       text: nextHidden ? "" : text,
       hidden: nextHidden,
       phase: nextHidden ? "" : phase || "",
+      modelLabel: nextHidden ? "" : modelLabel || "",
     };
   }
 
-  function setAgentStatus(text, hidden, phase) {
-    applyAgentStatusState(text, hidden, phase);
+  function setAgentStatus(text, hidden, phase, modelLabel) {
+    // Tool progress lives in the timeline — don't also pulse «Читаю…» status.
+    const timelineBusy = Boolean(
+      currentChatTurnEl?.querySelector?.(
+        ".tool-group.agent-timeline:not([data-sealed]) .agent-step"
+      )
+    );
+    const suppressPhase =
+      timelineBusy &&
+      (phase === "reading" ||
+        phase === "listing" ||
+        phase === "editing" ||
+        phase === "running" ||
+        phase === "thinking");
+    if (suppressPhase && !hidden) {
+      if (agentStatusEl) {
+        agentStatusEl.hidden = true;
+      }
+      return;
+    }
+
+    applyAgentStatusState(text, hidden, phase, modelLabel);
 
     if (agentStatusState.hidden) {
       if (agentStatusEl) {
@@ -2647,7 +2698,17 @@
 
     const el = ensureAgentStatusEl();
     el.hidden = false;
-    el.textContent = agentStatusState.text;
+    el.replaceChildren();
+    const label = document.createElement("span");
+    label.className = "agent-status-text";
+    label.textContent = agentStatusState.text;
+    el.appendChild(label);
+    if (agentStatusState.modelLabel) {
+      const model = document.createElement("span");
+      model.className = "agent-status-model";
+      model.textContent = `(${agentStatusState.modelLabel})`;
+      el.appendChild(model);
+    }
     if (agentStatusState.phase) {
       el.dataset.phase = agentStatusState.phase;
     } else {
@@ -2666,7 +2727,8 @@
     setAgentStatus(
       agentStatusState.text,
       false,
-      agentStatusState.phase
+      agentStatusState.phase,
+      agentStatusState.modelLabel
     );
   }
 
@@ -3355,67 +3417,72 @@
     contextRingEl.hidden = false;
   }
 
+  function formatToolHumanLabel(name, argsPreview) {
+    const toolName = String(name || "").trim();
+    let args = {};
+    const rawArgs = String(argsPreview || "").trim();
+    if (rawArgs) {
+      try {
+        args = JSON.parse(rawArgs);
+      } catch {
+        // Truncated JSON from step preview — try to pull relativePath/command.
+        const pathMatch = rawArgs.match(
+          /"relativePath"\s*:\s*"((?:\\.|[^"\\])*)"/
+        );
+        if (pathMatch) {
+          args.relativePath = pathMatch[1].replace(/\\"/g, '"');
+        }
+        const cmdMatch = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (cmdMatch) {
+          args.command = cmdMatch[1].replace(/\\"/g, '"');
+        }
+        const queryMatch = rawArgs.match(/"query"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (queryMatch) {
+          args.query = queryMatch[1].replace(/\\"/g, '"');
+        }
+        const urlMatch = rawArgs.match(/"url"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (urlMatch) {
+          args.url = urlMatch[1].replace(/\\"/g, '"');
+        }
+      }
+    }
+    const path = String(args.relativePath || "").trim();
+    switch (toolName) {
+      case "read_file":
+        return t("toolHumanRead", path);
+      case "write_file":
+        return t("toolHumanWrite", path);
+      case "search_replace":
+        return t("toolHumanReplace", path);
+      case "list_files":
+        return t("toolHumanList", path || ".");
+      case "search_text":
+        return t("toolHumanSearch", String(args.query || "").trim());
+      case "run_command":
+        return t("toolHumanRun", String(args.command || "").trim());
+      case "fetch_url":
+        return t("toolHumanFetch", String(args.url || "").trim());
+      case "open_external":
+        return t("toolHumanOpen", String(args.url || "").trim());
+      case "get_diagnostics":
+        return t("toolHumanDiagnostics");
+      default: {
+        if (toolName.startsWith("mcp__")) {
+          const short = toolName.replace(/^mcp__[^_]+__/, "") || toolName;
+          return t("toolHumanMcp", short);
+        }
+        return t("toolHumanTool", toolName);
+      }
+    }
+  }
+
   function formatToolLine(text) {
     const raw = String(text || "").replace(/^⚙\s*/, "").trim();
     const match = raw.match(/^([a-zA-Z0-9_]+)\(([\s\S]*)\)$/);
     if (!match) {
       return raw;
     }
-
-    const name = match[1];
-    let args = {};
-    try {
-      args = match[2] ? JSON.parse(match[2]) : {};
-    } catch {
-      return `${name}`;
-    }
-
-    switch (name) {
-      case "run_command":
-        return args.command
-          ? `${t("toolKindRun")} · ${args.command}`
-          : t("toolKindRun");
-      case "read_file":
-        return args.relativePath
-          ? `${t("toolKindRead")} · ${args.relativePath}`
-          : t("toolKindRead");
-      case "write_file":
-        return args.relativePath
-          ? `${t("toolKindWrite")} · ${args.relativePath}`
-          : t("toolKindWrite");
-      case "search_replace":
-        return args.relativePath
-          ? `${t("toolKindReplace")} · ${args.relativePath}`
-          : t("toolKindReplace");
-      case "list_files": {
-        const path = args.relativePath || ".";
-        return `${t("toolKindList")} · ${path}`;
-      }
-      case "search_text":
-        return args.query
-          ? `${t("toolKindSearch")} · ${args.query}`
-          : t("toolKindSearch");
-      case "fetch_url":
-        return args.url
-          ? `${t("toolKindFetch")} · ${args.url}`
-          : t("toolKindFetch");
-      case "open_external":
-        return args.url
-          ? `${t("toolKindOpen")} · ${args.url}`
-          : t("toolKindOpen");
-      default: {
-        if (String(name).startsWith("mcp__")) {
-          const short = name.replace(/^mcp__[^_]+__/, "") || name;
-          return `${t("toolKindMcp")} · ${short}`;
-        }
-        const values = Object.values(args)
-          .filter((v) => typeof v === "string" || typeof v === "number")
-          .slice(0, 2);
-        return values.length
-          ? `${t("toolKindTool")} · ${values.join(" · ")}`
-          : t("toolKindTool");
-      }
-    }
+    return formatToolHumanLabel(match[1], match[2]);
   }
 
   function parseToolName(text) {
@@ -3560,6 +3627,12 @@
   function toolTypesSummary(group) {
     const counts = new Map();
     for (const el of group.querySelectorAll(".msg.tool")) {
+      if (el.classList.contains("agent-step")) {
+        const stepKind = el.dataset.stepKind || "";
+        if (stepKind && stepKind !== "tool") {
+          continue;
+        }
+      }
       const name = el.dataset.toolName || parseToolName(el.dataset.raw || "");
       const kind = toolKind(name) || "tool";
       counts.set(kind, (counts.get(kind) || 0) + 1);
@@ -3587,16 +3660,427 @@
         parts.push(t("toolTypeCount", toolKindLabel(kind), n));
       }
     }
-    return parts.length ? parts.join(" · ") : t("stepsZero");
+    return parts;
+  }
+
+  /** Count timeline steps: tools + thinking + compaction/retry (not text deltas). */
+  function countAgentSteps(group) {
+    if (!group) {
+      return 0;
+    }
+    let n = 0;
+    for (const el of group.querySelectorAll(".msg.tool")) {
+      if (el.classList.contains("agent-step")) {
+        const kind = el.dataset.stepKind || "";
+        if (kind === "text") {
+          continue;
+        }
+        n += 1;
+        continue;
+      }
+      n += 1;
+    }
+    return n;
+  }
+
+  function stepsCountLabel(n) {
+    if (n <= 0) {
+      return "";
+    }
+    if (n === 1) {
+      return t("stepsOne");
+    }
+    return t("stepsMany")(n);
   }
 
   function sealToolGroups() {
     for (const group of messagesEl.querySelectorAll(
       ".tool-group:not([data-sealed])"
     )) {
+      if (countAgentSteps(group) === 0) {
+        group.remove();
+        continue;
+      }
+      dedupeThinkingSteps(group);
+      dropPlaceholderThinkingSteps(group);
+      if (countAgentSteps(group) === 0) {
+        group.remove();
+        continue;
+      }
       group.dataset.sealed = "1";
+      // Zed-like: keep the interleaved timeline visible (no collapse to «N шагов»).
+      group.classList.remove("is-collapsed");
+      const toggle = group.querySelector(".tool-group-toggle");
+      if (toggle) {
+        toggle.hidden = true;
+      }
       updateToolGroupSummary(group);
+      // Auto-collapse long Thinking blocks once the turn advances to tools/text.
+      collapseLongThinkingSteps(group);
     }
+    // Legacy separate reasoning blocks: drop if timeline already has thinking,
+    // or if the legacy block itself never received real reasoning content.
+    for (const group of messagesEl.querySelectorAll(
+      ".reasoning-group:not([data-sealed])"
+    )) {
+      const turn = group.closest(".chat-turn") || messagesEl;
+      const timeline = turn.querySelector(
+        ".tool-group.agent-timeline .agent-step[data-step-kind='thinking']"
+      );
+      if (timeline) {
+        group.remove();
+        continue;
+      }
+      const legacyRaw = String(group.dataset.raw || "").trim();
+      if (!legacyRaw || isThinkingPlaceholder(legacyRaw)) {
+        group.remove();
+        continue;
+      }
+      group.dataset.sealed = "1";
+      updateReasoningGroupSummary(group);
+    }
+    // Merge leftover duplicate timelines / identical Thinking in the same turn.
+    collapseTurnThinkingDuplicates();
+  }
+
+  function normalizeThinkingKey(text) {
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function thinkingStepsIn(scope) {
+    if (!scope) {
+      return [];
+    }
+    return [...scope.querySelectorAll(".agent-step[data-step-kind='thinking']")];
+  }
+
+  function agentStepsInBody(body) {
+    if (!body) {
+      return [];
+    }
+    return [...body.children].filter(
+      (el) => el.classList && el.classList.contains("agent-step")
+    );
+  }
+
+  /** Drop identical Thinking cards across the whole turn (keep first). */
+  function collapseTurnThinkingDuplicates() {
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+    const seen = new Set();
+    for (const el of thinkingStepsIn(turn)) {
+      const key = normalizeThinkingKey(el.dataset.raw);
+      if (!key || isThinkingPlaceholder(key)) {
+        continue;
+      }
+      if (seen.has(key)) {
+        el.remove();
+      } else {
+        seen.add(key);
+      }
+    }
+    // Also merge leftover empty / duplicate timeline groups.
+    dedupeTurnTimelines();
+  }
+
+  function dedupeThinkingSteps(group) {
+    if (!group) {
+      return;
+    }
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return;
+    }
+    const seenThinking = new Set();
+    for (const el of agentStepsInBody(body)) {
+      if (el.dataset.stepKind !== "thinking") {
+        continue;
+      }
+      const key = normalizeThinkingKey(el.dataset.raw);
+      if (!key || isThinkingPlaceholder(key)) {
+        continue;
+      }
+      if (seenThinking.has(key)) {
+        el.remove();
+      } else {
+        seenThinking.add(key);
+      }
+    }
+  }
+
+  /**
+   * Drop Thinking steps that never received real reasoning content (still on
+   * the «Thinking…» / «Continuing…» placeholder). At seal time the turn is
+   * complete — if real reasoning had been streamed, it would have replaced the
+   * placeholder during streaming. A placeholder at seal means no reasoning was
+   * produced, so we remove it when the turn has other real content (assistant
+   * text in .msg-wrap-assistant, tool/compaction/retry steps, or non-placeholder
+   * thinking). Text answer lives outside the tool-group (.msg-wrap-assistant),
+   * so we check the parent .chat-turn too. Fixes the empty Thinking card shown
+   * for models that don't stream reasoning_content (e.g. Qwen3-Coder-Next).
+   */
+  function dropPlaceholderThinkingSteps(group) {
+    if (!group) {
+      return;
+    }
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return;
+    }
+    const steps = agentStepsInBody(body);
+    const thinkingSteps = steps.filter(
+      (el) => el.dataset.stepKind === "thinking"
+    );
+    if (!thinkingSteps.length) {
+      return;
+    }
+    // Non-placeholder thinking or non-thinking steps (tools/compaction/retry)
+    // inside the timeline count as real content.
+    const hasRealInGroup =
+      thinkingSteps.some((el) => !isThinkingPlaceholder(el.dataset.raw)) ||
+      steps.some((el) => el.dataset.stepKind !== "thinking");
+    // Assistant text answer lives in .msg-wrap-assistant (outside the tool-group),
+    // so check the parent .chat-turn. Covers both committed and streaming text.
+    const turn = group.closest(".chat-turn") || messagesEl;
+    const hasAssistantText = Boolean(
+      [...turn.querySelectorAll(".msg-wrap-assistant .msg")].some(
+        (el) => String(el.dataset.raw || "").trim()
+      )
+    );
+    if (!hasRealInGroup && !hasAssistantText) {
+      return;
+    }
+    for (const el of thinkingSteps) {
+      if (isThinkingPlaceholder(el.dataset.raw)) {
+        el.remove();
+      }
+    }
+  }
+
+  /**
+   * Clean placeholder-only Thinking cards from ALREADY-SEALED groups in the
+   * current turn. sealToolGroups() runs inside appendMessage BEFORE the
+   * assistant text element is appended to the DOM, so dropPlaceholderThinkingSteps
+   * can't see the text at seal time. This second pass runs after the text is in
+   * the DOM and removes placeholders that should have been dropped at seal.
+   */
+  function cleanSealedThinkingPlaceholders() {
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    if (!turn) {
+      return;
+    }
+    const hasAssistantText = Boolean(
+      [...turn.querySelectorAll(".msg-wrap-assistant .msg")].some(
+        (el) => String(el.dataset.raw || "").trim()
+      )
+    );
+    if (!hasAssistantText) {
+      return;
+    }
+    for (const group of turn.querySelectorAll(
+      ".tool-group.agent-timeline[data-sealed='1']"
+    )) {
+      const body = group.querySelector(".tool-group-body");
+      if (!body) {
+        continue;
+      }
+      const thinkingSteps = [
+        ...body.querySelectorAll(
+          ".agent-step[data-step-kind='thinking']"
+        ),
+      ];
+      if (!thinkingSteps.length) {
+        continue;
+      }
+      const hasRealInGroup =
+        thinkingSteps.some((el) => !isThinkingPlaceholder(el.dataset.raw)) ||
+        Boolean(
+          body.querySelector(
+            ".agent-step:not([data-step-kind='thinking'])"
+          )
+        );
+      // Remove placeholder thinking steps regardless of whether the group
+      // has other real content (tools, non-placeholder thinking). The
+      // placeholder means no reasoning was streamed for that round — it
+      // should not stay visible next to tool calls or the final answer.
+      void hasRealInGroup;
+      for (const el of thinkingSteps) {
+        if (isThinkingPlaceholder(el.dataset.raw)) {
+          el.remove();
+        }
+      }
+      if (countAgentSteps(group) === 0) {
+        group.remove();
+      }
+    }
+  }
+
+  function findTurnThinkingByText(text) {
+    const key = normalizeThinkingKey(text);
+    if (!key || isThinkingPlaceholder(key)) {
+      return null;
+    }
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+    for (const el of thinkingStepsIn(turn)) {
+      if (normalizeThinkingKey(el.dataset.raw) === key) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function findLatestTurnThinking() {
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+    const all = thinkingStepsIn(turn);
+    return all.length ? all[all.length - 1] : null;
+  }
+
+  /** True if a committed (non-queued) tool appears after `el` in the turn. */
+  function hasCommittedToolAfter(el) {
+    if (!el) {
+      return false;
+    }
+    const turn = el.closest(".chat-turn") || messagesEl;
+    const steps = [...turn.querySelectorAll(".agent-step")];
+    const ix = steps.indexOf(el);
+    if (ix < 0) {
+      return false;
+    }
+    for (let i = ix + 1; i < steps.length; i += 1) {
+      if (
+        steps[i].dataset.stepKind === "tool" &&
+        steps[i].dataset.status &&
+        steps[i].dataset.status !== "queued"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function dedupeTurnTimelines() {
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    if (!turn) {
+      return;
+    }
+    const groups = [...turn.querySelectorAll(".tool-group.agent-timeline")];
+    if (groups.length < 2) {
+      return;
+    }
+    const primary = groups[0];
+    const primaryBody = primary.querySelector(".tool-group-body");
+    if (!primaryBody) {
+      return;
+    }
+    const known = new Set(
+      [...primaryBody.querySelectorAll(".agent-step[data-step-kind='thinking']")].map(
+        (el) => normalizeThinkingKey(el.dataset.raw)
+      )
+    );
+    for (let i = 1; i < groups.length; i += 1) {
+      const body = groups[i].querySelector(".tool-group-body");
+      if (!body) {
+        groups[i].remove();
+        continue;
+      }
+      for (const el of agentStepsInBody(body)) {
+        if (el.dataset.stepKind === "thinking") {
+          const key = normalizeThinkingKey(el.dataset.raw);
+          if (key && known.has(key)) {
+            el.remove();
+            continue;
+          }
+          if (key) {
+            known.add(key);
+          }
+        }
+        primaryBody.appendChild(el);
+      }
+      groups[i].remove();
+    }
+    dedupeThinkingSteps(primary);
+  }
+
+  function updateReasoningGroupSummary(group) {
+    if (!group) {
+      return;
+    }
+    const summary = group.querySelector(".reasoning-group-summary");
+    const raw = String(group.dataset.raw || "").trim();
+    if (summary) {
+      summary.textContent = raw ? t("thinkingLabel") : t("thinkingWorking");
+    }
+    group.title = "";
+    const toggle = group.querySelector(".reasoning-group-toggle");
+    if (toggle) {
+      toggle.title = group.classList.contains("is-collapsed")
+        ? t("showThinking")
+        : t("hideThinking");
+    }
+  }
+
+  function createReasoningGroup() {
+    const group = document.createElement("div");
+    group.className = "reasoning-group is-collapsed";
+    group.innerHTML =
+      `<button type="button" class="reasoning-group-toggle" aria-expanded="false">` +
+      `<span class="material-symbols-outlined reasoning-group-chevron" aria-hidden="true">expand_more</span>` +
+      `<span class="material-symbols-outlined reasoning-group-icon" aria-hidden="true">psychology</span>` +
+      `<span class="reasoning-group-summary">${escapeHtml(t("thinkingWorking"))}</span>` +
+      `</button>` +
+      `<div class="reasoning-group-body"><div class="reasoning-text"></div></div>`;
+    return group;
+  }
+
+  function getActiveReasoningGroup() {
+    return null;
+  }
+
+  function ensureActiveReasoningGroup() {
+    return null;
+  }
+
+  function isThinkingPlaceholder(text) {
+    const raw = String(text || "").trim();
+    return (
+      !raw ||
+      raw === "Thinking…" ||
+      raw === "Thinking..." ||
+      raw === "Думаю…" ||
+      raw === "Continuing…" ||
+      raw === "Continuing..."
+    );
+  }
+
+  /**
+   * Reasoning goes into the unified timeline (Zed-like), not a separate card.
+   */
+  function upsertReasoning(text, options = {}) {
+    const raw = String(text || "").trim();
+    if (!raw) {
+      return null;
+    }
+    return upsertAgentStep({
+      stepId: options.stepId || "thinking-live",
+      kind: "thinking",
+      text: raw,
+    });
   }
 
   function clearStoppedRunArtifacts() {
@@ -3615,11 +4099,19 @@
       for (const group of turn.querySelectorAll(".tool-group")) {
         group.remove();
       }
+      for (const group of turn.querySelectorAll(".reasoning-group")) {
+        group.remove();
+      }
     } else {
       // Fallback для старой/восстановленной разметки: незапечатанная группа
       // всегда относится к текущему незавершённому запуску.
       for (const group of messagesEl.querySelectorAll(
         ".tool-group:not([data-sealed])"
+      )) {
+        group.remove();
+      }
+      for (const group of messagesEl.querySelectorAll(
+        ".reasoning-group:not([data-sealed])"
       )) {
         group.remove();
       }
@@ -3637,35 +4129,22 @@
     if (!group) {
       return;
     }
-    const tools = group.querySelectorAll(".msg.tool");
-    const count = tools.length;
-    const summary = group.querySelector(".tool-group-summary");
-    if (summary) {
-      if (!count) {
-        summary.textContent = t("toolWorking");
-      } else if (group.dataset.sealed === "1") {
-        summary.textContent = toolTypesSummary(group);
-      } else {
-        const last = tools[tools.length - 1];
-        const name =
-          last.dataset.toolName || parseToolName(last.dataset.raw || "");
-        summary.textContent = toolWorkingLabel(toolKind(name));
-      }
+    const toggle = group.querySelector(".tool-group-toggle");
+    // Unified timeline: no «N шагов» chrome — Zed-like open stream.
+    if (toggle) {
+      toggle.hidden = true;
     }
-    group.title = group.classList.contains("is-collapsed")
-      ? t("showSteps")
-      : t("hideSteps");
   }
 
   function createToolGroup() {
     const group = document.createElement("div");
-    group.className = "tool-group is-collapsed";
+    group.className = "tool-group agent-timeline";
     group.innerHTML =
-      `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
+      `<button type="button" class="tool-group-toggle" hidden aria-expanded="true">` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
       `<span class="tool-group-summary">${escapeHtml(t("toolWorking"))}</span>` +
       `</button>` +
-      `<div class="tool-group-body"></div>`;
+      `<div class="tool-group-body agent-timeline-body"></div>`;
     return group;
   }
 
@@ -3675,20 +4154,37 @@
         ? currentChatTurnEl
         : null;
     const scope = turn || messagesEl;
-    let node = scope.lastElementChild;
-    while (
-      node &&
-      (node.id === "agentStatus" ||
-        node.classList.contains("agent-status"))
-    ) {
-      node = node.previousElementSibling;
+    // Keep one open timeline for the turn even if assistant stream
+    // was inserted after it (otherwise we spawn a second «Работаю…»).
+    const open = scope.querySelectorAll(".tool-group:not([data-sealed])");
+    if (open.length > 0) {
+      return open[open.length - 1];
     }
-    if (
-      node &&
-      node.classList.contains("tool-group") &&
-      !node.dataset.sealed
-    ) {
-      return node;
+    return null;
+  }
+
+  /** Latest thinking step after the last committed tool in this timeline body. */
+  function findOpenThinkingStep(body) {
+    if (!body) {
+      return null;
+    }
+    const steps = agentStepsInBody(body);
+    let lastToolIx = -1;
+    for (let i = 0; i < steps.length; i += 1) {
+      // Early stream "queued" tools must not open a new Thinking phase —
+      // the model often abandons them and only answers in text.
+      if (
+        steps[i].dataset.stepKind === "tool" &&
+        steps[i].dataset.status &&
+        steps[i].dataset.status !== "queued"
+      ) {
+        lastToolIx = i;
+      }
+    }
+    for (let i = steps.length - 1; i > lastToolIx; i -= 1) {
+      if (steps[i].dataset.stepKind === "thinking") {
+        return steps[i];
+      }
     }
     return null;
   }
@@ -3704,7 +4200,278 @@
     return group;
   }
 
-  function appendToolToGroup(text, index) {
+  function agentStepStatusIcon(status, kind) {
+    if (kind === "thinking") {
+      return "psychology";
+    }
+    if (kind === "compaction") {
+      return "compress";
+    }
+    if (kind === "retry") {
+      return "replay";
+    }
+    if (kind === "tool" || !kind) {
+      const nameHint = "";
+      void nameHint;
+    }
+    if (status === "done") {
+      return "check";
+    }
+    if (status === "error") {
+      return "error";
+    }
+    if (status === "running") {
+      return "progress_activity";
+    }
+    if (status === "queued") {
+      return "schedule";
+    }
+    return "info";
+  }
+
+  function toolStepIcon(name, status) {
+    if (status === "done") {
+      return "check";
+    }
+    if (status === "error") {
+      return "error";
+    }
+    if (status === "running") {
+      return "progress_activity";
+    }
+    switch (String(name || "")) {
+      case "read_file":
+        return "draft";
+      case "list_files":
+        return "folder_open";
+      case "write_file":
+      case "search_replace":
+        return "edit";
+      case "run_command":
+        return "terminal";
+      case "search_text":
+        return "search";
+      case "fetch_url":
+      case "open_external":
+        return "link";
+      case "get_diagnostics":
+        return "bug_report";
+      default:
+        if (String(name || "").startsWith("mcp__")) {
+          return "extension";
+        }
+        return status === "queued" ? "schedule" : "build";
+    }
+  }
+
+  function upsertAgentStep(step) {
+    if (!step || !step.stepId) {
+      return null;
+    }
+    if (step.kind === "text") {
+      return null;
+    }
+
+    // Thinking: resolve target node BEFORE opening a new timeline group.
+    if (step.kind === "thinking") {
+      const incoming = String(step.text || "").trim();
+      const incomingKey = normalizeThinkingKey(incoming);
+
+      // Same text already on screen → update that card, never clone.
+      const sameText = findTurnThinkingByText(incoming);
+      if (sameText) {
+        sameText.dataset.stepId = step.stepId;
+        renderThinkingStep(sameText, incoming);
+        collapseTurnThinkingDuplicates();
+        keepStatusAtEnd();
+        scrollToBottom();
+        return sameText;
+      }
+
+      // Reuse latest Thinking when still in the same phase (no committed tool after it).
+      const latest = findLatestTurnThinking();
+      if (latest && !hasCommittedToolAfter(latest)) {
+        latest.dataset.stepId = step.stepId;
+        renderThinkingStep(latest, incoming);
+        collapseTurnThinkingDuplicates();
+        keepStatusAtEnd();
+        scrollToBottom();
+        return latest;
+      }
+    }
+
+    const group = ensureActiveToolGroup();
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return null;
+    }
+
+    let el = body.querySelector(
+      `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+
+    if (step.kind === "thinking") {
+      const openThinking = findOpenThinkingStep(body);
+      if (openThinking) {
+        el = openThinking;
+        el.dataset.stepId = step.stepId;
+      } else if (!el) {
+        el = document.createElement("div");
+        el.className = "msg tool agent-step";
+        el.dataset.stepId = step.stepId;
+        body.appendChild(el);
+      }
+    } else if (!el) {
+      el = document.createElement("div");
+      el.className = "msg tool agent-step";
+      el.dataset.stepId = step.stepId;
+      body.appendChild(el);
+    }
+    el.dataset.stepKind = step.kind || "tool";
+    if (step.status) {
+      el.dataset.status = step.status;
+    }
+    if (step.name) {
+      el.dataset.toolName = step.name;
+    }
+
+    if (step.kind === "thinking") {
+      renderThinkingStep(el, String(step.text || "").trim());
+      collapseTurnThinkingDuplicates();
+    } else if (step.kind === "tool") {
+      el.classList.remove("agent-step-thinking");
+      const label = formatToolHumanLabel(step.name, step.argsPreview);
+      const icon = toolStepIcon(step.name, step.status);
+      el.innerHTML =
+        `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="agent-step-label"></span>`;
+      const labelEl = el.querySelector(".agent-step-label");
+      if (labelEl) {
+        labelEl.textContent = label;
+      }
+    } else {
+      el.classList.remove("agent-step-thinking");
+      const icon = agentStepStatusIcon(step.status, step.kind);
+      const label =
+        step.kind === "compaction"
+          ? step.text || "Context compacted"
+          : step.kind === "retry"
+            ? step.text ||
+              `Retry ${step.attempt || "?"}/${step.maxAttempts || "?"}`
+            : step.text || step.kind || "";
+      el.innerHTML =
+        `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="agent-step-label"></span>`;
+      const labelEl = el.querySelector(".agent-step-label");
+      if (labelEl) {
+        labelEl.textContent = label;
+      }
+    }
+
+    updateToolGroupSummary(group);
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
+  }
+
+  function renderThinkingStep(el, incoming) {
+    if (!el) {
+      return;
+    }
+    const prev = String(el.dataset.raw || "").trim();
+    let full =
+      isThinkingPlaceholder(incoming) && prev && !isThinkingPlaceholder(prev)
+        ? prev
+        : incoming;
+    if (
+      !isThinkingPlaceholder(incoming) &&
+      !isThinkingPlaceholder(prev) &&
+      incoming.length < prev.length &&
+      prev.startsWith(incoming)
+    ) {
+      full = prev;
+    } else if (
+      !isThinkingPlaceholder(incoming) &&
+      !isThinkingPlaceholder(prev) &&
+      prev.length < incoming.length &&
+      incoming.startsWith(prev)
+    ) {
+      full = incoming;
+    } else if (
+      !isThinkingPlaceholder(incoming) &&
+      !isThinkingPlaceholder(prev) &&
+      incoming === prev
+    ) {
+      full = prev;
+    }
+    el.dataset.stepKind = "thinking";
+    el.dataset.raw = full;
+    el.classList.add("agent-step-thinking");
+    el.innerHTML =
+      `<div class="agent-step-head">` +
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">psychology</span>` +
+      `<span class="agent-step-label">${escapeHtml(t("thinkingLabel"))}</span>` +
+      `</div>` +
+      `<div class="agent-step-thinking-text"></div>` +
+      `<button type="button" class="agent-step-thinking-toggle" aria-expanded="true" hidden>` +
+      `<span class="agent-step-thinking-toggle-label"></span>` +
+      `<span class="material-symbols-outlined agent-step-thinking-chevron" aria-hidden="true">expand_more</span>` +
+      `</button>`;
+    const textEl = el.querySelector(".agent-step-thinking-text");
+    if (textEl) {
+      textEl.textContent = isThinkingPlaceholder(full)
+        ? t("thinkingWorking")
+        : full;
+    }
+    updateThinkingCollapse(el, full);
+  }
+
+  /** Auto-collapse long Thinking blocks; show toggle when text exceeds preview. */
+  function updateThinkingCollapse(el, text) {
+    const toggle = el.querySelector(".agent-step-thinking-toggle");
+    const toggleLabel = el.querySelector(
+      ".agent-step-thinking-toggle-label"
+    );
+    if (!toggle || !toggleLabel) {
+      return;
+    }
+    const raw = String(text || "").trim();
+    const isPlaceholder = !raw || isThinkingPlaceholder(raw);
+    if (isPlaceholder || raw.length <= 240) {
+      el.classList.remove("is-thinking-collapsed");
+      toggle.hidden = true;
+      return;
+    }
+    toggle.hidden = false;
+    const collapsed = el.classList.contains("is-thinking-collapsed");
+    toggleLabel.textContent = collapsed
+      ? t("showThinking")
+      : t("hideThinking");
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+  }
+
+  /** Collapse all long Thinking steps in a turn once the turn advances. */
+  function collapseLongThinkingSteps(scope) {
+    const root = scope || messagesEl;
+    for (const el of root.querySelectorAll(
+      ".agent-step[data-step-kind='thinking']:not(.is-thinking-collapsed)"
+    )) {
+      const raw = String(el.dataset.raw || "").trim();
+      if (raw && !isThinkingPlaceholder(raw) && raw.length > 240) {
+        el.classList.add("is-thinking-collapsed");
+        updateThinkingCollapse(el, raw);
+      }
+    }
+  }
+
+  function appendToolToGroup(text, index, step) {
+    if (step && step.stepId) {
+      const el = upsertAgentStep(step);
+      if (el && typeof index === "number") {
+        el.dataset.index = String(index);
+      }
+      return el;
+    }
     const group = ensureActiveToolGroup();
     const body = group.querySelector(".tool-group-body");
     const toolName = parseToolName(text);
@@ -8410,7 +9177,9 @@
     index,
     regenAssistantIndex,
     attachments,
-    shouldScroll = true
+    shouldScroll = true,
+    reasoning,
+    step
   ) {
     if (role === "review") {
       sealToolGroups();
@@ -8423,10 +9192,25 @@
     }
 
     if (role === "tool") {
-      return appendToolToGroup(text, index);
+      return appendToolToGroup(text, index, step);
     }
 
     sealToolGroups();
+
+    // History restore only — live turns already painted Thinking via steps.
+    if (role === "assistant" && String(reasoning || "").trim()) {
+      const turn =
+        currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+          ? currentChatTurnEl
+          : null;
+      const alreadyHasThinking = Boolean(
+        turn?.querySelector(".agent-step[data-step-kind='thinking']")
+      );
+      if (!alreadyHasThinking) {
+        upsertReasoning(String(reasoning).trim());
+        sealToolGroups();
+      }
+    }
 
     const el = document.createElement("div");
     el.className = `msg ${role}`;
@@ -8570,7 +9354,9 @@
         i,
         regenAssistantIndex,
         item.attachments,
-        false
+        false,
+        item.reasoning,
+        item.step
       );
     }
     restoreAgentStatus();
@@ -8635,12 +9421,33 @@
     updateVisionUi();
     if (notify && selectedModelId) {
       localModelChangeAt = Date.now();
-      vscode.postMessage({ type: "modelChanged", model: selectedModelId });
+      vscode.postMessage({
+        type: "modelChanged",
+        model: selectedModelId,
+        chatId: activeChatId || "",
+      });
     }
   }
 
-  function resolvePreferredModelId(preferredId) {
+  function resolvePreferredModelId(preferredId, forceHost = false) {
     const fromHost = String(preferredId || "").trim();
+    // При переключении чата / init / regenerate модель хоста авторитетна —
+    // не даём локальному guard перекрывать модель нового чата.
+    if (forceHost) {
+      localModelChangeAt = 0;
+      if (fromHost && models.some((m) => m.id === fromHost)) {
+        return fromHost;
+      }
+      if (activeChatId && state.modelByChat[activeChatId]) {
+        const fromChat = String(state.modelByChat[activeChatId] || "").trim();
+        if (fromChat && models.some((m) => m.id === fromChat)) {
+          return fromChat;
+        }
+      }
+      return selectedModelId && models.some((m) => m.id === selectedModelId)
+        ? selectedModelId
+        : fromHost;
+    }
     const localIsFresh =
       localModelChangeAt > 0 &&
       Date.now() - localModelChangeAt < LOCAL_MODEL_GUARD_MS &&
@@ -8667,10 +9474,10 @@
     return models[0]?.id || "";
   }
 
-  function fillModels(nextModels, preferredId) {
+  function fillModels(nextModels, preferredId, forceHost = false) {
     const incoming = Array.isArray(nextModels) ? nextModels : [];
     models = incoming.length ? incoming : DEFAULT_MODELS.slice();
-    const preferred = resolvePreferredModelId(preferredId);
+    const preferred = resolvePreferredModelId(preferredId, forceHost);
     setSelectedModel(preferred, false);
     if (menuOpen) {
       renderMenu();
@@ -8920,7 +9727,11 @@
       promptEl.focus();
     }
     if (notify && agentMode) {
-      vscode.postMessage({ type: "modeChanged", mode: agentMode });
+      vscode.postMessage({
+        type: "modeChanged",
+        mode: agentMode,
+        chatId: activeChatId || "",
+      });
     }
   }
 
@@ -10555,6 +11366,47 @@
       updateToolGroupSummary(group);
       return;
     }
+    const reasoningToggle = event.target.closest(".reasoning-group-toggle");
+    if (reasoningToggle && messagesEl.contains(reasoningToggle)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const group = reasoningToggle.closest(".reasoning-group");
+      if (!group) {
+        return;
+      }
+      const collapsed = group.classList.toggle("is-collapsed");
+      reasoningToggle.setAttribute(
+        "aria-expanded",
+        collapsed ? "false" : "true"
+      );
+      updateReasoningGroupSummary(group);
+      return;
+    }
+    const thinkingToggle = event.target.closest(
+      ".agent-step-thinking-toggle"
+    );
+    if (thinkingToggle && messagesEl.contains(thinkingToggle)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const step = thinkingToggle.closest(".agent-step");
+      if (!step) {
+        return;
+      }
+      const collapsed = step.classList.toggle("is-thinking-collapsed");
+      thinkingToggle.setAttribute(
+        "aria-expanded",
+        collapsed ? "false" : "true"
+      );
+      const label = thinkingToggle.querySelector(
+        ".agent-step-thinking-toggle-label"
+      );
+      if (label) {
+        label.textContent = collapsed
+          ? t("showThinking")
+          : t("hideThinking");
+      }
+      return;
+    }
     const editModeTrigger = event.target.closest(".msg-edit-mode-trigger");
     if (editModeTrigger && messagesEl.contains(editModeTrigger)) {
       event.preventDefault();
@@ -10758,7 +11610,7 @@
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
-        fillModels(msg.models, msg.selectedModel);
+        fillModels(msg.models, msg.selectedModel, true);
         if (msg.modes) {
           applyModes(msg.modes);
         }
@@ -10770,7 +11622,12 @@
         editingAttachments = [];
         clearPendingAttachments();
         setCanRegenerate(msg.canRegenerate);
-        applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
+        applyAgentStatusState(
+          msg.status?.text || "",
+          Boolean(msg.status?.hidden),
+          msg.status?.phase,
+          msg.status?.modelLabel || ""
+        );
         renderMessages(msg.uiMessages || [], "restore", msg.scrollTop);
         if (msg.agentId) {
           activeAgentId = msg.agentId;
@@ -10865,7 +11722,7 @@
           activeChatId = msg.chatId;
         }
         if (msg.models) {
-          fillModels(msg.models, msg.selectedModel);
+          fillModels(msg.models, msg.selectedModel, true);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
         editingUserIndex = null;
@@ -10873,7 +11730,12 @@
         editingModelId = "";
         editingModeId = "";
         setCanRegenerate(msg.canRegenerate);
-        applyAgentStatusState(msg.status?.text || "", Boolean(msg.status?.hidden), msg.status?.phase);
+        applyAgentStatusState(
+          msg.status?.text || "",
+          Boolean(msg.status?.hidden),
+          msg.status?.phase,
+          msg.status?.modelLabel || ""
+        );
         if (msg.providerConnStatus) {
           renderProviderConnStatus(msg.providerConnStatus);
         }
@@ -10952,14 +11814,14 @@
         break;
       case "regenerateState":
         if (msg.selectedModel) {
-          fillModels(models, msg.selectedModel);
+          fillModels(models, msg.selectedModel, true);
         }
         setCanRegenerate(msg.canRegenerate);
         ensureRegenerateButton();
         break;
       case "messagesReplaced":
         if (msg.selectedModel) {
-          fillModels(models, msg.selectedModel);
+          fillModels(models, msg.selectedModel, true);
         }
         editingUserIndex = null;
         editingUserText = "";
@@ -10980,18 +11842,31 @@
           role: msg.role,
           text: msg.text,
           attachments: msg.attachments,
+          ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
+          ...(msg.step ? { step: msg.step } : {}),
         });
         appendMessage(
           msg.role,
           msg.text,
           uiMessagesCache.length - 1,
           -1,
-          msg.attachments
+          msg.attachments,
+          true,
+          msg.reasoning,
+          msg.step
         );
+        break;
+      case "step":
+        upsertAgentStep(msg);
         break;
       case "status":
         if (!msg.chatId || msg.chatId === activeChatId) {
-          setAgentStatus(msg.text || "", Boolean(msg.hidden), msg.phase);
+          setAgentStatus(
+            msg.text || "",
+            Boolean(msg.hidden),
+            msg.phase,
+            msg.modelLabel || ""
+          );
         }
         break;
       case "review":
@@ -11035,18 +11910,37 @@
         break;
       case "assistantDone":
         if (!streamingEl && msg.text) {
-          uiMessagesCache.push({ role: "assistant", text: msg.text });
+          uiMessagesCache.push({
+            role: "assistant",
+            text: msg.text,
+            ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
+          });
+          // Reasoning already rendered via live steps — do not upsert again
+          // (that raced after seal and duplicated Thinking).
+          // Append text FIRST so sealToolGroups can detect assistant text in
+          // the .chat-turn and drop placeholder-only Thinking cards.
           appendMessage(
             "assistant",
             msg.text,
             uiMessagesCache.length - 1,
-            canRegenerate ? uiMessagesCache.length - 1 : -1
+            canRegenerate ? uiMessagesCache.length - 1 : -1,
+            undefined,
+            true,
+            undefined
           );
+          sealToolGroups();
+          cleanSealedThinkingPlaceholders();
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
           setMessageContent(streamingEl, "assistant", raw);
-          uiMessagesCache.push({ role: "assistant", text: raw });
+          uiMessagesCache.push({
+            role: "assistant",
+            text: raw,
+            ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
+          });
           streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+          sealToolGroups();
+          cleanSealedThinkingPlaceholders();
         }
         streamingEl = null;
         streamingRenderScheduled = false;
@@ -11056,6 +11950,15 @@
         editingModeId = "";
         setBusy(false);
         ensureRegenerateButton();
+        break;
+      case "reasoning":
+        // Live Thinking comes from step events. Late/duplicate reasoning
+        // messages must not open a second card after seal.
+        if (msg.text) {
+          upsertReasoning(msg.text);
+          dedupeTurnTimelines();
+          scrollToBottom();
+        }
         break;
       case "idle":
         if (msg.chatId && msg.chatId !== activeChatId) {

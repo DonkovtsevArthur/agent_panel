@@ -233,7 +233,7 @@ export function looksLikeUserEditRequest(text: string): boolean {
   if (!raw) {
     return false;
   }
-  const value = raw.toLowerCase();
+  const value = raw.toLowerCase().replace(/ё/g, "е");
 
   const needles = [
     "верни",
@@ -253,6 +253,8 @@ export function looksLikeUserEditRequest(text: string): boolean {
     "переименуй",
     "перепиши",
     "поменяй",
+    "поменяем",
+    "поменять",
     "измени верси",
     "подними верси",
     "смени верси",
@@ -261,9 +263,14 @@ export function looksLikeUserEditRequest(text: string): boolean {
     "update version",
     "сделай",
     "реализуй",
+    "реализац",
+    "приступ",
     "внеси",
     "по плану",
     "давай сделаем",
+    "давай реализ",
+    "implement",
+    "implementation",
     "apply",
     "fix",
     "rename",
@@ -274,6 +281,16 @@ export function looksLikeUserEditRequest(text: string): boolean {
     "why remove",
   ];
   if (hasAny(value, needles)) {
+    return true;
+  }
+
+  // «по этому / твоему / следующему плану»
+  if (
+    /(?:^|[^\p{L}\p{N}_])по\s+\S{0,24}\s*плану(?:[^\p{L}\p{N}_]|$)/iu.test(
+      value
+    ) ||
+    /(?:^|[^\p{L}\p{N}_])по\s+плану(?:[^\p{L}\p{N}_]|$)/iu.test(value)
+  ) {
     return true;
   }
 

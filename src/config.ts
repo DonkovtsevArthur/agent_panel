@@ -51,6 +51,12 @@ export interface AgentModel {
    * Если не задан — берётся эвристика по id (см. resolveModelSupportsVision).
    */
   supportsVision?: boolean;
+  /**
+   * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4 через
+   * OpenAI-compatible гейтвей). Пусто = default по capability ("high").
+   * Допустимо: "minimal" | "low" | "medium" | "high" | "xhigh" | "max".
+   */
+  reasoningEffort?: string;
 }
 
 export interface ModelEndpoint {
@@ -275,6 +281,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       enabled?: unknown;
       favorite?: unknown;
       supportsVision?: unknown;
+      reasoningEffort?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -323,6 +330,12 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       model.supportsVision = true;
     } else if (row.supportsVision === false) {
       model.supportsVision = false;
+    }
+    if (
+      typeof row.reasoningEffort === "string" &&
+      row.reasoningEffort.trim()
+    ) {
+      model.reasoningEffort = row.reasoningEffort.trim();
     }
     models.push(model);
   }
@@ -531,6 +544,27 @@ export function resolveModelSupportsVision(
   return resolveModelCapabilities(modelOrId.id, {
     supportsVision: modelOrId.supportsVision,
   }).supportsVision;
+}
+
+/**
+ * reasoning_effort для модели: явный из конфига → default по capability.
+ * undefined — модель не поддерживает reasoning_effort (не отправляем поле).
+ */
+export function resolveModelReasoningEffort(
+  modelId: string
+): string | undefined {
+  const fromConfig = getConfig().models.find((m) => m.id === modelId);
+  const capabilities = resolveModelCapabilities(modelId, {
+    reasoningEffort: fromConfig?.reasoningEffort,
+  });
+  if (!capabilities.supportsReasoningEffort) {
+    return undefined;
+  }
+  return (
+    capabilities.reasoningEffortDefault ||
+    fromConfig?.reasoningEffort ||
+    "high"
+  );
 }
 
 /** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */

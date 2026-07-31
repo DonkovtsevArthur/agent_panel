@@ -71,9 +71,21 @@ function isEffectivelyEmptyContent(
  */
 export function toApiMessages(
   messages: ChatMessage[],
-  options?: { ensureReasoningForTools?: boolean }
+  options?: {
+    ensureReasoningForTools?: boolean;
+    stripReasoningOnEcho?: boolean;
+    /**
+     * Kimi: assistant tool-call turn должен идти без поля `content` вообще
+     * (гейтвей 400-ит на `content: null`). Для всех остальных моделей
+     * `content: null` обязателен — без него строгие гейтвеи (DeepSeek/DaVinci)
+     * 500-ят на re-entry после tool-result.
+     */
+    omitContentForToolCalls?: boolean;
+  }
 ): Record<string, unknown>[] {
   const ensureReasoning = Boolean(options?.ensureReasoningForTools);
+  const stripReasoning = Boolean(options?.stripReasoningOnEcho);
+  const omitContentForTools = Boolean(options?.omitContentForToolCalls);
   return messages.map((message) => {
     const { attachments: _a, ...rest } = message;
     const out: Record<string, unknown> = { role: rest.role };
@@ -92,7 +104,10 @@ export function toApiMessages(
       typeof rest.reasoning_content === "string"
         ? rest.reasoning_content
         : undefined;
-    if (reasoning && reasoning.length > 0) {
+    if (stripReasoning && rest.role === "assistant") {
+      // Claude extended thinking: reasoning_content не несёт signature,
+      // поэтому не эхается на assistant tool-call turn (гейтвей регенерирует).
+    } else if (reasoning && reasoning.length > 0) {
       out.reasoning_content = reasoning;
     } else if (
       ensureReasoning &&
@@ -112,6 +127,13 @@ export function toApiMessages(
       } else if (!rest.tool_calls?.length) {
         out.content = "";
       }
+    } else if (omitContentForTools) {
+      // Kimi: гейтвей 400-ит на `content: null` — опускаем поле полностью.
+    } else {
+      // DeepSeek/OpenAI/Anthropic-compat: assistant tool-call turn must carry
+      // an explicit `content: null`; omitting it makes strict gateways 500
+      // on re-entry after a tool result.
+      out.content = null;
     }
 
     return out;
@@ -289,7 +311,8 @@ function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
 async function withTransportRetry<T>(
   operation: () => Promise<T>,
   signal: AbortSignal | undefined,
-  options: Required<TransportRetryOptions>
+  options: Required<TransportRetryOptions>,
+  onRetry?: ChatCompletionsCallOptions["onRetry"]
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     if (signal?.aborted) {
@@ -311,7 +334,14 @@ async function withTransportRetry<T>(
       );
       const jitter =
         exponential * options.jitterRatio * (Math.random() * 2 - 1);
-      await sleepWithSignal(Math.max(0, exponential + jitter), signal);
+      const delayMs = Math.max(0, exponential + jitter);
+      onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts: options.maxAttempts,
+        error,
+        delayMs,
+      });
+      await sleepWithSignal(delayMs, signal);
     }
   }
 }
@@ -405,6 +435,24 @@ export function resolveRequestMaxTokens(
 export interface ChatCompletionDelta {
   content?: string;
   reasoning_content?: string;
+  /** Partial tool call as it streams (name/id may appear before args finish). */
+  tool_call?: {
+    index: number;
+    id?: string;
+    name?: string;
+    argumentsDelta?: string;
+  };
+}
+
+export interface ChatCompletionsCallOptions {
+  onDelta?: (delta: ChatCompletionDelta) => void;
+  /** Fired before each transport retry (attempt is 1-based after the first failure). */
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    error: unknown;
+    delayMs: number;
+  }) => void;
 }
 
 export interface ChatCompletionRequest {
@@ -416,6 +464,8 @@ export interface ChatCompletionRequest {
   max_tokens?: number;
   /** Internal client option; not sent to the API. */
   minimum_output_tokens?: number;
+  /** OpenAI-style reasoning effort (Claude 3.5+/4 via gateway). */
+  reasoning_effort?: string;
 }
 
 function requestJson(
@@ -582,7 +632,8 @@ function applyToolCallDelta(
     id?: string;
     type?: string;
     function?: { name?: string; arguments?: string };
-  }>
+  }>,
+  onDelta?: (delta: ChatCompletionDelta) => void
 ): void {
   for (const part of deltas) {
     const index = typeof part.index === "number" ? part.index : 0;
@@ -602,6 +653,22 @@ function applyToolCallDelta(
     }
     if (typeof part.function?.arguments === "string") {
       row.function.arguments += part.function.arguments;
+    }
+    if (
+      onDelta &&
+      (part.id || part.function?.name || typeof part.function?.arguments === "string")
+    ) {
+      onDelta({
+        tool_call: {
+          index,
+          id: row.id,
+          name: row.function.name,
+          argumentsDelta:
+            typeof part.function?.arguments === "string"
+              ? part.function.arguments
+              : undefined,
+        },
+      });
     }
   }
 }
@@ -659,6 +726,8 @@ export class OpenAICompatibleClient {
       messages: toApiMessages(body.messages, {
         ensureReasoningForTools:
           capabilities.requiresReasoningContentForToolCalls,
+        stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
+        omitContentForToolCalls: capabilities.omitContentForToolCalls,
       }),
       stream,
     };
@@ -679,32 +748,103 @@ export class OpenAICompatibleClient {
     if (maxTokens !== undefined) {
       apiBody.max_tokens = maxTokens;
     }
+    if (body.reasoning_effort) {
+      apiBody.reasoning_effort = body.reasoning_effort;
+    }
     return apiBody;
   }
 
   async chatCompletions(
     body: ChatCompletionRequest,
     signal?: AbortSignal,
-    options?: { onDelta?: (delta: ChatCompletionDelta) => void }
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
-    // Все модели: как на main — простой non-stream JSON.
-    const result = await this.chatCompletionsMainLike(body, signal);
-    const text =
-      typeof result.message.content === "string"
-        ? result.message.content
-        : "";
-    if (text && options?.onDelta) {
-      options.onDelta({ content: text });
+    try {
+      const streamed = await this.chatCompletionsStreaming(
+        body,
+        signal,
+        options
+      );
+      const text =
+        typeof streamed.message.content === "string"
+          ? streamed.message.content
+          : "";
+      const hasTools = Boolean(streamed.message.tool_calls?.length);
+      const hasReasoning = Boolean(
+        typeof streamed.message.reasoning_content === "string" &&
+          streamed.message.reasoning_content.trim() &&
+          streamed.message.reasoning_content.trim() !== " "
+      );
+      if (!text && !hasTools) {
+        // Reasoning-only SSE already drove onDelta → Thinking UI. Re-fetching
+        // JSON would fire the same reasoning again and duplicate cards.
+        if (hasReasoning) {
+          return streamed;
+        }
+        // Empty SSE — fall back to non-stream JSON (corporate gateways).
+        return this.chatCompletionsMainLike(body, signal, options);
+      }
+      // Some Kimi gateways stream content/tools via SSE but omit
+      // reasoning_content from the deltas, so the Thinking card stalls on
+      // "Thinking…". Re-fetch via JSON to recover reasoning, forwarding only
+      // reasoning deltas so already-streamed content/tools are not duplicated.
+      if (!hasReasoning && isKimiFamilyModel(body.model)) {
+        try {
+          const jsonResult = await this.chatCompletionsMainLike(body, signal, {
+            ...options,
+            onDelta: (delta) => {
+              if (delta.reasoning_content) {
+                options?.onDelta?.({ reasoning_content: delta.reasoning_content });
+              }
+            },
+          });
+          if (
+            typeof jsonResult.message.reasoning_content === "string" &&
+            jsonResult.message.reasoning_content.trim()
+          ) {
+            return {
+              ...streamed,
+              message: {
+                ...streamed.message,
+                reasoning_content: jsonResult.message.reasoning_content,
+              },
+            };
+          }
+        } catch {
+          // Reasoning recovery failed — keep the streamed result as-is.
+        }
+      }
+      return streamed;
+    } catch (error) {
+      if (isAbortError(error, signal)) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        /SSE stream interrupted after partial/i.test(error.message)
+      ) {
+        throw error;
+      }
+      // Do not JSON-fallback after exhausted HTTP retries (429/5xx) — surface the error.
+      if (
+        error instanceof HttpStatusError ||
+        (error instanceof Error && /^API \d{3}:/.test(error.message))
+      ) {
+        throw error;
+      }
+      // Stream transport/parse failure before useful output — JSON fallback.
+      return this.chatCompletionsMainLike(body, signal, options);
     }
-    return result;
   }
 
   /**
-   * Транспорт один в один как на main: JSON.stringify(body), без stream/retry/toApiMessages.
+   * Non-stream JSON chat/completions (gateway-stable fallback).
+   * Kimi: toApiMessages + reasoning placeholder, без temperature, min max_tokens.
    */
   private async chatCompletionsMainLike(
     body: ChatCompletionRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -713,19 +853,14 @@ export class OpenAICompatibleClient {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
 
-    // Как на main: тело = model/messages[/tools]/tool_choice]/temperature]/max_tokens].
-    const requestBody: {
-      model: string;
-      messages: ChatMessage[];
-      tools?: ChatTool[];
-      tool_choice?: "auto" | "none";
-      temperature?: number;
-      max_tokens?: number;
-    } = {
+    const capabilities = resolveModelCapabilities(body.model);
+    const requestBody: Record<string, unknown> = {
       model: body.model,
-      messages: body.messages.map((message) => {
-        const { attachments: _a, ...rest } = message;
-        return rest;
+      messages: toApiMessages(body.messages, {
+        ensureReasoningForTools:
+          capabilities.requiresReasoningContentForToolCalls,
+        stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
+        omitContentForToolCalls: capabilities.omitContentForToolCalls,
       }),
     };
     if (body.tools) {
@@ -734,34 +869,75 @@ export class OpenAICompatibleClient {
     if (body.tool_choice) {
       requestBody.tool_choice = body.tool_choice;
     }
-    if (body.temperature !== undefined) {
+    if (!capabilities.omitTemperature && body.temperature !== undefined) {
       requestBody.temperature = body.temperature;
     }
-    if (body.max_tokens !== undefined) {
-      requestBody.max_tokens = body.max_tokens;
+    const maxTokens = resolveModelRequestMaxTokens(
+      body.model,
+      body.max_tokens,
+      body.minimum_output_tokens
+    );
+    if (maxTokens !== undefined) {
+      requestBody.max_tokens = maxTokens;
+    }
+    if (body.reasoning_effort) {
+      requestBody.reasoning_effort = body.reasoning_effort;
     }
 
     const payload = JSON.stringify(requestBody);
     headers["Content-Length"] = Buffer.byteLength(payload).toString();
 
-    const response = await requestJson(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: payload,
+    const response = await withTransportRetry(
+      async () => {
+        const current = await requestJson(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: payload,
+          signal,
+          tls: this.tls,
+        });
+        if (current.status < 200 || current.status >= 300) {
+          throw new HttpStatusError(
+            current.status,
+            `API ${current.status}: ${current.text.slice(0, 800)}`
+          );
+        }
+        return current;
+      },
       signal,
-      tls: this.tls,
-    });
+      this.retry,
+      options?.onRetry
+    );
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(
-        `API ${response.status}: ${response.text.slice(0, 800)}`
-      );
-    }
-
-    const data = JSON.parse(response.text) as ChatCompletionResponse;
-    const message = data.choices?.[0]?.message;
-    if (!message) {
+    const data = JSON.parse(response.text) as ChatCompletionResponse & {
+      choices?: Array<{
+        message?: ChatMessage & { reasoning_content?: unknown; reasoning?: unknown };
+      }>;
+    };
+    const raw = data.choices?.[0]?.message;
+    if (!raw) {
       throw new Error("Пустой ответ от API");
+    }
+    const message: ChatMessage = { ...raw };
+    if (typeof raw.reasoning_content === "string") {
+      message.reasoning_content = raw.reasoning_content;
+    }
+    // Алиас `reasoning` (без _content) — некоторые гейтвеи отдают thinking
+    // только через это поле. Не перетираем `reasoning_content`, если он есть.
+    if (
+      typeof raw.reasoning === "string" &&
+      raw.reasoning &&
+      !message.reasoning_content
+    ) {
+      message.reasoning_content = raw.reasoning;
+    }
+    const text =
+      typeof message.content === "string" ? message.content : "";
+    if (text && options?.onDelta) {
+      options.onDelta({ content: text });
+    }
+    if (message.reasoning_content && options?.onDelta) {
+      options.onDelta({ reasoning_content: message.reasoning_content });
     }
     return {
       message,
@@ -773,7 +949,7 @@ export class OpenAICompatibleClient {
   private async chatCompletionsStreaming(
     body: ChatCompletionRequest,
     signal?: AbortSignal,
-    options?: { onDelta?: (delta: ChatCompletionDelta) => void }
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -818,6 +994,7 @@ export class OpenAICompatibleClient {
                     delta?: {
                       content?: string | null;
                       reasoning_content?: string | null;
+                      reasoning?: string | null;
                       tool_calls?: Array<{
                         index?: number;
                         id?: string;
@@ -825,7 +1002,10 @@ export class OpenAICompatibleClient {
                         function?: { name?: string; arguments?: string };
                       }>;
                     };
-                    message?: ChatMessage & { reasoning_content?: unknown };
+                    message?: ChatMessage & {
+                      reasoning_content?: unknown;
+                      reasoning?: unknown;
+                    };
                     finish_reason?: string | null;
                   }>;
                   usage?: ChatCompletionUsage;
@@ -856,11 +1036,28 @@ export class OpenAICompatibleClient {
                       reasoning_content: delta.reasoning_content,
                     });
                   }
+                  // Алиас `reasoning` (без _content) — OpenRouter / Anthropic-прокси
+                  // / корпоративные гейтвеи отдают Claude thinking через это поле.
+                  // Не дублируем, если гейтвей шлёт оба.
+                  if (
+                    typeof delta.reasoning === "string" &&
+                    delta.reasoning &&
+                    !(typeof delta.reasoning_content === "string" && delta.reasoning_content)
+                  ) {
+                    reasoning += delta.reasoning;
+                    options?.onDelta?.({
+                      reasoning_content: delta.reasoning,
+                    });
+                  }
                   if (
                     Array.isArray(delta.tool_calls) &&
                     delta.tool_calls.length
                   ) {
-                    applyToolCallDelta(toolAcc, delta.tool_calls);
+                    applyToolCallDelta(
+                      toolAcc,
+                      delta.tool_calls,
+                      options?.onDelta
+                    );
                   }
                 }
                 // Редкий non-delta chunk в stream.
@@ -871,6 +1068,13 @@ export class OpenAICompatibleClient {
                   }
                   if (typeof msg.reasoning_content === "string") {
                     reasoning = msg.reasoning_content;
+                  }
+                  if (
+                    typeof msg.reasoning === "string" &&
+                    msg.reasoning &&
+                    !(typeof msg.reasoning_content === "string" && msg.reasoning_content)
+                  ) {
+                    reasoning = msg.reasoning;
                   }
                   if (msg.tool_calls?.length) {
                     toolAcc.clear();
@@ -901,11 +1105,12 @@ export class OpenAICompatibleClient {
           }
       },
       signal,
-      this.retry
+      this.retry,
+      options?.onRetry
     );
 
     if (!sawChoice && !content && toolAcc.size === 0) {
-      return this.chatCompletionsNonStream(body, signal);
+      return this.chatCompletionsMainLike(body, signal, options);
     }
 
     const toolCalls = finalizeToolCalls(toolAcc);
