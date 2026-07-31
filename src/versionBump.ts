@@ -9,6 +9,9 @@ function hasAny(haystack: string, needles: string[]): boolean {
 
 const SEMVER_RE = /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/g;
 
+/** Строгая semver для валидации значения поля version (без surrounding-текста). */
+const SEMVER_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
 export type VersionClarification = {
   current?: string;
   suggested?: string;
@@ -209,15 +212,19 @@ export function looksLikeVersionChangeRequest(text: string): boolean {
     return false;
   }
   return (
-    /(?:поменя|смени|обнов|подним|увелич|bump|change|update|set).{0,48}верси/.test(
+    /(?:поменя|смени|обнов|подним|постав|увелич|bump|change|update|set).{0,48}верси/.test(
       value
     ) ||
-    /верси.{0,48}(?:поменя|смени|обнов|подним|bump|change|update)/.test(
+    /верси.{0,48}(?:поменя|смени|обнов|подним|постав|увелич|bump|change|update)/.test(
       value
     ) ||
     /давай\s+(?:ее|её|еe|ее\s+)?поменя/.test(value) ||
     /давай\s+поменя/.test(value) ||
-    /^(поменяй|смени|обнови|подними)\s*(ее|её|еe)?\.?$/.test(value)
+    /^(поменяй|смени|обнови|подними)\s*(ее|её|еe)?\.?$/.test(value) ||
+    // «поменяй на 22» / «подними до 23» / «поставь на 22» — голый patch без слова «версия».
+    /(?:поменя|смени|обнов|подним|постав|увелич).{0,30}(?:на|до)\s+\d{1,6}\s*\.?$/.test(
+      value
+    )
   );
 }
 
@@ -253,6 +260,7 @@ export function resolveLocalVersionBump(
   history: Array<{ role?: string; content?: unknown }>
 ):
   | { targetVersion: string; source: "follow_up" | "explicit" | "assistant_patch" }
+  | { barePatch: string; source: "bare_number" }
   | { readPackageAndBumpPatch: true }
   | null {
   const followUp = resolveVersionBumpFollowUp(userText, history);
@@ -267,6 +275,14 @@ export function resolveLocalVersionBump(
   );
   if (explicit?.[1]) {
     return { targetVersion: explicit[1], source: "explicit" };
+  }
+  // Голый patch-номер: «поменяй на 22» / «подними до 23» / «поставь на 22».
+  // Точную semver соберём в resolveVersionBumpForPackageJson из версии с диска.
+  const bare = String(userText || "")
+    .toLowerCase()
+    .match(/(?:на|до)\s+(\d{1,6})\s*\.?$/);
+  if (bare?.[1]) {
+    return { barePatch: bare[1], source: "bare_number" };
   }
   const reported = extractReportedAppVersion(lastAssistantText(history));
   if (reported) {
@@ -297,6 +313,102 @@ export function applyPackageJsonVersion(
     previous,
     content: String(content).replace(re, `$1${newVersion}$3`),
   };
+}
+
+/** Извлечь top-level version из текста package.json (первое вхождение). */
+export function extractPackageJsonVersion(content: string): string | null {
+  const re = /"version"\s*:\s*"([^"]+)"/;
+  const match = String(content || "").match(re);
+  return match?.[1] || null;
+}
+
+/**
+ * Детерминированный bump версии в package.json без LLM.
+ * Трогает только top-level поле `version` (regex без флага g) — зависимости
+ * и прочие поля не меняются и не удаляются.
+ *
+ * @returns
+ *  - `{ kind: "bump", targetVersion, previous, newContent }` — записать newContent на диск;
+ *  - `{ kind: "already", current }` — версия уже целевая, менять нечего;
+ *  - `null` — запрос не похож на bump версии (провалить в обычный LLM-путь).
+ */
+export function resolveVersionBumpForPackageJson(
+  userText: string,
+  history: Array<{ role?: string; content?: unknown }>,
+  packageJsonContent: string
+):
+  | { kind: "bump"; targetVersion: string; previous: string; newContent: string }
+  | { kind: "already"; current: string }
+  | null {
+  const resolved = resolveLocalVersionBump(userText, history);
+  if (!resolved) {
+    return null;
+  }
+  let targetVersion: string | null;
+  if ("readPackageAndBumpPatch" in resolved) {
+    const current = extractPackageJsonVersion(packageJsonContent);
+    if (!current) {
+      return null;
+    }
+    targetVersion = bumpPatchVersion(current);
+  } else if ("barePatch" in resolved) {
+    // «поменяй на 22» — берём major.minor из package.json с диска, patch из запроса.
+    const current = extractPackageJsonVersion(packageJsonContent);
+    if (!current) {
+      return null;
+    }
+    const parts = current.split(".");
+    if (parts.length < 3) {
+      return null;
+    }
+    const patchPart = String(resolved.barePatch).split("-")[0];
+    targetVersion = `${parts[0]}.${parts[1]}.${patchPart}`;
+  } else {
+    targetVersion = resolved.targetVersion;
+  }
+  if (!targetVersion) {
+    return null;
+  }
+  const applied = applyPackageJsonVersion(packageJsonContent, targetVersion);
+  if (!applied.ok) {
+    if (applied.error.startsWith("already:")) {
+      return { kind: "already", current: applied.error.slice("already:".length) };
+    }
+    return null;
+  }
+  return {
+    kind: "bump",
+    targetVersion,
+    previous: applied.previous,
+    newContent: applied.content,
+  };
+}
+
+/**
+ * Guard (B): модель не должна записывать в package.json поле "version"
+ * не-semver значением (например, голое "22" вместо "0.0.22"). Если модель
+ * пытается — возвращаем ошибку инструмента, чтобы она либо поставила полную
+ * semver, либо уточнила у пользователя текстом, а не угадывала.
+ *
+ * Возвращает строку-ошибку (JSON) либо null, если значение корректное
+ * (или поле version отсутствует). Чистая функция без vscode — тестируется отдельно.
+ */
+export function validatePackageJsonVersionValue(
+  resultingContent: string
+): string | null {
+  const version = extractPackageJsonVersion(resultingContent);
+  if (version === null) {
+    return null;
+  }
+  if (SEMVER_VERSION_RE.test(version)) {
+    return null;
+  }
+  return JSON.stringify({
+    error:
+      `package.json "version" must be full semver (e.g. "0.0.22"), got ${JSON.stringify(version)}. ` +
+      `Do not write a bare number into the version field. Either set a proper semver, ` +
+      `or ask the user in plain text which version they meant — do not guess.`,
+  });
 }
 
 /** «Уже так / менять нечего» при явном запросе на изменение. */
