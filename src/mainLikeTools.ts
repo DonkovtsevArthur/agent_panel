@@ -14,6 +14,8 @@ import {
   isIgnoredDirName,
   isIgnoredWorkspacePath,
 } from "./workspaceIgnore";
+import { applySearchReplace } from "./patchApply";
+import { validatePackageJsonVersionValue } from "./versionBump";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +26,16 @@ export const MAIN_LIKE_READONLY_TOOL_NAMES = new Set([
   "fetch_url",
   "open_external",
 ]);
+
+/** Main-like инструменты, меняющие файлы на диске (учитываются как правки). */
+export const MAIN_LIKE_WRITE_TOOL_NAMES = new Set([
+  "write_file",
+  "search_replace",
+]);
+
+export function isMainLikeWriteTool(name: string): boolean {
+  return MAIN_LIKE_WRITE_TOOL_NAMES.has(String(name || ""));
+}
 
 /** Plan/Ask: built-in read tools + Figma MCP (all) + other read-only MCP. */
 export function isAllowedToolInReadonlyMainLike(name: string): boolean {
@@ -92,7 +104,7 @@ export const mainLikeAgentTools: ChatTool[] = [
     function: {
       name: "write_file",
       description:
-        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out. При diagnostics/importWarnings в ответе сразу исправь ошибки.",
+        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out. При diagnostics/importWarnings в ответе сразу исправь ошибки. Используй ТОЛЬКО для создания нового файла или полной перезаписи. Для точечной правки существующего файла предпочитай search_replace — он меняет только нужный фрагмент и не рискует остальное содержимое.",
       parameters: {
         type: "object",
         properties: {
@@ -106,6 +118,37 @@ export const mainLikeAgentTools: ChatTool[] = [
           },
         },
         required: ["relativePath", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_replace",
+      description:
+        "Точно заменить текст в существующем файле workspace (хирургическая правка). По умолчанию old_string должен встречаться ровно один раз; для всех совпадений укажи replace_all=true. Сохраняет окончания строк файла. ПРЕДПОЧИТАЙ этот инструмент для точечных правок существующих файлов — он трогает только целевой фрагмент, остальное содержимое (зависимости, импорты, соседний код) не меняется и не удаляется. write_file используй только для создания нового файла или полной перезаписи.",
+      parameters: {
+        type: "object",
+        properties: {
+          relativePath: {
+            type: "string",
+            description: "Относительный путь к существующему файлу",
+          },
+          old_string: {
+            type: "string",
+            description:
+              "Точный старый текст. Добавь окружающий контекст, чтобы совпадение было уникальным.",
+          },
+          new_string: {
+            type: "string",
+            description: "Новый текст (может быть пустым для удаления)",
+          },
+          replace_all: {
+            type: "boolean",
+            description: "Заменить все совпадения (по умолчанию false)",
+          },
+        },
+        required: ["relativePath", "old_string", "new_string"],
       },
     },
   },
@@ -201,6 +244,15 @@ function truncate(text: string, max = 40_000): string {
     return text;
   }
   return text.slice(0, max) + "\n\n[truncated]";
+}
+
+async function readWorkspaceFileText(uri: vscode.Uri): Promise<string | null> {
+  try {
+    const data = await vscode.workspace.fs.readFile(uri);
+    return Buffer.from(data).toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 async function runCommand(command: string, cwdRelative = ""): Promise<string> {
@@ -304,7 +356,46 @@ export async function runMainLikeTool(
           content: truncate(text, 80_000),
         });
       }
-      case "write_file":
+      case "write_file": {
+        const relativePath = String(args.relativePath ?? "");
+        const baseName = path.basename(relativePath);
+        if (baseName === "package.json") {
+          const newContent = String(args.content ?? "");
+          const guardError = validatePackageJsonVersionValue(newContent);
+          if (guardError) {
+            return guardError;
+          }
+        }
+        return runTool(name, argsJson);
+      }
+      case "search_replace": {
+        const relativePath = String(args.relativePath ?? "");
+        const baseName = path.basename(relativePath);
+        if (baseName === "package.json") {
+          const uri = resolvePath(relativePath);
+          const before = await readWorkspaceFileText(uri);
+          if (before !== null) {
+            const oldString = String(args.old_string ?? "");
+            const newString = String(args.new_string ?? "");
+            const replaceAll = args.replace_all === true;
+            const applied = applySearchReplace(
+              before,
+              oldString,
+              newString,
+              replaceAll
+            );
+            if (applied.ok) {
+              const guardError = validatePackageJsonVersionValue(
+                applied.content
+              );
+              if (guardError) {
+                return guardError;
+              }
+            }
+          }
+        }
+        return runTool(name, argsJson);
+      }
       case "get_diagnostics": {
         // Полный путь из tools.ts: diagnostics / importWarnings / unchanged.
         return runTool(name, argsJson);

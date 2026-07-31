@@ -52,10 +52,12 @@ All chat models use the **main-like** path:
 - **Tool evidence fallback**: when the model fails after tool rounds, `formatToolEvidenceFallbackAnswer` summarizes gathered read/search results instead of showing a bare red error.
 - **Thinking collapse**: long Thinking blocks (> 240 chars) auto-collapse when the turn advances to tools/text; user can expand via «Show thinking» toggle.
 - **`reasoning_effort` (Claude 3.5+/4 via gateway)**: models matching `claude.*(?:3[-.][5-9]|[4-9])` get OpenAI-style `reasoning_effort` (default `"high"`, overridable per-model via `agentPanel.models[].reasoningEffort`). The gateway enables extended thinking and streams `reasoning_content`, which the model-agnostic `onDelta` handler already renders into the Thinking card. Claude 3.0 (no thinking) and non-Claude models do not send the field.
+- **`reasoning_effort` gating on tool rounds (`effectiveReasoningEffort`)**: Anthropic's native API requires echoed `thinking` blocks (with a cryptographic `signature`) on the assistant tool-call turn when extended thinking is on. Our OpenAI-style `reasoning_content` carries no signature, so the corporate gateway returns 500 on re-entry after a tool result — both with and without `stripReasoningOnEcho`. To stay stable, `reasoning_effort` is dropped for any request whose message history already contains a `tool` result or an assistant `tool_calls` turn (`src/reasoningEffort.ts`). Net effect: thinking streams on the first turn (before any tool call); tool rounds and post-tool finales run without extended thinking. `stripReasoningOnEcho` stays on so echoed assistant tool-call turns also carry an explicit `content: null` (Anthropic-compat gateways reject an omitted `content` field).
 - Built-in tools from `mainLikeTools.ts`:
-  - always: `list_files`, `read_file`, `write_file`, `run_command`
+  - always: `list_files`, `read_file`, `write_file`, `search_replace`, `run_command`
   - URL: `fetch_url`, `open_external` (when the user message has http(s) / Figma URL)
   - plus connected **MCP** tools (e.g. Figma) when enabled in Settings
+  - **Focused edits (Zed-style):** `search_replace` (old_string → new_string, uniqueness required by default; `replace_all` for multi) is the surgical patch tool — it changes only the target fragment and leaves the rest of the file (dependencies, imports, neighboring code) untouched. The `FOCUSED_EDIT_HINT` system message nudges models to prefer `search_replace` for changes to EXISTING files and reserve `write_file` (full rewrite) for creating new files or rewriting entirely. `isMainLikeWriteTool` (`write_file` ∪ `search_replace`) gates productive rounds, edit tracking (`bumpEdit`), the hard-cut allow-list, and the post-edit verification gate — so `search_replace` edits are counted, tracked, and verified exactly like `write_file`.
 
 Do **not** tell the user that external URLs / Figma are unavailable when `fetch_url` / `open_external` / Figma MCP tools are in the tool list.
 
@@ -88,6 +90,27 @@ After successful edits, before the finale, Kimi runs a bounded quality gate (`ve
 4. if the project command fails but reports only paths **outside** this turn's edits → allow finale (do not fix whole-repo lint debt)
 
 Other models keep the previous behavior (no forced gate). `get_diagnostics` is exposed in main-like tools only when this gate is on.
+
+### Deterministic version bump (no LLM)
+
+When the user asks to change the version in `package.json` («поменяй версию» / follow-up «да» / explicit semver), `runMainLikeAgentTurn` runs a **pre-LLM shortcut** (`resolveVersionBumpForPackageJson` in `src/versionBump.ts`) before any model call:
+
+- Reads `package.json` from the workspace root, applies a targeted regex (no `g` flag) that replaces **only the first** `"version"` occurrence, and writes the file back.
+- Dependencies, scripts, and other fields are never touched, bumped, or deleted — the regex physically cannot reach them.
+- Reports the edit via `onFileEdit` + `onReview` (so the **Commit and push** tag appears), answers `«version: prev → new»`, and finishes the turn **without calling the LLM**.
+- If the version already matches → answers «уже X — менять нечего» (matches `looksLikeRefusedRequestedEdit`).
+- Only in **Agent** mode (not Plan/Ask) and only when a workspace root exists; otherwise falls through to the normal LLM path.
+- Question requests («какая версия») and unrelated edits («добавь зависимость») return `null` and go to the LLM as usual.
+- Bare patch number in the request («поменяй на 22» / «подними до 23» / «поставь на 22») is caught by `looksLikeVersionChangeRequest` and resolved via the new `barePatch` source: `resolveVersionBumpForPackageJson` takes `major.minor` from `package.json` on disk and substitutes the user's number as the patch → `0.0.22`. The model never gets a chance to write a literal `"22"` into the version field.
+
+### package.json version guard (tool-level, no LLM)
+
+Even when the shortcut above is bypassed (unusual phrasing, model-initiated edit), `runMainLikeTool` in `src/mainLikeTools.ts` intercepts `write_file` / `search_replace` whose target is a `package.json`:
+
+- For `write_file`: the new content is validated before the write.
+- For `search_replace`: the patch is applied locally (dry-run via `applySearchReplace`), the resulting content is validated, and the write is blocked if the guard fires.
+- `validatePackageJsonVersionValue` (in `src/versionBump.ts`, vscode-free, unit-tested) extracts the `"version"` value and rejects non-semver (e.g. bare `"22"`). The tool returns a JSON error telling the model to either set a proper semver or ask the user in plain text — not guess.
+- Valid semver and files without a `version` field pass through unchanged.
 
 ### Commit message generation (SCM / Commit and push)
 
