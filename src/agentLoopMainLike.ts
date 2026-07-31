@@ -102,6 +102,10 @@ import {
   normalizeReasoningContent,
 } from "./reasoningUi";
 import {
+  createThinkTagStreamFilter,
+  stripThinkTagBlock,
+} from "./thinkTagFilter";
+import {
   applyGetDiagnosticsToVerification,
   applyProjectCommandToVerification,
   applyWriteFileToVerification,
@@ -367,13 +371,27 @@ function assistantTurnFromApi(assistant: ChatMessage): ChatMessage {
   const toolCalls = (assistant.tool_calls ?? []).filter(
     (call) => call?.function?.name
   );
+  let content = assistant.content ?? null;
+  let reasoning: string | undefined;
+  if (typeof content === "string") {
+    // DeepSeek-R1 стиль: платформа может отдать `</welcome>…</welcome>` инлайн
+    // в content (не через reasoning_content). Срезаем ведущий блок и при
+    // наличии reasoning — прокидываем в reasoning_content (Thinking-карточка).
+    const stripped = stripThinkTagBlock(content);
+    content = stripped.text;
+    if (stripped.reasoning) {
+      reasoning = stripped.reasoning;
+    }
+  }
   const turn: ChatMessage = {
     role: "assistant",
-    content: assistant.content ?? null,
+    content,
     tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
   };
   if (typeof assistant.reasoning_content === "string") {
     turn.reasoning_content = assistant.reasoning_content;
+  } else if (reasoning) {
+    turn.reasoning_content = reasoning;
   }
   return turn;
 }
@@ -751,6 +769,12 @@ export async function runMainLikeAgentTurn(options: {
     const earlyToolIds = new Set<string>();
     /** Reasoning только этого completion — не дописывать в текст прошлых раундов. */
     let roundReasoning = "";
+    /**
+     * Streaming-фильтр `</welcome>…</welcome>` (DeepSeek-R1 стиль): платформа
+     * «ДаВинчи» отдаёт thinking инлайн в `content`. Фильтр режет блок по чанкам
+     * и направляет reasoning в Thinking-карточку, а видимый текст — в ответ.
+     */
+    const thinkFilter = createThinkTagStreamFilter();
     const activeClient = getClientForModel(request.model);
     try {
     const result = await activeClient.chatCompletions(
@@ -790,12 +814,27 @@ export async function runMainLikeAgentTurn(options: {
           });
         }
         if (delta.content) {
-          options.callbacks.onAssistantDelta?.(delta.content);
-          emitStep({
-            stepId: textStepId,
-            kind: "text",
-            text: delta.content,
-          });
+          const { visible, reasoning } = thinkFilter.consume(delta.content);
+          if (reasoning) {
+            roundReasoning = appendReasoningDelta(roundReasoning, reasoning);
+            const thinkingText =
+              normalizeReasoningContent(roundReasoning) ||
+              roundReasoning ||
+              "Thinking…";
+            emitStep({
+              stepId: thinkingStepId,
+              kind: "thinking",
+              text: thinkingText,
+            });
+          }
+          if (visible) {
+            options.callbacks.onAssistantDelta?.(visible);
+            emitStep({
+              stepId: textStepId,
+              kind: "text",
+              text: visible,
+            });
+          }
         }
         if (delta.tool_call?.id || delta.tool_call?.name) {
           const id =
@@ -1423,7 +1462,7 @@ export async function runMainLikeAgentTurn(options: {
           continue;
         }
         const finished = await applyHonestFinaleOrNudge(
-          contentAsString(assistant.content),
+          contentAsString(hardAssistant.content),
           round
         );
         if (finished) {
@@ -1536,7 +1575,7 @@ export async function runMainLikeAgentTurn(options: {
         continue;
       }
       const finished = await applyHonestFinaleOrNudge(
-        contentAsString(assistant.content),
+        contentAsString(roundAssistant.content),
         round
       );
       if (finished) {

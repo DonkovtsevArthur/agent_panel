@@ -73,3 +73,31 @@ test("finalizeAssistantText prefers real text, then edits, then tools", () => {
   );
   assert.equal(summarizeEditsFallback(edits).includes("src/a.ts"), true);
 });
+
+test("finalizeAssistantText strips a stray leading </welcome> close tag (no open tag)", () => {
+  const THINK_CLOSE = "<" + "/think" + ">";
+  const out = finalizeAssistantText(
+    THINK_CLOSE + "Вот актуальная информация: 0.0.21",
+    new Map(),
+    1000
+  );
+  assert.equal(out, "Вот актуальная информация: 0.0.21");
+});
+
+test("finalizeAssistantText strips a full leading </welcome>…</welcome> block", () => {
+  const THINK_OPEN = "<" + "think" + ">";
+  const THINK_CLOSE = "<" + "/think" + ">";
+  const out = finalizeAssistantText(
+    THINK_OPEN + "рассуждаю" + THINK_CLOSE + "ответ",
+    new Map(),
+    1000
+  );
+  assert.equal(out, "ответ");
+});
+
+test("finalizeAssistantText does NOT strip a </welcome> tag that is not leading", () => {
+  const THINK_CLOSE = "<" + "/think" + ">";
+  const input = "код: `" + THINK_CLOSE + "` — не трогать";
+  const out = finalizeAssistantText(input, new Map(), 1000);
+  assert.equal(out, input);
+});
