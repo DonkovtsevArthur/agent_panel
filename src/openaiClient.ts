@@ -74,10 +74,18 @@ export function toApiMessages(
   options?: {
     ensureReasoningForTools?: boolean;
     stripReasoningOnEcho?: boolean;
+    /**
+     * Kimi: assistant tool-call turn должен идти без поля `content` вообще
+     * (гейтвей 400-ит на `content: null`). Для всех остальных моделей
+     * `content: null` обязателен — без него строгие гейтвеи (DeepSeek/DaVinci)
+     * 500-ят на re-entry после tool-result.
+     */
+    omitContentForToolCalls?: boolean;
   }
 ): Record<string, unknown>[] {
   const ensureReasoning = Boolean(options?.ensureReasoningForTools);
   const stripReasoning = Boolean(options?.stripReasoningOnEcho);
+  const omitContentForTools = Boolean(options?.omitContentForToolCalls);
   return messages.map((message) => {
     const { attachments: _a, ...rest } = message;
     const out: Record<string, unknown> = { role: rest.role };
@@ -119,9 +127,12 @@ export function toApiMessages(
       } else if (!rest.tool_calls?.length) {
         out.content = "";
       }
-    } else if (stripReasoning) {
-      // Claude (Anthropic-compat gateway): assistant tool-call turn must carry
-      // a `content` field; null is accepted where omitted content is not.
+    } else if (omitContentForTools) {
+      // Kimi: гейтвей 400-ит на `content: null` — опускаем поле полностью.
+    } else {
+      // DeepSeek/OpenAI/Anthropic-compat: assistant tool-call turn must carry
+      // an explicit `content: null`; omitting it makes strict gateways 500
+      // on re-entry after a tool result.
       out.content = null;
     }
 
@@ -716,6 +727,7 @@ export class OpenAICompatibleClient {
         ensureReasoningForTools:
           capabilities.requiresReasoningContentForToolCalls,
         stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
+        omitContentForToolCalls: capabilities.omitContentForToolCalls,
       }),
       stream,
     };
@@ -848,6 +860,7 @@ export class OpenAICompatibleClient {
         ensureReasoningForTools:
           capabilities.requiresReasoningContentForToolCalls,
         stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
+        omitContentForToolCalls: capabilities.omitContentForToolCalls,
       }),
     };
     if (body.tools) {

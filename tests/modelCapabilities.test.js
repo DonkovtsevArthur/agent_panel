@@ -124,6 +124,32 @@ test("Claude reasoning strips reasoning_content on echo (no signature)", () => {
   );
 });
 
+test("omitContentForToolCalls: only Kimi omits content, others emit content: null", () => {
+  // Kimi gateway 400s on `content: null` → must omit the field.
+  assert.equal(
+    resolveModelCapabilities("Kimi-K2.5").omitContentForToolCalls,
+    true
+  );
+  assert.equal(
+    resolveModelCapabilities("moonshot/kimi-k2.5").omitContentForToolCalls,
+    true
+  );
+  // DeepSeek/OpenAI/Claude — strict gateways 500 on omitted content for
+  // assistant tool-call turns → content: null is required.
+  assert.equal(
+    resolveModelCapabilities("DeepSeek-V4-Flash").omitContentForToolCalls,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("claude-sonnet-4-5").omitContentForToolCalls,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("gpt-4.1").omitContentForToolCalls,
+    false
+  );
+});
+
 test("reasoningEffort override replaces the default", () => {
   const resolved = resolveModelCapabilities("claude-haiku-4-5", {
     reasoningEffort: "medium",

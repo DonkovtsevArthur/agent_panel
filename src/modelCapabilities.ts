@@ -23,6 +23,14 @@ export interface ModelCapabilities {
    * Противоположность Kimi (где thinking нужен в эхе).
    */
   stripReasoningOnEcho: boolean;
+  /**
+   * Kimi-гейтвей возвращает 400, если у assistant tool-call turn-а есть
+   * поле `content` (даже null). Для Kimi content опускается полностью.
+   * Все прочие модели (DeepSeek, OpenAI, Anthropic-compat) требуют
+   * `content: null` на assistant tool-call turn — без него строгие
+   * гейтвеи отвечают 500 на re-entry после tool-result.
+   */
+  omitContentForToolCalls: boolean;
 }
 
 export interface ModelCapabilityOverrides {
@@ -76,6 +84,7 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
       omitTemperature: true,
       requiresReasoningContentForToolCalls: true,
       minimumOutputTokens: KIMI_MIN_MAX_TOKENS,
+      omitContentForToolCalls: true,
     },
   },
   {
@@ -174,6 +183,7 @@ export function resolveModelCapabilities(
       resolved.requiresReasoningContentForToolCalls === true,
     supportsReasoningEffort: resolved.supportsReasoningEffort === true,
     stripReasoningOnEcho: resolved.stripReasoningOnEcho === true,
+    omitContentForToolCalls: resolved.omitContentForToolCalls === true,
   };
 }
 
