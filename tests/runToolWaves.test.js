@@ -100,3 +100,41 @@ test("executeToolCallsInOrder keeps write_file serial relative to reads", async 
   assert.ok(active.max >= 2, "expected parallel reads");
   assert.ok(active.max <= 2, `write must not overlap reads, max=${active.max}`);
 });
+
+test("executeToolCallsInOrder emits queued→running→done lifecycle", async () => {
+  const toolCalls = [
+    call("read_file", "{}", "a"),
+    call("read_file", "{}", "b"),
+  ];
+  const events = [];
+  await executeToolCallsInOrder({
+    toolCalls,
+    formatStatus: (name) => ({ phase: "reading", detail: name }),
+    onToolLifecycle: (call, status) => {
+      events.push(`${call.id}:${status}`);
+    },
+    invokeOne: async (c) => `ok:${c.id}`,
+  });
+  assert.deepEqual(events, [
+    "a:queued",
+    "b:queued",
+    "a:running",
+    "b:running",
+    "a:done",
+    "b:done",
+  ]);
+});
+
+test("executeToolCallsInOrder marks error lifecycle on error JSON", async () => {
+  const toolCalls = [call("write_file", "{}", "w")];
+  const events = [];
+  await executeToolCallsInOrder({
+    toolCalls,
+    formatStatus: (name) => ({ phase: "editing", detail: name }),
+    onToolLifecycle: (call, status) => {
+      events.push(`${call.id}:${status}`);
+    },
+    invokeOne: async () => JSON.stringify({ error: "denied" }),
+  });
+  assert.deepEqual(events, ["w:queued", "w:running", "w:error"]);
+});
