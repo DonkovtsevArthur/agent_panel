@@ -9421,7 +9421,11 @@
     updateVisionUi();
     if (notify && selectedModelId) {
       localModelChangeAt = Date.now();
-      vscode.postMessage({ type: "modelChanged", model: selectedModelId });
+      vscode.postMessage({
+        type: "modelChanged",
+        model: selectedModelId,
+        chatId: activeChatId || "",
+      });
     }
   }
 
@@ -9723,7 +9727,11 @@
       promptEl.focus();
     }
     if (notify && agentMode) {
-      vscode.postMessage({ type: "modeChanged", mode: agentMode });
+      vscode.postMessage({
+        type: "modeChanged",
+        mode: agentMode,
+        chatId: activeChatId || "",
+      });
     }
   }
 

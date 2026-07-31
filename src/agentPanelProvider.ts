@@ -152,8 +152,8 @@ type WebviewToHost =
   | { type: "archiveAgent"; agentId: string }
   | { type: "restoreAgent"; agentId: string }
   | { type: "deleteAgent"; agentId: string }
-  | { type: "modelChanged"; model: string }
-  | { type: "modeChanged"; mode: string }
+  | { type: "modelChanged"; model: string; chatId?: string }
+  | { type: "modeChanged"; mode: string; chatId?: string }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
   | { type: "commitAndPush"; paths: string[] }
@@ -1562,7 +1562,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           void this.postInit();
         }
         break;
-      case "modelChanged":
+      case "modelChanged": {
+        // Guard against stale modelChanged arriving after a chat switch:
+        // if the webview sent this for a different chat, ignore it — the
+        // new active chat's model was already hydrated by openAgent.
+        const msgChatId = String(message.chatId || "");
+        if (
+          msgChatId &&
+          this.store.activeChatId &&
+          msgChatId !== this.store.activeChatId
+        ) {
+          break;
+        }
         this.selectedModel = String(message.model || "").trim();
         if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
           touchChat(this.store, this.store.activeChatId, {
@@ -1579,7 +1590,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         });
         this.ensureProviderProbe(this.selectedModel);
         break;
-      case "modeChanged":
+      }
+      case "modeChanged": {
+        const msgChatId = String(message.chatId || "");
+        if (
+          msgChatId &&
+          this.store.activeChatId &&
+          msgChatId !== this.store.activeChatId
+        ) {
+          break;
+        }
         this.selectedMode = getModeById(message.mode).id;
         if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
           touchChat(this.store, this.store.activeChatId, {
@@ -1588,6 +1608,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         this.saveSession();
         break;
+      }
       case "newChat":
         this.newChat();
         break;
@@ -2299,8 +2320,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (!this.isChatRunCurrent(runChatId, runRef)) {
         return;
       }
-      // Prefer the live picker choice if the user switched mid-run.
-      const modelForChat = this.selectedModel || selectedModelAfterRun;
+      // Use the live picker choice only if the user is still viewing this
+      // chat. If they switched to another chat mid-run, this.selectedModel
+      // belongs to the other chat — don't let it leak into runChatId.
+      const modelForChat =
+        this.store.activeChatId === runChatId
+          ? this.selectedModel || selectedModelAfterRun
+          : selectedModelAfterRun;
       touchChat(this.store, runChatId, {
         selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
