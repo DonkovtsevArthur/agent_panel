@@ -9304,8 +9304,25 @@
     }
   }
 
-  function resolvePreferredModelId(preferredId) {
+  function resolvePreferredModelId(preferredId, forceHost = false) {
     const fromHost = String(preferredId || "").trim();
+    // При переключении чата / init / regenerate модель хоста авторитетна —
+    // не даём локальному guard перекрывать модель нового чата.
+    if (forceHost) {
+      localModelChangeAt = 0;
+      if (fromHost && models.some((m) => m.id === fromHost)) {
+        return fromHost;
+      }
+      if (activeChatId && state.modelByChat[activeChatId]) {
+        const fromChat = String(state.modelByChat[activeChatId] || "").trim();
+        if (fromChat && models.some((m) => m.id === fromChat)) {
+          return fromChat;
+        }
+      }
+      return selectedModelId && models.some((m) => m.id === selectedModelId)
+        ? selectedModelId
+        : fromHost;
+    }
     const localIsFresh =
       localModelChangeAt > 0 &&
       Date.now() - localModelChangeAt < LOCAL_MODEL_GUARD_MS &&
@@ -9332,10 +9349,10 @@
     return models[0]?.id || "";
   }
 
-  function fillModels(nextModels, preferredId) {
+  function fillModels(nextModels, preferredId, forceHost = false) {
     const incoming = Array.isArray(nextModels) ? nextModels : [];
     models = incoming.length ? incoming : DEFAULT_MODELS.slice();
-    const preferred = resolvePreferredModelId(preferredId);
+    const preferred = resolvePreferredModelId(preferredId, forceHost);
     setSelectedModel(preferred, false);
     if (menuOpen) {
       renderMenu();
@@ -11464,7 +11481,7 @@
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
-        fillModels(msg.models, msg.selectedModel);
+        fillModels(msg.models, msg.selectedModel, true);
         if (msg.modes) {
           applyModes(msg.modes);
         }
@@ -11576,7 +11593,7 @@
           activeChatId = msg.chatId;
         }
         if (msg.models) {
-          fillModels(msg.models, msg.selectedModel);
+          fillModels(msg.models, msg.selectedModel, true);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
         editingUserIndex = null;
@@ -11668,14 +11685,14 @@
         break;
       case "regenerateState":
         if (msg.selectedModel) {
-          fillModels(models, msg.selectedModel);
+          fillModels(models, msg.selectedModel, true);
         }
         setCanRegenerate(msg.canRegenerate);
         ensureRegenerateButton();
         break;
       case "messagesReplaced":
         if (msg.selectedModel) {
-          fillModels(models, msg.selectedModel);
+          fillModels(models, msg.selectedModel, true);
         }
         editingUserIndex = null;
         editingUserText = "";
