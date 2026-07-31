@@ -116,7 +116,7 @@ export function shouldBlockGitCommitOrPush(
 }
 
 export function isGitMutationCommand(command: string): boolean {
-  return /(?:^|[;&|]\s*)git\s+(?:commit|restore|revert|reset|clean)(?:\s|$)/i.test(
+  return /(?:^|[;&|]\s*)git\s+(?:commit|checkout|restore|revert|reset|clean)(?:\s|$)/i.test(
     String(command || "")
   );
 }

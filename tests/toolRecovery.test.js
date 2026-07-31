@@ -70,6 +70,49 @@ test("modelNeedsAggressiveToolBudget covers DeepSeek and gpt-4.1", () => {
   assert.ok(softGpt > AGGRESSIVE_SOFT_TARGET_CAP_TOKENS);
 });
 
+test("prepareKimiGatewayMessages shrinks older tool payloads", () => {
+  const {
+    prepareKimiGatewayMessages,
+    prepareKimiEmptyFinaleMessages,
+  } = require("../out/toolRecovery.js");
+  const messages = [
+    { role: "tool", name: "read_file", content: "a".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "b".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "c".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "d".repeat(6_000) },
+  ];
+  assert.equal(prepareKimiGatewayMessages(messages), true);
+  assert.ok(String(messages[0].content).length < 3_000);
+  assert.ok(String(messages[3].content).length === 6_000);
+
+  const forFinale = [
+    { role: "tool", name: "read_file", content: "x".repeat(5_000) },
+    { role: "tool", name: "read_file", content: "y".repeat(5_000) },
+    { role: "tool", name: "read_file", content: "z".repeat(5_000) },
+  ];
+  assert.equal(prepareKimiEmptyFinaleMessages(forFinale), true);
+  assert.ok(String(forFinale[0].content).length < 2_000);
+});
+
+test("prepareFragileGatewayMessages caps even the latest read_file", () => {
+  const { prepareFragileGatewayMessages } = require("../out/toolRecovery.js");
+  const payload = JSON.stringify({
+    path: "package.json",
+    content: "z".repeat(12_000),
+  });
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      tool_call_id: "1",
+      content: payload,
+    },
+  ];
+  assert.equal(prepareFragileGatewayMessages(messages), true);
+  assert.ok(String(messages[0].content).length < 3_200);
+  assert.ok(String(messages[0].content).includes("package.json"));
+});
+
 test("formatToolEvidenceFallbackAnswer summarizes read/search tools", () => {
   const answer = formatToolEvidenceFallbackAnswer(
     [

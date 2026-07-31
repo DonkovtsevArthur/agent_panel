@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.7.228",
+  "version": "1.0.22",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -392,7 +392,8 @@
         "agentPanel.speedRouting.agentExplore": {
           "type": "boolean",
           "default": true,
-          "description": "%config.speedRouting.agentExplore.description%"
+          "description": "%config.speedRouting.agentExplore.description%",
+          "deprecationMessage": "Unused: Agent explore handoff is not part of the main-like loop"
         },
         "agentPanel.visionRouting.preferredModelIds": {
           "type": "array",

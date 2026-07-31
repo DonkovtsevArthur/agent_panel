@@ -204,6 +204,45 @@ function editedSharedLookingPath(messages: ChatMessage[]): boolean {
 }
 
 /**
+ * Honest clarifying reply: model asks for a missing decision (version, choice)
+ * instead of claiming an edit. Like Zed — allow ask when proceeding would be guessing.
+ */
+export function looksLikeMissingInfoQuestion(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length > 900) {
+    return false;
+  }
+  const value = raw.toLowerCase().replace(/ё/g, "е");
+
+  const needles = [
+    "какую версию",
+    "на какую версию",
+    "какую именно",
+    "укажи,",
+    "укажи ",
+    "уточни",
+    "which version",
+    "what version",
+    "to which version",
+    "which one",
+  ];
+  if (needles.some((n) => value.includes(n))) {
+    return true;
+  }
+
+  // Short/medium question asking the user to choose or specify.
+  if (
+    raw.length <= 600 &&
+    /[?？]/.test(raw) &&
+    /(?:^|\n)\s*(какую|какой|какая|какие|укажи|уточни|which|what)\b/im.test(raw)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Единый гейт перед показом финала пользователю.
  */
 export function decideHonestFinale(input: {
@@ -213,6 +252,8 @@ export function decideHonestFinale(input: {
   userText: string;
   hadSuccessfulWrite?: boolean;
   gitOperationCompleted?: boolean;
+  /** Kimi only: allow clarifying questions without nudge_write. */
+  kimi?: boolean;
   allowNudgeWrite?: boolean;
   allowNudgeHedge?: boolean;
   allowNudgeHollow?: boolean;
@@ -223,6 +264,7 @@ export function decideHonestFinale(input: {
   const allowNudgeHedge = input.allowNudgeHedge !== false;
   const allowNudgeHollow = input.allowNudgeHollow !== false;
   const allowNudgeImpact = input.allowNudgeImpact !== false;
+  const kimi = input.kimi === true;
 
   if (!input.canEdit) {
     if (looksLikeHollowStatusOrDeferral(text)) {
@@ -254,6 +296,9 @@ export function decideHonestFinale(input: {
   const sharedClaim = looksLikeSharedLayoutChangeClaim(text);
   const sharedEdited = editedSharedLookingPath(input.messages);
   const searchedUsages = turnHadUsageSearch(input.messages);
+  // Kimi only: honest clarifying (version / choice) without write is OK —
+  // avoid MISSING_WRITE → long meta-thinking. Other models still get nudged.
+  const clarifying = kimi && looksLikeMissingInfoQuestion(text);
 
   // Явная ложь «уже сделал» без успешного файлового edit
   if (!hadWrite && claimsEdit) {
@@ -302,8 +347,13 @@ export function decideHonestFinale(input: {
     return { kind: "replace", text: IMPACT_USER_VISIBLE };
   }
 
-  // Follow-up на правку без write — дожимаем, иначе оставляем честный текст
-  if (!hadWrite && userWantsEdit && allowNudgeWrite) {
+  // Follow-up на правку без write — дожимаем (кроме clarifying у Kimi).
+  if (
+    !hadWrite &&
+    userWantsEdit &&
+    allowNudgeWrite &&
+    !clarifying
+  ) {
     return { kind: "nudge_write" };
   }
 
