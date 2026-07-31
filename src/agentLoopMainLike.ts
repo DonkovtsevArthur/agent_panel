@@ -760,22 +760,11 @@ export async function runMainLikeAgentTurn(options: {
   }> => {
     thinkingStepId = nextStepId("thinking");
     textStepId = nextStepId("text");
-    // Only emit the «Thinking…» placeholder for models that support
-    // reasoning_effort (Claude 3.5+/4 via gateway). For models without it
-    // (DeepSeek-V4-Flash, Qwen3-Coder-Next, …) the placeholder would stay
-    // empty for the entire round — skip it. If reasoning_content or inline
-    // <think> tags arrive during streaming, the Thinking card is created
-    // on demand via onDelta / think-tag filter below.
-    const modelSupportsThinking = Boolean(
-      resolveModelReasoningEffort(request.model)
-    );
-    if (modelSupportsThinking) {
-      emitStep({
-        stepId: thinkingStepId,
-        kind: "thinking",
-        text: completionIntent === "tool_results" ? "Continuing…" : "Thinking…",
-      });
-    }
+    // No eager placeholder for any model — the Thinking card is created on
+    // demand when real reasoning_content or inline think-tags arrive during
+    // streaming (onDelta / think-tag filter below). This avoids showing an
+    // empty "Thinking…" card while the model has not produced any reasoning.
+
 
     const earlyToolIds = new Set<string>();
     /** Reasoning только этого completion — не дописывать в текст прошлых раундов. */
