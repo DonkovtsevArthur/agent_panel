@@ -114,6 +114,16 @@ test("Claude reasoning max_tokens is lifted above config default for thinking bu
   );
 });
 
+test("Claude reasoning strips reasoning_content on echo (no signature)", () => {
+  const haiku4 = resolveModelCapabilities("claude-haiku-4-5");
+  assert.equal(haiku4.stripReasoningOnEcho, true);
+  // Kimi — наоборот, reasoning нужен в эхе.
+  assert.equal(
+    resolveModelCapabilities("Kimi-K2.5").stripReasoningOnEcho,
+    false
+  );
+});
+
 test("reasoningEffort override replaces the default", () => {
   const resolved = resolveModelCapabilities("claude-haiku-4-5", {
     reasoningEffort: "medium",

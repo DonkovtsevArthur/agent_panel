@@ -46,6 +46,13 @@ When you already know several paths to inspect, call multiple read_file / list_f
 export const PARALLEL_READS_HINT_MARKER =
   "multiple read_file / list_files in the same assistant turn";
 
+/**
+ * Zed-style focused-edit guidance: prefer search_replace (surgical patch) over
+ * write_file (full rewrite) for changes to existing files — protects the rest
+ * of the file (dependencies, imports, neighboring code) from being rewritten.
+ */
+export const FOCUSED_EDIT_HINT = `When editing an EXISTING file, prefer search_replace (old_string → new_string) — it changes only the target fragment and leaves the rest of the file untouched (dependencies, imports, neighboring code are not rewritten or deleted). Add enough surrounding context to old_string so the match is unique. Use write_file ONLY to create a new file or to rewrite it entirely. For a version bump in package.json, call search_replace with the exact "version": "x.y.z" line.`;
+
 let stepSeq = 0;
 
 export function nextStepId(prefix = "step"): string {
