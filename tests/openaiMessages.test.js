@@ -84,6 +84,62 @@ test("toApiMessages injects reasoning placeholder for Kimi tool calls", () => {
   assert.equal(serialized[0].reasoning_content, " ");
 });
 
+test("toApiMessages strips reasoning_content on assistant echo for Claude", () => {
+  const serialized = toApiMessages(
+    [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "read_file", arguments: "{}" },
+          },
+        ],
+        reasoning_content: "the model's thinking about reading package.json",
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        name: "read_file",
+        content: '{"path":"package.json","content":"..."}',
+      },
+    ],
+    { stripReasoningOnEcho: true }
+  );
+  assert.equal("reasoning_content" in serialized[0], false);
+  assert.equal(serialized[0].tool_calls.length, 1);
+  // Claude (Anthropic-compat): assistant tool-call turn carries explicit
+  // content: null instead of omitting the field.
+  assert.equal("content" in serialized[0], true);
+  assert.equal(serialized[0].content, null);
+  // tool result stays intact
+  assert.equal(serialized[1].role, "tool");
+  assert.equal(serialized[1].content, '{"path":"package.json","content":"..."}');
+});
+
+test("toApiMessages keeps reasoning_content when stripReasoningOnEcho is false", () => {
+  const serialized = toApiMessages(
+    [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "read_file", arguments: "{}" },
+          },
+        ],
+        reasoning_content: "kimi thinking",
+      },
+    ],
+    { stripReasoningOnEcho: false, ensureReasoningForTools: true }
+  );
+  assert.equal(serialized[0].reasoning_content, "kimi thinking");
+});
+
 test("toApiMessages keeps normal assistant content", () => {
   const serialized = toApiMessages([
     { role: "assistant", content: "Готово." },

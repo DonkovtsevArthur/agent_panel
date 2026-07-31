@@ -11,7 +11,8 @@ import {
   userContentForHistory,
 } from "./attachments";
 import { getConfig, getContextWindow, getModeById, resolveModelEndpoint, resolveModelReasoningEffort } from "./config";
-import { FileEditStat, formatEditTotals } from "./diffStats";
+import { effectiveReasoningEffort } from "./reasoningEffort";
+import { FileEditStat, formatEditTotals, lineDiffStats } from "./diffStats";
 import {
   buildEditorContextMessage,
   getEditorWorkspaceContext,
@@ -37,6 +38,7 @@ import {
 } from "./modelRouting";
 import {
   isAllowedToolInReadonlyMainLike,
+  isMainLikeWriteTool,
   mainLikeToolsForPolicy,
   runMainLikeTool,
 } from "./mainLikeTools";
@@ -48,6 +50,7 @@ import {
   MISSING_WRITE_USER_NUDGE,
   decideHonestFinale,
 } from "./honestFinale";
+import { resolveVersionBumpForPackageJson } from "./versionBump";
 import {
   EMPTY_ASSISTANT_PLACEHOLDER,
   EMPTY_TEXT_USER_NUDGE_NO_EDITS,
@@ -88,6 +91,7 @@ import {
   nextStepId,
   previewText,
   toolStepId,
+  FOCUSED_EDIT_HINT,
   VERIFY_REPO_FACTS_HINT,
   type CompletionIntent,
 } from "./agentSteps";
@@ -206,6 +210,13 @@ function formatToolStatus(
       return {
         phase: "editing",
         detail: path ? `Пишет · ${truncateStatus(path)}` : "Редактирует…",
+      };
+    }
+    case "search_replace": {
+      const path = String(args.relativePath || "").trim();
+      return {
+        phase: "editing",
+        detail: path ? `Правит · ${truncateStatus(path)}` : "Редактирует…",
       };
     }
     case "get_diagnostics": {
@@ -569,6 +580,7 @@ export async function runMainLikeAgentTurn(options: {
     { role: "system", content: buildEditorContextMessage() },
     { role: "system", content: urlCapabilityHint },
     { role: "system", content: VERIFY_REPO_FACTS_HINT },
+    { role: "system", content: FOCUSED_EDIT_HINT },
     ...(workspaceRules
       ? [
           {
@@ -605,13 +617,13 @@ export async function runMainLikeAgentTurn(options: {
     projectCommand,
   });
   if (enablePostEditVerification) {
-    // Index: after systemPrompt, editor, url, verify-facts (+ optional rules later in array).
-    // Insert after the first four fixed system messages.
-    messages.splice(4, 0, {
+    // Index: after the fixed system messages (systemPrompt, editor, url,
+    // verify-facts, focused-edit) — before optional rules/mode prompts.
+    messages.splice(5, 0, {
       role: "system",
       content: [
         "Post-edit verification is enabled for this model.",
-        "After write_file: fix diagnostics/importWarnings from the tool result for the files you edited.",
+        "After write_file / search_replace: fix diagnostics/importWarnings from the tool result for the files you edited.",
         "Before finishing, expect get_diagnostics on edited files.",
         "For non-metadata code edits, also one project command",
         projectCommand
@@ -636,7 +648,7 @@ export async function runMainLikeAgentTurn(options: {
   });
   const hardCutTools: ChatTool[] = activeTools.filter(
     (tool) =>
-      tool.function.name === "write_file" ||
+      isMainLikeWriteTool(tool.function.name) ||
       (enablePostEditVerification &&
         tool.function.name === "get_diagnostics")
   );
@@ -861,7 +873,10 @@ export async function runMainLikeAgentTurn(options: {
             ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
             ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {}),
             ...((() => {
-              const eff = resolveModelReasoningEffort(activeTurnModel);
+              const eff = effectiveReasoningEffort(
+                request.messages,
+                resolveModelReasoningEffort(activeTurnModel)
+              );
               return eff ? { reasoning_effort: eff } : {};
             })()),
           },
@@ -897,7 +912,7 @@ export async function runMainLikeAgentTurn(options: {
       return;
     }
     const parsed = parseToolJson(result);
-    if (name === "write_file") {
+    if (isMainLikeWriteTool(name)) {
       applyWriteFileToVerification(verification, {
         ok: Boolean(parsed.ok),
         unchanged: Boolean(parsed.unchanged),
@@ -1136,7 +1151,7 @@ export async function runMainLikeAgentTurn(options: {
         tool_choice: "none",
         temperature: 0.3,
         max_tokens: config.maxTokens,
-        reasoning_effort: turnReasoningEffort,
+        reasoning_effort: effectiveReasoningEffort(forcedRequest, turnReasoningEffort),
       });
     reportUsage(usage, forcedRequest);
     noteReasoning(forced);
@@ -1304,6 +1319,72 @@ export async function runMainLikeAgentTurn(options: {
     );
   };
 
+  // Pre-LLM shortcut: «поменяй версию в package.json» — детерминированный regex
+  // bump только top-level поля version. Без LLM → зависимости не трогаются,
+  // не удаляются, не переформатируются. Только Agent mode (не Plan/Ask).
+  if (!readonly && editorWorkspace.rootPath) {
+    const pkgPath = path.join(editorWorkspace.rootPath, "package.json");
+    try {
+      const pkgContent = await fs.readFile(pkgPath, "utf8");
+      const bump = resolveVersionBumpForPackageJson(
+        options.userText,
+        options.history,
+        pkgContent
+      );
+      if (bump) {
+        if (bump.kind === "already") {
+          const alreadyText = `Версия в package.json уже ${bump.current} — менять нечего.`;
+          options.callbacks.onPhase("done", modeDoneLabel(mode));
+          options.callbacks.onAssistant(alreadyText);
+          await Promise.resolve(
+            options.callbacks.onReview(await collectReviewEdits())
+          );
+          const historyUserAlready: ChatMessage = {
+            role: "user",
+            content: userContentForHistory(options.userText, persistedAttachments),
+          };
+          if (persistedAttachments.length) {
+            historyUserAlready.attachments = persistedAttachments;
+          }
+          return compactHistoryMainLike([
+            ...prior,
+            historyUserAlready,
+            { role: "assistant", content: alreadyText },
+          ]);
+        }
+        // kind === "bump"
+        await fs.writeFile(pkgPath, bump.newContent, "utf8");
+        const diff = lineDiffStats(pkgContent, bump.newContent);
+        bumpEdit({
+          path: pkgPath,
+          added: diff.added,
+          removed: diff.removed,
+          created: false,
+        });
+        const bumpText = `Поменял версию в package.json: ${bump.previous} → ${bump.targetVersion}.`;
+        options.callbacks.onPhase("done", modeDoneLabel(mode));
+        options.callbacks.onAssistant(bumpText);
+        await Promise.resolve(
+          options.callbacks.onReview(await collectReviewEdits())
+        );
+        const historyUserBump: ChatMessage = {
+          role: "user",
+          content: userContentForHistory(options.userText, persistedAttachments),
+        };
+        if (persistedAttachments.length) {
+          historyUserBump.attachments = persistedAttachments;
+        }
+        return compactHistoryMainLike([
+          ...prior,
+          historyUserBump,
+          { role: "assistant", content: bumpText },
+        ]);
+      }
+    } catch {
+      // package.json не читается / нет rootPath — проваливаемся в обычный LLM-путь.
+    }
+  }
+
   for (let round = 0; round < roundBudget; round++) {
     if (options.signal?.aborted) {
       throw new Error("aborted");
@@ -1327,7 +1408,7 @@ export async function runMainLikeAgentTurn(options: {
         tool_choice: "auto",
         temperature: 0.2,
         max_tokens: config.maxTokens,
-        reasoning_effort: turnReasoningEffort,
+        reasoning_effort: effectiveReasoningEffort(messages, turnReasoningEffort),
       });
       reportUsage(usage, hardRequest);
 
@@ -1363,14 +1444,14 @@ export async function runMainLikeAgentTurn(options: {
         onToolLifecycle: emitToolLifecycle,
         invokeOne: async (call) => {
           const allowedHardCut =
-            call.function.name === "write_file" ||
+            isMainLikeWriteTool(call.function.name) ||
             (enablePostEditVerification &&
               call.function.name === "get_diagnostics");
           if (!allowedHardCut) {
             return JSON.stringify({
               error: enablePostEditVerification
-                ? "Exploration limit: only write_file / get_diagnostics are allowed. Finish the file write now."
-                : "Exploration limit: only write_file is allowed. Finish the file write now.",
+                ? "Exploration limit: only write_file / search_replace / get_diagnostics are allowed. Finish the file write now."
+                : "Exploration limit: only write_file / search_replace are allowed. Finish the file write now.",
             });
           }
           return invokeTool(call.function.name, call.function.arguments);
@@ -1384,7 +1465,7 @@ export async function runMainLikeAgentTurn(options: {
           content: result,
         });
         noteToolResult(call.function.name, result);
-        if (call.function.name === "write_file") {
+        if (isMainLikeWriteTool(call.function.name)) {
           try {
             const parsed = JSON.parse(result) as {
               ok?: boolean;
@@ -1440,7 +1521,7 @@ export async function runMainLikeAgentTurn(options: {
         : { tool_choice: "none" as const }),
       temperature: 0.2,
       max_tokens: config.maxTokens,
-      reasoning_effort: turnReasoningEffort,
+      reasoning_effort: effectiveReasoningEffort(messages, turnReasoningEffort),
     });
     reportUsage(usage, requestMessages);
 
@@ -1512,7 +1593,7 @@ export async function runMainLikeAgentTurn(options: {
       });
       noteToolResult(call.function.name, result);
 
-      if (call.function.name === "write_file") {
+      if (isMainLikeWriteTool(call.function.name)) {
         hadProductiveTool = true;
         explorePhase = false;
         try {
@@ -1630,7 +1711,7 @@ export async function runMainLikeAgentTurn(options: {
         messages: finalRequest,
         temperature: 0.2,
         max_tokens: config.maxTokens,
-        reasoning_effort: turnReasoningEffort,
+        reasoning_effort: effectiveReasoningEffort(finalRequest, turnReasoningEffort),
       });
     reportUsage(finalUsage, finalRequest);
 

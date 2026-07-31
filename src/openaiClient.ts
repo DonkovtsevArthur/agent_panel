@@ -71,9 +71,13 @@ function isEffectivelyEmptyContent(
  */
 export function toApiMessages(
   messages: ChatMessage[],
-  options?: { ensureReasoningForTools?: boolean }
+  options?: {
+    ensureReasoningForTools?: boolean;
+    stripReasoningOnEcho?: boolean;
+  }
 ): Record<string, unknown>[] {
   const ensureReasoning = Boolean(options?.ensureReasoningForTools);
+  const stripReasoning = Boolean(options?.stripReasoningOnEcho);
   return messages.map((message) => {
     const { attachments: _a, ...rest } = message;
     const out: Record<string, unknown> = { role: rest.role };
@@ -92,7 +96,10 @@ export function toApiMessages(
       typeof rest.reasoning_content === "string"
         ? rest.reasoning_content
         : undefined;
-    if (reasoning && reasoning.length > 0) {
+    if (stripReasoning && rest.role === "assistant") {
+      // Claude extended thinking: reasoning_content не несёт signature,
+      // поэтому не эхается на assistant tool-call turn (гейтвей регенерирует).
+    } else if (reasoning && reasoning.length > 0) {
       out.reasoning_content = reasoning;
     } else if (
       ensureReasoning &&
@@ -112,6 +119,10 @@ export function toApiMessages(
       } else if (!rest.tool_calls?.length) {
         out.content = "";
       }
+    } else if (stripReasoning) {
+      // Claude (Anthropic-compat gateway): assistant tool-call turn must carry
+      // a `content` field; null is accepted where omitted content is not.
+      out.content = null;
     }
 
     return out;
@@ -704,6 +715,7 @@ export class OpenAICompatibleClient {
       messages: toApiMessages(body.messages, {
         ensureReasoningForTools:
           capabilities.requiresReasoningContentForToolCalls,
+        stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
       }),
       stream,
     };
@@ -835,6 +847,7 @@ export class OpenAICompatibleClient {
       messages: toApiMessages(body.messages, {
         ensureReasoningForTools:
           capabilities.requiresReasoningContentForToolCalls,
+        stripReasoningOnEcho: capabilities.stripReasoningOnEcho,
       }),
     };
     if (body.tools) {

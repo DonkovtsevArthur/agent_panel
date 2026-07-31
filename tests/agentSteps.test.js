@@ -50,6 +50,15 @@ test("VERIFY_REPO_FACTS_HINT stays universal (no task hardcoding)", () => {
   assert.match(VERIFY_REPO_FACTS_HINT, /parallel/i);
 });
 
+test("FOCUSED_EDIT_HINT nudges toward search_replace over write_file", () => {
+  const { FOCUSED_EDIT_HINT } = require("../out/agentSteps.js");
+  assert.match(FOCUSED_EDIT_HINT, /search_replace/i);
+  assert.match(FOCUSED_EDIT_HINT, /write_file/i);
+  assert.match(FOCUSED_EDIT_HINT, /only to create a new file or to rewrite/i);
+  // Must mention that the rest of the file is left untouched.
+  assert.match(FOCUSED_EDIT_HINT, /untouched|not rewritten|leaves the rest/i);
+});
+
 test("previewText truncates", () => {
   assert.equal(previewText("short"), "short");
   assert.ok(previewText("x".repeat(200), 20).endsWith("…"));

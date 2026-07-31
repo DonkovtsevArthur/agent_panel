@@ -59,6 +59,8 @@ test("all models use main-like agent loop and tools", () => {
 
   assert.match(mainLikeSrc, /listOpenAiTools\(false\)/);
   assert.match(mainLikeSrc, /isAllowedToolInReadonlyMainLike/);
+  assert.match(mainLikeSrc, /isMainLikeWriteTool/);
+  assert.match(mainLikeSrc, /FOCUSED_EDIT_HINT/);
 
   const i18nSrc = fs.readFileSync(
     path.join(__dirname, "../src/i18n.ts"),
@@ -74,6 +76,30 @@ test("all models use main-like agent loop and tools", () => {
   assert.match(modesSrc, /Connected MCP tools are available in Plan mode/);
   assert.match(modesSrc, /Connected MCP tools are available in Ask mode/);
   assert.match(modesSrc, /never say MCP is unavailable in this mode/);
+});
+
+test("main-like tools expose search_replace as a write tool (Zed-style focused edit)", () => {
+  const toolsSrc = fs.readFileSync(
+    path.join(__dirname, "../src/mainLikeTools.ts"),
+    "utf8"
+  );
+  // search_replace is defined in the main-like tool set
+  assert.match(toolsSrc, /name: "search_replace"/);
+  // dispatched to runTool
+  assert.match(toolsSrc, /case "search_replace":/);
+  // treated as a write tool
+  assert.match(toolsSrc, /MAIN_LIKE_WRITE_TOOL_NAMES/);
+  assert.match(toolsSrc, /"write_file",\s*"search_replace"/);
+  assert.match(toolsSrc, /isMainLikeWriteTool/);
+  // NOT in the readonly set (Plan/Ask must not expose it)
+  const readonlyBlock = toolsSrc.match(
+    /MAIN_LIKE_READONLY_TOOL_NAMES = new Set\(\[([^]*?)\]\)/
+  );
+  assert.ok(readonlyBlock, "MAIN_LIKE_READONLY_TOOL_NAMES block found");
+  assert.doesNotMatch(readonlyBlock[1], /"search_replace"/);
+  // tool description nudges toward search_replace for focused edits
+  assert.match(toolsSrc, /Точно заменить текст в существующем файле/);
+  assert.match(toolsSrc, /ПРЕДПОЧИТАЙ этот инструмент для точечных правок/);
 });
 
 test("post-edit verification is gated to Kimi agent turns only", () => {

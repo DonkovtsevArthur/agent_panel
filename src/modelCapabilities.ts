@@ -13,6 +13,16 @@ export interface ModelCapabilities {
   supportsReasoningEffort: boolean;
   /** Значение reasoning_effort по умолчанию, если не задано в конфиге. */
   reasoningEffortDefault?: string;
+  /**
+   * Anthropic extended thinking: thinking-блоки несут криптографическую
+   * signature, которую OpenAI-style `reasoning_content` не передаёт. Эхо
+   * reasoning_content на assistant tool-call turn гейтвей переводит в
+   * thinking без signature → Anthropic 400/500 на re-entry. Поэтому для
+   * Claude reasoning-моделей reasoning_content с assistant-сообщений
+   * при возврате истории снимается (гейтвей сам регенерирует thinking).
+   * Противоположность Kimi (где thinking нужен в эхе).
+   */
+  stripReasoningOnEcho: boolean;
 }
 
 export interface ModelCapabilityOverrides {
@@ -83,6 +93,7 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
       reasoningEffortDefault: "high",
       omitTemperature: true,
       minimumOutputTokens: 16_000,
+      stripReasoningOnEcho: true,
     },
   },
   {
@@ -162,6 +173,7 @@ export function resolveModelCapabilities(
     requiresReasoningContentForToolCalls:
       resolved.requiresReasoningContentForToolCalls === true,
     supportsReasoningEffort: resolved.supportsReasoningEffort === true,
+    stripReasoningOnEcho: resolved.stripReasoningOnEcho === true,
   };
 }
 
