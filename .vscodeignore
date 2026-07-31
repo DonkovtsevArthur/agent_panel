@@ -12,3 +12,6 @@ media/*preview*
 media/harbor-icon*
 media/icon-marketplace.svg
 *.vsix
+tests/**
+AGENTS.md
+docs/**

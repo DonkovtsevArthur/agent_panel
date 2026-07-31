@@ -252,7 +252,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   >();
   private readonly chatStatusState = new Map<
     string,
-    { text: string; hidden: boolean; phase?: AgentPhase }
+    { text: string; hidden: boolean; phase?: AgentPhase; modelLabel?: string }
   >();
   private readonly providerConnStatuses = new Map<string, ProviderConnStatus>();
   private readonly providerProbePromises = new Map<
@@ -1067,7 +1067,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     chatId: string | undefined,
     text: string,
     hidden = false,
-    phase?: AgentPhase
+    phase?: AgentPhase,
+    modelLabel?: string
   ): void {
     if (!chatId) {
       return;
@@ -1076,7 +1077,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (nextHidden) {
       this.chatStatusState.delete(chatId);
     } else {
-      this.chatStatusState.set(chatId, { text, hidden: false, phase });
+      this.chatStatusState.set(chatId, {
+        text,
+        hidden: false,
+        phase,
+        modelLabel: modelLabel || undefined,
+      });
     }
     if (this.isViewingChat(chatId)) {
       this.view?.webview.postMessage({
@@ -1085,6 +1091,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         text,
         hidden: nextHidden,
         phase,
+        modelLabel: nextHidden ? undefined : modelLabel || undefined,
       });
     }
   }
@@ -2368,13 +2375,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.setRunStateForChat(runChatId, "running");
     const mode = modeForRun;
     const agentMode = mode.id;
-    this.setStatusForChat(runChatId, modeThinkingLabel(mode), false, "thinking");
-
     const turnEdits: FileEditStat[] = [];
     let activeTurnModel = chosen;
     let fallbackAttempted = false;
     let turnHadToolSideEffects = false;
     let turnHadAssistantOutput = false;
+    this.setStatusForChat(
+      runChatId,
+      modeThinkingLabel(mode),
+      false,
+      "thinking",
+      this.modelLabel(activeTurnModel)
+    );
 
     try {
       while (true) {
@@ -2430,24 +2442,85 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                         : lang === "ru"
                           ? "Думаю..."
                           : "Thinking...";
-            this.setStatusForChat(runChatId, detail || fallback, false, phase);
+            this.setStatusForChat(
+              runChatId,
+              detail || fallback,
+              false,
+              phase,
+              this.modelLabel(activeTurnModel)
+            );
           },
           onActiveModel: (modelId) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
               return;
             }
             activeTurnModel = modelId;
+            const current = this.chatStatusState.get(runChatId);
+            if (current && !current.hidden && current.text) {
+              this.setStatusForChat(
+                runChatId,
+                current.text,
+                false,
+                current.phase,
+                this.modelLabel(activeTurnModel)
+              );
+            }
           },
           onTool: (toolText) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
               return;
             }
-            // Unknown and MCP tools are conservatively treated as side effects.
-            // This prevents a fallback from ever replaying a tool invocation.
             turnHadToolSideEffects = true;
             runUiMessages.push({ role: "tool", text: toolText });
             syncRunChat();
             postToRunChat({ type: "append", role: "tool", text: toolText });
+          },
+          onStep: (event) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
+            if (event.kind === "tool") {
+              turnHadToolSideEffects = true;
+              const label = event.name
+                ? `⚙ ${event.name}(${event.argsPreview || ""})`
+                : "⚙ tool";
+              const existingIx = runUiMessages.findIndex(
+                (m) => m.role === "tool" && m.step?.stepId === event.stepId
+              );
+              const uiMsg: import("./sessionStore").UiMessage = {
+                role: "tool",
+                text: label,
+                step: {
+                  stepId: event.stepId,
+                  kind: "tool",
+                  toolCallId: event.toolCallId,
+                  name: event.name,
+                  argsPreview: event.argsPreview,
+                  status: event.status,
+                  resultPreview: event.resultPreview,
+                },
+              };
+              if (existingIx >= 0) {
+                runUiMessages[existingIx] = uiMsg;
+              } else {
+                runUiMessages.push(uiMsg);
+              }
+              syncRunChat();
+            } else if (event.kind === "compaction" || event.kind === "retry") {
+              runUiMessages.push({
+                role: "tool",
+                text: event.text || event.kind,
+                step: {
+                  stepId: event.stepId,
+                  kind: event.kind,
+                  text: event.text,
+                  attempt: event.attempt,
+                  maxAttempts: event.maxAttempts,
+                },
+              });
+              syncRunChat();
+            }
+            postToRunChat({ type: "step", ...event });
           },
           onFileEdit: (edit) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -2455,22 +2528,36 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             turnEdits.push(edit);
           },
-          onAssistant: (assistantText) => {
+          onAssistant: (assistantText, meta) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
               return;
             }
             turnHadAssistantOutput = true;
             runLastTurnModel = activeTurnModel;
-            runUiMessages.push({ role: "assistant", text: assistantText });
+            const uiMsg: UiMessage = { role: "assistant", text: assistantText };
+            if (meta?.reasoning) {
+              uiMsg.reasoning = meta.reasoning;
+            }
+            runUiMessages.push(uiMsg);
             syncRunChat();
             this.setRunStateForChat(runChatId, "success");
             postToRunChat({
               type: "assistantDone",
               text: assistantText,
+              ...(meta?.reasoning ? { reasoning: meta.reasoning } : {}),
             });
             if (this.isViewingChat(runChatId)) {
               this.postRegenerateState();
             }
+          },
+          onReasoning: (reasoningText) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
+            postToRunChat({
+              type: "reasoning",
+              text: reasoningText,
+            });
           },
           onAssistantDelta: (chunk) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -2586,7 +2673,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             runChatId,
             statusText,
             false,
-            "thinking"
+            "thinking",
+            this.modelLabel(activeTurnModel)
           );
           void vscode.window.showWarningMessage(statusText);
         }
@@ -4070,7 +4158,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
           </label>
           <h3 class="settings-section-title" id="settingsSpeedRoutingTitle">Speed routing</h3>
-          <p class="settings-section-note" id="settingsSpeedRoutingNote">When a heavy model is selected, use a fast helper for Plan/Ask and Agent context gathering.</p>
+          <p class="settings-section-note" id="settingsSpeedRoutingNote">When a heavy model is selected, use a fast helper for Plan/Ask.</p>
           <label class="settings-field settings-check">
             <input id="settingsSpeedRoutingEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSpeedRoutingEnabledLabel">Speed up heavy models</span>
@@ -4084,7 +4172,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="settingsSpeedRoutingReadonlyOverride" type="checkbox" />
             <span class="settings-label" id="settingsSpeedRoutingReadonlyOverrideLabel">Plan / Ask on fast model</span>
           </label>
-          <label class="settings-field settings-check">
+          <label class="settings-field settings-check" hidden>
             <input id="settingsSpeedRoutingAgentExplore" type="checkbox" />
             <span class="settings-label" id="settingsSpeedRoutingAgentExploreLabel">Agent: explore on fast model first</span>
           </label>

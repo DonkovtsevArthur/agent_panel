@@ -289,7 +289,8 @@ function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
 async function withTransportRetry<T>(
   operation: () => Promise<T>,
   signal: AbortSignal | undefined,
-  options: Required<TransportRetryOptions>
+  options: Required<TransportRetryOptions>,
+  onRetry?: ChatCompletionsCallOptions["onRetry"]
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     if (signal?.aborted) {
@@ -311,7 +312,14 @@ async function withTransportRetry<T>(
       );
       const jitter =
         exponential * options.jitterRatio * (Math.random() * 2 - 1);
-      await sleepWithSignal(Math.max(0, exponential + jitter), signal);
+      const delayMs = Math.max(0, exponential + jitter);
+      onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts: options.maxAttempts,
+        error,
+        delayMs,
+      });
+      await sleepWithSignal(delayMs, signal);
     }
   }
 }
@@ -405,6 +413,24 @@ export function resolveRequestMaxTokens(
 export interface ChatCompletionDelta {
   content?: string;
   reasoning_content?: string;
+  /** Partial tool call as it streams (name/id may appear before args finish). */
+  tool_call?: {
+    index: number;
+    id?: string;
+    name?: string;
+    argumentsDelta?: string;
+  };
+}
+
+export interface ChatCompletionsCallOptions {
+  onDelta?: (delta: ChatCompletionDelta) => void;
+  /** Fired before each transport retry (attempt is 1-based after the first failure). */
+  onRetry?: (info: {
+    attempt: number;
+    maxAttempts: number;
+    error: unknown;
+    delayMs: number;
+  }) => void;
 }
 
 export interface ChatCompletionRequest {
@@ -582,7 +608,8 @@ function applyToolCallDelta(
     id?: string;
     type?: string;
     function?: { name?: string; arguments?: string };
-  }>
+  }>,
+  onDelta?: (delta: ChatCompletionDelta) => void
 ): void {
   for (const part of deltas) {
     const index = typeof part.index === "number" ? part.index : 0;
@@ -602,6 +629,22 @@ function applyToolCallDelta(
     }
     if (typeof part.function?.arguments === "string") {
       row.function.arguments += part.function.arguments;
+    }
+    if (
+      onDelta &&
+      (part.id || part.function?.name || typeof part.function?.arguments === "string")
+    ) {
+      onDelta({
+        tool_call: {
+          index,
+          id: row.id,
+          name: row.function.name,
+          argumentsDelta:
+            typeof part.function?.arguments === "string"
+              ? part.function.arguments
+              : undefined,
+        },
+      });
     }
   }
 }
@@ -685,26 +728,94 @@ export class OpenAICompatibleClient {
   async chatCompletions(
     body: ChatCompletionRequest,
     signal?: AbortSignal,
-    options?: { onDelta?: (delta: ChatCompletionDelta) => void }
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
-    // Все модели: как на main — простой non-stream JSON.
-    const result = await this.chatCompletionsMainLike(body, signal);
-    const text =
-      typeof result.message.content === "string"
-        ? result.message.content
-        : "";
-    if (text && options?.onDelta) {
-      options.onDelta({ content: text });
+    try {
+      const streamed = await this.chatCompletionsStreaming(
+        body,
+        signal,
+        options
+      );
+      const text =
+        typeof streamed.message.content === "string"
+          ? streamed.message.content
+          : "";
+      const hasTools = Boolean(streamed.message.tool_calls?.length);
+      const hasReasoning = Boolean(
+        typeof streamed.message.reasoning_content === "string" &&
+          streamed.message.reasoning_content.trim() &&
+          streamed.message.reasoning_content.trim() !== " "
+      );
+      if (!text && !hasTools) {
+        // Reasoning-only SSE already drove onDelta → Thinking UI. Re-fetching
+        // JSON would fire the same reasoning again and duplicate cards.
+        if (hasReasoning) {
+          return streamed;
+        }
+        // Empty SSE — fall back to non-stream JSON (corporate gateways).
+        return this.chatCompletionsMainLike(body, signal, options);
+      }
+      // Some Kimi gateways stream content/tools via SSE but omit
+      // reasoning_content from the deltas, so the Thinking card stalls on
+      // "Thinking…". Re-fetch via JSON to recover reasoning, forwarding only
+      // reasoning deltas so already-streamed content/tools are not duplicated.
+      if (!hasReasoning && isKimiFamilyModel(body.model)) {
+        try {
+          const jsonResult = await this.chatCompletionsMainLike(body, signal, {
+            ...options,
+            onDelta: (delta) => {
+              if (delta.reasoning_content) {
+                options?.onDelta?.({ reasoning_content: delta.reasoning_content });
+              }
+            },
+          });
+          if (
+            typeof jsonResult.message.reasoning_content === "string" &&
+            jsonResult.message.reasoning_content.trim()
+          ) {
+            return {
+              ...streamed,
+              message: {
+                ...streamed.message,
+                reasoning_content: jsonResult.message.reasoning_content,
+              },
+            };
+          }
+        } catch {
+          // Reasoning recovery failed — keep the streamed result as-is.
+        }
+      }
+      return streamed;
+    } catch (error) {
+      if (isAbortError(error, signal)) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        /SSE stream interrupted after partial/i.test(error.message)
+      ) {
+        throw error;
+      }
+      // Do not JSON-fallback after exhausted HTTP retries (429/5xx) — surface the error.
+      if (
+        error instanceof HttpStatusError ||
+        (error instanceof Error && /^API \d{3}:/.test(error.message))
+      ) {
+        throw error;
+      }
+      // Stream transport/parse failure before useful output — JSON fallback.
+      return this.chatCompletionsMainLike(body, signal, options);
     }
-    return result;
   }
 
   /**
-   * Транспорт один в один как на main: JSON.stringify(body), без stream/retry/toApiMessages.
+   * Non-stream JSON chat/completions (gateway-stable fallback).
+   * Kimi: toApiMessages + reasoning placeholder, без temperature, min max_tokens.
    */
   private async chatCompletionsMainLike(
     body: ChatCompletionRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -713,19 +824,12 @@ export class OpenAICompatibleClient {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
 
-    // Как на main: тело = model/messages[/tools]/tool_choice]/temperature]/max_tokens].
-    const requestBody: {
-      model: string;
-      messages: ChatMessage[];
-      tools?: ChatTool[];
-      tool_choice?: "auto" | "none";
-      temperature?: number;
-      max_tokens?: number;
-    } = {
+    const capabilities = resolveModelCapabilities(body.model);
+    const requestBody: Record<string, unknown> = {
       model: body.model,
-      messages: body.messages.map((message) => {
-        const { attachments: _a, ...rest } = message;
-        return rest;
+      messages: toApiMessages(body.messages, {
+        ensureReasoningForTools:
+          capabilities.requiresReasoningContentForToolCalls,
       }),
     };
     if (body.tools) {
@@ -734,34 +838,63 @@ export class OpenAICompatibleClient {
     if (body.tool_choice) {
       requestBody.tool_choice = body.tool_choice;
     }
-    if (body.temperature !== undefined) {
+    if (!capabilities.omitTemperature && body.temperature !== undefined) {
       requestBody.temperature = body.temperature;
     }
-    if (body.max_tokens !== undefined) {
-      requestBody.max_tokens = body.max_tokens;
+    const maxTokens = resolveModelRequestMaxTokens(
+      body.model,
+      body.max_tokens,
+      body.minimum_output_tokens
+    );
+    if (maxTokens !== undefined) {
+      requestBody.max_tokens = maxTokens;
     }
 
     const payload = JSON.stringify(requestBody);
     headers["Content-Length"] = Buffer.byteLength(payload).toString();
 
-    const response = await requestJson(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      body: payload,
+    const response = await withTransportRetry(
+      async () => {
+        const current = await requestJson(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: payload,
+          signal,
+          tls: this.tls,
+        });
+        if (current.status < 200 || current.status >= 300) {
+          throw new HttpStatusError(
+            current.status,
+            `API ${current.status}: ${current.text.slice(0, 800)}`
+          );
+        }
+        return current;
+      },
       signal,
-      tls: this.tls,
-    });
+      this.retry,
+      options?.onRetry
+    );
 
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(
-        `API ${response.status}: ${response.text.slice(0, 800)}`
-      );
-    }
-
-    const data = JSON.parse(response.text) as ChatCompletionResponse;
-    const message = data.choices?.[0]?.message;
-    if (!message) {
+    const data = JSON.parse(response.text) as ChatCompletionResponse & {
+      choices?: Array<{
+        message?: ChatMessage & { reasoning_content?: unknown };
+      }>;
+    };
+    const raw = data.choices?.[0]?.message;
+    if (!raw) {
       throw new Error("Пустой ответ от API");
+    }
+    const message: ChatMessage = { ...raw };
+    if (typeof raw.reasoning_content === "string") {
+      message.reasoning_content = raw.reasoning_content;
+    }
+    const text =
+      typeof message.content === "string" ? message.content : "";
+    if (text && options?.onDelta) {
+      options.onDelta({ content: text });
+    }
+    if (message.reasoning_content && options?.onDelta) {
+      options.onDelta({ reasoning_content: message.reasoning_content });
     }
     return {
       message,
@@ -773,7 +906,7 @@ export class OpenAICompatibleClient {
   private async chatCompletionsStreaming(
     body: ChatCompletionRequest,
     signal?: AbortSignal,
-    options?: { onDelta?: (delta: ChatCompletionDelta) => void }
+    options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -860,7 +993,11 @@ export class OpenAICompatibleClient {
                     Array.isArray(delta.tool_calls) &&
                     delta.tool_calls.length
                   ) {
-                    applyToolCallDelta(toolAcc, delta.tool_calls);
+                    applyToolCallDelta(
+                      toolAcc,
+                      delta.tool_calls,
+                      options?.onDelta
+                    );
                   }
                 }
                 // Редкий non-delta chunk в stream.
@@ -901,11 +1038,12 @@ export class OpenAICompatibleClient {
           }
       },
       signal,
-      this.retry
+      this.retry,
+      options?.onRetry
     );
 
     if (!sawChoice && !content && toolAcc.size === 0) {
-      return this.chatCompletionsNonStream(body, signal);
+      return this.chatCompletionsMainLike(body, signal, options);
     }
 
     const toolCalls = finalizeToolCalls(toolAcc);

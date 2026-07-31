@@ -15,6 +15,12 @@ alwaysApply: true
 - **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.
 - **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
 
+## Kimi — follow workspace rules (UI)
+
+- Перед новой страницей/UI: `list_files` + `read_file` 1–2 соседних файлов; писать по их паттерну, не invent → remake.
+- Soft explore-nudge позже (4) и снимает read; hard-cut на 6. Кап rules ~12k.
+- Перед API: ужим старых tool-результатов; transport без temperature + reasoning echo.
+
 ## Tools runtime (все модели)
 
 Путь: `agentLoop.ts` → `agentLoopMainLike.ts` + `mainLikeTools.ts`.

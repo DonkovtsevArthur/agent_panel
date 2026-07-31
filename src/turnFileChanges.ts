@@ -150,7 +150,7 @@ export async function listDirtyPaths(
     const stdout = await runGit(cwd, [
       "status",
       "--porcelain=v1",
-      "--untracked-files=normal",
+      "--untracked-files=all",
     ]);
     return parsePorcelainPaths(stdout);
   } catch {
@@ -220,7 +220,7 @@ async function statsForPaths(
       runGit(cwd, [
         "status",
         "--porcelain=v1",
-        "--untracked-files=normal",
+        "--untracked-files=all",
         "--",
         ...scoped,
       ]),

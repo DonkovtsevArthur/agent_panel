@@ -6,7 +6,6 @@ import { execFile } from "child_process";
 import * as path from "path";
 import { promisify } from "util";
 import * as vscode from "vscode";
-import { lineDiffStats } from "./diffStats";
 import type { ChatTool } from "./openaiClient";
 import { runTool } from "./tools";
 import { isAllowedMcpInReadonlyMode } from "./mcp/types";
@@ -21,6 +20,7 @@ const execFileAsync = promisify(execFile);
 export const MAIN_LIKE_READONLY_TOOL_NAMES = new Set([
   "list_files",
   "read_file",
+  "get_diagnostics",
   "fetch_url",
   "open_external",
 ]);
@@ -72,9 +72,27 @@ export const mainLikeAgentTools: ChatTool[] = [
   {
     type: "function",
     function: {
+      name: "get_diagnostics",
+      description:
+        "Получить актуальные VS Code Problems (error/warning) для указанных файлов workspace; без paths — для открытых файлов. После правок вызывай перед финалом, чтобы исправить недочёты.",
+      parameters: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string" },
+            description: "Относительные пути файлов workspace",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description:
-        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out.",
+        "Создать или перезаписать текстовый файл в workspace. Не пишет в node_modules/.git/dist/out. При diagnostics/importWarnings в ответе сразу исправь ошибки.",
       parameters: {
         type: "object",
         properties: {
@@ -96,7 +114,7 @@ export const mainLikeAgentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Используй для git status/log/diff, сборки, тестов.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Используй для git status/log/diff, сборки, тестов, lint/typecheck.",
       parameters: {
         type: "object",
         properties: {
@@ -286,33 +304,10 @@ export async function runMainLikeTool(
           content: truncate(text, 80_000),
         });
       }
-      case "write_file": {
-        const relativePath = String(args.relativePath ?? "");
-        if (isIgnoredWorkspacePath(relativePath)) {
-          return JSON.stringify({ error: ignoredPathError(relativePath) });
-        }
-        const content = String(args.content ?? "");
-        const uri = resolvePath(relativePath);
-        let before = "";
-        let created = true;
-        try {
-          const existing = await vscode.workspace.fs.readFile(uri);
-          before = Buffer.from(existing).toString("utf8");
-          created = false;
-        } catch {
-          created = true;
-        }
-        const parent = vscode.Uri.joinPath(uri, "..");
-        await vscode.workspace.fs.createDirectory(parent);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
-        const { added, removed } = lineDiffStats(before, content);
-        return JSON.stringify({
-          ok: true,
-          path: relativePath,
-          created,
-          added,
-          removed,
-        });
+      case "write_file":
+      case "get_diagnostics": {
+        // Полный путь из tools.ts: diagnostics / importWarnings / unchanged.
+        return runTool(name, argsJson);
       }
       case "run_command": {
         return await runCommand(

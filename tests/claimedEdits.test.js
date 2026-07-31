@@ -102,3 +102,23 @@ test("looksLikeQuestionRequest ignores plain tasks without question shape", () =
     false
   );
 });
+
+test("looksLikeUserEditRequest catches implement / start-plan phrasing", () => {
+  assert.equal(
+    looksLikeUserEditRequest("давай приступик к реализации по этому плану"),
+    true
+  );
+  assert.equal(
+    looksLikeUserEditRequest("давай приступим к реализации"),
+    true
+  );
+  assert.equal(
+    looksLikeUserEditRequest("реализуй по этому плану"),
+    true
+  );
+  assert.equal(looksLikeUserEditRequest("implement the plan"), true);
+  assert.equal(
+    looksLikeUserEditRequest("что экспортирует model.ts?"),
+    false
+  );
+});

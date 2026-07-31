@@ -47,6 +47,10 @@ All chat models use the **main-like** path:
 - Short context: system + editor + **workspace rules** (`AGENTS.md` + `.cursor/rules`, via `loadWorkspaceRules`, cap ~8k; **Kimi ~12k**) + mode prompt + history + user (no prefetch / explore handoff in the loop). Skip rules injection when the turn is rewriting `AGENTS.md`.
 - HTTP: **stream-first** `chat/completions` (SSE); on empty/broken stream → **JSON fallback** (no `stream` field). Retryable 429/5xx use transport backoff; UI gets `onStep` retry cards.
 - Turn sequence (Zed-like): structured `onStep` events (thinking / text / tool lifecycle / compaction / retry); after tools, sticky **ToolResults** intent hint; mid-turn `applyContextBudget` (+ optional summary marker).
+- **Speed routing `explore_then_edit`**: when `exploreModel` is provided (Agent + heavy model), explore-only rounds (list_files / read_file / search_text) run on the fast explore model; the loop switches to the user-selected model on the first `write_file` / `run_command`.
+- **Helper fallback**: when `helperFallbackModel` is provided (Plan/Ask fast override) and the helper fails with 5xx/transport, the loop switches to the user-selected model for the rest of the turn (`shouldAbandonHelperModel`).
+- **Tool evidence fallback**: when the model fails after tool rounds, `formatToolEvidenceFallbackAnswer` summarizes gathered read/search results instead of showing a bare red error.
+- **Thinking collapse**: long Thinking blocks (> 240 chars) auto-collapse when the turn advances to tools/text; user can expand via «Show thinking» toggle.
 - Built-in tools from `mainLikeTools.ts`:
   - always: `list_files`, `read_file`, `write_file`, `run_command`
   - URL: `fetch_url`, `open_external` (when the user message has http(s) / Figma URL)
