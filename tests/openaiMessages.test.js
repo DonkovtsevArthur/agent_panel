@@ -25,7 +25,7 @@ test("resolveRequestMaxTokens floors Kimi but keeps other models", () => {
   assert.equal(resolveRequestMaxTokens("gpt-4o"), undefined);
 });
 
-test("toApiMessages omits empty content when tool_calls present", () => {
+test("toApiMessages emits content: null by default for assistant tool-call turn", () => {
   const serialized = toApiMessages([
     {
       role: "assistant",
@@ -42,12 +42,15 @@ test("toApiMessages omits empty content when tool_calls present", () => {
   ]);
 
   assert.equal(serialized.length, 1);
-  assert.equal("content" in serialized[0], false);
+  // DeepSeek/OpenAI/Anthropic-compat: strict gateways 500 on re-entry when
+  // the assistant tool-call turn omits `content`. Default is `content: null`.
+  assert.equal("content" in serialized[0], true);
+  assert.equal(serialized[0].content, null);
   assert.equal(serialized[0].reasoning_content, "need to read the file");
   assert.equal(serialized[0].tool_calls.length, 1);
 });
 
-test("toApiMessages omits null content with tool_calls", () => {
+test("toApiMessages emits content: null for null content with tool_calls", () => {
   const serialized = toApiMessages([
     {
       role: "assistant",
@@ -61,7 +64,30 @@ test("toApiMessages omits null content with tool_calls", () => {
       ],
     },
   ]);
+  assert.equal("content" in serialized[0], true);
+  assert.equal(serialized[0].content, null);
+});
+
+test("toApiMessages omits content for Kimi tool-call turn (omitContentForToolCalls)", () => {
+  const serialized = toApiMessages(
+    [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "read_file", arguments: "{}" },
+          },
+        ],
+      },
+    ],
+    { omitContentForToolCalls: true }
+  );
+  // Kimi gateway 400s on `content: null` — content must be omitted entirely.
   assert.equal("content" in serialized[0], false);
+  assert.equal(serialized[0].tool_calls.length, 1);
 });
 
 test("toApiMessages injects reasoning placeholder for Kimi tool calls", () => {

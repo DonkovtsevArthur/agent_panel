@@ -3702,6 +3702,11 @@
         continue;
       }
       dedupeThinkingSteps(group);
+      dropPlaceholderThinkingSteps(group);
+      if (countAgentSteps(group) === 0) {
+        group.remove();
+        continue;
+      }
       group.dataset.sealed = "1";
       // Zed-like: keep the interleaved timeline visible (no collapse to «N шагов»).
       group.classList.remove("is-collapsed");
@@ -3713,7 +3718,8 @@
       // Auto-collapse long Thinking blocks once the turn advances to tools/text.
       collapseLongThinkingSteps(group);
     }
-    // Legacy separate reasoning blocks: drop if timeline already has thinking.
+    // Legacy separate reasoning blocks: drop if timeline already has thinking,
+    // or if the legacy block itself never received real reasoning content.
     for (const group of messagesEl.querySelectorAll(
       ".reasoning-group:not([data-sealed])"
     )) {
@@ -3722,6 +3728,11 @@
         ".tool-group.agent-timeline .agent-step[data-step-kind='thinking']"
       );
       if (timeline) {
+        group.remove();
+        continue;
+      }
+      const legacyRaw = String(group.dataset.raw || "").trim();
+      if (!legacyRaw || isThinkingPlaceholder(legacyRaw)) {
         group.remove();
         continue;
       }
@@ -3797,6 +3808,116 @@
         el.remove();
       } else {
         seenThinking.add(key);
+      }
+    }
+  }
+
+  /**
+   * Drop Thinking steps that never received real reasoning content (still on
+   * the «Thinking…» / «Continuing…» placeholder). At seal time the turn is
+   * complete — if real reasoning had been streamed, it would have replaced the
+   * placeholder during streaming. A placeholder at seal means no reasoning was
+   * produced, so we remove it when the turn has other real content (assistant
+   * text in .msg-wrap-assistant, tool/compaction/retry steps, or non-placeholder
+   * thinking). Text answer lives outside the tool-group (.msg-wrap-assistant),
+   * so we check the parent .chat-turn too. Fixes the empty Thinking card shown
+   * for models that don't stream reasoning_content (e.g. Qwen3-Coder-Next).
+   */
+  function dropPlaceholderThinkingSteps(group) {
+    if (!group) {
+      return;
+    }
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return;
+    }
+    const steps = agentStepsInBody(body);
+    const thinkingSteps = steps.filter(
+      (el) => el.dataset.stepKind === "thinking"
+    );
+    if (!thinkingSteps.length) {
+      return;
+    }
+    // Non-placeholder thinking or non-thinking steps (tools/compaction/retry)
+    // inside the timeline count as real content.
+    const hasRealInGroup =
+      thinkingSteps.some((el) => !isThinkingPlaceholder(el.dataset.raw)) ||
+      steps.some((el) => el.dataset.stepKind !== "thinking");
+    // Assistant text answer lives in .msg-wrap-assistant (outside the tool-group),
+    // so check the parent .chat-turn. Covers both committed and streaming text.
+    const turn = group.closest(".chat-turn") || messagesEl;
+    const hasAssistantText = Boolean(
+      [...turn.querySelectorAll(".msg-wrap-assistant .msg")].some(
+        (el) => String(el.dataset.raw || "").trim()
+      )
+    );
+    if (!hasRealInGroup && !hasAssistantText) {
+      return;
+    }
+    for (const el of thinkingSteps) {
+      if (isThinkingPlaceholder(el.dataset.raw)) {
+        el.remove();
+      }
+    }
+  }
+
+  /**
+   * Clean placeholder-only Thinking cards from ALREADY-SEALED groups in the
+   * current turn. sealToolGroups() runs inside appendMessage BEFORE the
+   * assistant text element is appended to the DOM, so dropPlaceholderThinkingSteps
+   * can't see the text at seal time. This second pass runs after the text is in
+   * the DOM and removes placeholders that should have been dropped at seal.
+   */
+  function cleanSealedThinkingPlaceholders() {
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    if (!turn) {
+      return;
+    }
+    const hasAssistantText = Boolean(
+      [...turn.querySelectorAll(".msg-wrap-assistant .msg")].some(
+        (el) => String(el.dataset.raw || "").trim()
+      )
+    );
+    if (!hasAssistantText) {
+      return;
+    }
+    for (const group of turn.querySelectorAll(
+      ".tool-group.agent-timeline[data-sealed='1']"
+    )) {
+      const body = group.querySelector(".tool-group-body");
+      if (!body) {
+        continue;
+      }
+      const thinkingSteps = [
+        ...body.querySelectorAll(
+          ".agent-step[data-step-kind='thinking']"
+        ),
+      ];
+      if (!thinkingSteps.length) {
+        continue;
+      }
+      const hasRealInGroup =
+        thinkingSteps.some((el) => !isThinkingPlaceholder(el.dataset.raw)) ||
+        Boolean(
+          body.querySelector(
+            ".agent-step:not([data-step-kind='thinking'])"
+          )
+        );
+      // Remove placeholder thinking steps regardless of whether the group
+      // has other real content (tools, non-placeholder thinking). The
+      // placeholder means no reasoning was streamed for that round — it
+      // should not stay visible next to tool calls or the final answer.
+      void hasRealInGroup;
+      for (const el of thinkingSteps) {
+        if (isThinkingPlaceholder(el.dataset.raw)) {
+          el.remove();
+        }
+      }
+      if (countAgentSteps(group) === 0) {
+        group.remove();
       }
     }
   }
@@ -11788,7 +11909,8 @@
           });
           // Reasoning already rendered via live steps — do not upsert again
           // (that raced after seal and duplicated Thinking).
-          sealToolGroups();
+          // Append text FIRST so sealToolGroups can detect assistant text in
+          // the .chat-turn and drop placeholder-only Thinking cards.
           appendMessage(
             "assistant",
             msg.text,
@@ -11798,6 +11920,8 @@
             true,
             undefined
           );
+          sealToolGroups();
+          cleanSealedThinkingPlaceholders();
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
           setMessageContent(streamingEl, "assistant", raw);
@@ -11808,6 +11932,7 @@
           });
           streamingEl.dataset.index = String(uiMessagesCache.length - 1);
           sealToolGroups();
+          cleanSealedThinkingPlaceholders();
         }
         streamingEl = null;
         streamingRenderScheduled = false;
