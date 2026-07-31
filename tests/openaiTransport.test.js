@@ -251,6 +251,126 @@ test("chatCompletions does not JSON-fallback for non-Kimi when SSE has content",
   });
 });
 
+test("chatCompletions sends reasoning_effort when provided in the request", async () => {
+  let capturedBody = null;
+  await withServer(async (req, res) => {
+    capturedBody = await readBody(req);
+    writeSse(res, "ok");
+  }, async (baseUrl) => {
+    const result = await client(baseUrl, { maxAttempts: 1 }).chatCompletions({
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "hello" }],
+      reasoning_effort: "high",
+    });
+    assert.equal(result.message.content, "ok");
+    const parsed = JSON.parse(capturedBody);
+    assert.equal(parsed.reasoning_effort, "high");
+  });
+});
+
+test("chatCompletions parses `reasoning` field alias from SSE deltas", async () => {
+  let reasoningDeltas = 0;
+  await withServer(async (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: { reasoning: "claude is thinking" }, finish_reason: null }],
+      })}\n\n`
+    );
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: { content: "answer" }, finish_reason: null }],
+      })}\n\n`
+    );
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: {}, finish_reason: "stop" }],
+      })}\n\n`
+    );
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }, async (baseUrl) => {
+    const result = await client(baseUrl, { maxAttempts: 1 }).chatCompletions(
+      {
+        model: "claude-haiku-4-5",
+        messages: [{ role: "user", content: "hello" }],
+        reasoning_effort: "high",
+      },
+      undefined,
+      {
+        onDelta: (delta) => {
+          if (delta.reasoning_content) {
+            reasoningDeltas += 1;
+          }
+        },
+      }
+    );
+    assert.equal(result.message.content, "answer");
+    assert.equal(result.message.reasoning_content, "claude is thinking");
+    assert.equal(reasoningDeltas, 1);
+  });
+});
+
+test("chatCompletions prefers reasoning_content and does not duplicate when both fields present", async () => {
+  await withServer(async (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              reasoning_content: "primary",
+              reasoning: "alias-should-be-ignored",
+            },
+          },
+        ],
+      })}\n\n`
+    );
+    res.write("data: [DONE]\n\n");
+    res.end();
+  }, async (baseUrl) => {
+    const result = await client(baseUrl, { maxAttempts: 1 }).chatCompletions({
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    assert.equal(result.message.reasoning_content, "primary");
+  });
+});
+
+test("chatCompletions omits temperature for Claude reasoning models", async () => {
+  let capturedBody = null;
+  await withServer(async (req, res) => {
+    capturedBody = await readBody(req);
+    writeSse(res, "ok");
+  }, async (baseUrl) => {
+    const result = await client(baseUrl, { maxAttempts: 1 }).chatCompletions({
+      model: "claude-haiku-4-5",
+      messages: [{ role: "user", content: "hello" }],
+      temperature: 0.2,
+      reasoning_effort: "high",
+    });
+    assert.equal(result.message.content, "ok");
+    const parsed = JSON.parse(capturedBody);
+    assert.equal(parsed.reasoning_effort, "high");
+    assert.equal("temperature" in parsed, false);
+  });
+});
+
+test("chatCompletions omits reasoning_effort when not provided", async () => {
+  let capturedBody = null;
+  await withServer(async (req, res) => {
+    capturedBody = await readBody(req);
+    writeSse(res, "ok");
+  }, async (baseUrl) => {
+    await client(baseUrl, { maxAttempts: 1 }).chatCompletions({
+      model: "DeepSeek-V4-Flash",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    const parsed = JSON.parse(capturedBody);
+    assert.equal("reasoning_effort" in parsed, false);
+  });
+});
+
 test("chatCompletions retries retryable HTTP errors on stream then surfaces", async () => {
   let requests = 0;
   await withServer(async (req, res) => {

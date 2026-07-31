@@ -183,7 +183,48 @@ export function prepareKimiGatewayMessages(messages: ChatMessage[]): boolean {
     maxOldChars: 2_500,
   });
   const edits = compactCompletedEditToolArguments(messages);
-  return older || edits;
+  const reasoning = dropOlderReasoningBlocks(messages, { keepRecent: 2 });
+  return older || edits || reasoning;
+}
+
+/**
+ * Zed-like `drop_reasoning_blocks`: reasoning_content на старых assistant-
+ * раундах (tool-call и text) — мёртвый груз. API Kimi требует лишь наличие
+ * (непустого) reasoning_content для tool-call раундов; `toApiMessages`
+ * подставит placeholder « » автоматически. Оставляем полным reasoning
+ * только у `keepRecent` последних раундов — модель видит свежую мысль.
+ */
+export function dropOlderReasoningBlocks(
+  messages: ChatMessage[],
+  options?: { keepRecent?: number }
+): boolean {
+  const keepRecent = Math.max(1, Math.floor(options?.keepRecent ?? 2));
+  const reasoningIdx: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== "assistant") {
+      continue;
+    }
+    const r =
+      typeof m.reasoning_content === "string" ? m.reasoning_content : "";
+    if (!r.trim()) {
+      continue;
+    }
+    reasoningIdx.push(i);
+  }
+  if (reasoningIdx.length <= keepRecent) {
+    return false;
+  }
+  let changed = false;
+  const dropUntil = reasoningIdx.length - keepRecent;
+  for (let i = 0; i < dropUntil; i++) {
+    const m = messages[reasoningIdx[i]];
+    if (m.reasoning_content && m.reasoning_content.trim()) {
+      m.reasoning_content = undefined;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /**

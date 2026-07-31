@@ -51,6 +51,7 @@ All chat models use the **main-like** path:
 - **Helper fallback**: when `helperFallbackModel` is provided (Plan/Ask fast override) and the helper fails with 5xx/transport, the loop switches to the user-selected model for the rest of the turn (`shouldAbandonHelperModel`).
 - **Tool evidence fallback**: when the model fails after tool rounds, `formatToolEvidenceFallbackAnswer` summarizes gathered read/search results instead of showing a bare red error.
 - **Thinking collapse**: long Thinking blocks (> 240 chars) auto-collapse when the turn advances to tools/text; user can expand via «Show thinking» toggle.
+- **`reasoning_effort` (Claude 3.5+/4 via gateway)**: models matching `claude.*(?:3[-.][5-9]|[4-9])` get OpenAI-style `reasoning_effort` (default `"high"`, overridable per-model via `agentPanel.models[].reasoningEffort`). The gateway enables extended thinking and streams `reasoning_content`, which the model-agnostic `onDelta` handler already renders into the Thinking card. Claude 3.0 (no thinking) and non-Claude models do not send the field.
 - Built-in tools from `mainLikeTools.ts`:
   - always: `list_files`, `read_file`, `write_file`, `run_command`
   - URL: `fetch_url`, `open_external` (when the user message has http(s) / Figma URL)
@@ -74,7 +75,7 @@ Do **not** tell the user that external URLs / Figma are unavailable when `fetch_
 - After **4** explore-only rounds: hard-cut — no more explore; write-only or final answer.
 - If the turn is productive (`write_file` / `run_command`) and the round budget ends: auto-extend once (+8 rounds).
 - Soft verify hint (`VERIFY_REPO_FACTS_HINT`): rules are guidance; verify repo facts with tools; prefer multiple `read_file` / `list_files` in one turn (they run in parallel).
-- **Kimi:** soft after **4**, hard-cut after **6**; soft nudge **strips** `list_files` / `read_file` (write by the analogous files already read). Before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`). Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`. Extra system hint: before new UI/pages, read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`).
+- **Kimi:** soft after **4**, hard-cut after **6**; soft nudge **strips** `list_files` / `read_file` (write by the analogous files already read). Before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`) **and** drop `reasoning_content` from older assistant rounds (`dropOlderReasoningBlocks`, keep recent 2) — Zed-like `drop_reasoning_blocks`: API still gets the required placeholder for tool-call rounds via `toApiMessages`, but stale thinking no longer eats context. Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`. Extra system hint: before new UI/pages, read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`).
 - **Fragile light models** (DeepSeek / Haiku / flash / mini / gemma): before each API call, `prepareFragileGatewayMessages` caps even the latest `read_file` (gateway often 500s on a full `package.json`).
 
 ### Post-edit verification (Kimi only, Agent mode)

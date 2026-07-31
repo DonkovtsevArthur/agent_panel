@@ -50,3 +50,74 @@ test("Kimi request quirks come from the registry", () => {
   assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096, 2048), 4096);
   assert.equal(resolveModelRequestMaxTokens("gpt-4.1", 4096, 8192), 4096);
 });
+
+test("Claude 3.5+/4 supports reasoning_effort, Claude 3.0 does not", () => {
+  const haiku4 = resolveModelCapabilities("claude-haiku-4-5");
+  assert.equal(haiku4.supportsReasoningEffort, true);
+  assert.equal(haiku4.reasoningEffortDefault, "high");
+  // Extended thinking требует default temperature — поле опускаем.
+  assert.equal(haiku4.omitTemperature, true);
+  // max_tokens должен превышать thinking-бюджет.
+  assert.equal(haiku4.minimumOutputTokens, 16_000);
+
+  const sonnet35 = resolveModelCapabilities("claude-3-5-sonnet");
+  assert.equal(sonnet35.supportsReasoningEffort, true);
+  assert.equal(sonnet35.omitTemperature, true);
+
+  const opus4 = resolveModelCapabilities("claude-opus-4-1");
+  assert.equal(opus4.supportsReasoningEffort, true);
+
+  // Claude 3.0 family — без thinking, temperature не опускаем.
+  assert.equal(
+    resolveModelCapabilities("claude-3-haiku").supportsReasoningEffort,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("claude-3-haiku").omitTemperature,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("claude-3-opus").supportsReasoningEffort,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("claude-3-sonnet").supportsReasoningEffort,
+    false
+  );
+
+  // Non-Claude models — no reasoning_effort capability by default.
+  assert.equal(
+    resolveModelCapabilities("gpt-4.1").supportsReasoningEffort,
+    false
+  );
+  assert.equal(
+    resolveModelCapabilities("DeepSeek-V4-Flash").supportsReasoningEffort,
+    false
+  );
+});
+
+test("Claude reasoning max_tokens is lifted above config default for thinking budget", () => {
+  // config.maxTokens default 4096 → Math.max(4096, 16000) = 16000.
+  assert.equal(
+    resolveModelRequestMaxTokens("claude-haiku-4-5", 4096),
+    16_000
+  );
+  // Явно заданный крупный max_tokens не урезается.
+  assert.equal(
+    resolveModelRequestMaxTokens("claude-sonnet-4-5", 32_000),
+    32_000
+  );
+  // Без запрошенного — отдаём минимум.
+  assert.equal(
+    resolveModelRequestMaxTokens("claude-opus-4-1", undefined),
+    16_000
+  );
+});
+
+test("reasoningEffort override replaces the default", () => {
+  const resolved = resolveModelCapabilities("claude-haiku-4-5", {
+    reasoningEffort: "medium",
+  });
+  assert.equal(resolved.supportsReasoningEffort, true);
+  assert.equal(resolved.reasoningEffortDefault, "medium");
+});

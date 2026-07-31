@@ -6,6 +6,8 @@ const {
   shrinkOlderToolResults,
   formatToolEvidenceFallbackAnswer,
   modelNeedsAggressiveToolBudget,
+  dropOlderReasoningBlocks,
+  prepareKimiGatewayMessages,
 } = require("../out/toolRecovery.js");
 
 test("shrinkToolMessageContents truncates long tool payloads", () => {
@@ -236,4 +238,79 @@ test("compactCompletedEditToolArguments strips write_file content", () => {
   assert.equal(args.relativePath, "AGENTS.md");
   assert.equal(typeof args.content, "undefined");
   assert.deepEqual(listSuccessfulEditPathsFromMessages(messages), ["AGENTS.md"]);
+});
+
+test("dropOlderReasoningBlocks clears reasoning on older assistant rounds", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "first round deep thinking ".repeat(50),
+    },
+    { role: "tool", tool_call_id: "c1", name: "read_file", content: "{}" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c2", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "second round thinking ".repeat(40),
+    },
+    { role: "tool", tool_call_id: "c2", name: "read_file", content: "{}" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c3", type: "function", function: { name: "write_file", arguments: "{}" } }],
+      reasoning_content: "latest round thinking ".repeat(30),
+    },
+    { role: "tool", tool_call_id: "c3", name: "write_file", content: "{}" },
+  ];
+  assert.equal(dropOlderReasoningBlocks(messages, { keepRecent: 2 }), true);
+  assert.equal(messages[0].reasoning_content, undefined);
+  assert.ok(messages[2].reasoning_content && messages[2].reasoning_content.trim());
+  assert.ok(messages[4].reasoning_content && messages[4].reasoning_content.trim());
+});
+
+test("dropOlderReasoningBlocks keeps recent reasoning when few rounds exist", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "only thinking",
+    },
+    { role: "tool", tool_call_id: "c1", name: "read_file", content: "{}" },
+  ];
+  assert.equal(dropOlderReasoningBlocks(messages, { keepRecent: 2 }), false);
+  assert.equal(messages[0].reasoning_content, "only thinking");
+});
+
+test("prepareKimiGatewayMessages drops older reasoning blocks", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "old thinking ".repeat(60),
+    },
+    { role: "tool", tool_call_id: "c1", name: "read_file", content: JSON.stringify({ path: "a.ts", content: "x".repeat(4000) }) },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c2", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "mid thinking",
+    },
+    { role: "tool", tool_call_id: "c2", name: "read_file", content: JSON.stringify({ path: "b.ts", content: "y" }) },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c3", type: "function", function: { name: "read_file", arguments: "{}" } }],
+      reasoning_content: "fresh thinking",
+    },
+    { role: "tool", tool_call_id: "c3", name: "read_file", content: JSON.stringify({ path: "c.ts", content: "z" }) },
+  ];
+  const changed = prepareKimiGatewayMessages(messages);
+  assert.equal(changed, true);
+  assert.equal(messages[0].reasoning_content, undefined);
+  assert.equal(messages[2].reasoning_content, "mid thinking");
+  assert.equal(messages[4].reasoning_content, "fresh thinking");
 });

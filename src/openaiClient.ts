@@ -442,6 +442,8 @@ export interface ChatCompletionRequest {
   max_tokens?: number;
   /** Internal client option; not sent to the API. */
   minimum_output_tokens?: number;
+  /** OpenAI-style reasoning effort (Claude 3.5+/4 via gateway). */
+  reasoning_effort?: string;
 }
 
 function requestJson(
@@ -722,6 +724,9 @@ export class OpenAICompatibleClient {
     if (maxTokens !== undefined) {
       apiBody.max_tokens = maxTokens;
     }
+    if (body.reasoning_effort) {
+      apiBody.reasoning_effort = body.reasoning_effort;
+    }
     return apiBody;
   }
 
@@ -849,6 +854,9 @@ export class OpenAICompatibleClient {
     if (maxTokens !== undefined) {
       requestBody.max_tokens = maxTokens;
     }
+    if (body.reasoning_effort) {
+      requestBody.reasoning_effort = body.reasoning_effort;
+    }
 
     const payload = JSON.stringify(requestBody);
     headers["Content-Length"] = Buffer.byteLength(payload).toString();
@@ -877,7 +885,7 @@ export class OpenAICompatibleClient {
 
     const data = JSON.parse(response.text) as ChatCompletionResponse & {
       choices?: Array<{
-        message?: ChatMessage & { reasoning_content?: unknown };
+        message?: ChatMessage & { reasoning_content?: unknown; reasoning?: unknown };
       }>;
     };
     const raw = data.choices?.[0]?.message;
@@ -887,6 +895,15 @@ export class OpenAICompatibleClient {
     const message: ChatMessage = { ...raw };
     if (typeof raw.reasoning_content === "string") {
       message.reasoning_content = raw.reasoning_content;
+    }
+    // Алиас `reasoning` (без _content) — некоторые гейтвеи отдают thinking
+    // только через это поле. Не перетираем `reasoning_content`, если он есть.
+    if (
+      typeof raw.reasoning === "string" &&
+      raw.reasoning &&
+      !message.reasoning_content
+    ) {
+      message.reasoning_content = raw.reasoning;
     }
     const text =
       typeof message.content === "string" ? message.content : "";
@@ -951,6 +968,7 @@ export class OpenAICompatibleClient {
                     delta?: {
                       content?: string | null;
                       reasoning_content?: string | null;
+                      reasoning?: string | null;
                       tool_calls?: Array<{
                         index?: number;
                         id?: string;
@@ -958,7 +976,10 @@ export class OpenAICompatibleClient {
                         function?: { name?: string; arguments?: string };
                       }>;
                     };
-                    message?: ChatMessage & { reasoning_content?: unknown };
+                    message?: ChatMessage & {
+                      reasoning_content?: unknown;
+                      reasoning?: unknown;
+                    };
                     finish_reason?: string | null;
                   }>;
                   usage?: ChatCompletionUsage;
@@ -989,6 +1010,19 @@ export class OpenAICompatibleClient {
                       reasoning_content: delta.reasoning_content,
                     });
                   }
+                  // Алиас `reasoning` (без _content) — OpenRouter / Anthropic-прокси
+                  // / корпоративные гейтвеи отдают Claude thinking через это поле.
+                  // Не дублируем, если гейтвей шлёт оба.
+                  if (
+                    typeof delta.reasoning === "string" &&
+                    delta.reasoning &&
+                    !(typeof delta.reasoning_content === "string" && delta.reasoning_content)
+                  ) {
+                    reasoning += delta.reasoning;
+                    options?.onDelta?.({
+                      reasoning_content: delta.reasoning,
+                    });
+                  }
                   if (
                     Array.isArray(delta.tool_calls) &&
                     delta.tool_calls.length
@@ -1008,6 +1042,13 @@ export class OpenAICompatibleClient {
                   }
                   if (typeof msg.reasoning_content === "string") {
                     reasoning = msg.reasoning_content;
+                  }
+                  if (
+                    typeof msg.reasoning === "string" &&
+                    msg.reasoning &&
+                    !(typeof msg.reasoning_content === "string" && msg.reasoning_content)
+                  ) {
+                    reasoning = msg.reasoning;
                   }
                   if (msg.tool_calls?.length) {
                     toolAcc.clear();

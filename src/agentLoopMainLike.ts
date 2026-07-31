@@ -10,7 +10,7 @@ import {
   stripAttachmentPayload,
   userContentForHistory,
 } from "./attachments";
-import { getConfig, getContextWindow, getModeById, resolveModelEndpoint } from "./config";
+import { getConfig, getContextWindow, getModeById, resolveModelEndpoint, resolveModelReasoningEffort } from "./config";
 import { FileEditStat, formatEditTotals } from "./diffStats";
 import {
   buildEditorContextMessage,
@@ -551,6 +551,10 @@ export async function runMainLikeAgentTurn(options: {
   const agentsMdTurn = looksLikeAgentsMdRequest(options.userText);
   const kimiModel = isKimiFamilyModel(options.model);
   const exploreLimits = exploreRoundLimits({ kimi: kimiModel });
+  // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
+  // включит extended thinking и будет стримить reasoning_content. Для моделей
+  // без capability — undefined (поле не отправляется).
+  const turnReasoningEffort = resolveModelReasoningEffort(options.model);
   // Короткие workspace rules (AGENTS.md + .cursor/rules) — что можно/нельзя править.
   // Kimi: больший кап, чтобы .cursor/rules не отрезались после длинного AGENTS.md.
   const workspaceRules =
@@ -718,6 +722,7 @@ export async function runMainLikeAgentTurn(options: {
     tool_choice?: "auto" | "none";
     temperature?: number;
     max_tokens?: number;
+    reasoning_effort?: string;
   }): Promise<{
     message: ChatMessage;
     usage?: ChatCompletionUsage;
@@ -747,6 +752,9 @@ export async function runMainLikeAgentTurn(options: {
           : {}),
         ...(request.max_tokens !== undefined
           ? { max_tokens: request.max_tokens }
+          : {}),
+        ...(request.reasoning_effort
+          ? { reasoning_effort: request.reasoning_effort }
           : {}),
       },
       options.signal,
@@ -852,6 +860,10 @@ export async function runMainLikeAgentTurn(options: {
             ...(request.tool_choice ? { tool_choice: request.tool_choice } : {}),
             ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
             ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {}),
+            ...((() => {
+              const eff = resolveModelReasoningEffort(activeTurnModel);
+              return eff ? { reasoning_effort: eff } : {};
+            })()),
           },
           options.signal,
           {
@@ -1124,6 +1136,7 @@ export async function runMainLikeAgentTurn(options: {
         tool_choice: "none",
         temperature: 0.3,
         max_tokens: config.maxTokens,
+        reasoning_effort: turnReasoningEffort,
       });
     reportUsage(usage, forcedRequest);
     noteReasoning(forced);
@@ -1314,6 +1327,7 @@ export async function runMainLikeAgentTurn(options: {
         tool_choice: "auto",
         temperature: 0.2,
         max_tokens: config.maxTokens,
+        reasoning_effort: turnReasoningEffort,
       });
       reportUsage(usage, hardRequest);
 
@@ -1426,6 +1440,7 @@ export async function runMainLikeAgentTurn(options: {
         : { tool_choice: "none" as const }),
       temperature: 0.2,
       max_tokens: config.maxTokens,
+      reasoning_effort: turnReasoningEffort,
     });
     reportUsage(usage, requestMessages);
 
@@ -1615,6 +1630,7 @@ export async function runMainLikeAgentTurn(options: {
         messages: finalRequest,
         temperature: 0.2,
         max_tokens: config.maxTokens,
+        reasoning_effort: turnReasoningEffort,
       });
     reportUsage(finalUsage, finalRequest);
 
