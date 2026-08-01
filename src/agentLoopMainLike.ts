@@ -74,7 +74,9 @@ import { getMcpManager } from "./mcpBundle";
 import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
 import {
+  buildEditCorrectionSystemHint,
   buildPlanImplementSystemHint,
+  looksLikeEditCorrectionRequest,
   looksLikePlanImplementRequest,
 } from "./planImplement";
 import { filterToolsForContext, messageContainsUrl } from "./toolFilter";
@@ -583,13 +585,18 @@ export async function runMainLikeAgentTurn(options: {
   const editorWorkspace = getEditorWorkspaceContext();
   const agentsMdTurn = looksLikeAgentsMdRequest(options.userText);
   const kimiModel = isKimiFamilyModel(options.model);
-  // Build → Agent: plan text is a contract; skip Kimi's "read analogous UI"
-  // invent-hint and use tighter explore limits.
+  // Build → Agent / UI correction: bind to plan + project patterns; skip Kimi's
+  // "read analogous UI and invent" hint; tighter explore limits.
   const implementPlan =
     !readonly && looksLikePlanImplementRequest(options.userText);
+  const editCorrection =
+    !readonly &&
+    !implementPlan &&
+    looksLikeEditCorrectionRequest(options.userText);
+  const focusedPlanEdit = implementPlan || editCorrection;
   const exploreLimits = exploreRoundLimits({
     kimi: kimiModel,
-    implementPlan,
+    implementPlan: focusedPlanEdit,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
   // включит extended thinking и будет стримить reasoning_content. Для моделей
@@ -624,6 +631,9 @@ export async function runMainLikeAgentTurn(options: {
     ...(implementPlan
       ? [{ role: "system" as const, content: buildPlanImplementSystemHint() }]
       : []),
+    ...(editCorrection
+      ? [{ role: "system" as const, content: buildEditCorrectionSystemHint() }]
+      : []),
     ...(workspaceRules
       ? [
           {
@@ -632,9 +642,9 @@ export async function runMainLikeAgentTurn(options: {
           },
         ]
       : []),
-    // Kimi «read analogous UI» conflicts with Build: plan already named the
-    // components — inventing from a different neighbor page is the failure mode.
-    ...(kimiModel && !agentsMdTurn && !readonly && !implementPlan
+    // Kimi «read analogous UI» conflicts with Build/correction: plan or user
+    // already named the target — inventing from a neighbor page is the failure mode.
+    ...(kimiModel && !agentsMdTurn && !readonly && !focusedPlanEdit
       ? [
           {
             role: "system" as const,
@@ -1800,7 +1810,7 @@ export async function runMainLikeAgentTurn(options: {
           readonly,
           plan: mode.id === "plan",
           kimi: kimiModel,
-          implementPlan,
+          implementPlan: focusedPlanEdit,
         }),
       });
     }
@@ -1815,7 +1825,7 @@ export async function runMainLikeAgentTurn(options: {
           agentsMd: agentsMdTurn,
           readonly,
           plan: mode.id === "plan",
-          implementPlan,
+          implementPlan: focusedPlanEdit,
         }),
       });
       // Гарантируем ещё одну итерацию под write-only / финал.

@@ -32,6 +32,10 @@ import {
   isIgnoredDirName,
   isIgnoredWorkspacePath,
 } from "./workspaceIgnore";
+import {
+  validateWriteFileAgainstExisting,
+  writeFileGuardErrorJson,
+} from "./writeFileGuard";
 
 const execFileAsync = promisify(execFile);
 
@@ -1015,6 +1019,14 @@ export async function runTool(
             error:
               "No changes: content is identical to the existing file. Do not claim you rewrote/fixed anything. Either write different content that actually changes the file, or explain honestly that the file was already correct.",
           });
+        }
+        const destructive = validateWriteFileAgainstExisting({
+          created,
+          before,
+          content,
+        });
+        if (destructive) {
+          return writeFileGuardErrorJson(destructive);
         }
         const parent = vscode.Uri.joinPath(uri, "..");
         await vscode.workspace.fs.createDirectory(parent);
