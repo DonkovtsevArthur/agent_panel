@@ -26,7 +26,8 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Model routing / utility models | `src/modelRouting.ts` |
 | Vision routing (image attachments) | `agentPanel.visionRouting.preferredModelIds` → `VISION_MODEL_PREFERENCE` (whole-turn switch only for attached images) |
 | Figma screenshot vision helper | `src/figmaVisionHelper.ts` — MCP `get_screenshot` images are described under the hood; chat-selected model stays the planner |
-| Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan is a binding contract (paths/components); tighter explore; no Kimi «analogous UI» invent-hint |
+| Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; correction follow-ups get the same discipline |
+| Destructive write guard | `src/writeFileGuard.ts` — refuse empty/truncated `write_file` over substantial existing files |
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) |

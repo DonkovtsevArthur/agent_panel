@@ -184,8 +184,8 @@ export function buildExploreSoftNudge(options: {
     return [
       "Stop exploring the repository.",
       "list_files and read_file are no longer available this turn.",
-      "Execute the approved plan now: search_replace / write_file on the paths and components named in the plan.",
-      "Do not invent a substitute component. If some plan steps remain unfinished, edit what you can and list the remaining steps.",
+      "You should already have read the planned/target files — now search_replace (preferred) or write_file with COMPLETE contents on those paths.",
+      "Match the project patterns from the files you read. Do not invent a substitute component. Never wipe a file with empty/truncated content. List any remaining steps.",
     ].join(" ");
   }
   if (options.kimi) {
@@ -235,7 +235,7 @@ export function buildExploreHardNudge(options: {
     return [
       "Exploration limit reached.",
       "list_files and read_file are no longer allowed this turn.",
-      "Call search_replace / write_file for the remaining plan steps on the named paths/components. Do not invent substitutes. No more reading.",
+      "Call search_replace (preferred) or write_file with COMPLETE contents for the remaining plan/correction steps on the named paths. Match project patterns. Do not invent substitutes or wipe files. No more reading.",
     ].join(" ");
   }
   return [
