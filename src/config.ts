@@ -131,19 +131,6 @@ export interface AgentPanelConfig {
   maxTokens: number;
   maxResponseChars: number;
   /**
-   * When the user selects a heavy model: Plan/Ask run on a fast helper;
-   * Agent gathers context on fast, then edits/answers on the selected model.
-   */
-  speedRouting: {
-    enabled: boolean;
-    /** Ordered model ids allowed as fast helpers; empty = auto. */
-    fastModelIds: string[];
-    /** Plan/Ask override onto fast helper. */
-    readonlyOverride: boolean;
-    /** Agent explore-then-edit on fast helper. */
-    agentExplore: boolean;
-  };
-  /**
    * Under-the-hood model for image messages when the selected chat model
    * lacks vision. Empty preferredModelIds → built-in VISION_MODEL_PREFERENCE.
    */
@@ -438,24 +425,6 @@ export function getConfig(): AgentPanelConfig {
     maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
     maxTokens: cfg.get<number>("maxTokens") ?? 4096,
     maxResponseChars: cfg.get<number>("maxResponseChars") ?? 12_000,
-    speedRouting: (() => {
-      const rawIds = cfg.get<unknown>("speedRouting.fastModelIds");
-      const fromArray = Array.isArray(rawIds)
-        ? rawIds
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-            .filter((id, index, all) => all.indexOf(id) === index)
-        : [];
-      const legacy = String(cfg.get<string>("speedRouting.fastModel") || "").trim();
-      return {
-        enabled: cfg.get<boolean>("speedRouting.enabled") !== false,
-        fastModelIds:
-          fromArray.length > 0 ? fromArray : legacy ? [legacy] : [],
-        readonlyOverride:
-          cfg.get<boolean>("speedRouting.readonlyOverride") !== false,
-        agentExplore: cfg.get<boolean>("speedRouting.agentExplore") !== false,
-      };
-    })(),
     visionRouting: (() => {
       const rawIds = cfg.get<unknown>("visionRouting.preferredModelIds");
       const fromArray = Array.isArray(rawIds)

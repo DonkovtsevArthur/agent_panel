@@ -3,15 +3,12 @@ const assert = require("node:assert/strict");
 
 const {
   classifyModelFallbackError,
-  looksLikeHeavyModel,
   looksLikeUtilityModel,
   modelFallbackEligibility,
-  resolveSpeedRouting,
   resolveVisionPreferenceIds,
   routeModel,
   selectFallbackModel,
   selectUtilityModel,
-  shouldAbandonHelperModel,
   UTILITY_MODEL_PREFERENCE,
   VISION_MODEL_PREFERENCE,
 } = require("../out/modelRouting.js");
@@ -214,14 +211,6 @@ test("fallback classification accepts only explicit transport, capability, and c
       kind: "transport",
       message: "API 500: Internal Server Error",
     }
-  );
-  assert.equal(
-    shouldAbandonHelperModel(new Error("API 500: Internal Server Error")),
-    true
-  );
-  assert.equal(
-    shouldAbandonHelperModel(new Error("API 401: invalid API key")),
-    false
   );
   assert.deepEqual(
     classifyModelFallbackError(
@@ -446,161 +435,3 @@ test("selectUtilityModel picks custom flash/mini/haiku models by name", () => {
   );
 });
 
-test("resolveSpeedRouting uses fast helper for Plan/Ask and Agent explore", () => {
-  const models = [
-    { id: "kimi-k2.6", favorite: true },
-    { id: "DeepSeek-V4-Flash" },
-    { id: "Qwen3-Coder-Next" },
-    { id: "claude-sonnet-4-5" },
-  ];
-
-  assert.equal(looksLikeHeavyModel({ id: "kimi-k2.6" }), true);
-  assert.equal(looksLikeHeavyModel({ id: "DeepSeek-V4-Flash" }), false);
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "readonly",
-    }),
-    {
-      kind: "readonly_fast",
-      primaryModelId: "DeepSeek-V4-Flash",
-      fastModelId: "DeepSeek-V4-Flash",
-    }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-    }),
-    {
-      kind: "explore_then_edit",
-      primaryModelId: "kimi-k2.6",
-      fastModelId: "DeepSeek-V4-Flash",
-    }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "DeepSeek-V4-Flash",
-      toolsPolicy: "agent",
-    }),
-    { kind: "none", primaryModelId: "DeepSeek-V4-Flash" }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      enabled: false,
-    }),
-    { kind: "none", primaryModelId: "kimi-k2.6" }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models: [
-        { id: "kimi-k2.6" },
-        { id: "DeepSeek-V4-Flash", supportsVision: false },
-        { id: "Gemini 2.5 Flash" },
-      ],
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "readonly",
-      visionRequired: true,
-    }),
-    {
-      kind: "readonly_fast",
-      primaryModelId: "Gemini 2.5 Flash",
-      fastModelId: "Gemini 2.5 Flash",
-    }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models: [{ id: "kimi-k2.6" }, { id: "claude-sonnet-4-5" }],
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-    }),
-    { kind: "none", primaryModelId: "kimi-k2.6" }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      fastModelIds: ["Qwen3-Coder-Next", "DeepSeek-V4-Flash"],
-    }),
-    {
-      kind: "explore_then_edit",
-      primaryModelId: "kimi-k2.6",
-      fastModelId: "Qwen3-Coder-Next",
-    }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "readonly",
-      readonlyOverride: false,
-    }),
-    { kind: "none", primaryModelId: "kimi-k2.6" }
-  );
-
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      agentExplore: false,
-    }),
-    { kind: "none", primaryModelId: "kimi-k2.6" }
-  );
-
-  // Explicit heavy model as fast helper is allowed when user enables it.
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      fastModelIds: ["claude-sonnet-4-5"],
-    }),
-    {
-      kind: "explore_then_edit",
-      primaryModelId: "kimi-k2.6",
-      fastModelId: "claude-sonnet-4-5",
-    }
-  );
-
-  // Legacy fastModel string still works.
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      fastModel: "Qwen3-Coder-Next",
-    }),
-    {
-      kind: "explore_then_edit",
-      primaryModelId: "kimi-k2.6",
-      fastModelId: "Qwen3-Coder-Next",
-    }
-  );
-
-  // Non-empty preference that cannot be used → no auto fallback.
-  assert.deepEqual(
-    resolveSpeedRouting({
-      models,
-      userSelectedModelId: "kimi-k2.6",
-      toolsPolicy: "agent",
-      fastModelIds: ["kimi-k2.6"],
-    }),
-    { kind: "none", primaryModelId: "kimi-k2.6" }
-  );
-});

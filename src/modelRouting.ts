@@ -61,9 +61,6 @@ export const UTILITY_MODEL_PREFERENCE: readonly string[] = [
   "Gemma-4-31b",
 ];
 
-/** Same preference list for Plan/Ask and Agent explore phases. */
-export const FAST_READONLY_PREFERENCE: readonly string[] = UTILITY_MODEL_PREFERENCE;
-
 /**
  * Default under-the-hood models when a message has images and the selected
  * model lacks vision. Exact ids first; only enabled vision-capable models win.
@@ -99,38 +96,6 @@ export interface UtilityModelSelectionOptions {
   fallbackModelId?: string;
 }
 
-export type SpeedRoutingKind = "none" | "readonly_fast" | "explore_then_edit";
-
-export interface SpeedRoutingOptions {
-  models: readonly AgentModel[];
-  userSelectedModelId: string;
-  /** readonly → Plan/Ask override; agent → explore on fast, edit on selected. */
-  toolsPolicy: "agent" | "readonly";
-  /** When false, always returns kind "none". Default true. */
-  enabled?: boolean;
-  /** Explicit fast helper preference (ordered). Empty → auto-pick utility models. */
-  fastModelIds?: readonly string[];
-  /** @deprecated use fastModelIds */
-  fastModel?: string;
-  /** Plan/Ask: run on fast helper when selected model is heavy. Default true. */
-  readonlyOverride?: boolean;
-  /** Agent: explore on fast, then edit on selected. Default true. */
-  agentExplore?: boolean;
-  visionRequired?: boolean;
-}
-
-export interface SpeedRoutingResult {
-  kind: SpeedRoutingKind;
-  /**
-   * Model that owns the turn outcome:
-   * - readonly_fast → the fast model actually used
-   * - explore_then_edit / none → the user-selected (edit) model
-   */
-  primaryModelId: string;
-  /** Fast helper when kind is readonly_fast or explore_then_edit. */
-  fastModelId?: string;
-}
-
 /** True when the model id/label looks suitable for short under-the-hood git/commit work. */
 export function looksLikeUtilityModel(model: {
   id?: string;
@@ -149,121 +114,6 @@ export function looksLikeUtilityModel(model: {
     return false;
   }
   return UTILITY_LIGHT_NAME.test(text);
-}
-
-/** True when the selected model should use a fast helper for speed routing. */
-export function looksLikeHeavyModel(model: {
-  id?: string;
-  label?: string;
-}): boolean {
-  const id = String(model.id || "").trim();
-  if (!id) {
-    return false;
-  }
-  return !looksLikeUtilityModel(model);
-}
-
-function modelSupportsRequiredVision(
-  model: AgentModel,
-  visionRequired: boolean | undefined
-): boolean {
-  if (visionRequired !== true) {
-    return true;
-  }
-  return resolveModelCapabilities(model.id, {
-    supportsVision: model.supportsVision,
-  }).supportsVision;
-}
-
-/**
- * Pick a fast helper for Plan/Ask or Agent explore when the user selected a
- * heavy model. Vision-capable fast models are required when visionRequired.
- */
-export function resolveSpeedRouting(
-  options: SpeedRoutingOptions
-): SpeedRoutingResult {
-  const selected = String(options.userSelectedModelId || "").trim();
-  if (!selected || options.enabled === false) {
-    return { kind: "none", primaryModelId: selected };
-  }
-
-  if (options.toolsPolicy === "readonly" && options.readonlyOverride === false) {
-    return { kind: "none", primaryModelId: selected };
-  }
-  if (options.toolsPolicy === "agent" && options.agentExplore === false) {
-    return { kind: "none", primaryModelId: selected };
-  }
-
-  const enabled: AgentModel[] = [];
-  const byId = new Map<string, AgentModel>();
-  for (const model of options.models) {
-    const id = String(model.id || "").trim();
-    if (!id || model.enabled === false || byId.has(id)) {
-      continue;
-    }
-    const row = { ...model, id };
-    enabled.push(row);
-    byId.set(id, row);
-  }
-
-  const selectedModel = byId.get(selected);
-  if (!selectedModel || !looksLikeHeavyModel(selectedModel)) {
-    return { kind: "none", primaryModelId: selected };
-  }
-
-  const preferredFastIds = [
-    ...normalizedIds(options.fastModelIds),
-    ...normalizedIds(
-      options.fastModel ? [String(options.fastModel).trim()] : undefined
-    ),
-  ].filter((id, index, all) => id && all.indexOf(id) === index);
-
-  let fastModelId: string | undefined;
-
-  for (const preferredFastId of preferredFastIds) {
-    if (preferredFastId === selected) {
-      continue;
-    }
-    const preferred = byId.get(preferredFastId);
-    if (
-      preferred &&
-      modelSupportsRequiredVision(preferred, options.visionRequired)
-    ) {
-      fastModelId = preferred.id;
-      break;
-    }
-  }
-
-  if (!fastModelId && preferredFastIds.length === 0) {
-    const fastCandidates = enabled.filter((model) => {
-      if (model.id === selected || !looksLikeUtilityModel(model)) {
-        return false;
-      }
-      return modelSupportsRequiredVision(model, options.visionRequired);
-    });
-    const fast = selectUtilityModel(fastCandidates);
-    if (fast && fast.modelId !== selected) {
-      fastModelId = fast.modelId;
-    }
-  }
-
-  if (!fastModelId || fastModelId === selected) {
-    return { kind: "none", primaryModelId: selected };
-  }
-
-  if (options.toolsPolicy === "readonly") {
-    return {
-      kind: "readonly_fast",
-      primaryModelId: fastModelId,
-      fastModelId,
-    };
-  }
-
-  return {
-    kind: "explore_then_edit",
-    primaryModelId: selected,
-    fastModelId,
-  };
 }
 
 export type ModelFallbackErrorKind =
@@ -391,14 +241,6 @@ export function classifyModelFallbackError(
   }
 
   return undefined;
-}
-
-/**
- * True when a under-the-hood helper/fast model failure should be abandoned
- * in favor of the user-selected model (5xx / transport / timeouts).
- */
-export function shouldAbandonHelperModel(error: unknown): boolean {
-  return classifyModelFallbackError(error)?.kind === "transport";
 }
 
 /**
