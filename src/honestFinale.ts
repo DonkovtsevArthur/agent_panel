@@ -321,6 +321,19 @@ export function looksLikeProseClarifyingQuestions(text: string): boolean {
     return true;
   }
 
+  // Figma incomplete: модель получила абстрактный MCP-payload и пишет,
+  // что поля/ColumnDef не зафиксированы, без вызова request_user_input.
+  // Это дыра в плане — дожимаем через nudge_ask_user.
+  const figmaIncomplete =
+    /(?:ColumnDef|поля|колонки|лейблы|кнопки|фильтры)\s+(?:не\s+)?зафиксирован|не\s+видны|не\s+полностью\s+видны|не\s+зафиксированы|не\s+определены|не\s+зафиксиров/i.test(
+      value
+    ) || /(?:fields|columns|labels|buttons)\s+(?:are\s+)?not\s+(?:fixed|captured|visible|defined|finalized)/i.test(
+        value
+    );
+  if (figmaIncomplete) {
+    return true;
+  }
+
   return false;
 }
 

@@ -10,9 +10,15 @@ import {
   figmaSystemHint,
   isMcpReadonlyTool,
   mcpSystemHint,
+  messageHasFigmaUrl,
   parseQualifiedToolName,
   qualifyToolName,
 } from "./figma";
+import {
+  joinMcpToolResult,
+  splitMcpToolResult,
+  type SplitMcpToolResult,
+} from "./resultFormat";
 import {
   connectFigmaRemote,
   formatFigmaRemoteError,
@@ -78,34 +84,10 @@ function withTimeout<T>(
   });
 }
 
-function toolResultToString(result: unknown): string {
-  if (result == null) {
-    return "";
-  }
-  if (typeof result === "string") {
-    return result;
-  }
-  try {
-    const row = result as {
-      content?: Array<{ type?: string; text?: string }>;
-    };
-    if (Array.isArray(row.content)) {
-      const text = row.content
-        .map((part) => {
-          if (part?.type === "text" && typeof part.text === "string") {
-            return part.text;
-          }
-          return JSON.stringify(part);
-        })
-        .join("\n");
-      if (text) {
-        return text;
-      }
-    }
-    return JSON.stringify(result);
-  } catch {
-    return String(result);
-  }
+function truncateToolText(text: string): string {
+  return text.length > 120_000
+    ? `${text.slice(0, 120_000)}\n\n[truncated]`
+    : text;
 }
 
 export class McpManager {
@@ -266,15 +248,34 @@ export class McpManager {
   }
 
   async callTool(qualifiedName: string, argsJson: string): Promise<string> {
+    const split = await this.callToolWithMedia(qualifiedName, argsJson);
+    return joinMcpToolResult(split);
+  }
+
+  /**
+   * Like callTool, but keeps image payloads as data URLs so the agent loop
+   * can run an under-the-hood vision helper without dumping base64 into the
+   * main (often non-vision) model context.
+   */
+  async callToolWithMedia(
+    qualifiedName: string,
+    argsJson: string
+  ): Promise<SplitMcpToolResult> {
     const parsed = parseQualifiedToolName(qualifiedName);
     if (!parsed) {
-      return JSON.stringify({ error: `Unknown MCP tool: ${qualifiedName}` });
+      return {
+        text: JSON.stringify({ error: `Unknown MCP tool: ${qualifiedName}` }),
+        imageDataUrls: [],
+      };
     }
     let args: Record<string, unknown> = {};
     try {
       args = argsJson ? (JSON.parse(argsJson) as Record<string, unknown>) : {};
     } catch {
-      return JSON.stringify({ error: "Invalid tool arguments JSON" });
+      return {
+        text: JSON.stringify({ error: "Invalid tool arguments JSON" }),
+        imageDataUrls: [],
+      };
     }
 
     if (parsed.serverId === FIGMA_SERVER_ID) {
@@ -282,10 +283,13 @@ export class McpManager {
         await this.tryQuietReconnect();
       }
       if (!this.figmaClient) {
-        return JSON.stringify({
-          error:
-            "Figma MCP is not connected. Open Settings → MCP Servers.",
-        });
+        return {
+          text: JSON.stringify({
+            error:
+              "Figma MCP is not connected. Open Settings → MCP Servers.",
+          }),
+          imageDataUrls: [],
+        };
       }
       return this.invokeClientTool(this.figmaClient, parsed.toolName, args);
     }
@@ -296,9 +300,12 @@ export class McpManager {
     }
     const client = this.customRuntimes.get(parsed.serverId)?.client;
     if (!client) {
-      return JSON.stringify({
-        error: `MCP server "${parsed.serverId}" is not connected.`,
-      });
+      return {
+        text: JSON.stringify({
+          error: `MCP server "${parsed.serverId}" is not connected.`,
+        }),
+        imageDataUrls: [],
+      };
     }
     return this.invokeClientTool(client, parsed.toolName, args);
   }
@@ -307,19 +314,23 @@ export class McpManager {
     client: Client,
     toolName: string,
     args: Record<string, unknown>
-  ): Promise<string> {
+  ): Promise<SplitMcpToolResult> {
     try {
       const result = await client.callTool({
         name: toolName,
         arguments: args,
       });
-      const text = toolResultToString(result);
-      return text.length > 120_000
-        ? `${text.slice(0, 120_000)}\n\n[truncated]`
-        : text;
+      const split = splitMcpToolResult(result);
+      return {
+        text: truncateToolText(split.text),
+        imageDataUrls: split.imageDataUrls,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return JSON.stringify({ error: message });
+      return {
+        text: JSON.stringify({ error: message }),
+        imageDataUrls: [],
+      };
     }
   }
 
@@ -1034,4 +1045,4 @@ export function getMcpManager(): McpManager | undefined {
   return singleton;
 }
 
-export { mcpSystemHint };
+export { mcpSystemHint, messageHasFigmaUrl };

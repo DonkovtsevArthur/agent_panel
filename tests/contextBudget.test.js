@@ -5,6 +5,8 @@ const {
   applyContextBudget,
   calculateContextBudget,
   estimateTokens,
+  pullPreservedToolRounds,
+  shouldPreserveToolResultFromCompaction,
 } = require("../out/contextBudget.js");
 
 function toolRound(id, result, reasoning = `reasoning-${id}`, args = "{}") {
@@ -131,4 +133,95 @@ test("compacts old plain conversation while preserving latest user", () => {
   assert.equal(result.messages.at(-1).content, "current request must remain exact");
   assert.match(result.messages[1].content, /older conversation compacted/);
   assert.match(result.messages[2].content, /older conversation compacted/);
+});
+
+function figmaRound(id, result) {
+  return [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id,
+          type: "function",
+          function: {
+            name: "mcp__figma__get_screenshot",
+            arguments: '{"fileKey":"abc","nodeId":"1:2"}',
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: id,
+      name: "mcp__figma__get_screenshot",
+      content: result,
+    },
+  ];
+}
+
+test("shouldPreserveToolResultFromCompaction detects Figma and vision helper", () => {
+  assert.equal(
+    shouldPreserveToolResultFromCompaction({
+      role: "tool",
+      name: "mcp__figma__get_design_context",
+      content: "x".repeat(1000),
+    }),
+    true
+  );
+  assert.equal(
+    shouldPreserveToolResultFromCompaction({
+      role: "tool",
+      name: "read_file",
+      content: "[Harbor vision helper · Gemini] Columns: A",
+    }),
+    true
+  );
+  assert.equal(
+    shouldPreserveToolResultFromCompaction({
+      role: "tool",
+      name: "read_file",
+      content: "A".repeat(1000),
+    }),
+    false
+  );
+});
+
+test("applyContextBudget does not shrink old Figma tool results", () => {
+  const figmaBody =
+    "[Harbor vision helper · Gemini 2.5 Flash] Columns: ФИО, Профессия " +
+    "L".repeat(8_000);
+  const messages = [
+    { role: "system", content: "policy" },
+    { role: "user", content: "plan from figma" },
+    ...figmaRound("fig-1", figmaBody),
+    ...toolRound("read-1", "R".repeat(12_000)),
+    ...toolRound("latest", "C".repeat(2_000)),
+    { role: "user", content: "continue" },
+  ];
+
+  const result = applyContextBudget(messages, {
+    contextWindow: 6_000,
+    reservedOutputTokens: 1_000,
+    safetyMarginTokens: 500,
+  });
+
+  assert.equal(result.compacted, true);
+  assert.equal(result.messages[3].content, figmaBody);
+  assert.match(String(result.messages[5].content), /older tool result compacted/);
+});
+
+test("pullPreservedToolRounds pins Figma rounds and leaves the rest", () => {
+  const figmaBody = "[Harbor vision helper · X] Title: Удостоверение";
+  const messages = [
+    { role: "user", content: "start" },
+    ...figmaRound("fig-1", figmaBody),
+    ...toolRound("read-1", "file body"),
+    { role: "user", content: "later" },
+  ];
+  const { pinned, remainder } = pullPreservedToolRounds(messages);
+  assert.equal(pinned.length, 2);
+  assert.equal(pinned[1].content, figmaBody);
+  assert.equal(remainder.length, 4);
+  assert.ok(remainder.every((m) => m.name !== "mcp__figma__get_screenshot"));
 });

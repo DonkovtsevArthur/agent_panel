@@ -1,6 +1,66 @@
 import type { ChatMessage, ContentPart, ToolCall } from "./openaiClient";
+import { HARBOR_VISION_HELPER_MARKER } from "./figmaVisionFormat";
 
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 2_048;
+
+/**
+ * Figma MCP + under-the-hood vision-helper tool results are the authoritative
+ * UI source in Plan. Do not shrink them when fitting the context budget —
+ * otherwise the model drifts to a similar page found in the repo.
+ */
+export function shouldPreserveToolResultFromCompaction(
+  message: ChatMessage
+): boolean {
+  if (message.role !== "tool") {
+    return false;
+  }
+  const name = String(message.name || "");
+  if (name.startsWith("mcp__figma__")) {
+    return true;
+  }
+  const content =
+    typeof message.content === "string" ? message.content : "";
+  return content.includes(HARBOR_VISION_HELPER_MARKER);
+}
+
+/**
+ * Pull completed tool rounds that contain preserved Figma/vision results out
+ * of `messages` (order kept). Used by mid-turn summary so Figma is not replaced
+ * by a one-line snippet while list/read rounds are summarized away.
+ */
+export function pullPreservedToolRounds(messages: readonly ChatMessage[]): {
+  pinned: ChatMessage[];
+  remainder: ChatMessage[];
+} {
+  const rounds = completedToolRoundIndexes(messages);
+  const pinnedIndexes = new Set<number>();
+  for (const round of rounds) {
+    const preserve = round.tools.some((toolIndex) =>
+      shouldPreserveToolResultFromCompaction(messages[toolIndex])
+    );
+    if (!preserve) {
+      continue;
+    }
+    pinnedIndexes.add(round.assistant);
+    for (const toolIndex of round.tools) {
+      pinnedIndexes.add(toolIndex);
+    }
+  }
+  if (!pinnedIndexes.size) {
+    return { pinned: [], remainder: messages.map(cloneMessage) };
+  }
+  const pinned: ChatMessage[] = [];
+  const remainder: ChatMessage[] = [];
+  messages.forEach((message, index) => {
+    const clone = cloneMessage(message);
+    if (pinnedIndexes.has(index)) {
+      pinned.push(clone);
+    } else {
+      remainder.push(clone);
+    }
+  });
+  return { pinned, remainder };
+}
 
 export interface ContextBudgetOptions {
   contextWindow: number;
@@ -235,12 +295,16 @@ export function applyContextBudget(
   let compacted = false;
 
   // First preserve useful beginnings/endings and remove only as much as needed.
+  // Skip Figma MCP / vision-helper payloads — they are the plan's UI source.
   for (const round of oldRounds) {
     for (const toolIndex of round.tools) {
       if (estimatedTokens <= softTarget) {
         break;
       }
       const message = messages[toolIndex];
+      if (shouldPreserveToolResultFromCompaction(message)) {
+        continue;
+      }
       const chars =
         typeof message.content === "string"
           ? message.content.length
@@ -257,9 +321,17 @@ export function applyContextBudget(
   }
 
   // If results alone are insufficient, compact metadata/content of old rounds.
+  // Do not touch assistant turns that only exist to carry preserved Figma tools.
   for (const round of oldRounds) {
     if (estimatedTokens <= softTarget) {
       break;
+    }
+    if (
+      round.tools.some((toolIndex) =>
+        shouldPreserveToolResultFromCompaction(messages[toolIndex])
+      )
+    ) {
+      continue;
     }
     const shortened = compactOldAssistantRound(messages[round.assistant]);
     if (

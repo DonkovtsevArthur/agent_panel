@@ -3,6 +3,7 @@ import {
   applyContextBudget,
   calculateContextBudget,
   estimateTokens,
+  pullPreservedToolRounds,
 } from "./contextBudget";
 import { buildEarlierConversationSummary } from "./historySummary";
 import {
@@ -88,11 +89,14 @@ export function prepareRoundMessages(
             message.content.includes(MID_TURN_COMPACTION_MARKER)
         );
         if (!alreadyHasMarker) {
+          // Keep Figma/vision tool rounds verbatim — summarizing them away is
+          // what lets Plan drift onto a similar page from the repo.
+          const { pinned, remainder } = pullPreservedToolRounds(older);
           const summary: ChatMessage = {
             role: "user",
-            content: `${MID_TURN_COMPACTION_MARKER}\n${buildEarlierConversationSummary(older)}`,
+            content: `${MID_TURN_COMPACTION_MARKER}\n${buildEarlierConversationSummary(remainder.length ? remainder : older)}`,
           };
-          working = [...system, summary, ...recent];
+          working = [...system, summary, ...pinned, ...recent];
           summarized = true;
           compacted = true;
         }

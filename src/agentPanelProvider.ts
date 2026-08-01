@@ -2246,12 +2246,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const hasImageAttachment = attachments.some(
       (attachment) => attachment.kind === "image"
     );
-    const visionPreferenceIds = hasImageAttachment
+    // Vision routing только для вложений-картинок (multimodal user message).
+    // Figma URL не переключает весь ход: выбранная модель остаётся planner'ом,
+    // а get_screenshot обрабатывается under-the-hood vision helper'ом в
+    // agentLoopMainLike (см. describeMcpImagesForMainModel).
+    const needsVision = hasImageAttachment;
+    const visionPreferenceIds = needsVision
       ? config.visionRouting.preferredModelIds
       : undefined;
     const routed = routeModel(enabledModels, {
       userSelectedModelId: requestedModel,
-      hints: hasImageAttachment
+      hints: needsVision
         ? {
             vision_required: true,
             vision_preference: visionPreferenceIds ?? [],
@@ -2631,8 +2636,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               : failedContextWindow;
           const fallback = selectFallbackModel(enabledModels, {
             failedModelId: failedModel,
-            visionRequired: hasImageAttachment,
-            visionPreferenceIds: hasImageAttachment
+            visionRequired: needsVision,
+            visionPreferenceIds: needsVision
               ? config.visionRouting.preferredModelIds
               : undefined,
             minContextWindow: minimumContextWindow,

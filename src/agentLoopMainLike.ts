@@ -71,7 +71,8 @@ import {
 } from "./toolRoundPolicy";
 import { executeToolCallsInOrder } from "./runToolWaves";
 import { getMcpManager } from "./mcpBundle";
-import { messageHasFigmaUrl } from "./mcp/figma";
+import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
+import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
 import { filterToolsForContext, messageContainsUrl } from "./toolFilter";
 import {
   listDirtyPaths,
@@ -592,6 +593,10 @@ export async function runMainLikeAgentTurn(options: {
           charCap: kimiModel ? DEFAULT_WORKSPACE_RULE_CHAR_CAP : 8_000,
         })
       : undefined;
+  const figmaAntiDrift =
+    readonly && messageHasFigmaUrl(options.userText)
+      ? figmaPlanAntiDriftHint()
+      : "";
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
@@ -602,6 +607,9 @@ export async function runMainLikeAgentTurn(options: {
     ...(readonly
       ? []
       : [{ role: "system" as const, content: FOCUSED_EDIT_HINT }]),
+    ...(figmaAntiDrift
+      ? [{ role: "system" as const, content: figmaAntiDrift }]
+      : []),
     ...(workspaceRules
       ? [
           {
@@ -1340,9 +1348,56 @@ export async function runMainLikeAgentTurn(options: {
 
   const invokeTool = async (name: string, argsJson: string): Promise<string> => {
     if (name.startsWith("mcp__")) {
-      return mcp
-        ? await mcp.callTool(name, argsJson || "")
-        : JSON.stringify({ error: "MCP is not available" });
+      if (!mcp) {
+        return JSON.stringify({ error: "MCP is not available" });
+      }
+      // MCP screenshots arrive as image parts. Tool-role messages are text-only,
+      // so we run a vision helper under the hood and inject labels as text —
+      // the chat-selected model stays the planner (no whole-turn vision switch).
+      const split = await mcp.callToolWithMedia(name, argsJson || "");
+      if (!split.imageDataUrls.length) {
+        return split.text;
+      }
+      const visionStepId = nextStepId("vision");
+      options.callbacks.onPhase("reading", "Vision · Figma screenshot");
+      emitStep({
+        stepId: visionStepId,
+        kind: "tool",
+        name: "vision_figma_screenshot",
+        status: "running",
+        argsPreview: previewText(name, 80),
+      });
+      try {
+        const described = await describeMcpImagesForMainModel({
+          imageDataUrls: split.imageDataUrls,
+          accompanyingText: split.text,
+          visionPreferenceIds: config.visionRouting.preferredModelIds,
+          signal: options.signal,
+        });
+        emitStep({
+          stepId: visionStepId,
+          kind: "tool",
+          name: "vision_figma_screenshot",
+          status: "done",
+          resultPreview: previewText(described, 160),
+        });
+        return described;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emitStep({
+          stepId: visionStepId,
+          kind: "tool",
+          name: "vision_figma_screenshot",
+          status: "error",
+          resultPreview: previewText(message, 160),
+        });
+        return [
+          split.text,
+          `[Harbor vision helper failed: ${message}. Call request_user_input if concrete labels are still missing.]`,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+      }
     }
     return runMainLikeTool(name, argsJson, {
       readonly,
