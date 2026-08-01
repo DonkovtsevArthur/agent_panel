@@ -42,6 +42,12 @@ export const IMPACT_USER_NUDGE =
 export const IMPACT_USER_VISIBLE =
   "Модель поменяла (или описала) shared UI без проверки других мест использования. Повторите запрос — нужно найти consumers и учесть влияние на другие компоненты.";
 
+export const ASK_USER_VIA_TOOL_NUDGE =
+  "False: do NOT write clarifying questions as plain chat text (no numbered lists, no «Есть несколько уточняющих вопросов»). Call request_user_input — one question per call, with 2–4 mutually exclusive options and a recommended default. The UI shows QuickPick plus a free-text custom answer. Ask every blocking question via that tool before any <proposed_plan>. Do not finish this turn with prose questions.";
+
+export const ASK_USER_VIA_TOOL_USER_VISIBLE =
+  "Модель задала уточняющие вопросы текстом вместо tool request_user_input. Повторите запрос — вопросы должны прийти через выбор вариантов (и «Свой ответ…») в VS Code.";
+
 export type HonestFinaleDecision =
   | { kind: "ok"; text: string }
   | { kind: "nudge_write" }
@@ -49,6 +55,7 @@ export type HonestFinaleDecision =
   | { kind: "nudge_hollow" }
   | { kind: "nudge_denied_write" }
   | { kind: "nudge_impact" }
+  | { kind: "nudge_ask_user" }
   | { kind: "replace"; text: string };
 
 /**
@@ -243,6 +250,102 @@ export function looksLikeMissingInfoQuestion(text: string): boolean {
 }
 
 /**
+ * Plan/Ask: model dumped clarifying questions as chat prose instead of
+ * calling request_user_input (no QuickPick / custom answer UI).
+ */
+export function looksLikeProseClarifyingQuestions(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length < 40) {
+    return false;
+  }
+  // proposed_plan is the deliverable — do not treat it as a prose Q dump
+  if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(raw)) {
+    return false;
+  }
+  const value = raw.toLowerCase().replace(/ё/g, "е");
+  const qMarks = (raw.match(/[?？]/g) || []).length;
+
+  if (
+    /уточняющ\w*\s+вопрос|clarifying question|есть несколько вопрос|несколько уточн|помогут дать точный план|перед тем как (составить|дать|писать) план|нужн\w+ уточн/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+
+  const hasList = /(?:^|\n)\s*(?:\d+[.)]|[-*•])\s+\S+/m.test(raw);
+  if (qMarks >= 2 && hasList) {
+    return true;
+  }
+
+  if (
+    qMarks >= 2 &&
+    hasList &&
+    /(?:какой|какая|какие|где|нужен ли|есть ли|should|which|where|or)\b/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+
+  // Prose clarification WITHOUT question marks: model asks the user to
+  // describe/clarify the structure or composition of a design/layout, or
+  // hands off to a mode switch instead of calling request_user_input.
+  // Catches flowing "if typical → template, if unique → describe the
+  // structure once (or switch to Agent and I'll build iteratively)" replies
+  // that the qMarks+list branch above misses.
+  // The imperative alone is ambiguous (could be the model instructing the
+  // user), so require a corroboration signal: data insufficiency, a
+  // consequence clause ("тогда дам план"), a mode-switch, or a template/
+  // iterative hand-off.
+  const clarifyImperative =
+    /(?:уточните|уточни|опишите|опиши|перечислите)\s+(?:макет|структур|состав|поля|кнопки|фильтр|конкретн|детал)/i;
+  const dataInsufficiency =
+    /не\s+вижу|не\s+видно|не\s+хватает|в\s+сжатом\s+виде|только\s+каркас|частично|недостаточно|insufficient|cannot\s+see|don't\s+see|do\s+not\s+see/i;
+  const consequenceClause =
+    /тогда\s+(?:дам|сделаю|смогу|реализую|продолжу|составлю|дам\s+план)|чтобы\s+(?:сделать|реализовать|продолжить|составить\s+план)/i;
+  const modeSwitchNudge =
+    /переключитесь\s+в\s+режим|switch\s+to\s+(?:agent|plan|ask)\s+mode/i;
+  const handoffCorroboration =
+    /итеративн|по\s+ссылке|по\s+шаблону|iterative|by\s+(?:the\s+)?link|template/i;
+  if (
+    clarifyImperative.test(value) &&
+    (dataInsufficiency.test(value) ||
+      consequenceClause.test(value) ||
+      modeSwitchNudge.test(value) ||
+      handoffCorroboration.test(value))
+  ) {
+    return true;
+  }
+  if (modeSwitchNudge.test(value) && handoffCorroboration.test(value)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function turnHadSuccessfulRequestUserInput(
+  messages: ChatMessage[]
+): boolean {
+  for (const m of messages) {
+    if (m.role !== "tool" || m.name !== "request_user_input") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(String(m.content || "")) as {
+        ok?: unknown;
+      };
+      if (parsed && parsed.ok === true) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+/**
  * Единый гейт перед показом финала пользователю.
  */
 export function decideHonestFinale(input: {
@@ -258,24 +361,40 @@ export function decideHonestFinale(input: {
   allowNudgeHedge?: boolean;
   allowNudgeHollow?: boolean;
   allowNudgeImpact?: boolean;
+  /** Plan/Ask: nudge prose clarifying questions → request_user_input. */
+  allowNudgeAskUser?: boolean;
 }): HonestFinaleDecision {
   const text = String(input.text || "").trim();
   const allowNudgeWrite = input.allowNudgeWrite !== false;
   const allowNudgeHedge = input.allowNudgeHedge !== false;
   const allowNudgeHollow = input.allowNudgeHollow !== false;
   const allowNudgeImpact = input.allowNudgeImpact !== false;
+  const allowNudgeAskUser = input.allowNudgeAskUser !== false;
   const kimi = input.kimi === true;
 
   if (!input.canEdit) {
-    if (looksLikeHollowStatusOrDeferral(text)) {
-      return allowNudgeHollow
-        ? { kind: "nudge_hollow" }
-        : { kind: "replace", text: HOLLOW_USER_VISIBLE };
+    // Plan / Ask mode: объяснение — это deliverable, не пустышка.
+    // Hollow-детектор («я объяснил / скажи — перепишу») здесь ложносрабатывает:
+    // в readonly модель и должна объяснять и может отложить реализацию на Agent.
+    // Оставляем hedge + prose-clarifying (должны идти через request_user_input).
+    // <proposed_plan> — финальный артефакт Plan mode (Goal/Steps/Risks):
+    // Risks и future-tense шаги легитимно содержат «возможно стоит» / «начну с…»,
+    // что ложнит hedge-детектор. Защищаем тегом до любых nudge/replace.
+    if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
+      return { kind: "ok", text };
     }
     if (looksLikeHedgeOrUnfinishedAction(text)) {
       return allowNudgeHedge
         ? { kind: "nudge_hedge" }
         : { kind: "replace", text: HEDGE_USER_VISIBLE };
+    }
+    if (
+      looksLikeProseClarifyingQuestions(text) &&
+      !turnHadSuccessfulRequestUserInput(input.messages)
+    ) {
+      return allowNudgeAskUser
+        ? { kind: "nudge_ask_user" }
+        : { kind: "ok", text };
     }
     return { kind: "ok", text };
   }

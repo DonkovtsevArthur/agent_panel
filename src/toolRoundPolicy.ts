@@ -10,6 +10,14 @@
 
 export const EXPLORE_ONLY_TOOLS = new Set(["list_files", "read_file"]);
 
+/**
+ * В readonly (Plan/Ask) delegate_task форсируется в ask-под-агент — это
+ * тоже исследование, поэтому раунд с delegate_task должен двигать
+ * explore-streak наравне с list/read. В Agent mode delegate_task может
+ * делать правки — там он productive и streak не двигает.
+ */
+export const DELEGATE_TASK_TOOL = "delegate_task";
+
 /** После стольких explore-only раундов подряд — soft nudge. */
 export const EXPLORE_SOFT_NUDGE_ROUNDS = 2;
 
@@ -74,10 +82,51 @@ export function roundWasExploreOnly(
   return names.length > 0 && names.every((n) => isExploreOnlyTool(n));
 }
 
+/**
+ * Двигает ли раунд explore-streak. В readonly delegate_task = исследование
+ * (под-агент ask), поэтому раунд только из explore + delegate_task тоже
+ * считается explore-only для лимитов. В Agent delegate_task может править
+ * — там он productive и streak не двигает.
+ */
+export function roundAdvancesExploreStreak(
+  toolNames: Array<string | undefined>,
+  readonly: boolean
+): boolean {
+  const names = toolNames.map((n) => String(n || "")).filter(Boolean);
+  if (names.length === 0) {
+    return false;
+  }
+  if (names.every((n) => isExploreOnlyTool(n))) {
+    return true;
+  }
+  if (
+    readonly &&
+    names.every(
+      (n) => isExploreOnlyTool(n) || n === DELEGATE_TASK_TOOL
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Утилита для strip-логики: убираем explore-инструменты (+ delegate в readonly). */
+export function isExploreOrDelegatedTool(
+  name: string,
+  readonly: boolean
+): boolean {
+  if (isExploreOnlyTool(name)) {
+    return true;
+  }
+  return readonly && name === DELEGATE_TASK_TOOL;
+}
+
 export function shouldExtendToolRounds(options: {
   extensionsUsed: number;
   hadProductiveTool: boolean;
   answered: boolean;
+  /** readonly (Plan/Ask): delegate_task/request_user_input ok — тоже повод продлить. */
+  readonlyProductive?: boolean;
 }): boolean {
   if (options.answered) {
     return false;
@@ -85,15 +134,24 @@ export function shouldExtendToolRounds(options: {
   if (options.extensionsUsed >= MAX_ROUND_EXTENSIONS) {
     return false;
   }
-  return options.hadProductiveTool;
+  return Boolean(options.hadProductiveTool || options.readonlyProductive);
 }
 
 export function buildExploreSoftNudge(options: {
   agentsMd: boolean;
   readonly: boolean;
+  plan?: boolean;
   kimi?: boolean;
 }): string {
   if (options.readonly) {
+    if (options.plan) {
+      return [
+        "Stop exploring the repository.",
+        "You already have enough context from the tools above.",
+        "Do not call list_files or read_file again.",
+        "Now write the final plan: wrap it in a <proposed_plan>…</proposed_plan> block with Goal, Steps, Affected files, and Risks. Do not answer in prose — the plan is the deliverable.",
+      ].join(" ");
+    }
     return [
       "Stop exploring the repository.",
       "You already have enough context from the tools above.",
@@ -128,8 +186,16 @@ export function buildExploreSoftNudge(options: {
 export function buildExploreHardNudge(options: {
   agentsMd: boolean;
   readonly: boolean;
+  plan?: boolean;
 }): string {
   if (options.readonly) {
+    if (options.plan) {
+      return [
+        "Exploration limit reached.",
+        "list_files and read_file are no longer allowed this turn.",
+        "Write the final plan now: wrap it in a <proposed_plan>…</proposed_plan> block with Goal, Steps, Affected files, and Risks, based only on the information already gathered. Do not call tools and do not answer in prose.",
+      ].join(" ");
+    }
     return [
       "Exploration limit reached.",
       "list_files and read_file are no longer allowed this turn.",

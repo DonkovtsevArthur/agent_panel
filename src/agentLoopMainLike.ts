@@ -40,6 +40,7 @@ import {
   runMainLikeTool,
 } from "./mainLikeTools";
 import {
+  ASK_USER_VIA_TOOL_NUDGE,
   DENIED_WRITE_USER_NUDGE,
   HEDGE_USER_NUDGE,
   HOLLOW_USER_NUDGE,
@@ -64,8 +65,8 @@ import {
   buildExploreSoftNudge,
   buildKimiWorkspaceFollowHint,
   exploreRoundLimits,
-  isExploreOnlyTool,
-  roundWasExploreOnly,
+  isExploreOrDelegatedTool,
+  roundAdvancesExploreStreak,
   shouldExtendToolRounds,
 } from "./toolRoundPolicy";
 import { executeToolCallsInOrder } from "./runToolWaves";
@@ -110,6 +111,7 @@ import {
   bumpVerificationFixAttempt,
   createVerificationState,
   decideVerificationStep,
+  missingModuleSpecifiersFromOutput,
   projectCommandFailureTouchesScope,
   selectProjectVerificationCommand,
   type VerificationDiagnosticLike,
@@ -346,6 +348,31 @@ function compactHistoryMainLike(messages: ChatMessage[]): ChatMessage[] {
             ? message.content
             : contentPartsToHistoryText(message.content || []),
       });
+      continue;
+    }
+    // Сохраняем request_user_input tool-results: это ответы пользователя
+    // на clarifying questions. Короткие, но критичные для decision-complete
+    // плана — без них модель после compaction может пере-ask'нуть те же
+    // вопросы или построить план, противоречащий ответам.
+    if (
+      message.role === "tool" &&
+      message.name === "request_user_input"
+    ) {
+      try {
+        const parsed = JSON.parse(String(message.content || "")) as {
+          ok?: boolean;
+          answer?: string;
+          cancelled?: boolean;
+        };
+        if (parsed && parsed.ok === true && typeof parsed.answer === "string") {
+          compact.push({
+            role: "user",
+            content: `[user's answer to a clarifying question: ${parsed.answer}]`,
+          });
+        }
+      } catch {
+        // ignore
+      }
     }
   }
   const maxMessages = 24;
@@ -457,6 +484,10 @@ export async function runMainLikeAgentTurn(options: {
   /** @deprecated используй agentMode */
   planMode?: boolean;
   callbacks: AgentRunCallbacks;
+  /** Exclude these tool names from the available tool list (recursion guard for delegate_task). */
+  excludeToolNames?: Set<string>;
+  /** Override config.maxToolRounds for this turn (e.g. bounded sub-agent delegation). */
+  maxToolRounds?: number;
 }): Promise<ChatMessage[]> {
   const config = getConfig();
   const mode = getModeById(
@@ -566,7 +597,11 @@ export async function runMainLikeAgentTurn(options: {
     { role: "system", content: buildEditorContextMessage() },
     { role: "system", content: urlCapabilityHint },
     { role: "system", content: VERIFY_REPO_FACTS_HINT },
-    { role: "system", content: FOCUSED_EDIT_HINT },
+    // Focused-edit guidance толкает к search_replace/write_file — в Plan/Ask
+    // оба запрещены, не инъектируем, чтобы не конфликтовать с mode-prompt.
+    ...(readonly
+      ? []
+      : [{ role: "system" as const, content: FOCUSED_EDIT_HINT }]),
     ...(workspaceRules
       ? [
           {
@@ -628,6 +663,11 @@ export async function runMainLikeAgentTurn(options: {
       (tool) => tool.function.name !== "get_diagnostics"
     );
   }
+  if (options.excludeToolNames?.size) {
+    baseTools = baseTools.filter(
+      (tool) => !options.excludeToolNames!.has(tool.function.name)
+    );
+  }
   const allTools = [...baseTools, ...mcpTools];
   const activeTools = filterToolsForContext(allTools, {
     hasUrl: urlInMessage || messageHasFigmaUrl(options.userText),
@@ -641,13 +681,22 @@ export async function runMainLikeAgentTurn(options: {
   const editsByPath = new Map<string, FileEditStat>();
   // Dirty до tools — в review попадут и shell-правки (run_command), не только write_file.
   const baselineDirty = readonly ? ([] as string[]) : await listDirtyPaths();
-  let roundBudget = Math.max(1, config.maxToolRounds);
+  let roundBudget = Math.max(1, options.maxToolRounds ?? config.maxToolRounds);
+  // Plan/Ask: планы и объяснения длиннее правок — даём больше выходных токенов,
+  // чтобы <proposed_plan> не обрезался посередине (обрезанный тег не матчится
+  // парсером карточки в panel.js и план вываливается как raw text без Build).
+  const effectiveMaxTokens = readonly
+    ? Math.max(config.maxTokens, 8192)
+    : config.maxTokens;
   const seenToolCalls = new Set<string>();
   let answered = false;
   let exploreStreak = 0;
   let softNudgeSent = false;
   let hardCut = false;
   let hadProductiveTool = false;
+  // readonly (Plan/Ask): delegate_task ok / request_user_input ok считаются
+  // productive для продления бюджета раундов (правок-то нет).
+  let hadReadonlyProductiveTool = false;
   let extensionsUsed = 0;
   let turnHadGitOperation = false;
   let writeNudgeAttempts = 0;
@@ -655,6 +704,8 @@ export async function runMainLikeAgentTurn(options: {
   let hollowNudgeAttempts = 0;
   let impactNudgeAttempts = 0;
   let deniedWriteNudgeAttempts = 0;
+  let askUserNudgeAttempts = 0;
+  let requestUserInputCalls = 0;
   let emptyFinalAttempts = 0;
   let turnReasoning = "";
   let completionIntent: CompletionIntent = "user_prompt";
@@ -665,7 +716,9 @@ export async function runMainLikeAgentTurn(options: {
   const maxHollowNudges = 2;
   const maxImpactNudges = 2;
   const maxDeniedWriteNudges = 2;
+  const maxAskUserNudges = 2;
   const maxEmptyFinalAttempts = 3;
+  const MAX_REQUEST_USER_INPUT_CALLS = 5;
   const contextWindow = getContextWindow(options.model);
 
   const emitStep = (
@@ -1009,6 +1062,29 @@ export async function runMainLikeAgentTurn(options: {
             });
             return "allow_finale";
           }
+          // Failure touches edited files — но если это только «missing module»
+          // для ещё не созданных файлов, правильное действие — создать недостающий
+          // файл, а не переписывать уже корректный. Иначе Kimi ломает импорты
+          // вместо того, чтобы продолжить создавать фичу по плану.
+          const missingModules = missingModuleSpecifiersFromOutput(output);
+          if (missingModules.length > 0) {
+            messages.push({
+              role: "user",
+              content: [
+                `Post-edit verification: \`${step.command}\` failed because some imports in your edited files reference modules that are not created yet:`,
+                missingModules.map((m) => `- ${m}`).join("\n"),
+                "If these are part of your task, create the missing files with write_file now. Do NOT comment out or remove the imports from the files you already wrote correctly.",
+                "If they are pre-existing / unrelated, finish briefly and mention them.",
+                output.slice(0, 1_500),
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            });
+            if (round >= roundBudget - 1) {
+              roundBudget = round + 2;
+            }
+            return "continue";
+          }
           messages.push({
             role: "user",
             content: [
@@ -1118,7 +1194,7 @@ export async function runMainLikeAgentTurn(options: {
         messages: forcedRequest,
         tool_choice: "none",
         temperature: 0.3,
-        max_tokens: config.maxTokens,
+        max_tokens: effectiveMaxTokens,
         reasoning_effort: effectiveReasoningEffort(forcedRequest, turnReasoningEffort),
       });
     reportUsage(usage, forcedRequest);
@@ -1202,6 +1278,7 @@ export async function runMainLikeAgentTurn(options: {
         hollowNudgeAttempts < maxHollowNudges &&
         deniedWriteNudgeAttempts < maxDeniedWriteNudges,
       allowNudgeImpact: impactNudgeAttempts < maxImpactNudges,
+      allowNudgeAskUser: askUserNudgeAttempts < maxAskUserNudges,
     });
 
     if (decision.kind === "nudge_write") {
@@ -1244,6 +1321,14 @@ export async function runMainLikeAgentTurn(options: {
       }
       return false;
     }
+    if (decision.kind === "nudge_ask_user") {
+      askUserNudgeAttempts += 1;
+      messages.push({ role: "user", content: ASK_USER_VIA_TOOL_NUDGE });
+      if (round >= roundBudget - 1) {
+        roundBudget = round + 2;
+      }
+      return false;
+    }
     if (decision.kind === "replace") {
       await publishAssistantFinale(decision.text);
       return true;
@@ -1258,7 +1343,11 @@ export async function runMainLikeAgentTurn(options: {
         ? await mcp.callTool(name, argsJson || "")
         : JSON.stringify({ error: "MCP is not available" });
     }
-    return runMainLikeTool(name, argsJson);
+    return runMainLikeTool(name, argsJson, {
+      readonly,
+      model: activeTurnModel,
+      signal: options.signal,
+    });
   };
 
   const reportUsage = (
@@ -1375,7 +1464,7 @@ export async function runMainLikeAgentTurn(options: {
         tools: hardCutTools,
         tool_choice: "auto",
         temperature: 0.2,
-        max_tokens: config.maxTokens,
+        max_tokens: effectiveMaxTokens,
         reasoning_effort: effectiveReasoningEffort(messages, turnReasoningEffort),
       });
       reportUsage(usage, hardRequest);
@@ -1465,14 +1554,17 @@ export async function runMainLikeAgentTurn(options: {
 
     options.callbacks.onPhase("thinking", modeThinkingLabel(mode));
 
-    // После soft-nudge убираем list/read; URL/MCP tools оставляем.
+    // После soft-nudge убираем list/read (+ delegate в readonly — под-агент ask
+    // это тоже исследование); URL/MCP tools оставляем. Применяется и в readonly,
+    // чтобы gateway (особенно Kimi) не падал на раздутом tool-контексте.
     const stripExplore =
       hardCut ||
       (exploreLimits.stripExploreOnSoftNudge &&
-        exploreStreak >= exploreLimits.softNudgeRounds &&
-        !readonly);
+        exploreStreak >= exploreLimits.softNudgeRounds);
     const roundTools = stripExplore
-      ? activeTools.filter((tool) => !isExploreOnlyTool(tool.function.name))
+      ? activeTools.filter(
+          (tool) => !isExploreOrDelegatedTool(tool.function.name, readonly)
+        )
       : activeTools;
 
     prepareApiMessages();
@@ -1487,7 +1579,7 @@ export async function runMainLikeAgentTurn(options: {
         ? { tools: roundTools, tool_choice: "auto" as const }
         : { tool_choice: "none" as const }),
       temperature: 0.2,
-      max_tokens: config.maxTokens,
+      max_tokens: effectiveMaxTokens,
       reasoning_effort: effectiveReasoningEffort(messages, turnReasoningEffort),
     });
     reportUsage(usage, requestMessages);
@@ -1538,14 +1630,24 @@ export async function runMainLikeAgentTurn(options: {
         ) {
           return JSON.stringify({
             error:
-              "В этом режиме инструмент недоступен. Используй list_files / read_file / fetch_url / open_external или MCP (Figma).",
+              "В этом режиме инструмент недоступен. Используй list_files / read_file / fetch_url / open_external / request_user_input / delegate_task или MCP (Figma).",
           });
         }
-        if (hardCut && isExploreOnlyTool(call.function.name)) {
+        if (hardCut && isExploreOrDelegatedTool(call.function.name, readonly)) {
           return JSON.stringify({
             error:
               "Exploration limit: only write_file is allowed. Finish the file write now.",
           });
+        }
+        if (call.function.name === "request_user_input") {
+          requestUserInputCalls += 1;
+          if (requestUserInputCalls > MAX_REQUEST_USER_INPUT_CALLS) {
+            return JSON.stringify({
+              ok: false,
+              error:
+                "Too many request_user_input calls this turn. Stop asking and write the final answer / <proposed_plan> now.",
+            });
+          }
         }
         return invokeTool(call.function.name, call.function.arguments);
       },
@@ -1583,12 +1685,28 @@ export async function runMainLikeAgentTurn(options: {
         }
       } else if (call.function.name === "run_command") {
         hadProductiveTool = true;
+      } else if (
+        readonly &&
+        (call.function.name === "delegate_task" ||
+          call.function.name === "request_user_input")
+      ) {
+        try {
+          const parsed = JSON.parse(result) as { ok?: boolean };
+          if (parsed && parsed.ok === true) {
+            hadReadonlyProductiveTool = true;
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
     completionIntent = "tool_results";
 
-    if (roundWasExploreOnly(toolCalls.map((c) => c.function.name))) {
+    if (roundAdvancesExploreStreak(
+      toolCalls.map((c) => c.function.name),
+      readonly
+    )) {
       exploreStreak += 1;
     } else {
       exploreStreak = 0;
@@ -1608,6 +1726,7 @@ export async function runMainLikeAgentTurn(options: {
         content: buildExploreSoftNudge({
           agentsMd: agentsMdTurn,
           readonly,
+          plan: mode.id === "plan",
           kimi: kimiModel,
         }),
       });
@@ -1622,6 +1741,7 @@ export async function runMainLikeAgentTurn(options: {
         content: buildExploreHardNudge({
           agentsMd: agentsMdTurn,
           readonly,
+          plan: mode.id === "plan",
         }),
       });
       // Гарантируем ещё одну итерацию под write-only / финал.
@@ -1641,6 +1761,7 @@ export async function runMainLikeAgentTurn(options: {
       shouldExtendToolRounds({
         extensionsUsed,
         hadProductiveTool,
+        readonlyProductive: hadReadonlyProductiveTool,
         answered,
       })
     ) {
@@ -1675,7 +1796,7 @@ export async function runMainLikeAgentTurn(options: {
         model: options.model,
         messages: finalRequest,
         temperature: 0.2,
-        max_tokens: config.maxTokens,
+        max_tokens: effectiveMaxTokens,
         reasoning_effort: effectiveReasoningEffort(finalRequest, turnReasoningEffort),
       });
     reportUsage(finalUsage, finalRequest);
@@ -1705,6 +1826,7 @@ export async function runMainLikeAgentTurn(options: {
       allowNudgeHedge: false,
       allowNudgeHollow: false,
       allowNudgeImpact: false,
+      allowNudgeAskUser: false,
     });
     if (forcedDecision.kind === "replace") {
       text = forcedDecision.text;

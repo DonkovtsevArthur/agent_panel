@@ -140,6 +140,34 @@ export function projectCommandFailureTouchesScope(
   return mentioned.some((path) => pathTouchesScope(path, scope));
 }
 
+/**
+ * Извлекает спецификаторы «missing module / file» из вывода проектной команды
+ * (typecheck / lint / build). TS: "Cannot find module '...'"; Vite/rollup:
+ * "Could not resolve './...'"; ESLint: "Unable to resolve path to module '...'";
+ * TS2304 "Cannot find name '...'" для bare-импортов.
+ *
+ * Когда typecheck падает на отредактированном файле только из-за того, что он
+ * импортирует ещё не созданный файл — правильное действие создать недостающий
+ * файл, а не переписывать уже корректный. См. agentLoopMainLike.ts.
+ */
+export function missingModuleSpecifiersFromOutput(output: string): string[] {
+  const text = String(output || "");
+  if (!text.trim()) {
+    return [];
+  }
+  const found = new Set<string>();
+  const re =
+    /(?:Cannot find module|Could not resolve|Unable to resolve path to module|is not a module|Cannot find name)\s+['"`]([^'"`]+)['"`]/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const spec = String(match[1] || "").trim();
+    if (spec) {
+      found.add(spec);
+    }
+  }
+  return [...found];
+}
+
 export function createVerificationState(options: {
   agentMode: boolean;
   projectCommand?: string;

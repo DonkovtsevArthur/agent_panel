@@ -51,6 +51,7 @@ export function figmaSystemHint(connected: boolean, toolNames: string[]): string
       "Parse fileKey and node-id from the URL (node-id query uses '-' which maps to ':' for the API).",
       "Do not use fetch_url for figma.com designs (SPA/login wall); use MCP tools.",
       "Use open_external only if the user explicitly asks to open the link in a browser.",
+      "Figma MCP often returns an abstracted dev-mode representation (node tree / generated code) that may omit concrete table fields, filter chips, and button labels. If the fetched payload lacks the concrete elements needed for a decision-complete plan, do NOT write the clarification as prose — call request_user_input with options like «typical page — use template» / «unique layout — I will describe the structure» / «switch to Agent for iterative build», then continue. Never ask the user to describe the structure or to switch modes in plain chat text.",
     ].join(" ");
   }
   return [

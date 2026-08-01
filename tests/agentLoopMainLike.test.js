@@ -36,7 +36,7 @@ test("all models use main-like agent loop and tools", () => {
   );
   assert.match(mainLikeSrc, /mainLikeToolsForPolicy/);
   assert.match(mainLikeSrc, /runMainLikeTool/);
-  assert.match(mainLikeSrc, /max_tokens: config\.maxTokens/);
+  assert.match(mainLikeSrc, /max_tokens: effectiveMaxTokens/);
   assert.match(mainLikeSrc, /modeFinalNudge/);
   assert.match(mainLikeSrc, /buildExploreSoftNudge|EXPLORE_SOFT_NUDGE/);
   assert.match(mainLikeSrc, /hardCut|EXPLORE_HARD_CUT/);
@@ -140,4 +140,11 @@ test("readonly main-like allows Figma MCP and blocks write_file", () => {
   );
   assert.match(toolsSrc, /isAllowedToolInReadonlyMainLike/);
   assert.match(toolsSrc, /isAllowedMcpInReadonlyMode/);
+  // Plan prompt advertises delegate_task — it must be in the readonly schema
+  const readonlyBlock = toolsSrc.match(
+    /MAIN_LIKE_READONLY_TOOL_NAMES = new Set\(\[([^]*?)\]\)/
+  );
+  assert.ok(readonlyBlock, "MAIN_LIKE_READONLY_TOOL_NAMES block found");
+  assert.match(readonlyBlock[1], /"delegate_task"/);
+  assert.match(readonlyBlock[1], /"request_user_input"/);
 });
