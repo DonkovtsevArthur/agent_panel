@@ -121,6 +121,30 @@ export function isGitMutationCommand(command: string): boolean {
   );
 }
 
+/**
+ * Shell that undoes workspace edits (git discard or recursive rm).
+ * Used so honestFinale does not demand write_file after a successful discard.
+ */
+export function isWorkspaceDiscardCommand(command: string): boolean {
+  const value = String(command || "").trim();
+  if (!value) {
+    return false;
+  }
+  if (isGitMutationCommand(value)) {
+    // commit/push are mutations but not discards
+    if (isGitCommitCommand(value) || isGitPushCommand(value)) {
+      return false;
+    }
+    return /(?:^|[;&|]\s*)git\s+(?:checkout|restore|revert|reset|clean)(?:\s|$)/i.test(
+      value
+    );
+  }
+  // rm -r / rm -rf / rm --recursive (common agent undo for untracked)
+  return /(?:^|[;&|]\s*)rm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f?[a-zA-Z]*\b|--recursive\b)/i.test(
+    value
+  );
+}
+
 export function isGitStatusCommand(command: string): boolean {
   return /(?:^|[;&|]\s*)git\s+status(?:\s|$)/i.test(String(command || ""));
 }

@@ -219,7 +219,7 @@ export const mainLikeAgentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). Используй для git status/log/diff, сборки, тестов, lint/typecheck.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git status/log/diff, сборка, тесты. Откат правок агента: git restore -- <paths> (не git restore .). Откат ВСЕХ локальных изменений — только если пользователь явно сказал «все»: git restore . и при необходимости git clean -fd. Не используй write_file для отмены.",
       parameters: {
         type: "object",
         properties: {

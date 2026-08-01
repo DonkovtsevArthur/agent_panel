@@ -55,6 +55,11 @@ export interface ChatSession {
   branchedFromUiIndex?: number;
   /** Последняя позиция скролла в окне чата. */
   scrollTop?: number;
+  /**
+   * Paths edited/created in the last agent turn (review). Used to discard
+   * «свои» изменения without wiping unrelated workspace dirty files.
+   */
+  lastAgentEditedPaths?: string[];
 }
 
 export interface AgentRecord {
@@ -325,6 +330,11 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
   }
   if (typeof chat.scrollTop === "number" && Number.isFinite(chat.scrollTop)) {
     next.scrollTop = chat.scrollTop;
+  }
+  if (Array.isArray(chat.lastAgentEditedPaths)) {
+    next.lastAgentEditedPaths = chat.lastAgentEditedPaths
+      .map((p) => String(p || "").trim())
+      .filter(Boolean);
   }
   return next;
 }

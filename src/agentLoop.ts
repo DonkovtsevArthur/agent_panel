@@ -77,6 +77,8 @@ export async function runAgentTurn(options: {
   /** @deprecated используй agentMode */
   planMode?: boolean;
   callbacks: AgentRunCallbacks;
+  /** Paths from the previous agent edit turn — discard «свои». */
+  lastAgentEditedPaths?: string[];
 }): Promise<ChatMessage[]> {
   return runMainLikeAgentTurn(options);
 }
