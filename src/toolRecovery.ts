@@ -106,9 +106,11 @@ function shrinkOneToolContent(raw: string, maxChars: number): string {
  */
 export function shrinkToolMessageContents(
   messages: ChatMessage[],
-  maxToolChars = DEFAULT_MAX_TOOL_CHARS
+  maxToolChars = DEFAULT_MAX_TOOL_CHARS,
+  options?: { preserveToolPrefixes?: string[] }
 ): boolean {
   const limit = Math.max(400, Math.floor(maxToolChars));
+  const preserve = options?.preserveToolPrefixes ?? [];
   let changed = false;
   for (const message of messages) {
     if (message.role !== "tool") {
@@ -118,6 +120,9 @@ export function shrinkToolMessageContents(
       continue;
     }
     if (message.content.length <= limit) {
+      continue;
+    }
+    if (preserve.length && message.name && preserve.some((p) => message.name!.startsWith(p))) {
       continue;
     }
     const next = shrinkOneToolContent(message.content, limit);
@@ -135,13 +140,21 @@ export function shrinkToolMessageContents(
  */
 export function shrinkOlderToolResults(
   messages: ChatMessage[],
-  options?: { keepRecent?: number; maxOldChars?: number }
+  options?: {
+    keepRecent?: number;
+    maxOldChars?: number;
+    /** Tool name prefixes to skip (preserve full payload). Used in
+     * Plan/Ask mode to keep Figma MCP payloads intact — they are the
+     * primary source for the plan and must not be shrunk to 2.5 KB. */
+    preserveToolPrefixes?: string[];
+  }
 ): boolean {
   const keepRecent = Math.max(0, Math.floor(options?.keepRecent ?? 4));
   const maxOldChars = Math.max(
     400,
     Math.floor(options?.maxOldChars ?? PROACTIVE_OLD_TOOL_CHARS)
   );
+  const preserve = options?.preserveToolPrefixes ?? [];
   const toolIndexes: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].role === "tool") {
@@ -161,6 +174,9 @@ export function shrinkOlderToolResults(
     if (message.content.length <= maxOldChars) {
       continue;
     }
+    if (preserve.length && message.name && preserve.some((p) => message.name!.startsWith(p))) {
+      continue;
+    }
     const next = shrinkOneToolContent(message.content, maxOldChars).replace(
       "[truncated for recovery after model error]",
       "[older tool result compacted]"
@@ -176,11 +192,18 @@ export function shrinkOlderToolResults(
 /**
  * Kimi на корпоративном gateway: перед каждым chat/completions ужимаем
  * старые read_file и аргументы завершённых write_file.
+ * В readonly (Plan/Ask) сохраняем Figma MCP payloads целиком — они
+ * primary source для плана, урезание до 2.5 КБ убивает точные ColumnDef.
  */
-export function prepareKimiGatewayMessages(messages: ChatMessage[]): boolean {
+export function prepareKimiGatewayMessages(
+  messages: ChatMessage[],
+  options?: { readonly?: boolean }
+): boolean {
+  const preserve = options?.readonly ? ["mcp__figma__"] : [];
   const older = shrinkOlderToolResults(messages, {
     keepRecent: 3,
     maxOldChars: 2_500,
+    preserveToolPrefixes: preserve,
   });
   const edits = compactCompletedEditToolArguments(messages);
   const reasoning = dropOlderReasoningBlocks(messages, { keepRecent: 2 });
@@ -246,15 +269,22 @@ export function prepareFragileGatewayMessages(
 
 /**
  * Перед forced empty-finale reply — жёстче: иначе 500 на «функционал недоступен».
+ * В readonly (Plan/Ask) сохраняем Figma MCP payloads — план строится
+ * из них, урезание до 1.2 КБ убивает структуру таблицы.
  */
 export function prepareKimiEmptyFinaleMessages(
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options?: { readonly?: boolean }
 ): boolean {
+  const preserve = options?.readonly ? ["mcp__figma__"] : [];
   const older = shrinkOlderToolResults(messages, {
     keepRecent: 2,
     maxOldChars: 1_200,
+    preserveToolPrefixes: preserve,
   });
-  const all = shrinkToolMessageContents(messages, 1_500);
+  const all = shrinkToolMessageContents(messages, 1_500, {
+    preserveToolPrefixes: preserve,
+  });
   const edits = compactCompletedEditToolArguments(messages);
   return older || all || edits;
 }

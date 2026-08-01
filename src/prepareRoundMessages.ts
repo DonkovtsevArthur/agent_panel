@@ -20,6 +20,9 @@ export interface PrepareRoundMessagesOptions {
   contextWindow: number;
   reservedOutputTokens: number;
   kimi: boolean;
+  /** readonly (Plan/Ask): preserve Figma MCP payloads from aggressive
+   * shrinking — they are the primary source for the plan. */
+  readonly?: boolean;
 }
 
 export interface PrepareRoundMessagesResult {
@@ -38,7 +41,9 @@ export function prepareRoundMessages(
   options: PrepareRoundMessagesOptions
 ): PrepareRoundMessagesResult {
   if (options.kimi) {
-    prepareKimiGatewayMessages(options.messages);
+    prepareKimiGatewayMessages(options.messages, {
+      readonly: options.readonly,
+    });
   } else if (modelNeedsAggressiveToolBudget(options.modelId)) {
     prepareFragileGatewayMessages(options.messages);
   }
