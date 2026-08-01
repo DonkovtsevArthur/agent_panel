@@ -12,6 +12,7 @@ const {
   decideVerificationStep,
   isProjectVerificationCommand,
   isTargetedTestCommand,
+  missingModuleSpecifiersFromOutput,
   selectProjectVerificationCommand,
 } = require("../out/verificationLoop.js");
 
@@ -155,6 +156,33 @@ test("project command failure scope detects edited vs unrelated paths", () => {
     ]),
     false
   );
+});
+
+test("missingModuleSpecifiersFromOutput extracts unresolved import specifiers", () => {
+  const tsOut = [
+    "src/pages/NewPage.tsx:5:8 - error TS2307: Cannot find module './utils' or its corresponding type declarations.",
+    "src/pages/NewPage.tsx:8:8 - error TS2304: Cannot find name 'useStore'.",
+    "src/pages/NewPage.tsx:12:3 - error TS2322: Type 'string' is not assignable to type 'number'.",
+    "",
+    "Found 3 errors in the same file.",
+  ].join("\n");
+  const specs = missingModuleSpecifiersFromOutput(tsOut);
+  assert.ok(specs.includes("./utils"));
+  assert.ok(specs.includes("useStore"));
+
+  const viteOut =
+    "Could not resolve './styles.css' from src/pages/NewPage.tsx";
+  assert.ok(missingModuleSpecifiersFromOutput(viteOut).includes("./styles.css"));
+
+  const eslintOut =
+    "error  Unable to resolve path to module 'shared/ui'  import/no-unresolved";
+  assert.ok(missingModuleSpecifiersFromOutput(eslintOut).includes("shared/ui"));
+
+  // Чистый type-error без missing module → пусто (не сработает).
+  const typeOnly = "src/a.ts:3:5 - error TS2322: Type 'string' is not assignable to type 'number'.";
+  assert.deepEqual(missingModuleSpecifiersFromOutput(typeOnly), []);
+
+  assert.deepEqual(missingModuleSpecifiersFromOutput(""), []);
 });
 
 test("verification is disabled outside Agent mode and without edits", () => {

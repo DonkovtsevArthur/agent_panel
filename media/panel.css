@@ -1245,6 +1245,65 @@ body.vscode-dark .md-pre .syntax-property {
   color: #d15b5b;
 }
 
+.proposed-plan-card {
+  align-self: stretch;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-input-background);
+}
+
+.proposed-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.proposed-plan-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.proposed-plan-build {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.proposed-plan-build:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.proposed-plan-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-editor-foreground, #ccc);
+  word-break: break-word;
+}
+
+.proposed-plan-body > :first-child {
+  margin-top: 0;
+}
+
+.proposed-plan-body > :last-child {
+  margin-bottom: 0;
+}
+
 .composer-scm-actions {
   display: flex;
   gap: 6px;

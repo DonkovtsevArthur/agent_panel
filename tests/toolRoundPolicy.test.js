@@ -104,3 +104,40 @@ test("Kimi workspace follow hint requires reading analogous UI first", () => {
   assert.match(hint, /write_file/);
   assert.match(hint, /same tool round|parallel/i);
 });
+
+test("plan-mode explore nudges ask for <proposed_plan>, not a concise answer", () => {
+  const soft = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: true,
+    plan: true,
+  });
+  assert.match(soft, /proposed_plan/);
+  assert.doesNotMatch(soft, /Reply to the user/);
+  const hard = buildExploreHardNudge({
+    agentsMd: false,
+    readonly: true,
+    plan: true,
+  });
+  assert.match(hard, /proposed_plan/);
+  assert.doesNotMatch(hard, /Answer the user/);
+  // Ask mode (readonly, no plan) keeps the concise-answer wording.
+  const ask = buildExploreSoftNudge({ agentsMd: false, readonly: true });
+  assert.match(ask, /Reply to the user/);
+});
+
+test("roundAdvancesExploreStreak counts delegate_task only in readonly", () => {
+  const { roundAdvancesExploreStreak } = require("../out/toolRoundPolicy.js");
+  assert.equal(roundAdvancesExploreStreak(["list_files", "read_file"], false), true);
+  assert.equal(roundAdvancesExploreStreak(["delegate_task"], false), false);
+  assert.equal(roundAdvancesExploreStreak(["delegate_task"], true), true);
+  assert.equal(
+    roundAdvancesExploreStreak(["read_file", "delegate_task"], true),
+    true
+  );
+  assert.equal(
+    roundAdvancesExploreStreak(["read_file", "delegate_task"], false),
+    false
+  );
+  assert.equal(roundAdvancesExploreStreak(["write_file"], true), false);
+  assert.equal(roundAdvancesExploreStreak([], true), false);
+});

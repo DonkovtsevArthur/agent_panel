@@ -7,7 +7,9 @@ import * as path from "path";
 import { promisify } from "util";
 import * as vscode from "vscode";
 import type { ChatTool } from "./openaiClient";
+import { getConfig } from "./config";
 import { runTool } from "./tools";
+import { runDelegateTask } from "./delegateTask";
 import { isAllowedMcpInReadonlyMode } from "./mcp/types";
 import {
   ignoredPathError,
@@ -19,12 +21,72 @@ import { validatePackageJsonVersionValue } from "./versionBump";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Race a showQuickPick / showInputBox promise against the turn AbortSignal.
+ * VS Code's showQuickPick has no native AbortSignal support, so on abort
+ * we resolve the race with undefined — the prompt UI may still be visible,
+ * but the turn proceeds as cancelled instead of blocking forever.
+ */
+async function raceShowWithSignal<T>(
+  promise: Thenable<T>,
+  signal?: AbortSignal
+): Promise<T | undefined> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.resolve(undefined);
+  }
+  return new Promise<T | undefined>((resolve) => {
+    let done = false;
+    const onAbort = () => {
+      if (!done) {
+        done = true;
+        resolve(undefined);
+      }
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        if (!done) {
+          done = true;
+          signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        }
+      },
+      (err) => {
+        if (!done) {
+          done = true;
+          signal.removeEventListener("abort", onAbort);
+          resolve(undefined);
+        }
+      }
+    );
+  });
+}
+
+function raceShowQuickPickWithSignal<T>(
+  promise: Thenable<T>,
+  signal?: AbortSignal
+): Promise<T | undefined> {
+  return raceShowWithSignal(promise, signal);
+}
+
+function raceShowInputBoxWithSignal(
+  promise: Thenable<string | undefined>,
+  signal?: AbortSignal
+): Promise<string | undefined> {
+  return raceShowWithSignal(promise, signal);
+}
+
 export const MAIN_LIKE_READONLY_TOOL_NAMES = new Set([
   "list_files",
   "read_file",
   "get_diagnostics",
   "fetch_url",
   "open_external",
+  "request_user_input",
+  "delegate_task",
 ]);
 
 /** Main-like инструменты, меняющие файлы на диске (учитываются как правки). */
@@ -211,6 +273,57 @@ export const mainLikeAgentTools: ChatTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "request_user_input",
+      description:
+        "Ask the user a clarifying question with multiple-choice options. Use when requirements are ambiguous and you need a decision — do not guess, ask. Provide 2–4 mutually exclusive options and a recommended default. The UI always offers a free-text «custom answer» in addition to your options.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description: "The question to ask the user",
+          },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            description: "2–4 mutually exclusive answer options",
+          },
+          recommended: {
+            type: "string",
+            description: "Recommended option (0-based index) — used as default if user skips",
+          },
+        },
+        required: ["question", "options"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delegate_task",
+      description:
+        "Delegate a self-contained sub-task to a sub-agent. Use for large tasks with independent steps — each sub-agent gets its own context budget and max_tokens, avoiding truncation. The sub-agent runs in the same workspace. Returns the sub-agent's final answer. Describe the sub-task concretely with all context the sub-agent needs (file paths, patterns to follow, expected behavior). In Plan/Ask mode the sub-agent is always research-only (ask); agent (edits) requires Agent mode.",
+      parameters: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+            description: "Concrete, self-contained sub-task description with all context the sub-agent needs",
+          },
+          mode: {
+            type: "string",
+            enum: ["agent", "ask"],
+            description:
+              "agent for edits, ask for research only (default: agent). Ignored in Plan/Ask — forced to ask.",
+          },
+        },
+        required: ["task"],
+      },
+    },
+  },
 ];
 
 function getWorkspaceRoot(): vscode.Uri {
@@ -307,7 +420,14 @@ async function runCommand(command: string, cwdRelative = ""): Promise<string> {
 
 export async function runMainLikeTool(
   name: string,
-  argsJson: string
+  argsJson: string,
+  options?: {
+    readonly?: boolean;
+    /** Selected chat model — used by delegate_task (falls back to defaultModel). */
+    model?: string;
+    /** Parent turn abort signal — propagated to delegate_task sub-agent. */
+    signal?: AbortSignal;
+  }
 ): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
@@ -409,6 +529,110 @@ export async function runMainLikeTool(
       case "fetch_url":
       case "open_external": {
         return runTool(name, argsJson);
+      }
+      case "request_user_input": {
+        const question = String(args.question ?? "").trim();
+        const optList = Array.isArray(args.options)
+          ? (args.options as unknown[]).map((o) => String(o ?? "")).filter(Boolean)
+          : [];
+        const recommendedIdx = Number(args.recommended);
+        if (!question || optList.length < 2) {
+          return JSON.stringify({
+            ok: false,
+            error: "request_user_input requires a question and at least 2 options",
+          });
+        }
+        const customLabel = "Свой ответ…";
+        const items: Array<{
+          label: string;
+          description?: string;
+          picked?: boolean;
+        }> = optList.map((opt, i) => ({
+          label: opt,
+          ...(i === recommendedIdx ? { picked: true } : {}),
+        }));
+        items.push({
+          label: customLabel,
+          description: "ввести вручную",
+        });
+        // Abort-aware QuickPick: race showQuickPick against the turn signal
+        // so Stop actually interrupts the prompt instead of blocking until
+        // the user picks or escapes manually.
+        const picked = await raceShowQuickPickWithSignal(
+          vscode.window.showQuickPick(items, {
+            placeHolder: question,
+            canPickMany: false,
+            ignoreFocusOut: true,
+            title: question,
+          }),
+          options?.signal
+        );
+        if (!picked) {
+          // Cancel (Esc / focus loss): НЕ подсовываем fallback как ответ.
+          // Явно сообщаем модели, что пользователь снял вопрос — не трактовать
+          // fallback как выбор и не строить план на выдуманном ответе.
+          return JSON.stringify({
+            ok: false,
+            cancelled: true,
+            message:
+              "User dismissed the prompt (Esc / cancelled). Do NOT assume any of the options was chosen. Either ask again with a different framing, or proceed with explicit uncertainty and flag the assumption in the plan.",
+          });
+        }
+        if (picked.label === customLabel) {
+          const custom = await raceShowInputBoxWithSignal(
+            vscode.window.showInputBox({
+              prompt: question,
+              placeHolder: "Введите свой ответ",
+              ignoreFocusOut: true,
+            }),
+            options?.signal
+          );
+          const answer = String(custom ?? "").trim();
+          if (!answer) {
+            return JSON.stringify({
+              ok: false,
+              cancelled: true,
+              message:
+                "User dismissed the custom answer input. Do NOT assume any of the options was chosen. Either ask again with a different framing, or proceed with explicit uncertainty and flag the assumption in the plan.",
+            });
+          }
+          return JSON.stringify({ ok: true, answer, custom: true });
+        }
+        return JSON.stringify({ ok: true, answer: picked.label });
+      }
+      case "delegate_task": {
+        const task = String(args.task ?? "").trim();
+        // Plan/Ask parent must not spawn an editing sub-agent.
+        const subMode =
+          options?.readonly === true
+            ? "ask"
+            : String(args.mode ?? "agent") === "ask"
+              ? "ask"
+              : "agent";
+        if (!task) {
+          return JSON.stringify({
+            ok: false,
+            error: "delegate_task requires a task description",
+          });
+        }
+        const config = getConfig();
+        const modelId = options?.model || config.defaultModel || "";
+        if (!modelId) {
+          return JSON.stringify({
+            ok: false,
+            error: "No model configured for delegation.",
+          });
+        }
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        const storageUri = folder?.uri;
+        const result = await runDelegateTask({
+          task,
+          mode: subMode as "agent" | "ask",
+          model: modelId,
+          storageUri,
+          signal: options?.signal,
+        });
+        return JSON.stringify(result);
       }
       default:
         return JSON.stringify({ error: `Неизвестный инструмент: ${name}` });

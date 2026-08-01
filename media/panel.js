@@ -320,7 +320,10 @@
       slashCompactDefault:
         "Compact this chat into a short working summary. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.",
       slashCompactWithTarget: (target) =>
-        `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`
+        `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`,
+      proposedPlanTitle: "Plan",
+      proposedPlanBuild: "Build",
+      proposedPlanImplementPrefix: "Implement the following plan:",
     },
     ru: {
       agents: "Агенты",
@@ -619,7 +622,10 @@
       slashCompactDefault:
         "Сожми текущий чат в короткое рабочее резюме. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.",
       slashCompactWithTarget: (target) =>
-        `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`
+        `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`,
+      proposedPlanTitle: "План",
+      proposedPlanBuild: "Собрать",
+      proposedPlanImplementPrefix: "Реализуй следующий план:",
     }
   };
   const STR = UI_STRINGS[UI_LANG];
@@ -8421,6 +8427,109 @@
     });
   }
 
+  /**
+   * <proposed_plan>…</proposed_plan> — plan block with Build button.
+   * Called on raw assistant text BEFORE marked.parse, so match raw tags.
+   * Also accept escaped form for re-renders / history edge cases.
+   */
+  function replaceProposedPlanBlocks(raw) {
+    const blocks = [];
+    const re =
+      /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*?)\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi;
+    // Промпт требует «полная замена, не патч». Если модель выдала несколько
+    // <proposed_plan> блоков (черновик + финал, ревизия) — рендерим в
+    // карточку только последний, остальные выкидываем, чтобы не плодить
+    // лишние Build-кнопки.
+    let text = String(raw || "");
+    const allMatches = [];
+    text.replace(re, (...args) => {
+      allMatches.push(args);
+      return "";
+    });
+    // Recovery: обрезанный <proposed_plan> без закрывающего тега (модель
+    // упёрлась в max_tokens посередине плана). Regex выше не матчит —
+    // достраиваем: если есть открывающий тег, но нет закрывающего, берём
+    // остаток текста как тело плана, чтобы карточка всё-таки отрисовалась.
+    // с кнопкой Build (пользователь увидит, что план обрезан, и сможет
+    // попросить продолжение).
+    if (!allMatches.length) {
+      const openRe =
+        /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*)/i;
+      const openMatch = openRe.exec(text);
+      if (openMatch) {
+        allMatches.push(openMatch);
+      }
+    }
+    const lastIdx = allMatches.length - 1;
+    let matchIdx = 0;
+    let out = text;
+    if (allMatches.length) {
+      let usedRecovery = !re.test(text);
+      if (usedRecovery) {
+        // Обрезанный случай: заменяем вручную, regex не матчит.
+        const body = allMatches[0][1];
+        const id = blocks.length;
+        blocks.push(renderProposedPlanCard(String(body || "").trim()));
+        out = text.replace(
+          /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*)/i,
+          `\n\n\u0002PLAN${id}\u0002\n\n`
+        );
+      } else {
+        out = text.replace(re, (_full, body) => {
+          const isLast = matchIdx === lastIdx;
+          matchIdx += 1;
+          if (!isLast) {
+            return "";
+          }
+          const id = blocks.length;
+          blocks.push(renderProposedPlanCard(body.trim()));
+          return `\n\n\u0002PLAN${id}\u0002\n\n`;
+        });
+      }
+    }
+    return { text: out, blocks };
+  }
+
+  function restoreProposedPlanBlocks(html, blocks) {
+    if (!blocks.length) {
+      return html;
+    }
+    return String(html || "").replace(/\u0002PLAN(\d+)\u0002/g, (_, id) => {
+      return blocks[Number(id)] || "";
+    });
+  }
+
+  /** Markdown for plan card body only — no nested proposed_plan extraction. */
+  function renderPlanBodyHtml(planBody) {
+    const text = String(planBody || "");
+    if (!text) {
+      return "";
+    }
+    const api = getMarkedApi();
+    if (ensureMarkdownRenderer() && api) {
+      try {
+        return api.parse(text, { async: false });
+      } catch {
+        // fall through
+      }
+    }
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br />");
+  }
+
+  function renderProposedPlanCard(planBody) {
+    return `<div class="proposed-plan-card" data-plan-raw="${escapeHtml(String(planBody || ""))}">`
+      + `<div class="proposed-plan-head">`
+      + `<span class="proposed-plan-title">${escapeHtml(t("proposedPlanTitle"))}</span>`
+      + `<button class="proposed-plan-build" type="button" data-plan-action="build">${escapeHtml(t("proposedPlanBuild"))}</button>`
+      + `</div>`
+      + `<div class="proposed-plan-body">${renderPlanBodyHtml(planBody)}</div>`
+      + `</div>`;
+  }
+
   function getMarkedApi() {
     if (typeof marked === "undefined") {
       return null;
@@ -8840,22 +8949,29 @@
       return "";
     }
     const extracted = replaceCitationFences(raw);
+    const plans = replaceProposedPlanBlocks(extracted.text);
     const api = getMarkedApi();
     if (ensureMarkdownRenderer() && api) {
       try {
-        const html = api.parse(extracted.text, { async: false });
-        return restoreCitationFences(html, extracted.blocks);
+        const html = api.parse(plans.text, { async: false });
+        return restoreProposedPlanBlocks(
+          restoreCitationFences(html, extracted.blocks),
+          plans.blocks
+        );
       } catch {
         // fallback below
       }
     }
-    if (extracted.blocks.length) {
-      return restoreCitationFences(
-        `<div class="md-p">${linkifyPlainText(extracted.text, false).replace(
-          /\n/g,
-          "<br />"
-        )}</div>`,
-        extracted.blocks
+    if (extracted.blocks.length || plans.blocks.length) {
+      return restoreProposedPlanBlocks(
+        restoreCitationFences(
+          `<div class="md-p">${linkifyPlainText(plans.text, false).replace(
+            /\n/g,
+            "<br />"
+          )}</div>`,
+          extracted.blocks
+        ),
+        plans.blocks
       );
     }
     return `<div class="md-p">${linkifyPlainText(raw, false).replace(
@@ -11141,6 +11257,34 @@
           ? t("showThinking")
           : t("hideThinking");
       }
+      return;
+    }
+    const buildBtn = event.target.closest("[data-plan-action='build']");
+    if (buildBtn && messagesEl.contains(buildBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = buildBtn.closest(".proposed-plan-card");
+      if (!card) {
+        return;
+      }
+      // Prefer the raw markdown stored at render time (preserves **bold**,
+      // code spans, list structure). Fall back to textContent for cards
+      // rendered before this attribute existed (history re-renders).
+      const rawPlan = card.dataset.planRaw || "";
+      const planBody = card.querySelector(".proposed-plan-body");
+      const planText = rawPlan.trim() || (planBody ? planBody.textContent : "");
+      if (!planText.trim()) {
+        return;
+      }
+      setAgentMode("agent", { notify: true });
+      setBusy(true);
+      vscode.postMessage({
+        type: "send",
+        text: `${t("proposedPlanImplementPrefix")}\n\n${planText}`,
+        model: getSelectedModel(),
+        agentMode: "agent",
+        attachments: [],
+      });
       return;
     }
     const editModeTrigger = event.target.closest(".msg-edit-mode-trigger");
