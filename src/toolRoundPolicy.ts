@@ -45,7 +45,18 @@ export type ExploreRoundLimits = {
 
 export function exploreRoundLimits(options: {
   kimi: boolean;
+  /** Build → Agent: меньше explore, быстрее к правкам по плану. */
+  implementPlan?: boolean;
 }): ExploreRoundLimits {
+  // Implement-from-plan: plan already named files/components — do not spend
+  // Kimi's long explore budget re-browsing analogous pages.
+  if (options.implementPlan) {
+    return {
+      softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
+      stripExploreOnSoftNudge: true,
+    };
+  }
   if (options.kimi) {
     return {
       softNudgeRounds: KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
@@ -142,6 +153,8 @@ export function buildExploreSoftNudge(options: {
   readonly: boolean;
   plan?: boolean;
   kimi?: boolean;
+  /** Build → Agent: правь по плану, не ищи «лучший» аналог. */
+  implementPlan?: boolean;
 }): string {
   if (options.readonly) {
     if (options.plan) {
@@ -167,6 +180,14 @@ export function buildExploreSoftNudge(options: {
       "Immediately call write_file for AGENTS.md (create or update), then briefly confirm in chat what you wrote.",
     ].join(" ");
   }
+  if (options.implementPlan) {
+    return [
+      "Stop exploring the repository.",
+      "list_files and read_file are no longer available this turn.",
+      "Execute the approved plan now: search_replace / write_file on the paths and components named in the plan.",
+      "Do not invent a substitute component. If some plan steps remain unfinished, edit what you can and list the remaining steps.",
+    ].join(" ");
+  }
   if (options.kimi) {
     return [
       "Stop exploring the repository.",
@@ -187,6 +208,7 @@ export function buildExploreHardNudge(options: {
   agentsMd: boolean;
   readonly: boolean;
   plan?: boolean;
+  implementPlan?: boolean;
 }): string {
   if (options.readonly) {
     if (options.plan) {
@@ -207,6 +229,13 @@ export function buildExploreHardNudge(options: {
       "Exploration limit reached.",
       "list_files and read_file are no longer allowed this turn.",
       "Call write_file for AGENTS.md now (short guide), then confirm briefly. No more reading.",
+    ].join(" ");
+  }
+  if (options.implementPlan) {
+    return [
+      "Exploration limit reached.",
+      "list_files and read_file are no longer allowed this turn.",
+      "Call search_replace / write_file for the remaining plan steps on the named paths/components. Do not invent substitutes. No more reading.",
     ].join(" ");
   }
   return [
