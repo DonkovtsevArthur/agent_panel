@@ -754,6 +754,7 @@ export async function runMainLikeAgentTurn(options: {
       contextWindow,
       reservedOutputTokens: config.maxTokens,
       kimi: kimiModel,
+      readonly,
     });
     if (prep.compacted || prep.summarized) {
       emitStep({
@@ -1177,7 +1178,7 @@ export async function runMainLikeAgentTurn(options: {
 
   const forceNonEmptyTextReply = async (): Promise<string> => {
     if (kimiModel || modelNeedsAggressiveToolBudget(options.model)) {
-      prepareKimiEmptyFinaleMessages(messages);
+      prepareKimiEmptyFinaleMessages(messages, { readonly });
     }
     options.callbacks.onPhase("thinking", modeCollectLabel(mode));
     const forcedRequest: ChatMessage[] = [
@@ -1782,7 +1783,7 @@ export async function runMainLikeAgentTurn(options: {
     options.callbacks.onPhase("thinking", modeCollectLabel(mode));
 
     if (kimiModel || modelNeedsAggressiveToolBudget(options.model)) {
-      prepareKimiEmptyFinaleMessages(messages);
+      prepareKimiEmptyFinaleMessages(messages, { readonly });
     }
     const finalRequest = [
       ...messages,
