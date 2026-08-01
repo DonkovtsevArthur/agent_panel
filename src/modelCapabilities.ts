@@ -45,7 +45,10 @@ interface ModelCapabilityRule {
   capabilities: Partial<ModelCapabilities>;
 }
 
-export const KIMI_MIN_MAX_TOKENS = 8192;
+// Kimi gateway default max_tokens (4096) truncates large write_file tool calls
+// mid-stream → "Некорректный JSON аргументов" → модель дробит файл по кускам.
+// 16000 (~64 КБ) покрывает целую страницу и сравнимо с thinking-бюджетом Claude.
+export const KIMI_MIN_MAX_TOKENS = 16_000;
 
 /**
  * Backend source of truth for model-specific behavior.

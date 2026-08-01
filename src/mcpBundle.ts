@@ -5,6 +5,7 @@ export {
   initMcpManager,
 } from "./mcp/manager";
 export type { FigmaStatusPayload } from "./mcp/figma";
+export { messageHasFigmaUrl } from "./mcp/figma";
 export type {
   McpServerConfig,
   McpServerRuntimeStatus,

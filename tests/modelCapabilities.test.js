@@ -46,7 +46,7 @@ test("Kimi request quirks come from the registry", () => {
   assert.equal(kimi.requiresReasoningContentForToolCalls, true);
   assert.equal(kimi.minimumOutputTokens, KIMI_MIN_MAX_TOKENS);
 
-  assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096), 8192);
+  assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096), KIMI_MIN_MAX_TOKENS);
   assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096, 2048), 4096);
   assert.equal(resolveModelRequestMaxTokens("gpt-4.1", 4096, 8192), 4096);
 });
