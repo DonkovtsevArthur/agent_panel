@@ -1060,6 +1060,9 @@
   let chatSearchMatchIndex = -1;
   let restoringChatScroll = false;
   let pendingScrollSync = 0;
+  /** Follow live output only while the viewport is pinned to the bottom. */
+  let stickToBottom = true;
+  const NEAR_BOTTOM_PX = 80;
 
   function localizeStaticUi() {
     document.title = "Harbor Agents";
@@ -2483,8 +2486,28 @@
     }
   }
 
-  function scrollToBottom() {
+  function isNearBottom(threshold = NEAR_BOTTOM_PX) {
+    if (!messagesEl) {
+      return true;
+    }
+    const distance =
+      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    return distance <= threshold;
+  }
+
+  /** Scroll to end only if pinned (or forced — new send / full re-render). */
+  function scrollToBottom(options) {
+    const force = Boolean(options && options.force);
+    if (!force && !stickToBottom) {
+      return;
+    }
     messagesEl.scrollTop = messagesEl.scrollHeight;
+    stickToBottom = true;
+  }
+
+  function pinChatToBottom() {
+    stickToBottom = true;
+    scrollToBottom({ force: true });
   }
 
   function persistUiState() {
@@ -2532,8 +2555,9 @@
   function restoreChatScroll(scrollTop) {
     if (typeof scrollTop === "number" && Number.isFinite(scrollTop)) {
       messagesEl.scrollTop = scrollTop;
+      stickToBottom = isNearBottom();
     } else {
-      scrollToBottom();
+      scrollToBottom({ force: true });
     }
   }
 
@@ -2733,6 +2757,7 @@
     }
     closeEditModelMenu();
     closeEditModeMenu();
+    stickToBottom = true;
     setBusy(true);
     vscode.postMessage({
       type: "editUserMessage",
@@ -9249,7 +9274,7 @@
       if (scrollMode === "restore") {
         restoreChatScroll(restoredScrollTop);
       } else {
-        scrollToBottom();
+        scrollToBottom({ force: true });
       }
       restoringChatScroll = false;
     });
@@ -9934,6 +9959,7 @@
     editingModelId = "";
     editingModeId = "";
     editingAttachments = [];
+    stickToBottom = true;
     uiMessagesCache.push({ role: "user", text, attachments });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
@@ -11277,6 +11303,7 @@
         return;
       }
       setAgentMode("agent", { notify: true });
+      stickToBottom = true;
       setBusy(true);
       vscode.postMessage({
         type: "send",
@@ -11315,6 +11342,7 @@
       if (busy || !canRegenerate) {
         return;
       }
+      pinChatToBottom();
       setBusy(true);
       vscode.postMessage({ type: "regenerate", agentMode });
       return;
@@ -11453,6 +11481,9 @@
     () => {
       if (editModelMenuOpen) {
         closeEditModelMenu();
+      }
+      if (!restoringChatScroll) {
+        stickToBottom = isNearBottom();
       }
       if (!restoringChatScroll && chatScreen && !chatScreen.hidden && activeChatId) {
         syncChatScroll(activeChatId);
