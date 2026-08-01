@@ -208,7 +208,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "run_command",
       description:
-        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit ЗАПРЕЩЁН — после правок пользователь жмёт тег «Закоммитить и запушить». git push разрешён только по явной просьбе («запушь» / «выполни push»). Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Для отката всех правок: git status --short, затем git restore . (и git clean -fd при необходимости) — НЕ читай файлы через read_file; в ответе пользователю — коротко результат git, без упоминания write_file/search_replace. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
+        "Выполнить shell-команду в корне workspace (git, npm, ls и т.п.). git commit ЗАПРЕЩЁН — после правок пользователь жмёт тег «Закоммитить и запушить». git push разрешён только по явной просьбе («запушь» / «выполни push»). Для статуса/diff: git status, git diff, git log, git show. git add --all/-A/. запрещён без явной просьбы включить все изменения. Откат: если пользователь просит отменить СВОИ/правки агента — git restore -- <paths из system hint> (и rm/git clean только этих untracked); git restore . и git clean -fd без путей — ТОЛЬКО при явной просьбе убрать ВСЕ локальные изменения. Не отменяй через write_file/search_replace. После успешного git restore/clean/rm кратко подтверди — write_file не нужен. Для «как было до правок» одного файла: git show HEAD:path / git diff HEAD -- path. Также: сборка, тесты.",
       parameters: {
         type: "object",
         properties: {

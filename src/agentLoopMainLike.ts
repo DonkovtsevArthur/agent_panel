@@ -58,7 +58,14 @@ import {
   looksLikeEmptyAssistantReply,
 } from "./emptyFinale";
 import { looksLikeAgentsMdRequest } from "./agentsMd";
-import { isGitMutationCommand } from "./gitCommandPolicy";
+import {
+  isGitMutationCommand,
+  isWorkspaceDiscardCommand,
+} from "./gitCommandPolicy";
+import {
+  buildDiscardSystemHint,
+  resolveDiscardScope,
+} from "./discardChanges";
 import {
   ROUND_EXTENSION_SIZE,
   buildExploreHardNudge,
@@ -495,6 +502,11 @@ export async function runMainLikeAgentTurn(options: {
   excludeToolNames?: Set<string>;
   /** Override config.maxToolRounds for this turn (e.g. bounded sub-agent delegation). */
   maxToolRounds?: number;
+  /**
+   * Paths from the previous agent edit turn (chat.lastAgentEditedPaths).
+   * Used when the user asks to discard «свои» changes.
+   */
+  lastAgentEditedPaths?: string[];
 }): Promise<ChatMessage[]> {
   const config = getConfig();
   const mode = getModeById(
@@ -594,6 +606,17 @@ export async function runMainLikeAgentTurn(options: {
     !implementPlan &&
     looksLikeEditCorrectionRequest(options.userText);
   const focusedPlanEdit = implementPlan || editCorrection;
+  const discardScope =
+    !readonly && !implementPlan && !editCorrection
+      ? resolveDiscardScope(options.userText)
+      : null;
+  const discardHint =
+    discardScope != null
+      ? buildDiscardSystemHint({
+          scope: discardScope,
+          agentEditedPaths: options.lastAgentEditedPaths || [],
+        })
+      : "";
   const exploreLimits = exploreRoundLimits({
     kimi: kimiModel,
     implementPlan: focusedPlanEdit,
@@ -634,6 +657,9 @@ export async function runMainLikeAgentTurn(options: {
     ...(editCorrection
       ? [{ role: "system" as const, content: buildEditCorrectionSystemHint() }]
       : []),
+    ...(discardHint
+      ? [{ role: "system" as const, content: discardHint }]
+      : []),
     ...(workspaceRules
       ? [
           {
@@ -642,9 +668,12 @@ export async function runMainLikeAgentTurn(options: {
           },
         ]
       : []),
-    // Kimi «read analogous UI» conflicts with Build/correction: plan or user
-    // already named the target — inventing from a neighbor page is the failure mode.
-    ...(kimiModel && !agentsMdTurn && !readonly && !focusedPlanEdit
+    // Kimi «read analogous UI» conflicts with Build/correction/discard.
+    ...(kimiModel &&
+    !agentsMdTurn &&
+    !readonly &&
+    !focusedPlanEdit &&
+    !discardScope
       ? [
           {
             role: "system" as const,
@@ -1004,8 +1033,11 @@ export async function runMainLikeAgentTurn(options: {
     if (
       name === "run_command" &&
       parsed.ok !== false &&
-      isGitMutationCommand(String(parsed.command || ""))
+      (isGitMutationCommand(String(parsed.command || "")) ||
+        isWorkspaceDiscardCommand(String(parsed.command || "")))
     ) {
+      // Successful git restore/clean/checkout OR rm -rf discard — do not
+      // demand write_file in honestFinale («Готово, отменил»).
       turnHadGitOperation = true;
     }
   };
@@ -1274,7 +1306,7 @@ export async function runMainLikeAgentTurn(options: {
           userText: options.userText,
           hadSuccessfulWrite: turnHadRealFileEdit(),
           kimi: kimiModel,
-          gitOperationCompleted: kimiModel && turnHadGitOperation,
+          gitOperationCompleted: turnHadGitOperation,
           allowNudgeWrite: false,
           allowNudgeHedge: false,
           allowNudgeHollow: false,
@@ -1306,7 +1338,7 @@ export async function runMainLikeAgentTurn(options: {
       userText: options.userText,
       hadSuccessfulWrite: turnHadRealFileEdit(),
       kimi: kimiModel,
-      gitOperationCompleted: kimiModel && turnHadGitOperation,
+      gitOperationCompleted: turnHadGitOperation,
       allowNudgeWrite: writeNudgeAttempts < maxWriteNudges,
       allowNudgeHedge: hedgeNudgeAttempts < maxHedgeNudges,
       allowNudgeHollow:
@@ -1905,7 +1937,7 @@ export async function runMainLikeAgentTurn(options: {
       userText: options.userText,
       hadSuccessfulWrite: turnHadRealFileEdit(),
       kimi: kimiModel,
-      gitOperationCompleted: kimiModel && turnHadGitOperation,
+      gitOperationCompleted: turnHadGitOperation,
       allowNudgeWrite: false,
       allowNudgeHedge: false,
       allowNudgeHollow: false,

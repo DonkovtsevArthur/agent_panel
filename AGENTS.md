@@ -28,6 +28,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Figma screenshot vision helper | `src/figmaVisionHelper.ts` — MCP `get_screenshot` images are described under the hood; chat-selected model stays the planner |
 | Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; correction follow-ups get the same discipline |
 | Destructive write guard | `src/writeFileGuard.ts` — refuse empty/truncated `write_file` over substantial existing files |
+| Discard scope | `src/discardChanges.ts` — «отмени изменения» = last agent paths; «все» = whole dirty; bare «отмени» → ask; successful restore/clean/rm skips write_file honestFinale |
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) |

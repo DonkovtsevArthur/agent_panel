@@ -2400,6 +2400,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             storageUri: this.storageUri(),
             signal: currentRun.signal,
             agentMode,
+            lastAgentEditedPaths:
+              this.store.chats[runChatId]?.lastAgentEditedPaths || [],
             callbacks: {
           onPhase: (phase, detail) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -2572,10 +2574,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
               return;
             }
+            const reviewEdits = edits.length ? edits : turnEdits;
+            // Remember paths for later «отмени изменения» (agent-only discard).
+            const editedPaths = [
+              ...new Set(
+                reviewEdits
+                  .map((edit) => String(edit.path || "").trim())
+                  .filter(Boolean)
+              ),
+            ];
+            touchChat(this.store, runChatId, {
+              lastAgentEditedPaths: editedPaths,
+            });
+            void this.writeStoreOnly();
             // Не завязываемся на chatRuns после await: finally снимает run,
             // а review всё ещё должен попасть в UI (если не abort / не новый run).
             return this.publishReview(
-              edits.length ? edits : turnEdits,
+              reviewEdits,
               runChatId,
               runUiMessages,
               () =>
