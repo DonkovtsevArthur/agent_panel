@@ -118,7 +118,12 @@ test("post-edit verification is gated to Kimi agent turns only", () => {
     /enablePostEditVerification[\s\S]*?kimiModel/
   );
   assert.match(mainLikeSrc, /buildKimiWorkspaceFollowHint/);
-  assert.match(mainLikeSrc, /exploreRoundLimits\(\{ kimi: kimiModel \}\)/);
+  assert.match(mainLikeSrc, /looksLikePlanImplementRequest/);
+  assert.match(mainLikeSrc, /buildPlanImplementSystemHint/);
+  assert.match(
+    mainLikeSrc,
+    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan,/
+  );
   assert.match(mainLikeSrc, /DEFAULT_WORKSPACE_RULE_CHAR_CAP/);
   assert.match(mainLikeSrc, /tool\.function\.name !== "get_diagnostics"/);
 });

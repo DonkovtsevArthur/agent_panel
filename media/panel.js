@@ -323,7 +323,8 @@
         `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`,
       proposedPlanTitle: "Plan",
       proposedPlanBuild: "Build",
-      proposedPlanImplementPrefix: "Implement the following plan:",
+      proposedPlanImplementPrefix:
+        "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
     },
     ru: {
       agents: "Агенты",
@@ -625,7 +626,8 @@
         `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`,
       proposedPlanTitle: "План",
       proposedPlanBuild: "Собрать",
-      proposedPlanImplementPrefix: "Реализуй следующий план:",
+      proposedPlanImplementPrefix:
+        "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
   };
   const STR = UI_STRINGS[UI_LANG];
@@ -11305,9 +11307,11 @@
       setAgentMode("agent", { notify: true });
       stickToBottom = true;
       setBusy(true);
+      // Marker is language-independent — host detects Build handoff even if
+      // the localized prefix changes.
       vscode.postMessage({
         type: "send",
-        text: `${t("proposedPlanImplementPrefix")}\n\n${planText}`,
+        text: `[[harbor:implement_plan]]\n${t("proposedPlanImplementPrefix")}\n\n${planText}`,
         model: getSelectedModel(),
         agentMode: "agent",
         attachments: [],

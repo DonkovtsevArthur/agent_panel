@@ -73,6 +73,10 @@ import { executeToolCallsInOrder } from "./runToolWaves";
 import { getMcpManager } from "./mcpBundle";
 import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
+import {
+  buildPlanImplementSystemHint,
+  looksLikePlanImplementRequest,
+} from "./planImplement";
 import { filterToolsForContext, messageContainsUrl } from "./toolFilter";
 import {
   listDirtyPaths,
@@ -579,7 +583,14 @@ export async function runMainLikeAgentTurn(options: {
   const editorWorkspace = getEditorWorkspaceContext();
   const agentsMdTurn = looksLikeAgentsMdRequest(options.userText);
   const kimiModel = isKimiFamilyModel(options.model);
-  const exploreLimits = exploreRoundLimits({ kimi: kimiModel });
+  // Build → Agent: plan text is a contract; skip Kimi's "read analogous UI"
+  // invent-hint and use tighter explore limits.
+  const implementPlan =
+    !readonly && looksLikePlanImplementRequest(options.userText);
+  const exploreLimits = exploreRoundLimits({
+    kimi: kimiModel,
+    implementPlan,
+  });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
   // включит extended thinking и будет стримить reasoning_content. Для моделей
   // без capability — undefined (поле не отправляется).
@@ -610,6 +621,9 @@ export async function runMainLikeAgentTurn(options: {
     ...(figmaAntiDrift
       ? [{ role: "system" as const, content: figmaAntiDrift }]
       : []),
+    ...(implementPlan
+      ? [{ role: "system" as const, content: buildPlanImplementSystemHint() }]
+      : []),
     ...(workspaceRules
       ? [
           {
@@ -618,7 +632,9 @@ export async function runMainLikeAgentTurn(options: {
           },
         ]
       : []),
-    ...(kimiModel && !agentsMdTurn && !readonly
+    // Kimi «read analogous UI» conflicts with Build: plan already named the
+    // components — inventing from a different neighbor page is the failure mode.
+    ...(kimiModel && !agentsMdTurn && !readonly && !implementPlan
       ? [
           {
             role: "system" as const,
@@ -1784,6 +1800,7 @@ export async function runMainLikeAgentTurn(options: {
           readonly,
           plan: mode.id === "plan",
           kimi: kimiModel,
+          implementPlan,
         }),
       });
     }
@@ -1798,6 +1815,7 @@ export async function runMainLikeAgentTurn(options: {
           agentsMd: agentsMdTurn,
           readonly,
           plan: mode.id === "plan",
+          implementPlan,
         }),
       });
       // Гарантируем ещё одну итерацию под write-only / финал.
