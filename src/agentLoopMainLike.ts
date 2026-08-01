@@ -34,9 +34,6 @@ import {
   ToolCall,
 } from "./openaiClient";
 import {
-  shouldAbandonHelperModel,
-} from "./modelRouting";
-import {
   isAllowedToolInReadonlyMainLike,
   isMainLikeWriteTool,
   mainLikeToolsForPolicy,
@@ -451,16 +448,6 @@ async function hydrateHistoryForApi(
 
 export async function runMainLikeAgentTurn(options: {
   model: string;
-  /**
-   * Optional fast model for the Agent explore phase (read-only tools only).
-   * After context is gathered, the loop switches to {@link model} for edits/answer.
-   */
-  exploreModel?: string;
-  /**
-   * When the under-the-hood helper (Plan/Ask fast override) fails with 5xx/transport,
-   * continue the same turn on this user-selected model.
-   */
-  helperFallbackModel?: string;
   history: ChatMessage[];
   userText: string;
   attachments?: MessageAttachment[];
@@ -497,29 +484,10 @@ export async function runMainLikeAgentTurn(options: {
     }
   );
 
-  // Explore model: fast helper for read-only rounds, switch to main model on write.
-  const exploreModelId = options.exploreModel?.trim() || "";
-  let exploreClient = client;
-  if (exploreModelId && exploreModelId !== options.model) {
-    const exploreEp = resolveModelEndpoint(exploreModelId);
-    if (exploreEp.baseUrl && exploreEp.apiKey) {
-      exploreClient = getOpenAICompatibleClient(
-        exploreEp.baseUrl,
-        exploreEp.apiKey,
-        {
-          rejectUnauthorized: config.rejectUnauthorized,
-          caBundlePath: config.caBundlePath,
-        }
-      );
-    }
-  }
-  let explorePhase = Boolean(exploreModelId) && !readonly;
-  let helperFallbackUsed = false;
   let activeTurnModel = options.model;
 
   const getClientForModel = (modelId: string): typeof client => {
     if (modelId === options.model) return client;
-    if (modelId === exploreModelId) return exploreClient;
     const ep = resolveModelEndpoint(modelId);
     if (!ep.baseUrl || !ep.apiKey) return client;
     return getOpenAICompatibleClient(ep.baseUrl, ep.apiKey, {
@@ -887,45 +855,6 @@ export async function runMainLikeAgentTurn(options: {
     }
     return result;
     } catch (error) {
-      if (
-        options.helperFallbackModel &&
-        !helperFallbackUsed &&
-        !explorePhase &&
-        shouldAbandonHelperModel(error)
-      ) {
-        helperFallbackUsed = true;
-        activeTurnModel = options.helperFallbackModel;
-        explorePhase = false;
-        const fallbackLabel = options.helperFallbackModel;
-        options.callbacks.onStep?.({
-          stepId: nextStepId("retry"),
-          kind: "retry",
-          text: `Switching to ${fallbackLabel} after helper failure`,
-        });
-        const fallbackClient = getClientForModel(activeTurnModel);
-        const fallbackResult = await fallbackClient.chatCompletions(
-          {
-            model: activeTurnModel,
-            messages: request.messages,
-            ...(request.tools ? { tools: request.tools } : {}),
-            ...(request.tool_choice ? { tool_choice: request.tool_choice } : {}),
-            ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-            ...(request.max_tokens !== undefined ? { max_tokens: request.max_tokens } : {}),
-            ...((() => {
-              const eff = effectiveReasoningEffort(
-                request.messages,
-                resolveModelReasoningEffort(activeTurnModel)
-              );
-              return eff ? { reasoning_effort: eff } : {};
-            })()),
-          },
-          options.signal,
-          {
-            onDelta: () => {},
-          }
-        );
-        return fallbackResult;
-      }
       throw error;
     }
   };
@@ -1551,9 +1480,8 @@ export async function runMainLikeAgentTurn(options: {
       ensureToolResultsIntentHint(messages);
     }
     const requestMessages = messages.slice();
-    const roundModel = explorePhase ? exploreModelId || activeTurnModel : activeTurnModel;
     const { message: assistant, usage } = await requestAssistant({
-      model: roundModel,
+      model: activeTurnModel,
       messages,
       ...(roundTools.length
         ? { tools: roundTools, tool_choice: "auto" as const }
@@ -1634,7 +1562,6 @@ export async function runMainLikeAgentTurn(options: {
 
       if (isMainLikeWriteTool(call.function.name)) {
         hadProductiveTool = true;
-        explorePhase = false;
         try {
           const parsed = JSON.parse(result) as {
             ok?: boolean;
@@ -1656,7 +1583,6 @@ export async function runMainLikeAgentTurn(options: {
         }
       } else if (call.function.name === "run_command") {
         hadProductiveTool = true;
-        explorePhase = false;
       }
     }
 

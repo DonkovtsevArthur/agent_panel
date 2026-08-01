@@ -25,7 +25,6 @@ import type { AgentPhase } from "./agentLoop";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
-  resolveSpeedRouting,
   routeModel,
   selectFallbackModel,
 } from "./modelRouting";
@@ -106,10 +105,6 @@ type SettingsPayload = {
   maxTokens: number;
   maxResponseChars: number;
   soundNotificationsEnabled?: boolean;
-  speedRoutingEnabled?: boolean;
-  speedRoutingFastModelIds?: string[];
-  speedRoutingReadonlyOverride?: boolean;
-  speedRoutingAgentExplore?: boolean;
   visionRoutingPreferredModelIds?: string[];
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -2274,33 +2269,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         selectedMode: this.selectedMode,
       });
     }
-    const speed = resolveSpeedRouting({
-      models: enabledModels,
-      userSelectedModelId: chosen,
-      toolsPolicy: isReadonlyPolicy(modeForRun.tools) ? "readonly" : "agent",
-      enabled: config.speedRouting.enabled,
-      fastModelIds: config.speedRouting.fastModelIds,
-      readonlyOverride: config.speedRouting.readonlyOverride,
-      agentExplore: config.speedRouting.agentExplore,
-      visionRequired: hasImageAttachment,
-    });
-    let exploreModel: string | undefined;
-    if (speed.kind === "readonly_fast" && speed.fastModelId) {
-      chosen = speed.primaryModelId;
-      const lang = resolveUiLanguage(config.language);
-      const fastLabel =
-        enabledModels.find((item) => item.id === chosen)?.label || chosen;
-      void vscode.window.showInformationMessage(
-        lang === "ru"
-          ? `${modeForRun.label}: для скорости используется ${fastLabel}`
-          : `${modeForRun.label}: using ${fastLabel} for speed`
-      );
-    } else if (speed.kind === "explore_then_edit" && speed.fastModelId) {
-      exploreModel = speed.fastModelId;
-    }
-    const selectedModelAfterRun =
-      chosen !== requestedModel ? requestedModel : chosen;
-    if (chosen !== requestedModel && speed.kind !== "readonly_fast") {
+    const selectedModelAfterRun = chosen;
+    if (chosen !== requestedModel) {
       const label =
         enabledModels.find((item) => item.id === chosen)?.label || chosen;
       void vscode.window.showInformationMessage(
@@ -2419,15 +2389,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         try {
           runHistory = await runAgentTurn({
             model: activeTurnModel,
-            ...(exploreModel && !fallbackAttempted
-              ? { exploreModel }
-              : {}),
-            ...(speed.kind === "readonly_fast" &&
-            requestedModel &&
-            requestedModel !== activeTurnModel &&
-            !fallbackAttempted
-              ? { helperFallbackModel: requestedModel }
-              : {}),
             history: runHistory,
             userText: trimmed,
             attachments,
@@ -3264,10 +3225,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxTokens: config.maxTokens,
         maxResponseChars: config.maxResponseChars,
         soundNotificationsEnabled: config.soundNotifications.enabled,
-        speedRoutingEnabled: config.speedRouting.enabled,
-        speedRoutingFastModelIds: config.speedRouting.fastModelIds,
-        speedRoutingReadonlyOverride: config.speedRouting.readonlyOverride,
-        speedRoutingAgentExplore: config.speedRouting.agentExplore,
         visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -3662,32 +3619,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "soundNotifications.enabled",
       raw.soundNotificationsEnabled !== false,
-      target
-    );
-    await cfg.update(
-      "speedRouting.enabled",
-      raw.speedRoutingEnabled !== false,
-      target
-    );
-    await cfg.update(
-      "speedRouting.fastModelIds",
-      Array.isArray(raw.speedRoutingFastModelIds)
-        ? raw.speedRoutingFastModelIds
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-            .filter((id, index, all) => all.indexOf(id) === index)
-        : [],
-      target
-    );
-    await cfg.update("speedRouting.fastModel", "", target);
-    await cfg.update(
-      "speedRouting.readonlyOverride",
-      raw.speedRoutingReadonlyOverride !== false,
-      target
-    );
-    await cfg.update(
-      "speedRouting.agentExplore",
-      raw.speedRoutingAgentExplore !== false,
       target
     );
     await cfg.update(
@@ -4182,25 +4113,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field settings-check">
             <input id="settingsSoundNotificationsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
-          </label>
-          <h3 class="settings-section-title" id="settingsSpeedRoutingTitle">Speed routing</h3>
-          <p class="settings-section-note" id="settingsSpeedRoutingNote">When a heavy model is selected, use a fast helper for Plan/Ask.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsSpeedRoutingEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSpeedRoutingEnabledLabel">Speed up heavy models</span>
-          </label>
-          <div class="settings-field">
-            <span class="settings-label" id="settingsSpeedRoutingFastModelLabel">Fast models</span>
-            <p class="settings-hint" id="settingsSpeedRoutingFastModelHint">Enabled models are preferred in list order. If none are enabled, Harbor auto-picks a lightweight model.</p>
-            <div id="settingsSpeedRoutingFastModels" class="settings-speed-models" role="group" aria-labelledby="settingsSpeedRoutingFastModelLabel"></div>
-          </div>
-          <label class="settings-field settings-check">
-            <input id="settingsSpeedRoutingReadonlyOverride" type="checkbox" />
-            <span class="settings-label" id="settingsSpeedRoutingReadonlyOverrideLabel">Plan / Ask on fast model</span>
-          </label>
-          <label class="settings-field settings-check" hidden>
-            <input id="settingsSpeedRoutingAgentExplore" type="checkbox" />
-            <span class="settings-label" id="settingsSpeedRoutingAgentExploreLabel">Agent: explore on fast model first</span>
           </label>
           <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
           <p class="settings-section-note" id="settingsVisionRoutingNote">When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.</p>

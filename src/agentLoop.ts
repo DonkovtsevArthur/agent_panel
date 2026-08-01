@@ -68,16 +68,6 @@ export function compactHistory(messages: ChatMessage[]): ChatMessage[] {
  */
 export async function runAgentTurn(options: {
   model: string;
-  /**
-   * Optional fast model for the Agent explore phase (read-only tools only).
-   * After context is gathered, the loop switches to {@link model} for edits/answer.
-   */
-  exploreModel?: string;
-  /**
-   * When the under-the-hood helper (Plan/Ask fast override) fails with 5xx/transport,
-   * continue the same turn on this user-selected model.
-   */
-  helperFallbackModel?: string;
   history: ChatMessage[];
   userText: string;
   attachments?: MessageAttachment[];

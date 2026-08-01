@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.48",
+  "version": "1.0.49",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -364,36 +364,6 @@
           "minimum": 64,
           "maximum": 128000,
           "description": "%config.maxTokens.description%"
-        },
-        "agentPanel.speedRouting.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "%config.speedRouting.enabled.description%"
-        },
-        "agentPanel.speedRouting.fastModel": {
-          "type": "string",
-          "default": "",
-          "description": "%config.speedRouting.fastModel.description%",
-          "deprecationMessage": "Use agentPanel.speedRouting.fastModelIds"
-        },
-        "agentPanel.speedRouting.fastModelIds": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "%config.speedRouting.fastModelIds.description%"
-        },
-        "agentPanel.speedRouting.readonlyOverride": {
-          "type": "boolean",
-          "default": true,
-          "description": "%config.speedRouting.readonlyOverride.description%"
-        },
-        "agentPanel.speedRouting.agentExplore": {
-          "type": "boolean",
-          "default": true,
-          "description": "%config.speedRouting.agentExplore.description%",
-          "deprecationMessage": "Unused: Agent explore handoff is not part of the main-like loop"
         },
         "agentPanel.visionRouting.preferredModelIds": {
           "type": "array",

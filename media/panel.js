@@ -140,16 +140,6 @@
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
       soundNotifications: "Sound notifications",
-      speedRoutingTitle: "Speed routing",
-      speedRoutingNote:
-        "When a heavy model is selected, use a fast helper for Plan/Ask.",
-      speedRoutingEnabled: "Speed up heavy models",
-      speedRoutingFastModel: "Fast models",
-      speedRoutingFastModelHint:
-        "Left: use as fast helper (enabled first). Right: turn the model on/off in Harbor. Disabled models cannot be used as helpers.",
-      speedRoutingFastModelEmpty: "No models in settings",
-      speedRoutingReadonlyOverride: "Plan / Ask on fast model",
-      speedRoutingAgentExplore: "Agent: explore on fast model first",
       visionRoutingTitle: "Images (vision)",
       visionRoutingNote:
         "When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.",
@@ -449,16 +439,6 @@
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
       soundNotifications: "Звуковые уведомления",
-      speedRoutingTitle: "Ускорение тяжёлых моделей",
-      speedRoutingNote:
-        "Если выбрана тяжёлая модель — Plan/Ask идут на быстрой.",
-      speedRoutingEnabled: "Ускорять тяжёлые модели",
-      speedRoutingFastModel: "Быстрые модели",
-      speedRoutingFastModelHint:
-        "Слева: использовать как быструю (включённые сверху). Справа: вкл/выкл модели в Harbor. Выключенная модель не работает как helper.",
-      speedRoutingFastModelEmpty: "Нет моделей в настройках",
-      speedRoutingReadonlyOverride: "Plan / Ask на быстрой",
-      speedRoutingAgentExplore: "Agent: сначала explore на быстрой",
       visionRoutingTitle: "Картинки (vision)",
       visionRoutingNote:
         "Если выбранная модель не видит изображения, Harbor под капотом переключает на vision-модель. Пустой список — автопредпочтение.",
@@ -798,23 +778,9 @@
   const settingsSoundNotificationsEnabled = document.getElementById(
     "settingsSoundNotificationsEnabled"
   );
-  const settingsSpeedRoutingEnabled = document.getElementById(
-    "settingsSpeedRoutingEnabled"
-  );
-  const settingsSpeedRoutingFastModels = document.getElementById(
-    "settingsSpeedRoutingFastModels"
-  );
-  const settingsSpeedRoutingReadonlyOverride = document.getElementById(
-    "settingsSpeedRoutingReadonlyOverride"
-  );
-  const settingsSpeedRoutingAgentExplore = document.getElementById(
-    "settingsSpeedRoutingAgentExplore"
-  );
   const settingsVisionRoutingModels = document.getElementById(
     "settingsVisionRoutingModels"
   );
-  /** Ordered ids enabled as fast helpers in the settings list. */
-  let speedRoutingFastModelIds = [];
   /** Ordered preferred vision model ids for image messages. */
   let visionRoutingPreferredModelIds = [];
   const settingsCaBundle = document.getElementById("settingsCaBundle");
@@ -1285,56 +1251,6 @@
     );
     if (settingsSoundNotificationsLabel) {
       settingsSoundNotificationsLabel.textContent = t("soundNotifications");
-    }
-    const settingsSpeedRoutingTitle = document.getElementById(
-      "settingsSpeedRoutingTitle"
-    );
-    if (settingsSpeedRoutingTitle) {
-      settingsSpeedRoutingTitle.textContent = t("speedRoutingTitle");
-    }
-    const settingsSpeedRoutingNote = document.getElementById(
-      "settingsSpeedRoutingNote"
-    );
-    if (settingsSpeedRoutingNote) {
-      settingsSpeedRoutingNote.textContent = t("speedRoutingNote");
-    }
-    const settingsSpeedRoutingEnabledLabel = document.getElementById(
-      "settingsSpeedRoutingEnabledLabel"
-    );
-    if (settingsSpeedRoutingEnabledLabel) {
-      settingsSpeedRoutingEnabledLabel.textContent = t("speedRoutingEnabled");
-    }
-    const settingsSpeedRoutingFastModelLabel = document.getElementById(
-      "settingsSpeedRoutingFastModelLabel"
-    );
-    if (settingsSpeedRoutingFastModelLabel) {
-      settingsSpeedRoutingFastModelLabel.textContent = t(
-        "speedRoutingFastModel"
-      );
-    }
-    const settingsSpeedRoutingFastModelHint = document.getElementById(
-      "settingsSpeedRoutingFastModelHint"
-    );
-    if (settingsSpeedRoutingFastModelHint) {
-      settingsSpeedRoutingFastModelHint.textContent = t(
-        "speedRoutingFastModelHint"
-      );
-    }
-    const settingsSpeedRoutingReadonlyOverrideLabel = document.getElementById(
-      "settingsSpeedRoutingReadonlyOverrideLabel"
-    );
-    if (settingsSpeedRoutingReadonlyOverrideLabel) {
-      settingsSpeedRoutingReadonlyOverrideLabel.textContent = t(
-        "speedRoutingReadonlyOverride"
-      );
-    }
-    const settingsSpeedRoutingAgentExploreLabel = document.getElementById(
-      "settingsSpeedRoutingAgentExploreLabel"
-    );
-    if (settingsSpeedRoutingAgentExploreLabel) {
-      settingsSpeedRoutingAgentExploreLabel.textContent = t(
-        "speedRoutingAgentExplore"
-      );
     }
     const settingsVisionRoutingTitle = document.getElementById(
       "settingsVisionRoutingTitle"
@@ -5527,9 +5443,7 @@
     }
 
     syncDefaultModelSelect();
-    renderSpeedRoutingFastModelsList();
     renderVisionRoutingModelsList();
-    syncSpeedRoutingControlsDisabled();
   }
 
   function renderSettingsModels() {
@@ -7212,29 +7126,11 @@
       settingsSoundNotificationsEnabled.checked =
         settings.soundNotificationsEnabled !== false;
     }
-    populateSpeedRoutingFastModelsList(
-      Array.isArray(settings.speedRoutingFastModelIds)
-        ? settings.speedRoutingFastModelIds
-        : []
-    );
-    if (settingsSpeedRoutingEnabled) {
-      settingsSpeedRoutingEnabled.checked =
-        settings.speedRoutingEnabled !== false;
-    }
-    if (settingsSpeedRoutingReadonlyOverride) {
-      settingsSpeedRoutingReadonlyOverride.checked =
-        settings.speedRoutingReadonlyOverride !== false;
-    }
-    if (settingsSpeedRoutingAgentExplore) {
-      settingsSpeedRoutingAgentExplore.checked =
-        settings.speedRoutingAgentExplore !== false;
-    }
     populateVisionRoutingModelsList(
       Array.isArray(settings.visionRoutingPreferredModelIds)
         ? settings.visionRoutingPreferredModelIds
         : []
     );
-    syncSpeedRoutingControlsDisabled();
     closeModelEditModal();
     closeProviderEditModal();
     ingestProviderConnStatuses(settings.providerConnStatuses);
@@ -7245,110 +7141,12 @@
     }
   }
 
-  function normalizeSpeedRoutingFastModelIds(ids) {
+  function normalizeModelIdList(ids) {
     const list = Array.isArray(ids) ? ids : [];
     return list
       .map((id) => String(id || "").trim())
       .filter(Boolean)
       .filter((id, index, all) => all.indexOf(id) === index);
-  }
-
-  function populateSpeedRoutingFastModelsList(selectedIds) {
-    speedRoutingFastModelIds = normalizeSpeedRoutingFastModelIds(selectedIds);
-    renderSpeedRoutingFastModelsList();
-  }
-
-  function renderSpeedRoutingFastModelsList() {
-    if (!settingsSpeedRoutingFastModels) {
-      return;
-    }
-    const models = (settingsModels || []).filter((m) => m && m.id);
-    const fastSet = new Set(speedRoutingFastModelIds);
-    const modelOn = [];
-    const modelOff = [];
-    for (const model of models) {
-      if (model.enabled !== false) {
-        modelOn.push(model);
-      } else {
-        modelOff.push(model);
-      }
-    }
-    const sortFastFirst = (list) => {
-      const on = [];
-      const off = [];
-      for (const id of speedRoutingFastModelIds) {
-        const hit = list.find((m) => m.id === id);
-        if (hit) {
-          on.push(hit);
-        }
-      }
-      for (const model of list) {
-        if (!fastSet.has(model.id)) {
-          off.push(model);
-        }
-      }
-      return [...on, ...off];
-    };
-    const ordered = [...sortFastFirst(modelOn), ...sortFastFirst(modelOff)];
-    if (!ordered.length) {
-      settingsSpeedRoutingFastModels.innerHTML =
-        `<div class="settings-speed-models-empty">${escapeHtml(
-          t("speedRoutingFastModelEmpty")
-        )}</div>`;
-      return;
-    }
-    settingsSpeedRoutingFastModels.innerHTML = ordered
-      .map((model) => {
-        const fastOn = fastSet.has(model.id);
-        const modelEnabled = model.enabled !== false;
-        const label = model.label || model.id;
-        const classes = [
-          "settings-speed-model-row",
-          modelEnabled ? "" : "is-model-off",
-          fastOn ? "" : "is-fast-off",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return (
-          `<div class="${classes}">` +
-          `<input type="checkbox" class="settings-speed-fast-check" data-speed-fast-id="${escapeHtml(
-            model.id
-          )}" ${fastOn ? "checked" : ""} title="${escapeHtml(
-            t("speedRoutingFastModel")
-          )}" />` +
-          `<span class="settings-speed-model-name" title="${escapeHtml(
-            label
-          )}">${escapeHtml(label)}</span>` +
-          `<label class="settings-model-switch" title="${escapeHtml(
-            modelEnabled ? t("disable") : t("enable")
-          )}">` +
-          `<input type="checkbox" class="settings-model-toggle" data-speed-model-id="${escapeHtml(
-            model.id
-          )}" ${modelEnabled ? "checked" : ""} />` +
-          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
-          `</label>` +
-          `</div>`
-        );
-      })
-      .join("");
-  }
-
-  function readSpeedRoutingFastModelIdsFromDom() {
-    if (!settingsSpeedRoutingFastModels) {
-      return [...speedRoutingFastModelIds];
-    }
-    const checked = [];
-    settingsSpeedRoutingFastModels
-      .querySelectorAll('input.settings-speed-fast-check[data-speed-fast-id]')
-      .forEach((input) => {
-        if (input instanceof HTMLInputElement && input.checked) {
-          const id = String(input.getAttribute("data-speed-fast-id") || "").trim();
-          if (id) {
-            checked.push(id);
-          }
-        }
-      });
-    return normalizeSpeedRoutingFastModelIds(checked);
   }
 
   function setModelEnabledById(modelId, enabled) {
@@ -7364,29 +7162,8 @@
     return true;
   }
 
-  function syncSpeedRoutingControlsDisabled() {
-    const on = settingsSpeedRoutingEnabled
-      ? settingsSpeedRoutingEnabled.checked
-      : true;
-    if (settingsSpeedRoutingFastModels) {
-      settingsSpeedRoutingFastModels
-        .querySelectorAll("input.settings-speed-fast-check")
-        .forEach((el) => {
-          if (el instanceof HTMLInputElement) {
-            el.disabled = !on;
-          }
-        });
-    }
-    if (settingsSpeedRoutingReadonlyOverride) {
-      settingsSpeedRoutingReadonlyOverride.disabled = !on;
-    }
-    if (settingsSpeedRoutingAgentExplore) {
-      settingsSpeedRoutingAgentExplore.disabled = !on;
-    }
-  }
-
   function normalizeVisionRoutingPreferredModelIds(ids) {
-    return normalizeSpeedRoutingFastModelIds(ids);
+    return normalizeModelIdList(ids);
   }
 
   function populateVisionRoutingModelsList(selectedIds) {
@@ -7584,16 +7361,6 @@
       maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
-        : true,
-      speedRoutingEnabled: settingsSpeedRoutingEnabled
-        ? settingsSpeedRoutingEnabled.checked
-        : true,
-      speedRoutingFastModelIds: readSpeedRoutingFastModelIdsFromDom(),
-      speedRoutingReadonlyOverride: settingsSpeedRoutingReadonlyOverride
-        ? settingsSpeedRoutingReadonlyOverride.checked
-        : true,
-      speedRoutingAgentExplore: settingsSpeedRoutingAgentExplore
-        ? settingsSpeedRoutingAgentExplore.checked
         : true,
       visionRoutingPreferredModelIds: readVisionRoutingPreferredModelIdsFromDom(),
       modes: collectCustomModesForSave(),
@@ -10415,38 +10182,9 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsSpeedRoutingEnabled, #settingsSpeedRoutingReadonlyOverride, #settingsSpeedRoutingAgentExplore, #settingsSpeedRoutingFastModels, #settingsVisionRoutingModels"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsVisionRoutingModels"
         )
       ) {
-        if (target.id === "settingsSpeedRoutingEnabled") {
-          syncSpeedRoutingControlsDisabled();
-        }
-        if (
-          target instanceof HTMLInputElement &&
-          target.matches(
-            "#settingsSpeedRoutingFastModels input.settings-speed-fast-check[data-speed-fast-id]"
-          )
-        ) {
-          speedRoutingFastModelIds = readSpeedRoutingFastModelIdsFromDom();
-          renderSpeedRoutingFastModelsList();
-          syncSpeedRoutingControlsDisabled();
-        }
-        if (
-          target instanceof HTMLInputElement &&
-          target.matches(
-            "#settingsSpeedRoutingFastModels input.settings-model-toggle[data-speed-model-id]"
-          )
-        ) {
-          const modelId = String(
-            target.getAttribute("data-speed-model-id") || ""
-          ).trim();
-          if (setModelEnabledById(modelId, target.checked)) {
-            renderSettingsModels();
-            renderSpeedRoutingFastModelsList();
-            renderVisionRoutingModelsList();
-            syncSpeedRoutingControlsDisabled();
-          }
-        }
         if (
           target instanceof HTMLInputElement &&
           target.matches(
@@ -10468,9 +10206,7 @@
           ).trim();
           if (setModelEnabledById(modelId, target.checked)) {
             renderSettingsModels();
-            renderSpeedRoutingFastModelsList();
             renderVisionRoutingModelsList();
-            syncSpeedRoutingControlsDisabled();
           }
         }
         persistSettingsNow();
