@@ -37,10 +37,16 @@ export interface PrepareRoundMessagesResult {
 /**
  * Gateway shrink (Kimi / fragile light models) + context budget + optional
  * extractive mid-turn summary. Mutates `messages` in place when applied.
+ *
+ * Kimi Plan/Ask: keep explore/read grounding — no soft-target budget and no
+ * mid-turn extractive summary. Gateway shrink still runs (Figma preserved);
+ * hard context ceiling still applies. Agent mode keeps soft budget + summary.
  */
 export function prepareRoundMessages(
   options: PrepareRoundMessagesOptions
 ): PrepareRoundMessagesResult {
+  const kimiPlanAsk = options.kimi && Boolean(options.readonly);
+
   if (options.kimi) {
     prepareKimiGatewayMessages(options.messages, {
       readonly: options.readonly,
@@ -53,22 +59,30 @@ export function prepareRoundMessages(
     contextWindow: options.contextWindow,
     reservedOutputTokens: options.reservedOutputTokens,
   });
-  const softTargetTokens = resolveToolSoftTargetTokens({
-    hardBudget: budgetTokens,
-    modelId: options.modelId,
-  });
+  // Soft target drives proactive "Context compacted" cards before the hard
+  // ceiling. Skip it for Kimi Plan/Ask so early read_file grounding survives.
+  const softTargetTokens = kimiPlanAsk
+    ? undefined
+    : resolveToolSoftTargetTokens({
+        hardBudget: budgetTokens,
+        modelId: options.modelId,
+      });
 
   const budgeted = applyContextBudget(options.messages, {
     contextWindow: options.contextWindow,
     reservedOutputTokens: options.reservedOutputTokens,
-    softTargetTokens,
+    ...(softTargetTokens !== undefined ? { softTargetTokens } : {}),
   });
 
   let compacted = budgeted.compacted;
   let summarized = false;
   let working = budgeted.messages;
 
-  if (!budgeted.fits || budgeted.estimatedTokens > softTargetTokens) {
+  if (
+    !kimiPlanAsk &&
+    softTargetTokens !== undefined &&
+    (!budgeted.fits || budgeted.estimatedTokens > softTargetTokens)
+  ) {
     const system: ChatMessage[] = [];
     const rest: ChatMessage[] = [];
     for (const message of working) {
