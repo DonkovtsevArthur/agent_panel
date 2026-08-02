@@ -8,6 +8,7 @@ export function isParallelSafeTool(name: string): boolean {
     case "search_text":
     case "get_diagnostics":
     case "fetch_url":
+    case "screenshot_url":
     case "open_external":
       return true;
     case "search_replace":

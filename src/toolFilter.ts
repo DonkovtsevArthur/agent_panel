@@ -5,12 +5,16 @@ export interface ToolFilterContext {
   hasUrl: boolean;
 }
 
-/** Имя fetch/open tool — кандидаты на фильтрацию по контексту. */
-const URL_TOOL_NAMES = new Set(["fetch_url", "open_external"]);
+/** Имя fetch/screenshot/open tool — кандидаты на фильтрацию по контексту. */
+const URL_TOOL_NAMES = new Set([
+  "fetch_url",
+  "screenshot_url",
+  "open_external",
+]);
 
 /**
  * Убирает tool-схемы, которые в этом ходе точно бесполезны:
- * без URL в сообщении fetch_url/open_external — мёртвый груз в каждом раунде.
+ * без URL в сообщении fetch_url/screenshot_url/open_external — мёртвый груз.
  * MCP tools не трогаем: они и так приходят только от подключённых серверов.
  */
 export function filterToolsForContext(

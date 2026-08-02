@@ -323,6 +323,9 @@
         `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`,
       proposedPlanTitle: "Plan",
       proposedPlanBuild: "Build",
+      proposedPlanEdit: "Edit",
+      proposedPlanSave: "Save",
+      proposedPlanCancel: "Cancel",
       proposedPlanImplementPrefix:
         "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
     },
@@ -626,6 +629,9 @@
         `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`,
       proposedPlanTitle: "План",
       proposedPlanBuild: "Собрать",
+      proposedPlanEdit: "Изменить",
+      proposedPlanSave: "Сохранить",
+      proposedPlanCancel: "Отмена",
       proposedPlanImplementPrefix:
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
@@ -8548,13 +8554,82 @@
   }
 
   function renderProposedPlanCard(planBody) {
-    return `<div class="proposed-plan-card" data-plan-raw="${escapeHtml(String(planBody || ""))}">`
+    const raw = String(planBody || "");
+    return `<div class="proposed-plan-card" data-plan-raw="${escapeHtml(raw)}">`
       + `<div class="proposed-plan-head">`
       + `<span class="proposed-plan-title">${escapeHtml(t("proposedPlanTitle"))}</span>`
+      + `<div class="proposed-plan-actions">`
+      + `<button class="proposed-plan-edit" type="button" data-plan-action="edit" title="${escapeHtml(t("proposedPlanEdit"))}">`
+      + `<span class="material-symbols-outlined" aria-hidden="true">edit</span>`
+      + `<span>${escapeHtml(t("proposedPlanEdit"))}</span>`
+      + `</button>`
       + `<button class="proposed-plan-build" type="button" data-plan-action="build">${escapeHtml(t("proposedPlanBuild"))}</button>`
       + `</div>`
-      + `<div class="proposed-plan-body">${renderPlanBodyHtml(planBody)}</div>`
+      + `</div>`
+      + `<div class="proposed-plan-body">${renderPlanBodyHtml(raw)}</div>`
+      + `<div class="proposed-plan-editor" hidden>`
+      + `<textarea class="proposed-plan-textarea" spellcheck="false"></textarea>`
+      + `<div class="proposed-plan-editor-actions">`
+      + `<button class="proposed-plan-cancel" type="button" data-plan-action="cancel-edit">${escapeHtml(t("proposedPlanCancel"))}</button>`
+      + `<button class="proposed-plan-save" type="button" data-plan-action="save-edit">${escapeHtml(t("proposedPlanSave"))}</button>`
+      + `</div>`
+      + `</div>`
       + `</div>`;
+  }
+
+  function setProposedPlanEditing(card, editing) {
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const body = card.querySelector(".proposed-plan-body");
+    const editor = card.querySelector(".proposed-plan-editor");
+    const textarea = card.querySelector(".proposed-plan-textarea");
+    const editBtn = card.querySelector("[data-plan-action='edit']");
+    const buildBtn = card.querySelector("[data-plan-action='build']");
+    if (!body || !editor || !(textarea instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    if (editing) {
+      textarea.value = card.dataset.planRaw || "";
+      body.hidden = true;
+      editor.hidden = false;
+      if (editBtn) {
+        editBtn.hidden = true;
+      }
+      if (buildBtn) {
+        buildBtn.disabled = true;
+      }
+      textarea.focus();
+      const len = textarea.value.length;
+      textarea.setSelectionRange(len, len);
+    } else {
+      body.hidden = false;
+      editor.hidden = true;
+      if (editBtn) {
+        editBtn.hidden = false;
+      }
+      if (buildBtn) {
+        buildBtn.disabled = false;
+      }
+    }
+  }
+
+  function saveProposedPlanEdit(card) {
+    if (!(card instanceof HTMLElement)) {
+      return;
+    }
+    const textarea = card.querySelector(".proposed-plan-textarea");
+    const body = card.querySelector(".proposed-plan-body");
+    if (!(textarea instanceof HTMLTextAreaElement) || !body) {
+      return;
+    }
+    const next = String(textarea.value || "").trim();
+    if (!next) {
+      return;
+    }
+    card.dataset.planRaw = next;
+    body.innerHTML = renderPlanBodyHtml(next);
+    setProposedPlanEditing(card, false);
   }
 
   function getMarkedApi() {
@@ -11287,10 +11362,43 @@
       }
       return;
     }
+    const planEditBtn = event.target.closest("[data-plan-action='edit']");
+    if (planEditBtn && messagesEl.contains(planEditBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = planEditBtn.closest(".proposed-plan-card");
+      if (card) {
+        setProposedPlanEditing(card, true);
+      }
+      return;
+    }
+    const planCancelBtn = event.target.closest("[data-plan-action='cancel-edit']");
+    if (planCancelBtn && messagesEl.contains(planCancelBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = planCancelBtn.closest(".proposed-plan-card");
+      if (card) {
+        setProposedPlanEditing(card, false);
+      }
+      return;
+    }
+    const planSaveBtn = event.target.closest("[data-plan-action='save-edit']");
+    if (planSaveBtn && messagesEl.contains(planSaveBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = planSaveBtn.closest(".proposed-plan-card");
+      if (card) {
+        saveProposedPlanEdit(card);
+      }
+      return;
+    }
     const buildBtn = event.target.closest("[data-plan-action='build']");
     if (buildBtn && messagesEl.contains(buildBtn)) {
       event.preventDefault();
       event.stopPropagation();
+      if (buildBtn.disabled) {
+        return;
+      }
       const card = buildBtn.closest(".proposed-plan-card");
       if (!card) {
         return;
@@ -11298,6 +11406,7 @@
       // Prefer the raw markdown stored at render time (preserves **bold**,
       // code spans, list structure). Fall back to textContent for cards
       // rendered before this attribute existed (history re-renders).
+      // After Edit→Save, dataset.planRaw holds the user-edited plan.
       const rawPlan = card.dataset.planRaw || "";
       const planBody = card.querySelector(".proposed-plan-body");
       const planText = rawPlan.trim() || (planBody ? planBody.textContent : "");

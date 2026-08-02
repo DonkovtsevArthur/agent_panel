@@ -10,7 +10,7 @@ import {
   stripAttachmentPayload,
   userContentForHistory,
 } from "./attachments";
-import { getConfig, getContextWindow, getModeById, resolveModelEndpoint, resolveModelReasoningEffort } from "./config";
+import { getConfig, getContextWindow, getModeById, resolveModelEndpoint, resolveModelReasoningEffort, resolveModelSupportsVision } from "./config";
 import { effectiveReasoningEffort } from "./reasoningEffort";
 import { FileEditStat, formatEditTotals, lineDiffStats } from "./diffStats";
 import {
@@ -46,6 +46,7 @@ import {
   HOLLOW_USER_NUDGE,
   IMPACT_USER_NUDGE,
   MISSING_WRITE_USER_NUDGE,
+  PLAN_QUALITY_NUDGE,
   decideHonestFinale,
 } from "./honestFinale";
 import { resolveVersionBumpForPackageJson } from "./versionBump";
@@ -80,6 +81,9 @@ import { executeToolCallsInOrder } from "./runToolWaves";
 import { getMcpManager } from "./mcpBundle";
 import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
+import { shouldDeliverRawScreenshotToPlanner } from "./visionDelivery";
+import type { SplitMcpToolResult } from "./mcp/resultFormat";
+import { captureUrlScreenshot } from "./screenshotUrl";
 import {
   buildEditCorrectionSystemHint,
   buildPlanImplementSystemHint,
@@ -252,6 +256,15 @@ function formatToolStatus(
       return {
         phase: "reading",
         detail: url ? `Читает URL · ${truncateStatus(url)}` : "Читает URL…",
+      };
+    }
+    case "screenshot_url": {
+      const url = String(args.url || "").trim();
+      return {
+        phase: "reading",
+        detail: url
+          ? `Скриншот страницы · ${truncateStatus(url)}`
+          : "Скриншот страницы…",
       };
     }
     case "open_external": {
@@ -536,6 +549,12 @@ export async function runMainLikeAgentTurn(options: {
 
   let activeTurnModel = options.model;
 
+  // MCP screenshots arrive in tool results, which are text-only. When the
+  // planner supports vision, we additionally deliver the raw screenshot as a
+  // user image message after the tool results, so the planner sees pixels
+  // (not just the lossy text description). Drained in the tool-result loop.
+  const pendingVisionImageUrls: string[] = [];
+
   const getClientForModel = (modelId: string): typeof client => {
     if (modelId === options.model) return client;
     const ep = resolveModelEndpoint(modelId);
@@ -568,11 +587,12 @@ export async function runMainLikeAgentTurn(options: {
     mcp?.buildSystemHint(mcpToolNames) ||
       [
         "No MCP tools are currently connected.",
-        "You CAN access http(s) URLs via fetch_url / open_external — never claim you cannot open external URLs.",
+        "You CAN access http(s) URLs via fetch_url / screenshot_url / open_external — never claim you cannot open external URLs.",
       ].join(" "),
-    "Whenever the user shares an http(s) link and asks ANYTHING about that page, IMMEDIATELY call fetch_url before answering.",
-    "For figma.com links use Figma MCP tools when connected; do not use fetch_url for Figma designs.",
-    "Never say you cannot open external URLs, Figma, or websites when fetch_url / open_external / MCP tools are available.",
+    "Whenever the user shares an http(s) link and asks ANYTHING about that page: call fetch_url AND screenshot_url in the same tool round (they run in parallel) — fetch_url for HTML/metadata, screenshot_url for the rendered PNG + visible text after JS.",
+    "Use both the screenshot (vision) and the page text to answer. Prefer screenshot_url when the question is about layout, UI, colors, or a JS SPA; prefer fetch_url alone for APIs/JSON/raw HTML facts.",
+    "For figma.com links use Figma MCP tools when connected; do not use fetch_url or screenshot_url for Figma designs.",
+    "Never say you cannot open external URLs, Figma, or websites when fetch_url / screenshot_url / open_external / MCP tools are available.",
   ].join(" ");
 
   const urlInMessage =
@@ -606,6 +626,7 @@ export async function runMainLikeAgentTurn(options: {
     !implementPlan &&
     looksLikeEditCorrectionRequest(options.userText);
   const focusedPlanEdit = implementPlan || editCorrection;
+  const planQuality = readonly && mode.id === "plan";
   const discardScope =
     !readonly && !implementPlan && !editCorrection
       ? resolveDiscardScope(options.userText)
@@ -620,6 +641,7 @@ export async function runMainLikeAgentTurn(options: {
   const exploreLimits = exploreRoundLimits({
     kimi: kimiModel,
     implementPlan: focusedPlanEdit,
+    planQuality,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
   // включит extended thinking и будет стримить reasoning_content. Для моделей
@@ -755,6 +777,8 @@ export async function runMainLikeAgentTurn(options: {
   let answered = false;
   let exploreStreak = 0;
   let softNudgeSent = false;
+  /** Plan quality: allow soft reminders every softNudgeRounds, not only once. */
+  let lastSoftNudgeAtStreak = 0;
   let hardCut = false;
   let hadProductiveTool = false;
   // readonly (Plan/Ask): delegate_task ok / request_user_input ok считаются
@@ -768,6 +792,7 @@ export async function runMainLikeAgentTurn(options: {
   let impactNudgeAttempts = 0;
   let deniedWriteNudgeAttempts = 0;
   let askUserNudgeAttempts = 0;
+  let planQualityNudgeAttempts = 0;
   let requestUserInputCalls = 0;
   let emptyFinalAttempts = 0;
   let turnReasoning = "";
@@ -780,6 +805,7 @@ export async function runMainLikeAgentTurn(options: {
   const maxImpactNudges = 2;
   const maxDeniedWriteNudges = 2;
   const maxAskUserNudges = 2;
+  const maxPlanQualityNudges = 2;
   const maxEmptyFinalAttempts = 3;
   const MAX_REQUEST_USER_INPUT_CALLS = 5;
   const contextWindow = getContextWindow(options.model);
@@ -1311,6 +1337,8 @@ export async function runMainLikeAgentTurn(options: {
           allowNudgeHedge: false,
           allowNudgeHollow: false,
           allowNudgeImpact: false,
+          allowNudgeAskUser: false,
+          allowNudgePlanQuality: false,
         });
         await publishAssistantFinale(
           forcedDecision.kind === "replace" || forcedDecision.kind === "ok"
@@ -1346,6 +1374,8 @@ export async function runMainLikeAgentTurn(options: {
         deniedWriteNudgeAttempts < maxDeniedWriteNudges,
       allowNudgeImpact: impactNudgeAttempts < maxImpactNudges,
       allowNudgeAskUser: askUserNudgeAttempts < maxAskUserNudges,
+      allowNudgePlanQuality:
+        planQuality && planQualityNudgeAttempts < maxPlanQualityNudges,
     });
 
     if (decision.kind === "nudge_write") {
@@ -1396,6 +1426,14 @@ export async function runMainLikeAgentTurn(options: {
       }
       return false;
     }
+    if (decision.kind === "nudge_plan_quality") {
+      planQualityNudgeAttempts += 1;
+      messages.push({ role: "user", content: PLAN_QUALITY_NUDGE });
+      if (round >= roundBudget - 1) {
+        roundBudget = round + 2;
+      }
+      return false;
+    }
     if (decision.kind === "replace") {
       await publishAssistantFinale(decision.text);
       return true;
@@ -1404,58 +1442,121 @@ export async function runMainLikeAgentTurn(options: {
     return true;
   };
 
+  /**
+   * Deliver screenshot media from MCP get_screenshot / screenshot_url.
+   * Tool-role messages are text-only. When Settings lists preferred vision
+   * models and the chat planner is not among them, Harbor always runs the
+   * under-the-hood helper (preferred model looks at the PNG → text labels).
+   * Raw image messages go to the planner only when it is itself a preferred
+   * vision model (or preferred list is empty and the planner supports vision).
+   */
+  const deliverVisionMedia = async (
+    split: SplitMcpToolResult,
+    optionsForMedia: {
+      sourceName: string;
+      phaseLabel: string;
+      stepName: string;
+      pointerHint: string;
+    }
+  ): Promise<string> => {
+    if (!split.imageDataUrls.length) {
+      return split.text;
+    }
+    const deliverRaw = shouldDeliverRawScreenshotToPlanner(
+      activeTurnModel,
+      resolveModelSupportsVision(activeTurnModel),
+      config.visionRouting.preferredModelIds
+    );
+    if (deliverRaw) {
+      for (const url of split.imageDataUrls) {
+        const value = String(url || "").trim();
+        if (value) {
+          pendingVisionImageUrls.push(value);
+        }
+      }
+      const pointer = split.text
+        ? `${split.text}\n\n[Harbor vision: ${optionsForMedia.pointerHint}]`
+        : `[Harbor vision: ${optionsForMedia.pointerHint}]`;
+      return pointer;
+    }
+    const visionStepId = nextStepId("vision");
+    options.callbacks.onPhase("reading", optionsForMedia.phaseLabel);
+    emitStep({
+      stepId: visionStepId,
+      kind: "tool",
+      name: optionsForMedia.stepName,
+      status: "running",
+      argsPreview: previewText(optionsForMedia.sourceName, 80),
+    });
+    try {
+      const described = await describeMcpImagesForMainModel({
+        imageDataUrls: split.imageDataUrls,
+        accompanyingText: split.text,
+        visionPreferenceIds: config.visionRouting.preferredModelIds,
+        signal: options.signal,
+      });
+      emitStep({
+        stepId: visionStepId,
+        kind: "tool",
+        name: optionsForMedia.stepName,
+        status: "done",
+        resultPreview: previewText(described, 160),
+      });
+      return described;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emitStep({
+        stepId: visionStepId,
+        kind: "tool",
+        name: optionsForMedia.stepName,
+        status: "error",
+        resultPreview: previewText(message, 160),
+      });
+      return [
+        split.text,
+        `[Harbor vision helper failed: ${message}. Call request_user_input if concrete labels are still missing.]`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
+  };
+
   const invokeTool = async (name: string, argsJson: string): Promise<string> => {
     if (name.startsWith("mcp__")) {
       if (!mcp) {
         return JSON.stringify({ error: "MCP is not available" });
       }
-      // MCP screenshots arrive as image parts. Tool-role messages are text-only,
-      // so we run a vision helper under the hood and inject labels as text —
-      // the chat-selected model stays the planner (no whole-turn vision switch).
       const split = await mcp.callToolWithMedia(name, argsJson || "");
-      if (!split.imageDataUrls.length) {
-        return split.text;
-      }
-      const visionStepId = nextStepId("vision");
-      options.callbacks.onPhase("reading", "Vision · Figma screenshot");
-      emitStep({
-        stepId: visionStepId,
-        kind: "tool",
-        name: "vision_figma_screenshot",
-        status: "running",
-        argsPreview: previewText(name, 80),
+      return deliverVisionMedia(split, {
+        sourceName: name,
+        phaseLabel: "Vision · Figma screenshot",
+        stepName: "vision_figma_screenshot",
+        pointerHint:
+          "raw screenshot delivered as an image message — use it directly for exact layout, spacing, colors, and labels. Do not re-request get_screenshot.",
       });
+    }
+    if (name === "screenshot_url") {
+      let url = "";
       try {
-        const described = await describeMcpImagesForMainModel({
-          imageDataUrls: split.imageDataUrls,
-          accompanyingText: split.text,
-          visionPreferenceIds: config.visionRouting.preferredModelIds,
-          signal: options.signal,
-        });
-        emitStep({
-          stepId: visionStepId,
-          kind: "tool",
-          name: "vision_figma_screenshot",
-          status: "done",
-          resultPreview: previewText(described, 160),
-        });
-        return described;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        emitStep({
-          stepId: visionStepId,
-          kind: "tool",
-          name: "vision_figma_screenshot",
-          status: "error",
-          resultPreview: previewText(message, 160),
-        });
-        return [
-          split.text,
-          `[Harbor vision helper failed: ${message}. Call request_user_input if concrete labels are still missing.]`,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+        const args = argsJson
+          ? (JSON.parse(argsJson) as { url?: unknown })
+          : {};
+        url = String(args.url ?? "");
+      } catch {
+        return JSON.stringify({ error: "Некорректный JSON аргументов" });
       }
+      options.callbacks.onPhase("reading", "Screenshot · page");
+      const split = await captureUrlScreenshot({
+        url,
+        signal: options.signal,
+      });
+      return deliverVisionMedia(split, {
+        sourceName: "screenshot_url",
+        phaseLabel: "Vision · page screenshot",
+        stepName: "vision_page_screenshot",
+        pointerHint:
+          "raw page screenshot delivered as an image message — use it together with the visible page text above for layout, colors, and labels. Do not re-request screenshot_url for the same URL.",
+      });
     }
     return runMainLikeTool(name, argsJson, {
       readonly,
@@ -1744,13 +1845,16 @@ export async function runMainLikeAgentTurn(options: {
         ) {
           return JSON.stringify({
             error:
-              "В этом режиме инструмент недоступен. Используй list_files / read_file / fetch_url / open_external / request_user_input / delegate_task или MCP (Figma).",
+              "В этом режиме инструмент недоступен (write_file / search_replace / run_command запрещены). " +
+              "План пиши в <proposed_plan>…</proposed_plan>, не в PLAN.md. " +
+              "Доступны: list_files / read_file / search_text / fetch_url / screenshot_url / open_external / request_user_input / delegate_task или MCP Figma (get_design_context + get_screenshot, либо get_figma_data на PAT).",
           });
         }
         if (hardCut && isExploreOrDelegatedTool(call.function.name, readonly)) {
           return JSON.stringify({
-            error:
-              "Exploration limit: only write_file is allowed. Finish the file write now.",
+            error: readonly
+              ? "Exploration limit: explore tools are blocked. Write the final <proposed_plan> or answer from gathered context."
+              : "Exploration limit: only write_file / search_replace is allowed. Finish the file write now.",
           });
         }
         if (call.function.name === "request_user_input") {
@@ -1815,6 +1919,25 @@ export async function runMainLikeAgentTurn(options: {
       }
     }
 
+    // Drain MCP screenshots collected this round into a user image message so
+    // a vision-capable planner sees the raw pixels (not just the text pointer
+    // in the tool result). Keep the HARBOR_VISION_HELPER marker so the
+    // context budget does not compact these payloads mid-turn.
+    if (pendingVisionImageUrls.length) {
+      const urls = pendingVisionImageUrls.splice(0, pendingVisionImageUrls.length);
+      const parts: ContentPart[] = [
+        {
+          type: "text",
+          text:
+            "[Harbor vision helper · raw screenshot] Figma/MCP screenshot for the tool call(s) above. " +
+            "Use this image directly for exact layout, spacing, colors, and visible labels. " +
+            "Do not re-request get_screenshot for the same node.",
+        },
+        ...urls.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+      ];
+      messages.push({ role: "user", content: parts });
+    }
+
     completionIntent = "tool_results";
 
     if (roundAdvancesExploreStreak(
@@ -1825,16 +1948,26 @@ export async function runMainLikeAgentTurn(options: {
     } else {
       exploreStreak = 0;
       softNudgeSent = false;
+      lastSoftNudgeAtStreak = 0;
     }
 
     // (2) soft-nudge после N explore-only раундов (Kimi: позже + мягче).
-    if (
+    // Plan quality: напоминание можно повторять — hard-cut explore выключен,
+    // иначе незакрытые пункты инвентаря остаются без grounding.
+    const softDue =
       exploreStreak >= exploreLimits.softNudgeRounds &&
-      !softNudgeSent &&
-      !hardCut
-    ) {
+      !hardCut &&
+      (planQuality
+        ? exploreStreak - lastSoftNudgeAtStreak >=
+          exploreLimits.softNudgeRounds
+        : !softNudgeSent);
+    if (softDue) {
       softNudgeSent = true;
-      options.callbacks.onPhase("thinking", "Сокращаю обзор…");
+      lastSoftNudgeAtStreak = exploreStreak;
+      options.callbacks.onPhase(
+        "thinking",
+        planQuality ? "Сверяю пункты с репо…" : "Сокращаю обзор…"
+      );
       messages.push({
         role: "user",
         content: buildExploreSoftNudge({
@@ -1847,8 +1980,12 @@ export async function runMainLikeAgentTurn(options: {
       });
     }
 
-    // (3) hard-cut после M explore-only раундов (Kimi: позже).
-    if (exploreStreak >= exploreLimits.hardCutRounds) {
+    // (3) hard-cut после M explore-only раундов — не в Plan quality
+    // (там потолок maxToolRounds + incomplete-plan gate).
+    if (
+      exploreLimits.hardCutExplore &&
+      exploreStreak >= exploreLimits.hardCutRounds
+    ) {
       hardCut = true;
       options.callbacks.onPhase("thinking", "Лимит обзора — пишу ответ…");
       messages.push({
@@ -1943,6 +2080,7 @@ export async function runMainLikeAgentTurn(options: {
       allowNudgeHollow: false,
       allowNudgeImpact: false,
       allowNudgeAskUser: false,
+      allowNudgePlanQuality: false,
     });
     if (forcedDecision.kind === "replace") {
       text = forcedDecision.text;

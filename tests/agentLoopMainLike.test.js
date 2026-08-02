@@ -124,8 +124,10 @@ test("post-edit verification is gated to Kimi agent turns only", () => {
   assert.match(mainLikeSrc, /buildEditCorrectionSystemHint/);
   assert.match(
     mainLikeSrc,
-    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:/
+    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality/
   );
+  assert.match(mainLikeSrc, /PLAN_QUALITY_NUDGE/);
+  assert.match(mainLikeSrc, /nudge_plan_quality/);
   assert.match(mainLikeSrc, /DEFAULT_WORKSPACE_RULE_CHAR_CAP/);
   assert.match(mainLikeSrc, /tool\.function\.name !== "get_diagnostics"/);
 });
@@ -154,4 +156,20 @@ test("readonly main-like allows Figma MCP and blocks write_file", () => {
   assert.ok(readonlyBlock, "MAIN_LIKE_READONLY_TOOL_NAMES block found");
   assert.match(readonlyBlock[1], /"delegate_task"/);
   assert.match(readonlyBlock[1], /"request_user_input"/);
+  assert.match(readonlyBlock[1], /"search_text"/);
+});
+
+test("MCP screenshots respect preferred-vision delivery policy", () => {
+  const mainLikeSrc = fs.readFileSync(
+    path.join(__dirname, "../src/agentLoopMainLike.ts"),
+    "utf8"
+  );
+  assert.match(mainLikeSrc, /shouldDeliverRawScreenshotToPlanner/);
+  assert.match(mainLikeSrc, /resolveModelSupportsVision/);
+  assert.match(mainLikeSrc, /pendingVisionImageUrls/);
+  assert.match(mainLikeSrc, /type: "image_url" as const/);
+  assert.match(mainLikeSrc, /Harbor vision helper · raw screenshot/);
+  assert.match(mainLikeSrc, /captureUrlScreenshot/);
+  assert.match(mainLikeSrc, /deliverVisionMedia/);
+  assert.match(mainLikeSrc, /vision_page_screenshot/);
 });

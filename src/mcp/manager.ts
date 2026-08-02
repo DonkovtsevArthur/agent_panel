@@ -12,7 +12,10 @@ import {
   mcpSystemHint,
   messageHasFigmaUrl,
   parseQualifiedToolName,
+  LEGACY_FIGMA_DATA_BLOCKED_JSON,
+  prepareFigmaToolArgs,
   qualifyToolName,
+  shouldHideLegacyFigmaDataTool,
 } from "./figma";
 import {
   joinMcpToolResult,
@@ -220,10 +223,14 @@ export class McpManager {
 
   async listOpenAiTools(readonlyOnly = false): Promise<ChatTool[]> {
     await this.tryQuietReconnectAll();
+    const figmaCatalog = this.figmaTools.map((t) => t.function.name);
     const tools = [
       ...(this.figmaStatus.enabled !== false &&
       this.figmaStatus.state === "connected"
-        ? this.figmaTools
+        ? this.figmaTools.filter(
+            (t) =>
+              !shouldHideLegacyFigmaDataTool(t.function.name, figmaCatalog)
+          )
         : []),
       ...[...this.customRuntimes.values()]
         .filter(
@@ -279,6 +286,13 @@ export class McpManager {
     }
 
     if (parsed.serverId === FIGMA_SERVER_ID) {
+      const figmaCatalog = this.figmaTools.map((t) => t.function.name);
+      if (shouldHideLegacyFigmaDataTool(parsed.toolName, figmaCatalog)) {
+        return {
+          text: LEGACY_FIGMA_DATA_BLOCKED_JSON,
+          imageDataUrls: [],
+        };
+      }
       if (!this.figmaClient || this.figmaStatus.state !== "connected") {
         await this.tryQuietReconnect();
       }
@@ -291,7 +305,11 @@ export class McpManager {
           imageDataUrls: [],
         };
       }
-      return this.invokeClientTool(this.figmaClient, parsed.toolName, args);
+      return this.invokeClientTool(
+        this.figmaClient,
+        parsed.toolName,
+        prepareFigmaToolArgs(parsed.toolName, args)
+      );
     }
 
     const rt = this.customRuntimes.get(parsed.serverId);

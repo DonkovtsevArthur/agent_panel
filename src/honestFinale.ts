@@ -11,6 +11,15 @@ import {
   looksLikeSharedLayoutChangeClaim,
 } from "./hollowReplies";
 import { looksLikeRefusedRequestedEdit } from "./versionBump";
+import {
+  PLAN_QUALITY_NUDGE,
+  PLAN_QUALITY_USER_VISIBLE,
+  extractProposedPlanBody,
+  looksLikePageToTabDrift,
+  looksLikePlanQualityFailure,
+} from "./planQuality";
+
+export { PLAN_QUALITY_NUDGE, PLAN_QUALITY_USER_VISIBLE };
 
 export const MISSING_WRITE_USER_NUDGE =
   "False: you described code changes but did NOT successfully call write_file or search_replace in this step. Editing tools ARE available. Do NOT claim you already returned/fixed/restored anything. Call search_replace for a focused edit or write_file for full content, then reply briefly.";
@@ -56,6 +65,7 @@ export type HonestFinaleDecision =
   | { kind: "nudge_denied_write" }
   | { kind: "nudge_impact" }
   | { kind: "nudge_ask_user" }
+  | { kind: "nudge_plan_quality" }
   | { kind: "replace"; text: string };
 
 /**
@@ -376,6 +386,8 @@ export function decideHonestFinale(input: {
   allowNudgeImpact?: boolean;
   /** Plan/Ask: nudge prose clarifying questions → request_user_input. */
   allowNudgeAskUser?: boolean;
+  /** Plan: nudge incomplete <proposed_plan> (no paths / unfixed fields). */
+  allowNudgePlanQuality?: boolean;
 }): HonestFinaleDecision {
   const text = String(input.text || "").trim();
   const allowNudgeWrite = input.allowNudgeWrite !== false;
@@ -383,6 +395,7 @@ export function decideHonestFinale(input: {
   const allowNudgeHollow = input.allowNudgeHollow !== false;
   const allowNudgeImpact = input.allowNudgeImpact !== false;
   const allowNudgeAskUser = input.allowNudgeAskUser !== false;
+  const allowNudgePlanQuality = input.allowNudgePlanQuality !== false;
   const kimi = input.kimi === true;
 
   if (!input.canEdit) {
@@ -390,10 +403,37 @@ export function decideHonestFinale(input: {
     // Hollow-детектор («я объяснил / скажи — перепишу») здесь ложносрабатывает:
     // в readonly модель и должна объяснять и может отложить реализацию на Agent.
     // Оставляем hedge + prose-clarifying (должны идти через request_user_input).
-    // <proposed_plan> — финальный артефакт Plan mode (Goal/Steps/Risks):
-    // Risks и future-tense шаги легитимно содержат «возможно стоит» / «начну с…»,
-    // что ложнит hedge-детектор. Защищаем тегом до любых nudge/replace.
+    // Plan quality: incomplete <proposed_plan>, page→tab drift, «уже есть»
+    // without block inventory, or shipping PLAN.md instead of the card.
+    // Runs before hedge so Risks/future-tense steps in a good plan still pass.
+    if (
+      looksLikePlanQualityFailure(text, { userText: input.userText })
+    ) {
+      if (allowNudgePlanQuality) {
+        return { kind: "nudge_plan_quality" };
+      }
+      // Nudges exhausted. z.ai-style: if the model still produced a
+      // <proposed_plan> card (even a structurally imperfect one — missing
+      // paths, «already exists» without inventory), show THAT plan to the
+      // user with the Build button rather than blocking them with an error.
+      // Exception — Kimi + page→tab WHAT drift: do NOT show a misleading
+      // Build card (Kimi often buries «добавить вкладку» after soft nudges).
+      // Only fall back to the error message when there is no plan card at all
+      // (prose «already exists» / PLAN.md file-write claim) — those never
+      // rendered as a card and the user would see nothing useful otherwise.
+      if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
+        if (kimi) {
+          const body = extractProposedPlanBody(text) || text;
+          if (looksLikePageToTabDrift(input.userText || "", body)) {
+            return { kind: "replace", text: PLAN_QUALITY_USER_VISIBLE };
+          }
+        }
+        return { kind: "ok", text };
+      }
+      return { kind: "replace", text: PLAN_QUALITY_USER_VISIBLE };
+    }
     if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
+      // Decision-complete plan — protect from hedge (Risks may say «возможно»).
       return { kind: "ok", text };
     }
     if (looksLikeHedgeOrUnfinishedAction(text)) {

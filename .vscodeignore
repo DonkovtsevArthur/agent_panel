@@ -8,6 +8,9 @@ tsconfig.json
 **/*.ts
 **/*.map
 node_modules/**
+# screenshot_url needs playwright-core at runtime (browsers download to ~/.harbor-agents).
+!node_modules/playwright-core/
+!node_modules/playwright-core/**
 media/*preview*
 media/harbor-icon*
 media/icon-marketplace.svg

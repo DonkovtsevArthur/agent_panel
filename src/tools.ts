@@ -46,6 +46,7 @@ export const READONLY_TOOL_NAMES = new Set([
   "get_diagnostics",
   "open_external",
   "fetch_url",
+  "screenshot_url",
 ]);
 
 export const agentTools: ChatTool[] = [
@@ -231,7 +232,25 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "fetch_url",
       description:
-        "Скачать http(s) URL и вернуть структурированные данные страницы: title, description, headings, content, colors, links. Используй для ЛЮБОГО вопроса по ссылке (факты, цвета, цены, текст, метаданные). Не говори, что не можешь открывать URL. Для figma.com — MCP Figma tools, если доступны.",
+        "Скачать http(s) URL без JS-рендера и вернуть структурированные данные: title, description, headings, content, colors, links. Для сырого HTML/метаданных. Если нужен визуальный вид страницы — screenshot_url. Для figma.com — MCP Figma tools.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "screenshot_url",
+      description:
+        "Открыть http(s) страницу в headless-браузере, сделать PNG-скриншот и вернуть видимый текст после JS-рендера. Для визуального разбора страницы. Не для figma.com — там MCP. Нужен Chrome/Edge.",
       parameters: {
         type: "object",
         properties: {
@@ -249,7 +268,7 @@ export const agentTools: ChatTool[] = [
     function: {
       name: "open_external",
       description:
-        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — сначала fetch_url. Для Figma — MCP tools.",
+        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — fetch_url и/или screenshot_url. Для Figma — MCP tools.",
       parameters: {
         type: "object",
         properties: {
@@ -1154,6 +1173,19 @@ export async function runTool(
       }
       case "fetch_url": {
         return await fetchUrl(String(args.url ?? ""));
+      }
+      case "screenshot_url": {
+        const { captureUrlScreenshot } = await import("./screenshotUrl");
+        const split = await captureUrlScreenshot({
+          url: String(args.url ?? ""),
+        });
+        if (!split.imageDataUrls.length) {
+          return split.text;
+        }
+        return [
+          split.text,
+          `[screenshot_url: ${split.imageDataUrls.length} PNG — main-like loop delivers this to vision]`,
+        ].join("\n");
       }
       default:
         return JSON.stringify({ error: `Неизвестный инструмент: ${name}` });

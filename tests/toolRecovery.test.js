@@ -96,6 +96,27 @@ test("prepareKimiGatewayMessages shrinks older tool payloads", () => {
   assert.ok(String(forFinale[0].content).length < 2_000);
 });
 
+test("prepareKimiGatewayMessages readonly preserves Figma and shrinks explore harder", () => {
+  const figmaPayload = "FIGMA".repeat(2_000);
+  const messages = [
+    { role: "tool", name: "read_file", content: "a".repeat(6_000) },
+    { role: "tool", name: "search_text", content: "b".repeat(6_000) },
+    {
+      role: "tool",
+      name: "mcp__figma__get_design_context",
+      content: figmaPayload,
+    },
+    { role: "tool", name: "read_file", content: "c".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "d".repeat(6_000) },
+  ];
+  assert.equal(prepareKimiGatewayMessages(messages, { readonly: true }), true);
+  // keepRecent=2 → first three non-preserved older tools shrink; Figma intact
+  assert.ok(String(messages[0].content).length < 2_000);
+  assert.ok(String(messages[1].content).length < 2_000);
+  assert.equal(String(messages[2].content), figmaPayload);
+  assert.equal(String(messages[4].content).length, 6_000);
+});
+
 test("prepareFragileGatewayMessages caps even the latest read_file", () => {
   const { prepareFragileGatewayMessages } = require("../out/toolRecovery.js");
   const payload = JSON.stringify({

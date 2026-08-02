@@ -37,14 +37,14 @@ Prefer the next concrete action (write_file / answer) over re-exploring files yo
  * Universal (not task-specific): rules/context are guidance; verify repo facts with tools.
  */
 export const VERIFY_REPO_FACTS_HINT = `Workspace guidance (AGENTS.md / rules / editor context) is helpful context, not a substitute for the repository.
-When the user asks for factual claims about this project that can be checked in the workspace (versions, file contents, structure, configs, scripts, dependencies), verify with list_files / read_file before answering.
+When the user asks for factual claims about this project that can be checked in the workspace (versions, file contents, structure, configs, scripts, dependencies), verify with list_files / read_file / search_text before answering.
 Do not invent paths or versions. Prefer a short tool-verified answer over restating rules alone.
 If tools are unavailable or the question is purely conceptual, answer from knowledge and say when you did not read the repo.
-When you already know several paths to inspect, call multiple read_file / list_files in the same assistant turn — they run in parallel. Do not serialize one read per round when the other paths are already clear.`;
+When you already know several paths to inspect, call multiple read_file / list_files / search_text in the same assistant turn — they run in parallel. Do not serialize one read per round when the other paths are already clear.`;
 
 /** Short marker used in tests / docs for the parallel-reads guidance. */
 export const PARALLEL_READS_HINT_MARKER =
-  "multiple read_file / list_files in the same assistant turn";
+  "multiple read_file / list_files / search_text in the same assistant turn";
 
 /**
  * Zed-style focused-edit guidance: prefer search_replace (surgical patch) over

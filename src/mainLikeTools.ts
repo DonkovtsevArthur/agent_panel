@@ -82,8 +82,10 @@ function raceShowInputBoxWithSignal(
 export const MAIN_LIKE_READONLY_TOOL_NAMES = new Set([
   "list_files",
   "read_file",
+  "search_text",
   "get_diagnostics",
   "fetch_url",
+  "screenshot_url",
   "open_external",
   "request_user_input",
   "delegate_task",
@@ -140,6 +142,46 @@ export const mainLikeAgentTools: ChatTool[] = [
           },
         },
         required: ["relativePath"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_text",
+      description:
+        "Быстрый поиск текста по файлам workspace (как grep): path:line. Используй в Plan, чтобы найти похожие компоненты/экраны/API перед записью шага плана. Не для node_modules/.git/dist/out.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Подстрока или RegExp (см. regex)",
+          },
+          pathPrefix: {
+            type: "string",
+            description:
+              "Относительная подпапка для ограничения поиска (по умолчанию весь workspace)",
+          },
+          include: {
+            type: "string",
+            description:
+              "Glob-маска имени файла, например *.ts или *.{ts,tsx}",
+          },
+          regex: {
+            type: "boolean",
+            description: "Трактовать query как RegExp (по умолчанию false)",
+          },
+          caseSensitive: {
+            type: "boolean",
+            description: "Учитывать регистр (по умолчанию false)",
+          },
+          maxResults: {
+            type: "number",
+            description: "Максимум совпадений (по умолчанию 50)",
+          },
+        },
+        required: ["query"],
       },
     },
   },
@@ -242,7 +284,25 @@ export const mainLikeAgentTools: ChatTool[] = [
     function: {
       name: "fetch_url",
       description:
-        "Скачать http(s) URL и вернуть структурированные данные страницы: title, description, headings, content, colors, links. Используй для ЛЮБОГО вопроса по ссылке (факты, цвета, цены, текст, метаданные). Не говори, что не можешь открывать URL. Для figma.com — MCP Figma tools, если доступны.",
+        "Скачать http(s) URL без JS-рендера и вернуть структурированные данные: title, description, headings, content, colors, links. Для сырого HTML/метаданных. Если нужен визуальный вид страницы (layout, цвета, кнопки после JS) — вызывай screenshot_url (можно параллельно). Для figma.com — MCP Figma tools.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Полный URL со схемой http или https",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "screenshot_url",
+      description:
+        "Открыть http(s) страницу в headless-браузере, сделать PNG-скриншот и вернуть видимый текст после JS-рендера. Используй когда пользователь дал ссылку на веб-страницу и нужен визуальный разбор (layout, UI, цвета) или когда fetch_url вернул SPA-оболочку. Скриншот уходит в vision. Не для figma.com — там MCP get_design_context + get_screenshot. Браузер: системный Chrome/Edge/Brave или Playwright Chromium (~/.harbor-agents, скачивается при первом вызове).",
       parameters: {
         type: "object",
         properties: {
@@ -260,7 +320,7 @@ export const mainLikeAgentTools: ChatTool[] = [
     function: {
       name: "open_external",
       description:
-        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — сначала fetch_url. Для Figma — MCP tools.",
+        "Открыть http(s) URL во внешнем браузере пользователя. Если нужно самому проверить факты/текст/цвета по ссылке — fetch_url и/или screenshot_url. Для Figma — MCP tools.",
       parameters: {
         type: "object",
         properties: {
@@ -520,6 +580,9 @@ export async function runMainLikeTool(
         // Полный путь из tools.ts: diagnostics / importWarnings / unchanged.
         return runTool(name, argsJson);
       }
+      case "search_text": {
+        return runTool(name, argsJson);
+      }
       case "run_command": {
         return await runCommand(
           String(args.command ?? ""),
@@ -529,6 +592,22 @@ export async function runMainLikeTool(
       case "fetch_url":
       case "open_external": {
         return runTool(name, argsJson);
+      }
+      case "screenshot_url": {
+        // Media (PNG) is handled in agentLoopMainLike.invokeTool via
+        // captureUrlScreenshot — this path is a text-only fallback.
+        const { captureUrlScreenshot } = await import("./screenshotUrl");
+        const split = await captureUrlScreenshot({
+          url: String(args.url ?? ""),
+          signal: options?.signal,
+        });
+        if (!split.imageDataUrls.length) {
+          return split.text;
+        }
+        return [
+          split.text,
+          `[screenshot_url: ${split.imageDataUrls.length} PNG attached — prefer the main-like vision path]`,
+        ].join("\n");
       }
       case "request_user_input": {
         const question = String(args.question ?? "").trim();

@@ -76,15 +76,17 @@ export function buildPlanImplementSystemHint(): string {
   return [
     "You are executing an approved plan from Plan mode (Build).",
     "The plan in the user message is a binding contract for WHAT to build:",
-    "- Implement every Step; if the turn budget ends mid-plan, say which steps remain — do not silently stop after a partial subset.",
-    "- Use the components, widgets, shared primitives, and file paths named in the plan. Do NOT invent a parallel component or replace a named existing one with a new one-off.",
+    "- Implement every Step in order; treat Acceptance criteria as the definition of done for each step when present.",
+    "- If the turn budget ends mid-plan, list completed vs remaining Steps explicitly — do not silently stop after a partial subset.",
+    "- Use the components, widgets, shared primitives, and file paths named in the plan (reuse paths and new-by-pattern references). Do NOT invent a parallel component or replace a named existing one with a new one-off.",
+    "- If the plan includes an **Implementation** section (props/imports/types/signatures/snippets), treat it as the contract for HOW to call the named components and shape data — build against those exact props and types. Do not re-decide them. You still must read_file the target file before editing to match its current structure, imports, and surrounding code.",
     "- Do not rewrite the architecture or re-plan. Choosing a different UI kit/component than the plan is not allowed.",
     "HOW to write code must come from the project:",
     "- Before write_file / search_replace on an existing path: read_file that file (and its direct imports / 1 sibling in the same feature if needed).",
     "- Match that file's structure, imports, styling, and shared primitives — plan names the target; the repo shows the pattern.",
     "- Do not browse unrelated pages to redesign. Analogues only from the plan paths / same module.",
     "- Prefer search_replace for existing files; write_file only to create a new file or a true full rewrite with COMPLETE contents (never empty or truncated).",
-    "- After edits, briefly report done vs remaining plan steps.",
+    "- After edits, briefly report done vs remaining plan steps against the plan checklist.",
   ].join(" ");
 }
 

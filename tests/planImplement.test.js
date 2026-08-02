@@ -68,6 +68,15 @@ test("buildPlanImplementSystemHint requires reading project files for HOW", () =
   assert.match(hint, /read_file/i);
   assert.match(hint, /HOW to write/i);
   assert.match(hint, /never empty or truncated/i);
+  assert.match(hint, /Acceptance/i);
+  assert.match(hint, /completed vs remaining/i);
+});
+
+test("buildPlanImplementSystemHint treats the plan Implementation section as the HOW contract", () => {
+  const hint = buildPlanImplementSystemHint();
+  assert.match(hint, /\*\*Implementation\*\*/i);
+  assert.match(hint, /exact props and types/i);
+  assert.match(hint, /Do not re-decide them/i);
 });
 
 test("buildEditCorrectionSystemHint prefers search_replace and Figma labels", () => {

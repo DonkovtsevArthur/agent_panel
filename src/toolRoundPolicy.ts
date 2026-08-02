@@ -8,7 +8,11 @@
  * list/read — иначе gateway падает на раздутом tool-контексте.
  */
 
-export const EXPLORE_ONLY_TOOLS = new Set(["list_files", "read_file"]);
+export const EXPLORE_ONLY_TOOLS = new Set([
+  "list_files",
+  "read_file",
+  "search_text",
+]);
 
 /**
  * В readonly (Plan/Ask) delegate_task форсируется в ask-под-агент — это
@@ -30,6 +34,14 @@ export const KIMI_EXPLORE_SOFT_NUDGE_ROUNDS = 4;
 /** Kimi: hard-cut (после soft без explore). */
 export const KIMI_EXPLORE_HARD_CUT_ROUNDS = 6;
 
+/**
+ * Plan quality-first: мягкие напоминания про grounding.
+ * Hard-cut explore отключён — иначе обрывает незакрытые пункты
+ * инвентаря (чеклист / блоки макета). Потолок = maxToolRounds + planQuality gate.
+ */
+export const PLAN_QUALITY_SOFT_NUDGE_ROUNDS = 6;
+export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS = 8;
+
 /** Сколько раз можно продлить бюджет раундов. */
 export const MAX_ROUND_EXTENSIONS = 1;
 
@@ -41,12 +53,22 @@ export type ExploreRoundLimits = {
   hardCutRounds: number;
   /** Soft-nudge снимает list/read из tool list. */
   stripExploreOnSoftNudge: boolean;
+  /**
+   * When false (Plan quality), never hard-cut / strip explore tools.
+   * Soft reminders may repeat; incomplete-plan gate is the real stop.
+   */
+  hardCutExplore: boolean;
 };
 
 export function exploreRoundLimits(options: {
   kimi: boolean;
   /** Build → Agent: меньше explore, быстрее к правкам по плану. */
   implementPlan?: boolean;
+  /**
+   * Plan mode quality-first: per-item grounding before <proposed_plan>.
+   * Soft reminders only — no hard-cut that would strand ungrounded items.
+   */
+  planQuality?: boolean;
 }): ExploreRoundLimits {
   // Implement-from-plan: plan already named files/components — do not spend
   // Kimi's long explore budget re-browsing analogous pages.
@@ -55,6 +77,18 @@ export function exploreRoundLimits(options: {
       softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
       hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
       stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
+    };
+  }
+  if (options.planQuality) {
+    return {
+      softNudgeRounds: options.kimi
+        ? PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS
+        : PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
+      // Unused while hardCutExplore is false — keep a large sentinel for tests.
+      hardCutRounds: Number.MAX_SAFE_INTEGER,
+      stripExploreOnSoftNudge: false,
+      hardCutExplore: false,
     };
   }
   if (options.kimi) {
@@ -62,12 +96,14 @@ export function exploreRoundLimits(options: {
       softNudgeRounds: KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
       hardCutRounds: KIMI_EXPLORE_HARD_CUT_ROUNDS,
       stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
     };
   }
   return {
     softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
     hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
     stripExploreOnSoftNudge: true,
+    hardCutExplore: true,
   };
 }
 
@@ -159,16 +195,17 @@ export function buildExploreSoftNudge(options: {
   if (options.readonly) {
     if (options.plan) {
       return [
-        "Stop exploring the repository.",
-        "You already have enough context from the tools above.",
-        "Do not call list_files or read_file again.",
-        "Now write the final plan: wrap it in a <proposed_plan>…</proposed_plan> block with Goal, Steps, Affected files, and Risks. Do not answer in prose — the plan is the deliverable.",
+        "Progress check (explore tools remain available — this is not a hard stop):",
+        "If you already have a checklist of mockup blocks / user items, keep grounding any item that still lacks a verified workspace path (reuse or new-by-pattern of a path you read) via search_text / list_files / read_file / delegate_task.",
+        "Do not drop remaining items because of round count.",
+        "Only when every item is grounded, write the final <proposed_plan>…</proposed_plan> with Goal, Steps (1:1 with items, each naming a concrete path), Affected files, Acceptance, and Risks.",
+        "Do not answer in prose — the plan is the deliverable. Do not invent paths you did not verify with tools.",
       ].join(" ");
     }
     return [
       "Stop exploring the repository.",
       "You already have enough context from the tools above.",
-      "Do not call list_files or read_file again.",
+      "Do not call list_files, read_file, or search_text again.",
       "Reply to the user now with a concise answer based on what you already gathered.",
     ].join(" ");
   }
@@ -214,13 +251,14 @@ export function buildExploreHardNudge(options: {
     if (options.plan) {
       return [
         "Exploration limit reached.",
-        "list_files and read_file are no longer allowed this turn.",
-        "Write the final plan now: wrap it in a <proposed_plan>…</proposed_plan> block with Goal, Steps, Affected files, and Risks, based only on the information already gathered. Do not call tools and do not answer in prose.",
+        "list_files, read_file, and search_text are no longer allowed this turn.",
+        "Write the final <proposed_plan>…</proposed_plan> now from what you already gathered: Goal, Steps (each with a concrete path you found — reuse or new-by-pattern), Affected files, Acceptance, Risks.",
+        "If a critical path was never found, say so in Risks and use only verified paths. Do not invent files. Do not answer in prose outside the plan block.",
       ].join(" ");
     }
     return [
       "Exploration limit reached.",
-      "list_files and read_file are no longer allowed this turn.",
+      "list_files, read_file, and search_text are no longer allowed this turn.",
       "Answer the user now using only the information already gathered. Do not call tools.",
     ].join(" ");
   }
