@@ -369,7 +369,7 @@ test("readonly mode: prose questions ok after successful request_user_input", ()
 
 test("readonly mode: proposed_plan with risks is not prose clarifying", () => {
   const plan =
-    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Роут.\n**Риски**: API может отсутствовать.\n</proposed_plan>";
+    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Роут — reuse `src/app/routes.ts`.\n**Затрагиваемые файлы**: `src/app/routes.ts`\n**Риски**: API может отсутствовать.\n</proposed_plan>";
   const decision = decideHonestFinale({
     text: plan,
     canEdit: false,
@@ -385,7 +385,7 @@ test("readonly mode: proposed_plan with future-tense steps is not hedge (forced-
   // hedge-детектор. forced-finale зовёт decideHonestFinale с allowNudgeHedge:false
   // — без защиты тегом это заменило бы план на HEDGE_USER_VISIBLE.
   const plan =
-    "<proposed_plan>\n**Цель**: миграция.\n**Шаги**:\n1. Начну с обновления путей.\n2. Возможно стоит добавить fallback.\n**Риски**: возможно, стоит проверить совместимость.\n</proposed_plan>";
+    "<proposed_plan>\n**Цель**: миграция.\n**Шаги**:\n1. Начну с обновления путей в `src/migrate.ts`.\n2. Возможно стоит добавить fallback в `src/fallback.ts`.\n**Затрагиваемые файлы**: `src/migrate.ts`, `src/fallback.ts`\n**Риски**: возможно, стоит проверить совместимость.\n</proposed_plan>";
   const decisionAllow = decideHonestFinale({
     text: plan,
     canEdit: false,
@@ -405,6 +405,104 @@ test("readonly mode: proposed_plan with future-tense steps is not hedge (forced-
   });
   assert.equal(decisionForced.kind, "ok");
   assert.equal(decisionForced.text, plan);
+});
+
+test("readonly mode: incomplete proposed_plan without paths nudges plan quality", () => {
+  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+  const plan =
+    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Сделать таблицу.\n**Затрагиваемые файлы**: несколько файлов\n**Риски**: нет.\n</proposed_plan>";
+  const nudged = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [],
+    userText: "план по пунктам",
+    allowNudgePlanQuality: true,
+  });
+  assert.equal(nudged.kind, "nudge_plan_quality");
+
+  // z.ai-style: nudges exhausted but a <proposed_plan> card exists → show it
+  // (with the Build button), do NOT replace with the blocking error.
+  const shown = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [],
+    userText: "план по пунктам",
+    allowNudgePlanQuality: false,
+  });
+  assert.equal(shown.kind, "ok");
+  assert.equal(shown.text, plan);
+});
+
+test("readonly mode: Kimi page→tab drift after nudges is a hard replace", () => {
+  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+  const user =
+    "составь план реализации страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const plan =
+    "<proposed_plan>\n**Цель**: Реализовать вкладку «Удостоверение» на существующей странице InitialBriefingKnowledgeCheckPage\n**Шаги**:\n" +
+    "1. Добавить таб — src/features/ibkc/tabs.tsx\n" +
+    "**Затрагиваемые файлы**:\n- src/features/ibkc/tabs.tsx\n**Риски**: нет\n</proposed_plan>";
+  const nudged = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [],
+    userText: user,
+    allowNudgePlanQuality: true,
+    kimi: true,
+  });
+  assert.equal(nudged.kind, "nudge_plan_quality");
+
+  const replaced = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [],
+    userText: user,
+    allowNudgePlanQuality: false,
+    kimi: true,
+  });
+  assert.equal(replaced.kind, "replace");
+  assert.equal(replaced.text, PLAN_QUALITY_USER_VISIBLE);
+
+  // Non-Kimi keeps soft show of the imperfect card.
+  const soft = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [],
+    userText: user,
+    allowNudgePlanQuality: false,
+    kimi: false,
+  });
+  assert.equal(soft.kind, "ok");
+  assert.equal(soft.text, plan);
+});
+
+test("readonly mode: prose «already exists» without a plan card is replaced with the error when nudges are off", () => {
+  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+  const prose =
+    "Страница уже есть в проекте — initial-briefing-knowledge-check полностью совпадает с макетом Figma.";
+  const replaced = decideHonestFinale({
+    text: prose,
+    canEdit: false,
+    messages: [],
+    userText:
+      "составь план по реализации данной страницы https://www.figma.com/design/abc/x?node-id=1-2",
+    allowNudgePlanQuality: false,
+  });
+  assert.equal(replaced.kind, "replace");
+  assert.equal(replaced.text, PLAN_QUALITY_USER_VISIBLE);
+});
+
+test("readonly mode: prose «already exists» without proposed_plan nudges plan quality", () => {
+  const prose =
+    "Страница уже есть в проекте — initial-briefing-knowledge-check полностью совпадает с макетом Figma.";
+  const decision = decideHonestFinale({
+    text: prose,
+    canEdit: false,
+    messages: [],
+    userText:
+      "составь план по реализации данной страницы https://www.figma.com/design/abc/x?node-id=1-2",
+    allowNudgePlanQuality: true,
+  });
+  assert.equal(decision.kind, "nudge_plan_quality");
 });
 
 test("readonly mode: Figma abstract-payload prose clarification nudges (no question marks)", () => {

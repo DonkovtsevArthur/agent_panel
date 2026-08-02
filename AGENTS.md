@@ -25,8 +25,9 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Model capabilities registry | `src/modelCapabilities.ts` (per-model: vision, reasoning, Kimi quirks, `omitContentForToolCalls`) |
 | Model routing / utility models | `src/modelRouting.ts` |
 | Vision routing (image attachments) | `agentPanel.visionRouting.preferredModelIds` → `VISION_MODEL_PREFERENCE` (whole-turn switch only for attached images) |
-| Figma screenshot vision helper | `src/figmaVisionHelper.ts` — MCP `get_screenshot` images are described under the hood; chat-selected model stays the planner |
-| Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; correction follow-ups get the same discipline |
+| Figma / page screenshot vision | `src/figmaVisionHelper.ts` + `src/screenshotUrl.ts` + `src/visionDelivery.ts` — MCP `get_screenshot` / `screenshot_url` deliver PNG; if Settings preferred vision is set and the chat planner is not in that list, preferred always OCR’s under the hood (planner stays Kimi/etc.); raw pixels only when planner ∈ preferred (or preferred empty + planner has vision). Harbor forces `enableBase64Response` on Figma screenshots; `get_figma_data` is hidden only when `get_design_context`/`get_screenshot` exist (PAT keeps legacy). Kimi page→tab drift after plan-quality nudges → hard replace (no soft Build card) |
+| Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; plan's optional `**Implementation**` section (props/types/signatures) is the HOW contract the implementer builds against; correction follow-ups get the same discipline |
+| Plan quality | Per-item grounding + Component-API grounding (read the target shared UI component's source for exact props/imports) + page→tab / «already exists» / PLAN.md gates (`planQuality.ts`); Figma requires `get_design_context`+`get_screenshot`; `<proposed_plan>` may include an optional `**Implementation**` section; soft explore (no hard-cut); editable plan card; Kimi Plan preserves Figma, shrinks older explore |
 | Destructive write guard | `src/writeFileGuard.ts` — refuse empty/truncated `write_file` over substantial existing files |
 | Discard scope | `src/discardChanges.ts` — «отмени изменения» = last agent paths; «все» = whole dirty; bare «отмени» → ask; successful restore/clean/rm skips write_file honestFinale |
 | Commit message generation | `src/commitMessage.ts` |
@@ -61,7 +62,7 @@ All chat models use the **main-like** path:
 - **Per-chat model isolation (`syncRunChat` / `modelChanged`)**: `this.selectedModel` is a class-level field shared across chats. `syncRunChat` (`agentPanelProvider.ts`) saves the model to `runChatId` when a turn finishes — it must use `this.selectedModel` **only** when `this.store.activeChatId === runChatId`; otherwise use `selectedModelAfterRun` (the model chosen at run start). Without this guard, switching chats mid-run leaks the new chat's model into the old chat. `modelChanged` / `modeChanged` messages from the webview carry `chatId`; the host ignores them if the active chat no longer matches — prevents stale messages from overwriting a newly-switched chat's model.
 - Built-in tools from `mainLikeTools.ts`:
   - always: `list_files`, `read_file`, `write_file`, `search_replace`, `run_command`
-  - URL: `fetch_url`, `open_external` (when the user message has http(s) / Figma URL)
+  - URL: `fetch_url`, `screenshot_url` (headless Chrome/Edge PNG + visible text), `open_external` (when the user message has http(s) / Figma URL)
   - plus connected **MCP** tools (e.g. Figma) when enabled in Settings
   - **Focused edits (Zed-style):** `search_replace` (old_string → new_string, uniqueness required by default; `replace_all` for multi) is the surgical patch tool — it changes only the target fragment and leaves the rest of the file (dependencies, imports, neighboring code) untouched. The `FOCUSED_EDIT_HINT` system message nudges models to prefer `search_replace` for changes to EXISTING files and reserve `write_file` (full rewrite) for creating new files or rewriting entirely. `isMainLikeWriteTool` (`write_file` ∪ `search_replace`) gates productive rounds, edit tracking (`bumpEdit`), the hard-cut allow-list, and the post-edit verification gate — so `search_replace` edits are counted, tracked, and verified exactly like `write_file`.
 
@@ -79,8 +80,9 @@ Do **not** tell the user that external URLs / Figma are unavailable when `fetch_
 
 ### Tool-round policy
 
-- After **2** explore-only rounds (`list_files` / `read_file` only): soft nudge — stop reading, write or answer.
+- After **2** explore-only rounds (`list_files` / `read_file` / `search_text`): soft nudge — stop reading, write or answer.
 - After **4** explore-only rounds: hard-cut — no more explore; write-only or final answer.
+- **Plan mode:** soft grounding reminders only (repeatable); **no hard-cut explore** — finish per-item grounding; ceiling is `maxToolRounds` + incomplete-plan gate.
 - If the turn is productive (`write_file` / `run_command`) and the round budget ends: auto-extend once (+8 rounds).
 - Soft verify hint (`VERIFY_REPO_FACTS_HINT`): rules are guidance; verify repo facts with tools; prefer multiple `read_file` / `list_files` in one turn (they run in parallel).
 - **Kimi:** soft after **4**, hard-cut after **6**; soft nudge **strips** `list_files` / `read_file` (write by the analogous files already read). Before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`) **and** drop `reasoning_content` from older assistant rounds (`dropOlderReasoningBlocks`, keep recent 2) — Zed-like `drop_reasoning_blocks`: API still gets the required placeholder for tool-call rounds via `toApiMessages`, but stale thinking no longer eats context. Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`. Extra system hint: before new UI/pages, read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`).
@@ -161,6 +163,7 @@ else any enabled “light” model, else `defaultModel`.
 
 - Do not claim files were edited unless `write_file` actually ran successfully in this turn (real +/− lines).
 - Main-like loop enforces this via `decideHonestFinale` in `agentLoopMainLike.ts` (nudge → retry tools, else replace with honest user-visible message).
+- Plan-quality gate is softened (z.ai-style): when the model emits a `<proposed_plan>` card but `looksLikePlanQualityFailure` still flags it (missing paths / page→tab drift / «already exists» without inventory), the loop nudges up to 2× to self-correct; if it still produces a `<proposed_plan>`, the card is shown to the user with the Build button — NOT replaced with the blocking error. The error message is only used when there is no plan card at all (prose «already exists» / PLAN.md file-write claim).
 - Empty model finales never surface bare «(пустой ответ)»: nudge to `write_file` / forced text reply, else `finalizeAssistantText` (edits summary → tool activity → clear error) in `emptyFinale.ts`.
 - Do not claim Figma/URL access is impossible when the corresponding tools are available; if Figma MCP is disconnected, say to connect in Settings → MCP Servers (PAT).
 

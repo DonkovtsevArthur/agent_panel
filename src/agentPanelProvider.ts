@@ -2246,10 +2246,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const hasImageAttachment = attachments.some(
       (attachment) => attachment.kind === "image"
     );
-    // Vision routing только для вложений-картинок (multimodal user message).
-    // Figma URL не переключает весь ход: выбранная модель остаётся planner'ом,
-    // а get_screenshot обрабатывается under-the-hood vision helper'ом в
-    // agentLoopMainLike (см. describeMcpImagesForMainModel).
+    // Vision routing (whole-turn switch) только для вложений-картинок.
+    // Figma URL не переключает весь ход: выбранная модель остаётся planner'ом.
+    // MCP get_screenshot / screenshot_url: если в Settings задан preferred
+    // vision и planner не в этом списке — under-the-hood helper (preferred
+    // смотрит PNG → текстовые лейблы). Raw image-message planner'у — только
+    // когда он сам в preferred (или preferred пуст и у planner есть vision).
+    // См. shouldDeliverRawScreenshotToPlanner / deliverVisionMedia.
     const needsVision = hasImageAttachment;
     const visionPreferenceIds = needsVision
       ? config.visionRouting.preferredModelIds

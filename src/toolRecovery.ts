@@ -200,13 +200,17 @@ export function prepareKimiGatewayMessages(
   options?: { readonly?: boolean }
 ): boolean {
   const preserve = options?.readonly ? ["mcp__figma__"] : [];
+  // Plan/Ask: long explore + full Figma — keep Figma intact, shrink older
+  // list/read/search harder so the gateway does not 400 on JSON parse.
   const older = shrinkOlderToolResults(messages, {
-    keepRecent: 3,
-    maxOldChars: 2_500,
+    keepRecent: options?.readonly ? 2 : 3,
+    maxOldChars: options?.readonly ? 1_600 : 2_500,
     preserveToolPrefixes: preserve,
   });
   const edits = compactCompletedEditToolArguments(messages);
-  const reasoning = dropOlderReasoningBlocks(messages, { keepRecent: 2 });
+  const reasoning = dropOlderReasoningBlocks(messages, {
+    keepRecent: options?.readonly ? 1 : 2,
+  });
   return older || edits || reasoning;
 }
 

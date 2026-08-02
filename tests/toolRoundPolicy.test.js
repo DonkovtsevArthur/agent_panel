@@ -20,8 +20,10 @@ const {
 test("explore-only detection", () => {
   assert.equal(isExploreOnlyTool("list_files"), true);
   assert.equal(isExploreOnlyTool("read_file"), true);
+  assert.equal(isExploreOnlyTool("search_text"), true);
   assert.equal(isExploreOnlyTool("write_file"), false);
   assert.equal(roundWasExploreOnly(["list_files", "read_file"]), true);
+  assert.equal(roundWasExploreOnly(["search_text", "read_file"]), true);
   assert.equal(roundWasExploreOnly(["read_file", "write_file"]), false);
   assert.equal(roundWasExploreOnly([]), false);
 });
@@ -64,12 +66,14 @@ test("Kimi explore limits allow more reads then strip explore on soft", () => {
     softNudgeRounds: 2,
     hardCutRounds: 4,
     stripExploreOnSoftNudge: true,
+    hardCutExplore: true,
   });
   const kimiLimits = exploreRoundLimits({ kimi: true });
   assert.deepEqual(kimiLimits, {
     softNudgeRounds: 4,
     hardCutRounds: 6,
     stripExploreOnSoftNudge: true,
+    hardCutExplore: true,
   });
 });
 
@@ -112,6 +116,8 @@ test("plan-mode explore nudges ask for <proposed_plan>, not a concise answer", (
     plan: true,
   });
   assert.match(soft, /proposed_plan/);
+  assert.match(soft, /not a hard stop|remain available/i);
+  assert.match(soft, /Do not drop remaining items/i);
   assert.doesNotMatch(soft, /Reply to the user/);
   const hard = buildExploreHardNudge({
     agentsMd: false,
@@ -123,6 +129,31 @@ test("plan-mode explore nudges ask for <proposed_plan>, not a concise answer", (
   // Ask mode (readonly, no plan) keeps the concise-answer wording.
   const ask = buildExploreSoftNudge({ agentsMd: false, readonly: true });
   assert.match(ask, /Reply to the user/);
+});
+
+test("planQuality explore: soft reminders only, no hard-cut", () => {
+  const {
+    PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
+    PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS,
+  } = require("../out/toolRoundPolicy.js");
+  const plan = exploreRoundLimits({ kimi: false, planQuality: true });
+  assert.equal(plan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
+  assert.equal(plan.stripExploreOnSoftNudge, false);
+  assert.equal(plan.hardCutExplore, false);
+  assert.ok(plan.hardCutRounds > 1000);
+  const kimiPlan = exploreRoundLimits({ kimi: true, planQuality: true });
+  assert.equal(kimiPlan.softNudgeRounds, PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS);
+  assert.equal(kimiPlan.hardCutExplore, false);
+  assert.equal(kimiPlan.stripExploreOnSoftNudge, false);
+  // implementPlan still wins over planQuality if both were set
+  const implement = exploreRoundLimits({
+    kimi: true,
+    implementPlan: true,
+    planQuality: true,
+  });
+  assert.equal(implement.softNudgeRounds, EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(implement.stripExploreOnSoftNudge, true);
+  assert.equal(implement.hardCutExplore, true);
 });
 
 test("roundAdvancesExploreStreak counts delegate_task only in readonly", () => {
