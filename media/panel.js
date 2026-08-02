@@ -326,6 +326,10 @@
       proposedPlanEdit: "Edit",
       proposedPlanSave: "Save",
       proposedPlanCancel: "Cancel",
+      proposedPlanCodeSection: "Plan code",
+      proposedPlanCodeBlock: "Code",
+      proposedPlanCodeLines: (n) => (n === 1 ? "1 line" : `${n} lines`),
+      proposedPlanCodeToggle: "Show or hide code",
       proposedPlanImplementPrefix:
         "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
     },
@@ -632,6 +636,11 @@
       proposedPlanEdit: "Изменить",
       proposedPlanSave: "Сохранить",
       proposedPlanCancel: "Отмена",
+      proposedPlanCodeSection: "Код плана",
+      proposedPlanCodeBlock: "Код",
+      proposedPlanCodeLines: (n) =>
+        n === 1 ? "1 строка" : n < 5 ? `${n} строки` : `${n} строк`,
+      proposedPlanCodeToggle: "Показать или скрыть код",
       proposedPlanImplementPrefix:
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
@@ -8532,6 +8541,108 @@
     });
   }
 
+  const PLAN_SECTION_NEXT_RE =
+    /^(Цель|Goal|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Affected(?:\s+files)?|Риски|Risks|Acceptance)\b/i;
+
+  /**
+   * After marked.parse: highlight Implementation as a code section and give
+   * every fenced block a chrome bar (language / line count / collapse).
+   */
+  function enhancePlanBodyHtml(html) {
+    const raw = String(html || "");
+    if (!raw.trim()) {
+      return raw;
+    }
+    const root = document.createElement("div");
+    root.innerHTML = raw;
+
+    const kids = Array.from(root.children);
+    let implStart = -1;
+    for (let i = 0; i < kids.length; i++) {
+      const label = String(kids[i].textContent || "")
+        .trim()
+        .replace(/^#+\s*/, "");
+      if (/^Implementation\b/i.test(label)) {
+        implStart = i;
+        break;
+      }
+    }
+    if (implStart >= 0) {
+      let implEnd = kids.length;
+      for (let j = implStart + 1; j < kids.length; j++) {
+        const label = String(kids[j].textContent || "")
+          .trim()
+          .replace(/^#+\s*/, "");
+        if (PLAN_SECTION_NEXT_RE.test(label) && label.length < 96) {
+          implEnd = j;
+          break;
+        }
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "proposed-plan-impl";
+      const heading = document.createElement("div");
+      heading.className = "proposed-plan-impl-label";
+      heading.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">code</span>` +
+        `<span>${escapeHtml(t("proposedPlanCodeSection"))}</span>`;
+      const body = document.createElement("div");
+      body.className = "proposed-plan-impl-body";
+      const anchor = kids[implStart];
+      root.insertBefore(wrap, anchor);
+      wrap.appendChild(heading);
+      wrap.appendChild(body);
+      for (let k = implStart; k < implEnd; k++) {
+        body.appendChild(kids[k]);
+      }
+    }
+
+    root.querySelectorAll(".md-pre-wrap").forEach((wrap) => {
+      if (!(wrap instanceof HTMLElement)) {
+        return;
+      }
+      const pre = wrap.querySelector(".md-pre");
+      if (!pre) {
+        return;
+      }
+      const codeText = String(pre.textContent || "");
+      const lineCount = codeText ? codeText.split("\n").length : 0;
+      let meta = wrap.querySelector(".md-pre-meta");
+      if (!meta) {
+        meta = document.createElement("div");
+        const collapsible = lineCount > 10;
+        meta.className =
+          "md-pre-meta" + (collapsible ? " md-pre-toggle" : "");
+        if (collapsible) {
+          meta.setAttribute("role", "button");
+          meta.tabIndex = 0;
+          meta.setAttribute("aria-expanded", "false");
+          meta.setAttribute("aria-label", t("proposedPlanCodeToggle"));
+        }
+        meta.innerHTML =
+          `<span class="md-pre-meta-main">` +
+          `<span class="material-symbols-outlined md-pre-code-icon" aria-hidden="true">terminal</span>` +
+          `<span class="md-pre-path">${escapeHtml(t("proposedPlanCodeBlock"))}</span>` +
+          (lineCount
+            ? `<span class="md-pre-meta-sep">·</span>` +
+              `<span class="md-pre-lines">${escapeHtml(
+                t("proposedPlanCodeLines", lineCount)
+              )}</span>`
+            : "") +
+          `</span>` +
+          (collapsible
+            ? `<span class="material-symbols-outlined md-pre-chevron" aria-hidden="true">expand_more</span>`
+            : "");
+        wrap.insertBefore(meta, wrap.firstChild);
+        if (collapsible) {
+          wrap.classList.add("is-collapsible", "is-collapsed");
+        }
+      }
+      wrap.classList.add("proposed-plan-code");
+    });
+
+    return root.innerHTML;
+  }
+
   /** Markdown for plan card body only — no nested proposed_plan extraction. */
   function renderPlanBodyHtml(planBody) {
     const text = String(planBody || "");
@@ -8541,7 +8652,7 @@
     const api = getMarkedApi();
     if (ensureMarkdownRenderer() && api) {
       try {
-        return api.parse(text, { async: false });
+        return enhancePlanBodyHtml(api.parse(text, { async: false }));
       } catch {
         // fall through
       }

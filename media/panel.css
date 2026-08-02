@@ -1332,6 +1332,112 @@ body.vscode-dark .md-pre .syntax-property {
   word-break: break-word;
 }
 
+.proposed-plan-body .md-p {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.proposed-plan-body .md-p:last-child {
+  margin-bottom: 0;
+}
+
+.proposed-plan-body .md-list {
+  margin: 0 0 8px;
+  padding-left: 1.35em;
+}
+
+.proposed-plan-body .md-code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.proposed-plan-body .md-pre,
+.proposed-plan-impl .md-pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.35));
+  background: var(
+    --vscode-textCodeBlock-background,
+    var(--vscode-editor-background, #1e1e1e)
+  );
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.proposed-plan-body .md-pre code,
+.proposed-plan-impl .md-pre code {
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  background: transparent;
+}
+
+.proposed-plan-body .md-pre-wrap,
+.proposed-plan-impl .md-pre-wrap {
+  margin: 10px 0;
+}
+
+.proposed-plan-body .md-pre-wrap:first-child,
+.proposed-plan-impl-body > .md-pre-wrap:first-child {
+  margin-top: 0;
+}
+
+.proposed-plan-code .md-pre-code-icon {
+  font-size: 16px;
+  opacity: 0.85;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.proposed-plan-impl {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background, #1e1e1e) 88%,
+    var(--vscode-input-background, transparent)
+  );
+}
+
+.proposed-plan-impl-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.proposed-plan-impl-label .material-symbols-outlined {
+  font-size: 16px;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.proposed-plan-impl-body > :first-child {
+  margin-top: 0;
+}
+
+.proposed-plan-impl-body > :last-child {
+  margin-bottom: 0;
+}
+
 .proposed-plan-editor {
   display: flex;
   flex-direction: column;
