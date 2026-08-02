@@ -174,3 +174,110 @@ test("Haiku prepareRoundMessages uses fragile gateway shrink", () => {
   });
   assert.ok(String(messages[2].content).length < 3_500);
 });
+
+/**
+ * Oversized Kimi history: a large preserved Figma payload (soft budget cannot
+ * shrink it) plus many explore rounds so mid-turn summary is eligible.
+ */
+function buildLongKimiExploreHistory(rounds) {
+  const messages = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "plan the page from figma" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "fig1",
+          type: "function",
+          function: {
+            name: "mcp__figma__get_design_context",
+            arguments: "{}",
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "fig1",
+      name: "mcp__figma__get_design_context",
+      content: "FIGMA_DESIGN " + "col ".repeat(8_000),
+    },
+  ];
+  for (let i = 0; i < rounds; i++) {
+    messages.push({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: `c${i}`,
+          type: "function",
+          function: {
+            name: "read_file",
+            arguments: JSON.stringify({ path: `src/file${i}.ts` }),
+          },
+        },
+      ],
+    });
+    messages.push({
+      role: "tool",
+      tool_call_id: `c${i}`,
+      name: "read_file",
+      content: `// src/file${i}.ts\n` + "export const x = 1;\n".repeat(400),
+    });
+  }
+  return messages;
+}
+
+test("Kimi Agent may mid-turn summarize oversized explore", () => {
+  const messages = buildLongKimiExploreHistory(6);
+  const result = prepareRoundMessages({
+    messages,
+    modelId: "kimi-k2.5",
+    contextWindow: 8_000,
+    reservedOutputTokens: 2_000,
+    kimi: true,
+    readonly: false,
+  });
+  assert.equal(result.summarized, true);
+  assert.ok(
+    messages.some(
+      (m) =>
+        typeof m.content === "string" &&
+        m.content.includes("--- Context compacted ---")
+    )
+  );
+});
+
+test("Kimi Plan/Ask skips soft-budget and mid-turn Context compacted", () => {
+  // Large window: soft target would have fired for Agent, but Plan/Ask uses
+  // hard ceiling only — so no compaction card / no summary fold.
+  const messages = buildLongKimiExploreHistory(6);
+  const result = prepareRoundMessages({
+    messages,
+    modelId: "kimi-k2.5",
+    contextWindow: 128_000,
+    reservedOutputTokens: 4_000,
+    kimi: true,
+    readonly: true,
+  });
+  assert.equal(result.summarized, false);
+  assert.equal(result.compacted, false);
+  assert.ok(
+    !messages.some(
+      (m) =>
+        typeof m.content === "string" &&
+        m.content.includes("--- Context compacted ---")
+    )
+  );
+  // Explore tool rounds stay in the message list (not folded into summary).
+  assert.ok(
+    messages.filter((m) => m.role === "tool" && m.name === "read_file").length >=
+      4
+  );
+  // Recent explore keeps full payload (gateway only shrinks older rounds).
+  const reads = messages.filter(
+    (m) => m.role === "tool" && m.name === "read_file"
+  );
+  assert.ok(String(reads.at(-1)?.content || "").length > 4_000);
+});
