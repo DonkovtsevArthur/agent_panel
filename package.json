@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.120",
+  "version": "1.0.122",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {

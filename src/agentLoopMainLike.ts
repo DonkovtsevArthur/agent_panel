@@ -800,7 +800,8 @@ export async function runMainLikeAgentTurn(options: {
   const maxWriteNudges = 3;
   const maxHedgeNudges = 2;
   const maxHollowNudges = 2;
-  const maxImpactNudges = 2;
+  // One extra chance to call search_text before soft-warning + draft finale.
+  const maxImpactNudges = 3;
   const maxDeniedWriteNudges = 2;
   const maxAskUserNudges = 2;
   const maxPlanQualityNudges = 2;
