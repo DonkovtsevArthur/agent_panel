@@ -81,6 +81,11 @@ import {
 import { executeToolCallsInOrder } from "./runToolWaves";
 import { getMcpManager } from "./mcpBundle";
 import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
+import {
+  FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
+  FIGMA_FIRST_FORCE_HINT,
+  shouldForceFigmaBeforeExplore,
+} from "./planQuality";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
 import { shouldDeliverRawScreenshotToPlanner } from "./visionDelivery";
 import type { SplitMcpToolResult } from "./mcp/resultFormat";
@@ -664,6 +669,14 @@ export async function runMainLikeAgentTurn(options: {
     readonly && messageHasFigmaUrl(options.userText)
       ? figmaPlanAntiDriftHint()
       : "";
+  // Plan + Figma URL + MCP: strip explore until Figma tools ran (Kimi-like).
+  const figmaFirstForceActive = () =>
+    shouldForceFigmaBeforeExplore({
+      planMode: planQuality,
+      figmaConnected,
+      userText: options.userText,
+      messages,
+    });
   const messages: ChatMessage[] = [
     { role: "system", content: config.systemPrompt },
     { role: "system", content: buildEditorContextMessage() },
@@ -676,6 +689,11 @@ export async function runMainLikeAgentTurn(options: {
       : [{ role: "system" as const, content: FOCUSED_EDIT_HINT }]),
     ...(figmaAntiDrift
       ? [{ role: "system" as const, content: figmaAntiDrift }]
+      : []),
+    ...(planQuality &&
+    figmaConnected &&
+    messageHasFigmaUrl(options.userText)
+      ? [{ role: "system" as const, content: FIGMA_FIRST_FORCE_HINT }]
       : []),
     ...(implementPlan
       ? [{ role: "system" as const, content: buildPlanImplementSystemHint() }]
@@ -1831,8 +1849,11 @@ export async function runMainLikeAgentTurn(options: {
     // После soft-nudge убираем list/read (+ delegate в readonly — под-агент ask
     // это тоже исследование); URL/MCP tools оставляем. Применяется и в readonly,
     // чтобы gateway (особенно Kimi) не падал на раздутом tool-контексте.
+    // Plan + Figma URL: strip explore until Figma MCP ran (weak models otherwise
+    // jump to a similar repo page and skip the mockup — Kimi habit, all models).
     const stripExplore =
       hardCut ||
+      figmaFirstForceActive() ||
       (exploreLimits.stripExploreOnSoftNudge &&
         exploreStreak >= exploreLimits.softNudgeRounds);
     const roundTools = stripExplore
@@ -1908,6 +1929,12 @@ export async function runMainLikeAgentTurn(options: {
               "План пиши в <proposed_plan>…</proposed_plan>, не в PLAN.md. " +
               "Доступны: list_files / read_file / search_text / fetch_url / screenshot_url / open_external / request_user_input / delegate_task или MCP Figma (get_design_context + get_screenshot, либо get_figma_data на PAT).",
           });
+        }
+        if (
+          figmaFirstForceActive() &&
+          isExploreOrDelegatedTool(call.function.name, readonly)
+        ) {
+          return FIGMA_FIRST_EXPLORE_BLOCKED_JSON;
         }
         if (hardCut && isExploreOrDelegatedTool(call.function.name, readonly)) {
           const allowSearchText = hardCutAllowsSearchText({

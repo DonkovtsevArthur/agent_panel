@@ -43,12 +43,19 @@ export type PlanQualityReason =
   | "missing_implementation"
   | "missing_component_api_read"
   | "checklist_coverage"
-  | "goal_frame_title";
+  | "goal_frame_title"
+  | "figma_block_inventory";
 
 export type PlanQualityDiagnosis = {
+  /** Primary (first) failing reason — stable for logs / single-reason tests. */
   reason: PlanQualityReason;
+  /** All failing reasons in this diagnosis (capped); length ≥ 1. */
+  reasons: PlanQualityReason[];
   nudge: string;
 };
+
+/** Max reasons packed into one combined nudge (keeps prompt focused). */
+const MAX_PLAN_QUALITY_REASONS = 4;
 
 const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
   plan_file_write:
@@ -76,10 +83,58 @@ const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
   missing_component_api_read:
     "False: the plan names a shared primitive (Table, Layout, Modal, …) but you did not read_file that component's source (shared/ui or components path). search_text → read_file the component itself (not only a call site), put exact props/imports in **Implementation**, rewrite the FULL <proposed_plan>.",
   checklist_coverage:
-    "False: the user gave a numbered/bulleted checklist — Steps must cover every item (at least as many numbered Steps as checklist items, 1:1). Do not collapse items. Rewrite the FULL <proposed_plan>.",
+    "False: the user gave a numbered/bulleted checklist — Steps must cover every item 1:1 (count AND meaning: each item's key words must appear in Steps). Do not collapse or rename items away. Rewrite the FULL <proposed_plan>.",
   goal_frame_title:
     "False: Goal must include the Figma frame/page title from the vision-helper Visible UI (Title). Do not replace it with a similar repo page name. Rewrite the FULL <proposed_plan> with that title in **Goal**.",
+  figma_block_inventory:
+    "False: vision-helper listed concrete UI labels (Columns / Filters / Actions / Tabs) that are missing from the plan. Map each label into Steps (reuse path, new-by-pattern, or explicit gap) — do not drop mockup blocks. Rewrite the FULL <proposed_plan>.",
 };
+
+function stripFalsePrefix(nudge: string): string {
+  return String(nudge || "")
+    .replace(/^False:\s*/i, "")
+    .trim();
+}
+
+function diagnosis(reason: PlanQualityReason): PlanQualityDiagnosis {
+  return {
+    reason,
+    reasons: [reason],
+    nudge: PLAN_QUALITY_NUDGES[reason],
+  };
+}
+
+/** Pack 1..N reasons into one diagnosis (combined nudge when N>1). */
+export function diagnosisFromReasons(
+  reasons: PlanQualityReason[]
+): PlanQualityDiagnosis | null {
+  const unique: PlanQualityReason[] = [];
+  for (const reason of reasons) {
+    if (!unique.includes(reason)) {
+      unique.push(reason);
+    }
+    if (unique.length >= MAX_PLAN_QUALITY_REASONS) {
+      break;
+    }
+  }
+  if (!unique.length) {
+    return null;
+  }
+  if (unique.length === 1) {
+    return diagnosis(unique[0]);
+  }
+  const lines = unique.map(
+    (reason, index) =>
+      `${index + 1}) ${stripFalsePrefix(PLAN_QUALITY_NUDGES[reason])}`
+  );
+  return {
+    reason: unique[0],
+    reasons: unique,
+    nudge:
+      "False: plan is not decision-complete — fix ALL of the following, then rewrite the FULL <proposed_plan>:\n" +
+      lines.join("\n"),
+  };
+}
 
 export const PLAN_QUALITY_USER_VISIBLE =
   "План не decision-complete: нет нормального <proposed_plan> с путями, цель подменена (таб/«уже есть»), " +
@@ -654,10 +709,6 @@ const SHARED_PRIMITIVE_NAMES = [
   "Form",
 ] as const;
 
-function diagnosis(reason: PlanQualityReason): PlanQualityDiagnosis {
-  return { reason, nudge: PLAN_QUALITY_NUDGES[reason] };
-}
-
 function toolNameEndsWith(name: string, suffix: string): boolean {
   return name === suffix || name.endsWith(`__${suffix}`) || name.endsWith(`/${suffix}`);
 }
@@ -699,6 +750,42 @@ export function turnHadFigmaPlanTools(
   }
   return (hasDesignContext && hasScreenshot) || hasLegacyData;
 }
+
+/**
+ * Plan + Figma URL + MCP connected: block repo explore until Figma tools ran.
+ * Matches what stronger planners (Kimi) do by habit — weak models skip MCP
+ * and invent from the URL slug / a similar page unless explore is unavailable.
+ */
+export function shouldForceFigmaBeforeExplore(options: {
+  planMode: boolean;
+  figmaConnected: boolean;
+  userText?: string;
+  messages?: PlanQualityMessage[];
+}): boolean {
+  if (!options.planMode || !options.figmaConnected) {
+    return false;
+  }
+  if (!messageHasFigmaUrl(options.userText || "")) {
+    return false;
+  }
+  return !turnHadFigmaPlanTools(options.messages);
+}
+
+/** System hint while explore is stripped pending Figma fetch. */
+export const FIGMA_FIRST_FORCE_HINT =
+  "HARD RULE: the user pasted a Figma URL and Figma MCP is connected. " +
+  "Your FIRST tool call(s) this turn MUST be Figma MCP — " +
+  "get_design_context AND get_screenshot on the URL node, or get_figma_data on PAT. " +
+  "list_files / read_file / search_text / delegate_task are unavailable until that fetch succeeds. " +
+  "Do not invent UI from the URL title or a similar repo page. After Figma returns, explore the repo for HOW.";
+
+/** Tool-result JSON when explore is invoked before Figma despite the strip. */
+export const FIGMA_FIRST_EXPLORE_BLOCKED_JSON = JSON.stringify({
+  error:
+    "Figma URL present: call get_design_context AND get_screenshot " +
+    "(or get_figma_data on PAT) on the URL node BEFORE list_files / read_file / " +
+    "search_text / delegate_task. Repo explore is HOW after the mockup is fetched.",
+});
 
 function looksLikeUiOrFigmaPlan(userText?: string): boolean {
   const value = String(userText || "");
@@ -807,6 +894,22 @@ export function extractUserChecklistItems(userText: string): string[] {
   return items;
 }
 
+/** Significant tokens from a checklist line (numbering / bullets stripped). */
+export function significantChecklistTokens(item: string): string[] {
+  const cleaned = String(item || "")
+    .replace(/^\d+[.)]\s+/, "")
+    .replace(/^[-*•]\s+/, "")
+    .toLowerCase();
+  return cleaned
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3 && !GENERIC_CODE_WORDS.has(t));
+}
+
+/**
+ * Checklist gap: fewer Steps than items, OR an item whose key tokens
+ * never appear in Steps (semantic collapse).
+ */
 export function looksLikeChecklistCoverageGap(
   planBody: string,
   userText?: string
@@ -819,7 +922,20 @@ export function looksLikeChecklistCoverageGap(
     return false;
   }
   const steps = extractNumberedPlanSteps(planBody);
-  return steps.length < items.length;
+  if (steps.length < items.length) {
+    return true;
+  }
+  const stepsText = steps.join("\n").toLowerCase();
+  for (const item of items) {
+    const tokens = significantChecklistTokens(item);
+    if (!tokens.length) {
+      continue;
+    }
+    if (!tokens.some((token) => stepsText.includes(token))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function collectVisionHelperTexts(
@@ -894,6 +1010,93 @@ export function looksLikeGoalMissingFrameTitle(
   return !tokens.some((token) => goal.includes(token));
 }
 
+/**
+ * Concrete UI labels from vision-helper sections (Columns / Filters /
+ * Actions / Buttons / Tabs). Title is handled by goal_frame_title.
+ */
+export function extractVisionHelperUiLabels(
+  messages?: PlanQualityMessage[]
+): string[] {
+  const sectionRe =
+    /(?:^|\n)\s*(?:#{1,3}\s*|\*\*)?(Columns|Filters|Actions|Buttons|Tabs|Other text)(?:\*\*)?\s*:?\s*([^\n]+)/gi;
+  const labels: string[] = [];
+  for (const content of collectVisionHelperTexts(messages)) {
+    const visible =
+      content.match(
+        /##\s*Visible UI[\s\S]*?(?=\n##\s|\s*$)/i
+      )?.[0] || content;
+    sectionRe.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = sectionRe.exec(visible)) !== null) {
+      const raw = String(match[2] || "").trim();
+      if (!raw || /^\(/.test(raw)) {
+        continue;
+      }
+      for (const part of raw.split(/[,;|•·]/)) {
+        const label = part
+          .replace(/^[-*]\s+/, "")
+          .replace(/^["'«»]+|["'«»]+$/g, "")
+          .trim();
+        if (label.length < 3) {
+          continue;
+        }
+        const tokens = label
+          .toLowerCase()
+          .split(/[^\p{L}\p{N}]+/u)
+          .filter((t) => t.length >= 3 && !GENERIC_CODE_WORDS.has(t));
+        if (!tokens.length) {
+          continue;
+        }
+        if (!labels.some((existing) => existing.toLowerCase() === label.toLowerCase())) {
+          labels.push(label);
+        }
+      }
+    }
+  }
+  return labels;
+}
+
+function labelCoveredInPlan(label: string, planLower: string): boolean {
+  const normalized = label.toLowerCase().trim();
+  if (normalized.length >= 4 && planLower.includes(normalized)) {
+    return true;
+  }
+  const tokens = normalized
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 4 && !GENERIC_CODE_WORDS.has(t));
+  if (!tokens.length) {
+    // Short labels (e.g. «ФИО»): require exact phrase if ≥3 chars.
+    return normalized.length >= 3 && planLower.includes(normalized);
+  }
+  return tokens.some((token) => planLower.includes(token));
+}
+
+/**
+ * True when vision-helper listed ≥2 UI labels and the plan covers fewer
+ * than half of them (mockup blocks dropped).
+ */
+export function looksLikeMissingFigmaBlockInventory(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  const labels = extractVisionHelperUiLabels(messages);
+  if (labels.length < 2) {
+    return false;
+  }
+  const planLower = String(planBody || "").toLowerCase();
+  if (!planLower.trim()) {
+    return true;
+  }
+  let covered = 0;
+  for (const label of labels) {
+    if (labelCoveredInPlan(label, planLower)) {
+      covered += 1;
+    }
+  }
+  const need = Math.ceil(labels.length / 2);
+  return covered < need;
+}
+
 function diagnoseIncompleteProposedPlan(
   text: string,
   options?: PlanQualityOptions
@@ -902,65 +1105,70 @@ function diagnoseIncompleteProposedPlan(
   if (!body) {
     return null;
   }
+  const reasons: PlanQualityReason[] = [];
+
   if (UNFIXED_FIELDS_RE.test(body)) {
-    return diagnosis("unfixed_fields");
+    reasons.push("unfixed_fields");
   }
   if (ABSTRACT_FILES_RE.test(body) && !proposedPlanHasGroundedPath(body)) {
-    return diagnosis("missing_grounded_path");
-  }
-  if (!proposedPlanHasGroundedPath(body)) {
-    return diagnosis("missing_grounded_path");
+    reasons.push("missing_grounded_path");
+  } else if (!proposedPlanHasGroundedPath(body)) {
+    reasons.push("missing_grounded_path");
   }
   const hasStepsHeader =
     /\*\*\s*(?:Шаги|Steps)\s*\*\*/i.test(body) ||
     /(?:^|\n)\s*(?:Шаги|Steps)\s*:/i.test(body);
   const hasNumberedStep = /(?:^|\n)\s*\d+\.\s+\S/.test(body);
   if (!hasStepsHeader || !hasNumberedStep) {
-    return diagnosis("missing_steps");
+    reasons.push("missing_steps");
   }
   if (
     options?.userText &&
     messageHasFigmaUrl(options.userText) &&
     !turnHadFigmaPlanTools(options.messages)
   ) {
-    return diagnosis("missing_figma_tools");
+    reasons.push("missing_figma_tools");
   }
   if (
     options?.userText &&
     looksLikePageToTabDrift(options.userText, body)
   ) {
-    return diagnosis("page_to_tab");
+    reasons.push("page_to_tab");
   }
   if (
     options?.userText &&
     looksLikePageToSimilarPageDrift(options.userText, body)
   ) {
-    return diagnosis("page_to_similar");
+    reasons.push("page_to_similar");
   }
   if (looksLikeAlreadyExistsWithoutInventory(text, options?.userText)) {
-    return diagnosis("already_exists_no_inventory");
+    reasons.push("already_exists_no_inventory");
   }
   if (looksLikeMissingAnalogueQuote(body, options?.messages)) {
-    return diagnosis("missing_analogue_quote");
+    reasons.push("missing_analogue_quote");
   }
   if (looksLikeMissingImplementationSection(body, options?.userText)) {
-    return diagnosis("missing_implementation");
+    reasons.push("missing_implementation");
   }
   if (looksLikeMissingComponentApiRead(body, options?.messages)) {
-    return diagnosis("missing_component_api_read");
+    reasons.push("missing_component_api_read");
   }
   if (looksLikeChecklistCoverageGap(body, options?.userText)) {
-    return diagnosis("checklist_coverage");
+    reasons.push("checklist_coverage");
   }
   if (looksLikeGoalMissingFrameTitle(body, options?.messages)) {
-    return diagnosis("goal_frame_title");
+    reasons.push("goal_frame_title");
   }
-  return null;
+  if (looksLikeMissingFigmaBlockInventory(body, options?.messages)) {
+    reasons.push("figma_block_inventory");
+  }
+
+  return diagnosisFromReasons(reasons);
 }
 
 /**
  * Diagnose why a Plan-mode finale is not decision-complete.
- * Returns the first failing reason + a targeted nudge, or null when OK.
+ * Returns failing reason(s) + a targeted (or combined) nudge, or null when OK.
  */
 export function diagnosePlanQualityFailure(
   text: string,
