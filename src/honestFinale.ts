@@ -14,8 +14,8 @@ import { looksLikeRefusedRequestedEdit } from "./versionBump";
 import {
   PLAN_QUALITY_NUDGE,
   PLAN_QUALITY_USER_VISIBLE,
+  diagnosePlanQualityFailure,
   extractLastProposedPlanFromMessages,
-  looksLikePlanQualityFailure,
 } from "./planQuality";
 
 export { PLAN_QUALITY_NUDGE, PLAN_QUALITY_USER_VISIBLE };
@@ -68,7 +68,7 @@ export type HonestFinaleDecision =
   | { kind: "nudge_denied_write" }
   | { kind: "nudge_impact" }
   | { kind: "nudge_ask_user" }
-  | { kind: "nudge_plan_quality" }
+  | { kind: "nudge_plan_quality"; nudge: string }
   | { kind: "replace"; text: string };
 
 /**
@@ -441,14 +441,16 @@ export function decideHonestFinale(input: {
     // Plan quality: incomplete <proposed_plan>, page→tab drift, «уже есть»
     // without block inventory, or shipping PLAN.md instead of the card.
     // Runs before hedge so Risks/future-tense steps in a good plan still pass.
-    if (
-      looksLikePlanQualityFailure(text, {
-        userText: input.userText,
-        messages: input.messages,
-      })
-    ) {
+    const planQualityDiagnosis = diagnosePlanQualityFailure(text, {
+      userText: input.userText,
+      messages: input.messages,
+    });
+    if (planQualityDiagnosis) {
       if (allowNudgePlanQuality) {
-        return { kind: "nudge_plan_quality" };
+        return {
+          kind: "nudge_plan_quality",
+          nudge: planQualityDiagnosis.nudge || PLAN_QUALITY_NUDGE,
+        };
       }
       // Nudges exhausted. z.ai-style: always prefer a Build card over a dead-end
       // error — even an imperfect plan (missing quotes / page→tab drift / soft
