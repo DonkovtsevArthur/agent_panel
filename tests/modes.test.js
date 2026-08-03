@@ -31,3 +31,19 @@ test("planModeSystemPrompt allows an optional Implementation section in <propose
     /props\/imports of the target shared components|пропсы\/импорты целевых shared-компонентов/i
   );
 });
+
+test("agentModeSystemPrompt is wired for builtin Agent (en + ru)", () => {
+  assert.match(modesSrc, /function agentModeSystemPrompt/);
+  assert.match(modesSrc, /Активен режим Agent \(реализация\)/);
+  assert.match(modesSrc, /Agent mode is active \(implementation\)/);
+  assert.match(modesSrc, /prefer search_replace|предпочитай search_replace/);
+  assert.match(modesSrc, /\[\[harbor:implement_plan\]\]/);
+  assert.match(
+    modesSrc,
+    /base\.id === "agent"\s*\n\s*\? agentModeSystemPrompt\(lang\)/
+  );
+  assert.match(
+    modesSrc,
+    /id: "agent"[\s\S]*?prompt: agentModeSystemPrompt\("en"\)/
+  );
+});

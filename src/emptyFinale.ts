@@ -6,7 +6,7 @@ import { stripThinkTagBlock } from "./thinkTagFilter";
 export const EMPTY_ASSISTANT_PLACEHOLDER = "(пустой ответ)";
 
 export const EMPTY_WRITE_USER_NUDGE =
-  "You gathered context but made no file edits. Call write_file to apply the required changes now. Do not ask the user to paste code manually. After editing, reply with a short summary.";
+  "You gathered context but made no file edits. Call search_replace (preferred for existing files) or write_file (new file / full rewrite) to apply the required changes now. Do not ask the user to paste code manually. After editing, reply with a short summary.";
 
 export const EMPTY_TEXT_USER_NUDGE_WITH_EDITS =
   "Write a short Russian summary of the file changes you applied. Never return an empty message. Do not call tools.";

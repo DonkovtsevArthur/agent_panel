@@ -18,6 +18,25 @@ test("allows creating a new file even if content is short", () => {
   );
 });
 
+test("blocks empty create (no zero-byte stubs)", () => {
+  const err = validateWriteFileAgainstExisting({
+    created: true,
+    before: "",
+    content: "",
+  });
+  assert.match(String(err), /empty/i);
+  assert.match(String(err), /FULL file contents/i);
+});
+
+test("blocks whitespace-only create", () => {
+  const err = validateWriteFileAgainstExisting({
+    created: true,
+    before: "",
+    content: "  \n\n",
+  });
+  assert.match(String(err), /empty/i);
+});
+
 test("blocks empty overwrite of a non-empty file", () => {
   const err = validateWriteFileAgainstExisting({
     created: false,

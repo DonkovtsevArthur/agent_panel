@@ -9,17 +9,19 @@ alwaysApply: true
 
 ## Режим из UI — закон
 
-- **Agent** — можно `write_file`, полный набор tools + MCP (Figma).
-- **Plan / Ask** — нельзя `write_file` / `run_command`. MCP (включая **все** Figma tools) доступны. Также `list_files`, `read_file`, `fetch_url`, `open_external`.
+- **Agent** — можно `search_replace` / `write_file`, полный набор tools + MCP (Figma). Builtin `agentModeSystemPrompt` (en/ru).
+- **Plan / Ask** — нельзя `write_file` / `search_replace` / `run_command`. MCP (включая **все** Figma tools) доступны. Также `list_files`, `read_file`, `search_text`, `fetch_url`, `open_external`.
 - **Нельзя** подменять Agent → Ask по тексту вопроса (это уже убрано из `agentPanelProvider.ts`).
 - **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.
-- **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
+- **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` / `search_replace` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
 
 ## Agent — follow workspace rules (UI, все модели)
 
-- Перед новой страницей/UI: `list_files` + `read_file` 1–2 соседних файлов; писать по их паттерну, не invent → remake.
-- Soft explore-nudge после 4 и снимает read; hard-cut на 6. Кап rules ~12k.
-- Post-edit verification (diagnostics + typecheck/lint) в Agent для всех моделей.
+- Перед новой страницей/UI: `list_files` + `read_file` 1–2 соседних файлов; писать по их паттерну, не invent → remake. EXISTING → `search_replace`.
+- Explore: default soft 4 / hard 6; `@file`/path → 3/5; cold «новая страница» → 5/7; Build→Agent → 2/4. Soft снимает explore; после hard-cut + правки снова доступен `search_text` (consumers). Кап rules ~12k.
+- Agent soft-budget pin'ит Figma + grounding/`read_file` отредактированных путей.
+- Post-edit verification (diagnostics + typecheck/lint) в Agent; nudges предпочитают `search_replace`.
+- Impact-gate только для UI-shared (не `shared/api`); после nudge — предупреждение + черновик, не голый тупик.
 - Kimi transport: ужим старых tool-результатов; без temperature + reasoning echo.
 
 ## Tools runtime (все модели)
@@ -28,7 +30,7 @@ alwaysApply: true
 
 Разрешено вызывать из схемы:
 
-- `list_files`, `read_file`, `write_file` (Agent), `run_command`
+- `list_files`, `read_file`, `search_text`, `search_replace` / `write_file` (Agent), `run_command`
 - `fetch_url`, `open_external` при URL в сообщении
 - MCP (Figma и др.), если подключены
 
@@ -56,7 +58,7 @@ alwaysApply: true
 - Сравнения с Cursor в README / Marketplace / toasts / nls
 - Писать агентов в `globalState` как основное хранилище
 - Ставить VSIX через `/usr/local/bin/code` (часто Cursor)
-- Врать про сделанные правки без реального `write_file`
+- Врать про сделанные правки без реального `write_file` / `search_replace`
 
 ## Сборка после UI/логики
 

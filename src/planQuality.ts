@@ -16,7 +16,7 @@ export const PLAN_QUALITY_NUDGE =
   "If the user asked for a page/screen (or pasted Figma), Goal = that page/route with the Figma frame title — not a tab/вкладка from a similar repo page, and not a different existing page that merely looks similar. " +
   "Do not ground steps in src/pages|entities|features from a different feature area than the Figma/user message implies. " +
   "Layout chrome (Search Bar, sidebar Menu) is not the page deliverable. " +
-  "Analogue evidence: every Step with reuse / by-pattern of <path> must include a backtick quote (observed) copied from that path's read_file content (import, className, JSX tag, etc. — not the path itself). Describe HOW only from that quote — do not invent a UI kind that is not in the quote/file. " +
+  "Analogue evidence: every Step with reuse / by-pattern of <path> — and every Step that cites a path you already read_file'd — must include a backtick quote (observed) copied from that path's content (import, className, JSX tag, etc. — not the path itself). Describe HOW only from that quote — do not invent a UI kind that is not in the quote/file. " +
   "Use search_text / list_files / read_file / delegate_task, then rewrite the FULL <proposed_plan>.";
 
 /** Minimal message shape for Plan quality checks (avoids vscode/openai imports). */
@@ -117,6 +117,66 @@ export function extractProposedPlanBody(text: string): string | null {
     last = String(match[1] || "").trim();
   }
   return last;
+}
+
+/** Full last `<proposed_plan>…</proposed_plan>` block (tags included), or null. */
+export function extractLastProposedPlanBlock(text: string): string | null {
+  const value = String(text || "");
+  if (!value) {
+    return null;
+  }
+  let last: string | null = null;
+  const re =
+    /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*[\s\S]*?\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value)) !== null) {
+    last = String(match[0] || "").trim();
+  }
+  return last;
+}
+
+function messageContentAsText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const part of content) {
+    if (part && typeof part === "object" && "text" in part) {
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string") {
+        parts.push(text);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Recover the latest assistant `<proposed_plan>` from the turn history.
+ * Used when the finale dropped the card after quality nudges.
+ */
+export function extractLastProposedPlanFromMessages(
+  messages?: PlanQualityMessage[]
+): string | null {
+  if (!messages?.length) {
+    return null;
+  }
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const block = extractLastProposedPlanBlock(
+      messageContentAsText(message.content)
+    );
+    if (block) {
+      return block;
+    }
+  }
+  return null;
 }
 
 export function proposedPlanHasWorkspacePath(body: string): boolean {
@@ -360,7 +420,11 @@ function findReadContentForPath(
 }
 
 const ANALOGUE_PATH_CAPTURE =
-  /(?:reuse|по\s+паттерну|новый\s+по\s+паттерну|by\s+pattern(?:\s+of)?|new\s+by\s+pattern(?:\s+of)?)\s*[`«"']?((?:\.\/)?(?:[\w@.-]+\/)+[\w@.-]+\.[\w]{1,12})/gi;
+  /(?:reuse|по\s+паттерну|новый\s+по\s+паттерну|by\s+pattern(?:\s+of)?|new\s+by\s+pattern(?:\s+of)?|как\s+в|по\s+образцу|аналог(?:у|ом|а)?)\s*[`«"']?((?:\.\/)?(?:[\w@.-]+\/)+[\w@.-]+\.[\w]{1,12})/gi;
+
+/** Grounded path tokens inside a Step (directory + file). */
+const STEP_GROUNDED_PATH_CAPTURE =
+  /(?:^|[\s`"'(=[—–-])((?:\.\/)?(?:[\w@.-]+\/)+[\w@.-]+\.[\w]{1,12})\b/gi;
 
 /** Minimum length for an observed backtick quote (path-only quotes are excluded). */
 export const MIN_ANALOGUE_QUOTE_CHARS = 6;
@@ -388,6 +452,20 @@ export function extractAnaloguePathsFromStep(step: string): string[] {
   ANALOGUE_PATH_CAPTURE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ANALOGUE_PATH_CAPTURE.exec(String(step || ""))) !== null) {
+    const p = normalizePlanPath(match[1]);
+    if (p) {
+      found.push(p);
+    }
+  }
+  return [...new Set(found)];
+}
+
+/** All grounded workspace paths mentioned in a numbered Step. */
+export function extractGroundedPathsFromStep(step: string): string[] {
+  const found: string[] = [];
+  STEP_GROUNDED_PATH_CAPTURE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = STEP_GROUNDED_PATH_CAPTURE.exec(String(step || ""))) !== null) {
     const p = normalizePlanPath(match[1]);
     if (p) {
       found.push(p);
@@ -442,35 +520,59 @@ function contentContainsQuote(content: string, quote: string): boolean {
 }
 
 /**
- * A reuse / by-pattern Step lacks a backtick quote that appears in the
- * analogue's read_file content (or the analogue was never read).
- * Skipped when messages are absent (can't verify) or there are no analogue Steps.
+ * Analogue evidence gate (no UI-label dictionaries):
+ * - reuse / by-pattern / «как в» Steps must always carry a non-path backtick quote
+ *   (structural — even when tool messages are unavailable);
+ * - any grounded path in a Step that was read_file'd this turn must also have a
+ *   quote that appears in that file's content (bare «таблица — src/…/x.tsx»
+ *   counts when x.tsx was read — forces evidence from the real file);
+ * - create-only paths never read are skipped (nothing to verify against).
  */
 export function looksLikeMissingAnalogueQuote(
   planBody: string,
   messages?: PlanQualityMessage[]
 ): boolean {
-  if (!messages?.length) {
+  const steps = extractNumberedPlanSteps(planBody);
+  if (!steps.length) {
     return false;
   }
   const reads = collectReadFileContents(messages);
-  if (!reads.size) {
-    return false;
-  }
-  const steps = extractNumberedPlanSteps(planBody);
+
   for (const step of steps) {
-    const paths = extractAnaloguePathsFromStep(step);
-    if (!paths.length) {
+    const analoguePaths = extractAnaloguePathsFromStep(step);
+    const groundedPaths = extractGroundedPathsFromStep(step);
+    const pathKeys = [...new Set([...analoguePaths, ...groundedPaths])];
+    const quotes = extractObservedQuotesFromStep(step, pathKeys);
+
+    // Structural: explicit analogue markers require observed quote.
+    if (analoguePaths.length > 0 && quotes.length === 0) {
+      return true;
+    }
+
+    // Without tool payloads we can only enforce structure (quote present).
+    if (!reads.size) {
       continue;
     }
-    const quotes = extractObservedQuotesFromStep(step, paths);
-    for (const path of paths) {
+
+    const toVerify = new Set<string>(analoguePaths);
+    for (const path of groundedPaths) {
+      if (findReadContentForPath(reads, path) !== undefined) {
+        toVerify.add(path);
+      }
+    }
+    if (!toVerify.size) {
+      continue;
+    }
+    if (!quotes.length) {
+      return true;
+    }
+
+    for (const path of toVerify) {
       const content = findReadContentForPath(reads, path);
       if (content === undefined) {
-        return true;
-      }
-      if (!quotes.length) {
-        return true;
+        // Path not in surviving tool payloads (never read or compacted away) —
+        // structural quote already required for analogue markers; skip.
+        continue;
       }
       const matched = quotes.some((q) => contentContainsQuote(content, q));
       if (!matched) {
@@ -489,8 +591,8 @@ export type PlanQualityOptions = {
 /**
  * True when a Plan-mode finale wraps <proposed_plan> but is not
  * grounded enough for Build (paths missing, abstract files, unfixed Figma,
- * page→tab WHAT drift, page→similar-page drift, missing analogue observed
- * quote, or «already exists» without inventory).
+ * page→tab WHAT drift, page→similar-page drift, missing analogue evidence
+ * (structural quote / quote∉read_file), or «already exists» without inventory).
  */
 export function looksLikeIncompleteProposedPlan(
   text: string,

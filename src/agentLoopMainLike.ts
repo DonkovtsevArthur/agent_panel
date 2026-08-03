@@ -73,6 +73,7 @@ import {
   buildExploreSoftNudge,
   buildKimiWorkspaceFollowHint,
   exploreRoundLimits,
+  hardCutAllowsSearchText,
   isExploreOrDelegatedTool,
   roundAdvancesExploreStreak,
   shouldExtendToolRounds,
@@ -86,9 +87,11 @@ import type { SplitMcpToolResult } from "./mcp/resultFormat";
 import { captureUrlScreenshot } from "./screenshotUrl";
 import {
   buildEditCorrectionSystemHint,
+  buildPlanChecklistNudge,
   buildPlanImplementSystemHint,
   looksLikeEditCorrectionRequest,
   looksLikePlanImplementRequest,
+  remainingPlanTargetPaths,
 } from "./planImplement";
 import { filterToolsForContext, messageContainsUrl } from "./toolFilter";
 import {
@@ -642,6 +645,7 @@ export async function runMainLikeAgentTurn(options: {
     kimi: kimiModel,
     implementPlan: focusedPlanEdit,
     planQuality,
+    userText: options.userText,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
   // включит extended thinking и будет стримить reasoning_content. Для моделей
@@ -755,12 +759,6 @@ export async function runMainLikeAgentTurn(options: {
   const activeTools = filterToolsForContext(allTools, {
     hasUrl: urlInMessage || messageHasFigmaUrl(options.userText),
   });
-  const hardCutTools: ChatTool[] = activeTools.filter(
-    (tool) =>
-      isMainLikeWriteTool(tool.function.name) ||
-      (enablePostEditVerification &&
-        tool.function.name === "get_diagnostics")
-  );
   const editsByPath = new Map<string, FileEditStat>();
   // Dirty до tools — в review попадут и shell-правки (run_command), не только write_file.
   const baselineDirty = readonly ? ([] as string[]) : await listDirtyPaths();
@@ -788,6 +786,8 @@ export async function runMainLikeAgentTurn(options: {
   let hedgeNudgeAttempts = 0;
   let hollowNudgeAttempts = 0;
   let impactNudgeAttempts = 0;
+  let planChecklistNudgeAttempts = 0;
+  const maxPlanChecklistNudges = 2;
   let deniedWriteNudgeAttempts = 0;
   let askUserNudgeAttempts = 0;
   let planQualityNudgeAttempts = 0;
@@ -1112,7 +1112,7 @@ export async function runMainLikeAgentTurn(options: {
           content: [
             "Post-edit verification (auto get_diagnostics):",
             result,
-            "If errorCount > 0, fix with write_file before finishing.",
+            "If errorCount > 0, fix with search_replace (preferred) or write_file before finishing.",
           ].join("\n"),
         });
         continue;
@@ -1188,7 +1188,7 @@ export async function runMainLikeAgentTurn(options: {
             content: [
               `Post-edit verification: \`${step.command}\` failed on files you edited this turn.`,
               output.slice(0, 3_000),
-              `Fix only these edited paths with write_file: ${verification.editedPaths.join(", ")}.`,
+              `Fix only these edited paths with search_replace (preferred) or write_file: ${verification.editedPaths.join(", ")}.`,
               "Do not fix unrelated files. Then finish briefly.",
             ]
               .filter(Boolean)
@@ -1356,6 +1356,28 @@ export async function runMainLikeAgentTurn(options: {
         messages.push({
           role: "user",
           content: EMPTY_TEXT_USER_NUDGE_NO_EDITS,
+        });
+        if (round >= roundBudget - 1) {
+          roundBudget = round + 2;
+        }
+        return false;
+      }
+    }
+
+    // Build→Agent: unfinished explicit plan paths — soft checklist before finale.
+    if (
+      implementPlan &&
+      !readonly &&
+      planChecklistNudgeAttempts < maxPlanChecklistNudges
+    ) {
+      const remaining = remainingPlanTargetPaths(options.userText, [
+        ...editsByPath.keys(),
+      ]);
+      if (remaining.length > 0) {
+        planChecklistNudgeAttempts += 1;
+        messages.push({
+          role: "user",
+          content: buildPlanChecklistNudge(remaining),
         });
         if (round >= roundBudget - 1) {
           roundBudget = round + 2;
@@ -1667,8 +1689,21 @@ export async function runMainLikeAgentTurn(options: {
       throw new Error("aborted");
     }
 
-    // (3) hard-cut: explore закрыт — только write_file (agent) или сразу финал (readonly).
+    // (3) hard-cut: explore закрыт — write (+ search_text after productive edits).
     if (hardCut) {
+      const allowSearchText = hardCutAllowsSearchText({
+        readonly,
+        hadProductiveTool,
+        hadSuccessfulWrite: turnHadRealFileEdit(),
+        impactNudgeAttempts,
+      });
+      const hardCutTools = activeTools.filter(
+        (tool) =>
+          isMainLikeWriteTool(tool.function.name) ||
+          (enablePostEditVerification &&
+            tool.function.name === "get_diagnostics") ||
+          (allowSearchText && tool.function.name === "search_text")
+      );
       if (readonly || hardCutTools.length === 0) {
         break;
       }
@@ -1723,12 +1758,15 @@ export async function runMainLikeAgentTurn(options: {
           const allowedHardCut =
             isMainLikeWriteTool(call.function.name) ||
             (enablePostEditVerification &&
-              call.function.name === "get_diagnostics");
+              call.function.name === "get_diagnostics") ||
+            (allowSearchText && call.function.name === "search_text");
           if (!allowedHardCut) {
             return JSON.stringify({
-              error: enablePostEditVerification
-                ? "Exploration limit: only write_file / search_replace / get_diagnostics are allowed. Finish the file write now."
-                : "Exploration limit: only write_file / search_replace are allowed. Finish the file write now.",
+              error: allowSearchText
+                ? "Exploration limit: list_files/read_file blocked. Allowed: write_file, search_replace, search_text (consumers), get_diagnostics."
+                : enablePostEditVerification
+                  ? "Exploration limit: only write_file / search_replace / get_diagnostics are allowed. Finish the file write now."
+                  : "Exploration limit: only write_file / search_replace are allowed. Finish the file write now.",
             });
           }
           return invokeTool(call.function.name, call.function.arguments);
@@ -1743,6 +1781,7 @@ export async function runMainLikeAgentTurn(options: {
         });
         noteToolResult(call.function.name, result);
         if (isMainLikeWriteTool(call.function.name)) {
+          hadProductiveTool = true;
           try {
             const parsed = JSON.parse(result) as {
               ok?: boolean;
@@ -1762,14 +1801,20 @@ export async function runMainLikeAgentTurn(options: {
           } catch {
             // ignore
           }
+        } else if (call.function.name === "run_command") {
+          hadProductiveTool = true;
         }
       }
       completionIntent = "tool_results";
       if ((await applyVerificationGate(round)) === "continue") {
         continue;
       }
-      // После hard-cut write-раунда — финальный текст без tools.
-      break;
+      // Stay in the hard-cut loop: after a productive edit, search_text becomes
+      // available for consumer checks; finale runs when the model returns text.
+      if (round >= roundBudget - 1) {
+        roundBudget = round + 2;
+      }
+      continue;
     }
 
     // Between tool waves keep the last tool phase («Читаю…») — flashing
@@ -1862,10 +1907,21 @@ export async function runMainLikeAgentTurn(options: {
           });
         }
         if (hardCut && isExploreOrDelegatedTool(call.function.name, readonly)) {
+          const allowSearchText = hardCutAllowsSearchText({
+            readonly,
+            hadProductiveTool,
+            hadSuccessfulWrite: turnHadRealFileEdit(),
+            impactNudgeAttempts,
+          });
+          if (allowSearchText && call.function.name === "search_text") {
+            return invokeTool(call.function.name, call.function.arguments);
+          }
           return JSON.stringify({
             error: readonly
               ? "Exploration limit: explore tools are blocked. Write the final <proposed_plan> or answer from gathered context."
-              : "Exploration limit: only write_file / search_replace is allowed. Finish the file write now.",
+              : allowSearchText
+                ? "Exploration limit: list_files/read_file blocked. Allowed: write_file, search_replace, search_text (consumers)."
+                : "Exploration limit: only write_file / search_replace is allowed. Finish the file write now.",
           });
         }
         if (call.function.name === "request_user_input") {

@@ -138,6 +138,39 @@ test("prepareKimiGatewayMessages readonly pins grounding read_file paths", () =>
   assert.ok(String(messages[1].content).length < 3_200);
 });
 
+test("prepareKimiGatewayMessages Agent pins edited-path reads via preserveToolResult", () => {
+  const { createAgentImplementPreserve } = require("../out/contextBudget.js");
+  const pagePayload = JSON.stringify({
+    path: "src/pages/certificate/page.tsx",
+    content: "PAGE".repeat(2_000),
+  });
+  const messages = [
+    { role: "tool", name: "read_file", content: pagePayload },
+    { role: "tool", name: "search_text", content: "s".repeat(6_000) },
+    {
+      role: "tool",
+      name: "write_file",
+      content: JSON.stringify({
+        ok: true,
+        path: "src/pages/certificate/page.tsx",
+        created: true,
+        added: 5,
+        removed: 0,
+      }),
+    },
+    { role: "tool", name: "read_file", content: "a".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "b".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "c".repeat(6_000) },
+  ];
+  const preserve = createAgentImplementPreserve(messages);
+  assert.equal(
+    prepareKimiGatewayMessages(messages, { preserveToolResult: preserve }),
+    true
+  );
+  assert.equal(String(messages[0].content), pagePayload);
+  assert.ok(String(messages[1].content).length < 3_200);
+});
+
 test("prepareFragileGatewayMessages caps even the latest read_file", () => {
   const { prepareFragileGatewayMessages } = require("../out/toolRecovery.js");
   const payload = JSON.stringify({

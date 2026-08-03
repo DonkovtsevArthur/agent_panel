@@ -2,6 +2,7 @@ import type { ChatMessage } from "./openaiClient";
 import {
   applyContextBudget,
   calculateContextBudget,
+  createAgentImplementPreserve,
   estimateTokens,
   looksLikePlanGroundingToolResult,
   pullPreservedToolRounds,
@@ -42,20 +43,29 @@ export interface PrepareRoundMessagesResult {
  * Plan/Ask (all models): keep explore/read grounding — no soft-target budget
  * and no mid-turn extractive summary. Hard context ceiling still applies;
  * Kimi/fragile gateway shrink still runs with Figma + grounding pins.
- * Agent mode keeps soft budget + summary.
+ * Agent mode keeps soft budget + summary, but pins Figma + implement reads
+ * (plan grounding paths + reads of files edited this turn).
  */
 export function prepareRoundMessages(
   options: PrepareRoundMessagesOptions
 ): PrepareRoundMessagesResult {
   const planAsk = Boolean(options.readonly);
+  const agentPreserve = planAsk
+    ? undefined
+    : createAgentImplementPreserve(options.messages);
+  const preserveToolResult = planAsk
+    ? looksLikePlanGroundingToolResult
+    : agentPreserve;
 
   if (options.kimi) {
     prepareKimiGatewayMessages(options.messages, {
       readonly: options.readonly,
+      preserveToolResult,
     });
   } else if (modelNeedsAggressiveToolBudget(options.modelId)) {
     prepareFragileGatewayMessages(options.messages, {
       readonly: options.readonly,
+      preserveToolResult,
     });
   }
 
@@ -77,9 +87,7 @@ export function prepareRoundMessages(
     contextWindow: options.contextWindow,
     reservedOutputTokens: options.reservedOutputTokens,
     ...(softTargetTokens !== undefined ? { softTargetTokens } : {}),
-    ...(planAsk
-      ? { preserveToolResult: looksLikePlanGroundingToolResult }
-      : {}),
+    ...(preserveToolResult ? { preserveToolResult } : {}),
   });
 
   let compacted = budgeted.compacted;
@@ -111,9 +119,11 @@ export function prepareRoundMessages(
             message.content.includes(MID_TURN_COMPACTION_MARKER)
         );
         if (!alreadyHasMarker) {
-          // Keep Figma/vision tool rounds verbatim — summarizing them away is
-          // what lets Plan drift onto a similar page from the repo.
-          const { pinned, remainder } = pullPreservedToolRounds(older);
+          // Keep Figma/vision + Agent implement grounding rounds verbatim —
+          // summarizing them away causes page→tab / wrong-file drift.
+          const { pinned, remainder } = pullPreservedToolRounds(older, {
+            ...(agentPreserve ? { preserveToolResult: agentPreserve } : {}),
+          });
           const summary: ChatMessage = {
             role: "user",
             content: `${MID_TURN_COMPACTION_MARKER}\n${buildEarlierConversationSummary(remainder.length ? remainder : older)}`,

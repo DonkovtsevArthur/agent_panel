@@ -369,7 +369,7 @@ test("readonly mode: prose questions ok after successful request_user_input", ()
 
 test("readonly mode: proposed_plan with risks is not prose clarifying", () => {
   const plan =
-    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Роут — reuse `src/app/routes.ts`.\n**Затрагиваемые файлы**: `src/app/routes.ts`\n**Риски**: API может отсутствовать.\n</proposed_plan>";
+    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Роут — reuse `src/app/routes.ts` — observed: `createBrowserRouter`.\n**Затрагиваемые файлы**: `src/app/routes.ts`\n**Риски**: API может отсутствовать.\n</proposed_plan>";
   const decision = decideHonestFinale({
     text: plan,
     canEdit: false,
@@ -433,8 +433,7 @@ test("readonly mode: incomplete proposed_plan without paths nudges plan quality"
   assert.equal(shown.text, plan);
 });
 
-test("readonly mode: Kimi page→tab drift after nudges is a hard replace", () => {
-  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+test("readonly mode: page→tab drift after nudges still shows the Build card", () => {
   const user =
     "составь план реализации страницы https://www.figma.com/design/abc/x?node-id=1-2";
   const plan =
@@ -451,28 +450,51 @@ test("readonly mode: Kimi page→tab drift after nudges is a hard replace", () =
   });
   assert.equal(nudged.kind, "nudge_plan_quality");
 
-  const replaced = decideHonestFinale({
-    text: plan,
-    canEdit: false,
-    messages: [],
-    userText: user,
-    allowNudgePlanQuality: false,
-    kimi: true,
-  });
-  assert.equal(replaced.kind, "replace");
-  assert.equal(replaced.text, PLAN_QUALITY_USER_VISIBLE);
+  // After nudges: show the imperfect card (Kimi included) — never a dead-end
+  // error when a <proposed_plan> exists.
+  for (const kimi of [true, false]) {
+    const shown = decideHonestFinale({
+      text: plan,
+      canEdit: false,
+      messages: [],
+      userText: user,
+      allowNudgePlanQuality: false,
+      kimi,
+    });
+    assert.equal(shown.kind, "ok");
+    assert.equal(shown.text, plan);
+  }
+});
 
-  // Non-Kimi keeps soft show of the imperfect card.
-  const soft = decideHonestFinale({
-    text: plan,
+test("readonly mode: recovers last proposed_plan when finale dropped the card", () => {
+  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+  const user =
+    "составь план реализации страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const plan =
+    "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n" +
+    "1. Таблица — reuse src/pages/foo/page.tsx — observed: `DataTable`\n" +
+    "**Затрагиваемые файлы**: src/pages/foo/page.tsx\n</proposed_plan>";
+  const prose =
+    "Страница уже есть в проекте — initial-briefing полностью совпадает с макетом.";
+  const recovered = decideHonestFinale({
+    text: prose,
+    canEdit: false,
+    messages: [{ role: "assistant", content: plan }],
+    userText: user,
+    allowNudgePlanQuality: false,
+  });
+  assert.equal(recovered.kind, "ok");
+  assert.equal(recovered.text, plan);
+
+  const deadEnd = decideHonestFinale({
+    text: prose,
     canEdit: false,
     messages: [],
     userText: user,
     allowNudgePlanQuality: false,
-    kimi: false,
   });
-  assert.equal(soft.kind, "ok");
-  assert.equal(soft.text, plan);
+  assert.equal(deadEnd.kind, "replace");
+  assert.equal(deadEnd.text, PLAN_QUALITY_USER_VISIBLE);
 });
 
 test("readonly mode: prose «already exists» without a plan card is replaced with the error when nudges are off", () => {

@@ -4,7 +4,10 @@ const assert = require("node:assert/strict");
 const {
   applyContextBudget,
   calculateContextBudget,
+  collectSuccessfulEditPaths,
+  createAgentImplementPreserve,
   estimateTokens,
+  looksLikeAgentImplementToolResult,
   looksLikePlanGroundingToolResult,
   pullPreservedToolRounds,
   shouldPreserveToolResultFromCompaction,
@@ -250,6 +253,172 @@ test("pullPreservedToolRounds pins Figma rounds and leaves the rest", () => {
   assert.equal(pinned[1].content, figmaBody);
   assert.equal(remainder.length, 4);
   assert.ok(remainder.every((m) => m.name !== "mcp__figma__get_screenshot"));
+});
+
+test("looksLikeAgentImplementToolResult pins grounding and edited-path reads", () => {
+  const uiRead = {
+    role: "tool",
+    name: "read_file",
+    content: JSON.stringify({
+      path: "src/shared/ui/toast.tsx",
+      content: "export const Toast = () => null;\n".repeat(20),
+    }),
+  };
+  const pageRead = {
+    role: "tool",
+    name: "read_file",
+    content: JSON.stringify({
+      path: "src/pages/certificate/page.tsx",
+      content: "export const Page = () => null;\n".repeat(20),
+    }),
+  };
+  const noise = {
+    role: "tool",
+    name: "read_file",
+    content: JSON.stringify({
+      path: "src/features/foo/bar.tsx",
+      content: "export const X = 1;\n".repeat(20),
+    }),
+  };
+  assert.equal(looksLikeAgentImplementToolResult(uiRead, []), true);
+  assert.equal(looksLikeAgentImplementToolResult(pageRead, []), false);
+  assert.equal(
+    looksLikeAgentImplementToolResult(pageRead, [
+      "src/pages/certificate/page.tsx",
+    ]),
+    true
+  );
+  assert.equal(
+    looksLikeAgentImplementToolResult(noise, [
+      "src/pages/certificate/page.tsx",
+    ]),
+    false
+  );
+});
+
+test("createAgentImplementPreserve uses successful edit paths", () => {
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/pages/certificate/page.tsx",
+        content: "PAGE".repeat(2_000),
+      }),
+    },
+    {
+      role: "tool",
+      name: "write_file",
+      content: JSON.stringify({
+        ok: true,
+        path: "src/pages/certificate/page.tsx",
+        created: true,
+        added: 10,
+        removed: 0,
+      }),
+    },
+  ];
+  assert.deepEqual(collectSuccessfulEditPaths(messages), [
+    "src/pages/certificate/page.tsx",
+  ]);
+  const preserve = createAgentImplementPreserve(messages);
+  assert.equal(preserve(messages[0]), true);
+});
+
+test("applyContextBudget does not shrink Agent implement reads of edited paths", () => {
+  const pageBody = JSON.stringify({
+    path: "src/pages/certificate/page.tsx",
+    content: "P".repeat(10_000),
+  });
+  const noiseBody = "N".repeat(12_000);
+  const messages = [
+    { role: "system", content: "policy" },
+    { role: "user", content: "implement" },
+    ...toolRound("read-page", pageBody),
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "w1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: '{"relativePath":"src/pages/certificate/page.tsx"}',
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "w1",
+      name: "write_file",
+      content: JSON.stringify({
+        ok: true,
+        path: "src/pages/certificate/page.tsx",
+        created: true,
+        added: 40,
+        removed: 0,
+      }),
+    },
+    ...toolRound("noise", noiseBody),
+    ...toolRound("latest", "C".repeat(2_000)),
+    { role: "user", content: "continue" },
+  ];
+  const preserve = createAgentImplementPreserve(messages);
+  const result = applyContextBudget(messages, {
+    contextWindow: 6_000,
+    reservedOutputTokens: 1_000,
+    safetyMarginTokens: 500,
+    preserveToolResult: preserve,
+  });
+  assert.equal(result.compacted, true);
+  assert.equal(result.messages[3].content, pageBody);
+  assert.match(String(result.messages[7].content), /older tool result compacted/);
+});
+
+test("pullPreservedToolRounds pins Agent implement reads via extra predicate", () => {
+  const pageBody = JSON.stringify({
+    path: "src/pages/certificate/page.tsx",
+    content: "PAGE",
+  });
+  const messages = [
+    { role: "user", content: "start" },
+    ...toolRound("read-page", pageBody),
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "w1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: "{}",
+          },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "w1",
+      name: "write_file",
+      content: JSON.stringify({
+        ok: true,
+        path: "src/pages/certificate/page.tsx",
+        created: true,
+        added: 1,
+        removed: 0,
+      }),
+    },
+    ...toolRound("noise", "noise body"),
+  ];
+  const preserve = createAgentImplementPreserve(messages);
+  const { pinned, remainder } = pullPreservedToolRounds(messages, {
+    preserveToolResult: preserve,
+  });
+  assert.ok(pinned.some((m) => m.content === pageBody));
+  assert.ok(remainder.some((m) => m.content === "noise body"));
 });
 
 test("applyContextBudget skips deep clone when already under budget", () => {

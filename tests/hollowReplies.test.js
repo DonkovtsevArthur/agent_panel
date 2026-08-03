@@ -186,6 +186,23 @@ test("looksLikeSharedUiEditPath: UI yes, shared/api no", () => {
     looksLikeSharedUiEditPath("src/shared/lib/http/client.ts"),
     false
   );
+  // Feature/API paths with «notification» in the name are NOT shared UI.
+  assert.equal(
+    looksLikeSharedUiEditPath(
+      "src/pages/notification-certificate/ui/notification-certificate-page.tsx"
+    ),
+    false
+  );
+  assert.equal(
+    looksLikeSharedUiEditPath(
+      "src/shared/api/notification-certificate/get-certificates/types.ts"
+    ),
+    false
+  );
+  assert.equal(
+    looksLikeSharedUiEditPath("src/shared/ui/notification/toast.tsx"),
+    true
+  );
 });
 
 test("decideHonestFinale does not impact-nudge shared/api creates", () => {

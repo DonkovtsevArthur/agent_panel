@@ -35,6 +35,14 @@ export const IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS = 2;
 /** Build→Agent: hard-cut explore. */
 export const IMPLEMENT_EXPLORE_HARD_CUT_ROUNDS = 4;
 
+/** Agent with @file / workspace path in the user message. */
+export const FOCUSED_EXPLORE_SOFT_NUDGE_ROUNDS = 3;
+export const FOCUSED_EXPLORE_HARD_CUT_ROUNDS = 5;
+
+/** Agent cold-start «new page/screen» without named paths. */
+export const COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS = 5;
+export const COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS = 7;
+
 /** @deprecated alias — same as EXPLORE_SOFT_NUDGE_ROUNDS */
 export const KIMI_EXPLORE_SOFT_NUDGE_ROUNDS = EXPLORE_SOFT_NUDGE_ROUNDS;
 
@@ -71,6 +79,55 @@ export type ExploreRoundLimits = {
   hardCutExplore: boolean;
 };
 
+/** User message names a workspace path or @-file — tighter explore. */
+export function userMessageHasFocusedPath(userText: string): boolean {
+  const value = String(userText || "");
+  if (!value.trim()) {
+    return false;
+  }
+  if (/(?:^|[\s(])@[\w./\\-]+\.\w{1,8}\b/.test(value)) {
+    return true;
+  }
+  if (
+    /(?:^|[\s`"'(])(?:\.\/|src\/|app\/|pages\/|shared\/|entities\/|features\/|widgets\/|media\/|tests\/)[\w./\\-]+\.\w{1,8}\b/.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Cold-start new page/screen without focused paths. */
+export function looksLikeColdPageExploreRequest(userText: string): boolean {
+  const value = String(userText || "").trim();
+  if (!value || userMessageHasFocusedPath(value)) {
+    return false;
+  }
+  return /(?:новая|новую|новый|новое)\s+(?:страниц|экран|роуте?|page|screen)|(?:созда[йть]|добавь|сделай)\s+(?:страниц|экран|роуте?|page|screen)|(?:new|add|create)\s+(?:a\s+)?(?:page|screen|route)|(?:page|screen)\s+from\s+figma/i.test(
+    value
+  );
+}
+
+export type ExploreBudgetSignal = "implement" | "focused" | "cold_page" | "default";
+
+export function classifyExploreBudgetSignal(options: {
+  implementPlan?: boolean;
+  userText?: string;
+}): ExploreBudgetSignal {
+  if (options.implementPlan) {
+    return "implement";
+  }
+  const userText = String(options.userText || "");
+  if (userMessageHasFocusedPath(userText)) {
+    return "focused";
+  }
+  if (looksLikeColdPageExploreRequest(userText)) {
+    return "cold_page";
+  }
+  return "default";
+}
+
 export function exploreRoundLimits(options: {
   kimi: boolean;
   /** Build → Agent: меньше explore, быстрее к правкам по плану. */
@@ -80,6 +137,8 @@ export function exploreRoundLimits(options: {
    * Soft reminders only — no hard-cut that would strand ungrounded items.
    */
   planQuality?: boolean;
+  /** User message — adaptive Agent explore (focused path / cold page). */
+  userText?: string;
 }): ExploreRoundLimits {
   // Implement-from-plan: plan already named files/components — do not spend
   // the long explore budget re-browsing analogous pages.
@@ -100,13 +159,49 @@ export function exploreRoundLimits(options: {
       hardCutExplore: false,
     };
   }
-  // Agent: same explore budget for all models (was Kimi-only 4/6).
+  const signal = classifyExploreBudgetSignal({
+    userText: options.userText,
+  });
+  if (signal === "focused") {
+    return {
+      softNudgeRounds: FOCUSED_EXPLORE_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: FOCUSED_EXPLORE_HARD_CUT_ROUNDS,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
+    };
+  }
+  if (signal === "cold_page") {
+    return {
+      softNudgeRounds: COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
+    };
+  }
+  // Agent default: same explore budget for all models (was Kimi-only 4/6).
   return {
     softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
     hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
     stripExploreOnSoftNudge: true,
     hardCutExplore: true,
   };
+}
+
+/** After hard-cut, allow search_text once the turn already edited files. */
+export function hardCutAllowsSearchText(options: {
+  readonly: boolean;
+  hadProductiveTool: boolean;
+  hadSuccessfulWrite?: boolean;
+  impactNudgeAttempts?: number;
+}): boolean {
+  if (options.readonly) {
+    return false;
+  }
+  return Boolean(
+    options.hadProductiveTool ||
+      options.hadSuccessfulWrite ||
+      (options.impactNudgeAttempts ?? 0) > 0
+  );
 }
 
 /** Agent: follow workspace rules by reading analogous UI before inventing. */
@@ -268,12 +363,14 @@ export function buildExploreHardNudge(options: {
     return [
       "Exploration limit reached.",
       "list_files and read_file are no longer allowed this turn.",
-      "Call search_replace (preferred) or write_file with COMPLETE contents for the remaining plan/correction steps on the named paths. Match project patterns. Do not invent substitutes or wipe files. No more reading.",
+      "Call search_replace (preferred) or write_file with COMPLETE contents for the remaining plan/correction steps on the named paths. Match project patterns. Do not invent substitutes or wipe files.",
+      "After edits, search_text remains available to check consumers of shared UI. No more list_files/read_file.",
     ].join(" ");
   }
   return [
     "Exploration limit reached.",
     "list_files and read_file are no longer allowed this turn.",
-    "Call write_file if edits are still needed; otherwise reply to the user. No more reading.",
+    "Call search_replace / write_file if edits are still needed; otherwise reply to the user.",
+    "After edits, search_text remains available to check consumers of shared UI. No more list_files/read_file.",
   ].join(" ");
 }

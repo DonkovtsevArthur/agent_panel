@@ -5,6 +5,10 @@ const {
   EXPLORE_SOFT_NUDGE_ROUNDS,
   EXPLORE_HARD_CUT_ROUNDS,
   IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS,
+  FOCUSED_EXPLORE_SOFT_NUDGE_ROUNDS,
+  FOCUSED_EXPLORE_HARD_CUT_ROUNDS,
+  COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS,
+  COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS,
   KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_HARD_CUT_ROUNDS,
   ROUND_EXTENSION_SIZE,
@@ -13,6 +17,10 @@ const {
   roundWasExploreOnly,
   shouldExtendToolRounds,
   exploreRoundLimits,
+  classifyExploreBudgetSignal,
+  hardCutAllowsSearchText,
+  userMessageHasFocusedPath,
+  looksLikeColdPageExploreRequest,
   buildExploreSoftNudge,
   buildExploreHardNudge,
   buildKimiWorkspaceFollowHint,
@@ -73,6 +81,76 @@ test("Agent explore limits match for all models and strip explore on soft", () =
   assert.deepEqual(kimiLimits, defaultLimits);
 });
 
+test("adaptive explore: focused path / cold page / implement", () => {
+  assert.equal(userMessageHasFocusedPath("fix @src/pages/foo.tsx please"), true);
+  assert.equal(userMessageHasFocusedPath("поправь src/shared/ui/toast.tsx"), true);
+  assert.equal(userMessageHasFocusedPath("сделай красиво"), false);
+  assert.equal(
+    looksLikeColdPageExploreRequest("создай новую страницу по фигме"),
+    true
+  );
+  assert.equal(
+    looksLikeColdPageExploreRequest("создай новую страницу в src/pages/x.tsx"),
+    false
+  );
+  assert.equal(
+    classifyExploreBudgetSignal({ userText: "edit src/a.ts" }),
+    "focused"
+  );
+  assert.equal(
+    classifyExploreBudgetSignal({ userText: "new page from figma" }),
+    "cold_page"
+  );
+  assert.equal(
+    classifyExploreBudgetSignal({ implementPlan: true, userText: "new page" }),
+    "implement"
+  );
+  const focused = exploreRoundLimits({
+    kimi: false,
+    userText: "поправь src/pages/foo.tsx",
+  });
+  assert.equal(focused.softNudgeRounds, FOCUSED_EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(focused.hardCutRounds, FOCUSED_EXPLORE_HARD_CUT_ROUNDS);
+  const cold = exploreRoundLimits({
+    kimi: false,
+    userText: "создай новую страницу Удостоверение",
+  });
+  assert.equal(cold.softNudgeRounds, COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(cold.hardCutRounds, COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS);
+});
+
+test("hardCutAllowsSearchText only after productive Agent edits", () => {
+  assert.equal(
+    hardCutAllowsSearchText({
+      readonly: false,
+      hadProductiveTool: false,
+    }),
+    false
+  );
+  assert.equal(
+    hardCutAllowsSearchText({
+      readonly: false,
+      hadProductiveTool: true,
+    }),
+    true
+  );
+  assert.equal(
+    hardCutAllowsSearchText({
+      readonly: false,
+      hadProductiveTool: false,
+      impactNudgeAttempts: 1,
+    }),
+    true
+  );
+  assert.equal(
+    hardCutAllowsSearchText({
+      readonly: true,
+      hadProductiveTool: true,
+    }),
+    false
+  );
+});
+
 test("explore nudges mention AGENTS.md when needed", () => {
   const soft = buildExploreSoftNudge({ agentsMd: true, readonly: false });
   assert.match(soft, /AGENTS\.md/);
@@ -96,6 +174,16 @@ test("Agent soft nudge stops explore and asks to write by analogy", () => {
     assert.match(soft, /write_file|search_replace/);
     assert.match(soft, /no longer available|Stop exploring/i);
   }
+});
+
+test("Agent hard nudge keeps search_text for consumers after edits", () => {
+  const hard = buildExploreHardNudge({
+    agentsMd: false,
+    readonly: false,
+  });
+  assert.match(hard, /search_text/);
+  assert.match(hard, /consumers/i);
+  assert.match(hard, /list_files and read_file are no longer allowed/i);
 });
 
 test("workspace follow hint requires reading analogous UI first", () => {
