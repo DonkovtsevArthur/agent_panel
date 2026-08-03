@@ -323,9 +323,10 @@
         `Compact this chat into a short working summary focused on ${target}. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.`,
       proposedPlanTitle: "Plan",
       proposedPlanBuild: "Build",
-      proposedPlanEdit: "Edit",
-      proposedPlanSave: "Save",
-      proposedPlanCancel: "Cancel",
+      proposedPlanOpenTab: "Preview",
+      proposedPlanOpenRaw: "Raw",
+      proposedPlanExpand: "Show plan",
+      proposedPlanCollapse: "Hide plan",
       proposedPlanCodeSection: "Plan code",
       proposedPlanCodeBlock: "Code",
       proposedPlanCodeLines: (n) => (n === 1 ? "1 line" : `${n} lines`),
@@ -633,9 +634,10 @@
         `Сожми текущий чат в короткое рабочее резюме с фокусом на ${target}. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.`,
       proposedPlanTitle: "План",
       proposedPlanBuild: "Собрать",
-      proposedPlanEdit: "Изменить",
-      proposedPlanSave: "Сохранить",
-      proposedPlanCancel: "Отмена",
+      proposedPlanOpenTab: "Просмотр",
+      proposedPlanOpenRaw: "Сырой",
+      proposedPlanExpand: "Показать план",
+      proposedPlanCollapse: "Скрыть план",
       proposedPlanCodeSection: "Код плана",
       proposedPlanCodeBlock: "Код",
       proposedPlanCodeLines: (n) =>
@@ -667,6 +669,11 @@
   const composerEl = document.getElementById("composer");
   const composerWrapEl = document.getElementById("composerWrap");
   const composerScmActionsEl = document.getElementById("composerScmActions");
+  const composerPlanActionsEl = document.getElementById("composerPlanActions");
+  /** Latest proposed_plan markdown for the composer Build tag. */
+  let pendingPlanText = "";
+  /** Avoid re-opening the same plan markdown repeatedly. */
+  let lastOpenedPlanKey = "";
   const composerDropHintEl = document.getElementById("composerDropHint");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
@@ -8101,6 +8108,139 @@
     scrollToBottom();
   }
 
+  /**
+   * Strip Build handoff chrome ([[harbor:implement_plan]] + implement prefix)
+   * so plan cards / Plan.md show only the plan markdown.
+   */
+  function stripPlanImplementWrapper(text) {
+    let value = String(text || "")
+      .replace(/^\uFEFF/, "")
+      .trim();
+    if (!value) {
+      return "";
+    }
+    value = value.replace(/\[\[harbor:implement_plan\]\]\s*/gi, "");
+    value = value.replace(
+      /^(?:Implement the following plan(?:\s+exactly)?[^\n]*|Реализуй следующий план(?:\s+точно)?[^\n]*)\s*/i,
+      ""
+    );
+    return value.trim();
+  }
+
+  function looksLikePlanImplementDisplay(text) {
+    const value = String(text || "").trim();
+    if (!value) {
+      return false;
+    }
+    if (/\[\[harbor:implement_plan\]\]/i.test(value)) {
+      return true;
+    }
+    return /^(?:Implement the following plan|Реализуй следующий план)/i.test(
+      value
+    );
+  }
+
+  /** Inner body of the last closed <proposed_plan>…</proposed_plan>, or "". */
+  function extractLatestProposedPlan(raw) {
+    const re =
+      /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*?)\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi;
+    let last = "";
+    let match;
+    while ((match = re.exec(String(raw || ""))) !== null) {
+      last = String(match[1] || "").trim();
+    }
+    return stripPlanImplementWrapper(last);
+  }
+
+  function sendImplementPlan(planText) {
+    const text = stripPlanImplementWrapper(planText);
+    if (!text || busy) {
+      return;
+    }
+    setAgentMode("agent", { notify: true });
+    stickToBottom = true;
+    setBusy(true);
+    setComposerPlanBuild("", false);
+    vscode.postMessage({
+      type: "send",
+      text: `[[harbor:implement_plan]]\n${t("proposedPlanImplementPrefix")}\n\n${text}`,
+      model: getSelectedModel(),
+      agentMode: "agent",
+      attachments: [],
+    });
+  }
+
+  function setComposerPlanBuild(planText, show) {
+    if (!composerPlanActionsEl) {
+      return;
+    }
+    const text = stripPlanImplementWrapper(planText);
+    composerPlanActionsEl.replaceChildren();
+    if (!show || !text) {
+      composerPlanActionsEl.hidden = true;
+      pendingPlanText = "";
+      return;
+    }
+    pendingPlanText = text;
+    composerPlanActionsEl.hidden = false;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "composer-plan-build";
+    btn.title = t("proposedPlanBuild");
+    btn.disabled = busy;
+    btn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">construction</span>` +
+      `<span>${escapeHtml(t("proposedPlanBuild"))}</span>`;
+    btn.addEventListener("click", () => {
+      sendImplementPlan(pendingPlanText);
+    });
+    composerPlanActionsEl.appendChild(btn);
+  }
+
+  /**
+   * When a complete proposed_plan is available: show composer Build tag.
+   * Opening the markdown tab is opt-in (card «Open in tab» button).
+   */
+  function presentProposedPlan(
+    raw,
+    { openEditor = false, forceOpen = false } = {}
+  ) {
+    const plan = extractLatestProposedPlan(raw);
+    if (!plan) {
+      return false;
+    }
+    setComposerPlanBuild(plan, true);
+    if (openEditor) {
+      const key = plan.replace(/\s+/g, " ").trim();
+      if (forceOpen || key !== lastOpenedPlanKey) {
+        lastOpenedPlanKey = key;
+        vscode.postMessage({
+          type: "openPlanMarkdown",
+          text: plan,
+          view: "preview",
+        });
+      }
+    }
+    return true;
+  }
+
+  function syncComposerPlanFromCache({ openEditor = false } = {}) {
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i];
+      if (item?.role !== "assistant") {
+        continue;
+      }
+      const plan = extractLatestProposedPlan(item.text);
+      if (plan) {
+        presentProposedPlan(item.text, { openEditor });
+        return;
+      }
+    }
+    setComposerPlanBuild("", false);
+    lastOpenedPlanKey = "";
+  }
+
   function setComposerScmActions(filesOrPaths, show) {
     if (!composerScmActionsEl) {
       return;
@@ -8704,82 +8844,64 @@
   }
 
   function renderProposedPlanCard(planBody) {
-    const raw = String(planBody || "");
-    return `<div class="proposed-plan-card" data-plan-raw="${escapeHtml(raw)}">`
+    const raw = stripPlanImplementWrapper(planBody);
+    const title = escapeHtml(t("proposedPlanTitle"));
+    const openTab = escapeHtml(t("proposedPlanOpenTab"));
+    const openRaw = escapeHtml(t("proposedPlanOpenRaw"));
+    const expand = escapeHtml(t("proposedPlanExpand"));
+    return `<div class="proposed-plan-card is-collapsed" data-plan-raw="${escapeHtml(raw)}">`
       + `<div class="proposed-plan-head">`
-      + `<span class="proposed-plan-title">${escapeHtml(t("proposedPlanTitle"))}</span>`
-      + `<div class="proposed-plan-actions">`
-      + `<button class="proposed-plan-edit" type="button" data-plan-action="edit" title="${escapeHtml(t("proposedPlanEdit"))}">`
-      + `<span class="material-symbols-outlined" aria-hidden="true">edit</span>`
-      + `<span>${escapeHtml(t("proposedPlanEdit"))}</span>`
+      + `<button class="proposed-plan-toggle" type="button" data-plan-action="toggle" aria-expanded="false" title="${expand}">`
+      + `<span class="material-symbols-outlined proposed-plan-chevron" aria-hidden="true">expand_more</span>`
+      + `<span class="proposed-plan-title">${title}</span>`
       + `</button>`
-      + `<button class="proposed-plan-build" type="button" data-plan-action="build">${escapeHtml(t("proposedPlanBuild"))}</button>`
+      + `<div class="proposed-plan-actions">`
+      + `<button class="proposed-plan-open-tab" type="button" data-plan-action="open-tab" title="${openTab}">`
+      + `<span class="material-symbols-outlined" aria-hidden="true">preview</span>`
+      + `<span>${openTab}</span>`
+      + `</button>`
+      + `<button class="proposed-plan-open-raw" type="button" data-plan-action="open-raw" title="${openRaw}">`
+      + `<span class="material-symbols-outlined" aria-hidden="true">code</span>`
+      + `<span>${openRaw}</span>`
+      + `</button>`
       + `</div>`
       + `</div>`
-      + `<div class="proposed-plan-body">${renderPlanBodyHtml(raw)}</div>`
-      + `<div class="proposed-plan-editor" hidden>`
-      + `<textarea class="proposed-plan-textarea" spellcheck="false"></textarea>`
-      + `<div class="proposed-plan-editor-actions">`
-      + `<button class="proposed-plan-cancel" type="button" data-plan-action="cancel-edit">${escapeHtml(t("proposedPlanCancel"))}</button>`
-      + `<button class="proposed-plan-save" type="button" data-plan-action="save-edit">${escapeHtml(t("proposedPlanSave"))}</button>`
-      + `</div>`
-      + `</div>`
+      + `<div class="proposed-plan-body" hidden>${renderPlanBodyHtml(raw)}</div>`
       + `</div>`;
   }
 
-  function setProposedPlanEditing(card, editing) {
+  function setProposedPlanCollapsed(card, collapsed) {
     if (!(card instanceof HTMLElement)) {
       return;
     }
     const body = card.querySelector(".proposed-plan-body");
-    const editor = card.querySelector(".proposed-plan-editor");
-    const textarea = card.querySelector(".proposed-plan-textarea");
-    const editBtn = card.querySelector("[data-plan-action='edit']");
-    const buildBtn = card.querySelector("[data-plan-action='build']");
-    if (!body || !editor || !(textarea instanceof HTMLTextAreaElement)) {
+    const toggle = card.querySelector("[data-plan-action='toggle']");
+    if (!body || !(toggle instanceof HTMLButtonElement)) {
       return;
     }
-    if (editing) {
-      textarea.value = card.dataset.planRaw || "";
-      body.hidden = true;
-      editor.hidden = false;
-      if (editBtn) {
-        editBtn.hidden = true;
-      }
-      if (buildBtn) {
-        buildBtn.disabled = true;
-      }
-      textarea.focus();
-      const len = textarea.value.length;
-      textarea.setSelectionRange(len, len);
-    } else {
-      body.hidden = false;
-      editor.hidden = true;
-      if (editBtn) {
-        editBtn.hidden = false;
-      }
-      if (buildBtn) {
-        buildBtn.disabled = false;
-      }
-    }
+    card.classList.toggle("is-collapsed", collapsed);
+    body.hidden = collapsed;
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    toggle.title = collapsed
+      ? t("proposedPlanExpand")
+      : t("proposedPlanCollapse");
   }
 
-  function saveProposedPlanEdit(card) {
+  function openProposedPlanInTab(card, view = "preview") {
     if (!(card instanceof HTMLElement)) {
       return;
     }
-    const textarea = card.querySelector(".proposed-plan-textarea");
-    const body = card.querySelector(".proposed-plan-body");
-    if (!(textarea instanceof HTMLTextAreaElement) || !body) {
+    const raw = stripPlanImplementWrapper(card.dataset.planRaw || "");
+    if (!raw) {
       return;
     }
-    const next = String(textarea.value || "").trim();
-    if (!next) {
-      return;
-    }
-    card.dataset.planRaw = next;
-    body.innerHTML = renderPlanBodyHtml(next);
-    setProposedPlanEditing(card, false);
+    const key = raw.replace(/\s+/g, " ").trim();
+    lastOpenedPlanKey = key;
+    vscode.postMessage({
+      type: "openPlanMarkdown",
+      text: raw,
+      view: view === "raw" ? "raw" : "preview",
+    });
   }
 
   function getMarkedApi() {
@@ -9286,6 +9408,12 @@
       body.className = "msg-body";
       el.insertBefore(body, el.firstChild);
     }
+    if (role === "user" && looksLikePlanImplementDisplay(raw)) {
+      // Keep full Build payload in dataset.raw for edit/resend; show clean plan.
+      const clean = stripPlanImplementWrapper(raw);
+      body.innerHTML = renderInlineMarkdown(clean || raw);
+      return;
+    }
     if (role === "assistant" || role === "error" || role === "user") {
       body.innerHTML = renderInlineMarkdown(raw);
       return;
@@ -9496,6 +9624,7 @@
     }
     restoreAgentStatus();
     syncComposerScmFromCache();
+    syncComposerPlanFromCache({ openEditor: false });
     focusEditingInput();
     requestAnimationFrame(() => {
       if (scrollMode === "restore") {
@@ -9912,6 +10041,12 @@
       const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
       if (commitBtn) {
         commitBtn.disabled = busy;
+      }
+    }
+    if (composerPlanActionsEl) {
+      const planBtn = composerPlanActionsEl.querySelector(".composer-plan-build");
+      if (planBtn) {
+        planBtn.disabled = busy;
       }
     }
     if (busy) {
@@ -11512,69 +11647,37 @@
       }
       return;
     }
-    const planEditBtn = event.target.closest("[data-plan-action='edit']");
-    if (planEditBtn && messagesEl.contains(planEditBtn)) {
+    const planToggleBtn = event.target.closest("[data-plan-action='toggle']");
+    if (planToggleBtn && messagesEl.contains(planToggleBtn)) {
       event.preventDefault();
       event.stopPropagation();
-      const card = planEditBtn.closest(".proposed-plan-card");
+      const card = planToggleBtn.closest(".proposed-plan-card");
       if (card) {
-        setProposedPlanEditing(card, true);
+        setProposedPlanCollapsed(
+          card,
+          !card.classList.contains("is-collapsed")
+        );
       }
       return;
     }
-    const planCancelBtn = event.target.closest("[data-plan-action='cancel-edit']");
-    if (planCancelBtn && messagesEl.contains(planCancelBtn)) {
+    const planOpenTabBtn = event.target.closest("[data-plan-action='open-tab']");
+    if (planOpenTabBtn && messagesEl.contains(planOpenTabBtn)) {
       event.preventDefault();
       event.stopPropagation();
-      const card = planCancelBtn.closest(".proposed-plan-card");
+      const card = planOpenTabBtn.closest(".proposed-plan-card");
       if (card) {
-        setProposedPlanEditing(card, false);
+        openProposedPlanInTab(card, "preview");
       }
       return;
     }
-    const planSaveBtn = event.target.closest("[data-plan-action='save-edit']");
-    if (planSaveBtn && messagesEl.contains(planSaveBtn)) {
+    const planOpenRawBtn = event.target.closest("[data-plan-action='open-raw']");
+    if (planOpenRawBtn && messagesEl.contains(planOpenRawBtn)) {
       event.preventDefault();
       event.stopPropagation();
-      const card = planSaveBtn.closest(".proposed-plan-card");
+      const card = planOpenRawBtn.closest(".proposed-plan-card");
       if (card) {
-        saveProposedPlanEdit(card);
+        openProposedPlanInTab(card, "raw");
       }
-      return;
-    }
-    const buildBtn = event.target.closest("[data-plan-action='build']");
-    if (buildBtn && messagesEl.contains(buildBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (buildBtn.disabled) {
-        return;
-      }
-      const card = buildBtn.closest(".proposed-plan-card");
-      if (!card) {
-        return;
-      }
-      // Prefer the raw markdown stored at render time (preserves **bold**,
-      // code spans, list structure). Fall back to textContent for cards
-      // rendered before this attribute existed (history re-renders).
-      // After Edit→Save, dataset.planRaw holds the user-edited plan.
-      const rawPlan = card.dataset.planRaw || "";
-      const planBody = card.querySelector(".proposed-plan-body");
-      const planText = rawPlan.trim() || (planBody ? planBody.textContent : "");
-      if (!planText.trim()) {
-        return;
-      }
-      setAgentMode("agent", { notify: true });
-      stickToBottom = true;
-      setBusy(true);
-      // Marker is language-independent — host detects Build handoff even if
-      // the localized prefix changes.
-      vscode.postMessage({
-        type: "send",
-        text: `[[harbor:implement_plan]]\n${t("proposedPlanImplementPrefix")}\n\n${planText}`,
-        model: getSelectedModel(),
-        agentMode: "agent",
-        attachments: [],
-      });
       return;
     }
     const editModeTrigger = event.target.closest(".msg-edit-mode-trigger");
@@ -12029,6 +12132,9 @@
           msg.reasoning,
           msg.step
         );
+        if (msg.role === "assistant") {
+          presentProposedPlan(msg.text || "", { openEditor: false });
+        }
         break;
       case "step":
         upsertAgentStep(msg);
@@ -12082,8 +12188,10 @@
         }
         streamingRenderScheduled = false;
         break;
-      case "assistantDone":
+      case "assistantDone": {
+        let assistantDoneText = "";
         if (!streamingEl && msg.text) {
+          assistantDoneText = msg.text;
           uiMessagesCache.push({
             role: "assistant",
             text: msg.text,
@@ -12106,6 +12214,7 @@
           cleanSealedThinkingPlaceholders();
         } else if (streamingEl) {
           const raw = msg.text || streamingEl.dataset.raw || "";
+          assistantDoneText = raw;
           setMessageContent(streamingEl, "assistant", raw);
           uiMessagesCache.push({
             role: "assistant",
@@ -12124,7 +12233,11 @@
         editingModeId = "";
         setBusy(false);
         ensureRegenerateButton();
+        if (assistantDoneText) {
+          presentProposedPlan(assistantDoneText, { openEditor: false });
+        }
         break;
+      }
       case "reasoning":
         // Live Thinking comes from step events. Late/duplicate reasoning
         // messages must not open a second card after seal.
@@ -12159,6 +12272,8 @@
         editingModelId = "";
         editingModeId = "";
         streamingEl = null;
+        setComposerPlanBuild("", false);
+        lastOpenedPlanKey = "";
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
         setBusy(false);

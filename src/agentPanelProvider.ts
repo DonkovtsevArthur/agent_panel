@@ -42,6 +42,7 @@ import {
   type AgentModeDef,
 } from "./modes";
 import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
+import { stripPlanImplementWrapper } from "./planImplement";
 import { getMcpManager } from "./mcpBundle";
 import type { FigmaStatusPayload } from "./mcpBundle";
 import type { McpServerRuntimeStatus } from "./mcp/types";
@@ -151,6 +152,7 @@ type WebviewToHost =
   | { type: "modeChanged"; mode: string; chatId?: string }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
+  | { type: "openPlanMarkdown"; text: string; view?: "preview" | "raw" }
   | { type: "commitAndPush"; paths: string[] }
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
@@ -226,6 +228,22 @@ const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 /** Интервал фоновой проверки, пока виден чат. */
 const PROVIDER_PROBE_POLL_MS = 15_000;
 
+/** Virtual markdown buffer for Plan cards opened in the editor. */
+class PlanMarkdownContentProvider implements vscode.TextDocumentContentProvider {
+  private content = "";
+  private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+  readonly onDidChange = this._onDidChange.event;
+
+  set(content: string, uri: vscode.Uri): void {
+    this.content = content;
+    this._onDidChange.fire(uri);
+  }
+
+  provideTextDocumentContent(): string {
+    return this.content;
+  }
+}
+
 export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
 
@@ -274,12 +292,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         language: string;
       }
     | undefined;
+  /** Virtual markdown doc for the latest proposed plan (auto-opened in editor). */
+  private readonly planMarkdownProvider = new PlanMarkdownContentProvider();
+  private planMarkdownUri = vscode.Uri.from({
+    scheme: "harbor-plan",
+    path: "/Plan.md",
+  });
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly context: vscode.ExtensionContext
   ) {
     this.loadStore();
+    this.disposables.push(
+      vscode.workspace.registerTextDocumentContentProvider(
+        "harbor-plan",
+        this.planMarkdownProvider
+      )
+    );
     const mcp = getMcpManager();
     if (mcp) {
       this.disposables.push(
@@ -1818,6 +1848,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "openFileDiff":
         await this.openWorkspaceFileDiff(message.path);
         break;
+      case "openPlanMarkdown":
+        await this.openPlanMarkdown(
+          String(message.text || ""),
+          message.view === "raw" ? "raw" : "preview"
+        );
+        break;
       case "commitAndPush":
         await this.handleCommitAndPush(
           Array.isArray(message.paths) ? message.paths : []
@@ -2152,6 +2188,61 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(
         `Failed to open ${relativePath}: ${text}`
+      );
+    }
+  }
+
+  /**
+   * Open/update the latest Plan-mode markdown in the editor area.
+   * Default: rendered Markdown preview; `raw` shows the source buffer.
+   */
+  private async openPlanMarkdown(
+    markdown: string,
+    view: "preview" | "raw" = "preview"
+  ): Promise<void> {
+    const content = stripPlanImplementWrapper(markdown);
+    if (!content) {
+      return;
+    }
+    const fileName =
+      resolveUiLanguage(getConfig().language) === "ru" ? "План.md" : "Plan.md";
+    this.planMarkdownUri = vscode.Uri.from({
+      scheme: "harbor-plan",
+      path: `/${fileName}`,
+    });
+    this.planMarkdownProvider.set(content, this.planMarkdownUri);
+    try {
+      const doc = await vscode.workspace.openTextDocument(this.planMarkdownUri);
+      if (doc.languageId !== "markdown") {
+        await vscode.languages.setTextDocumentLanguage(doc, "markdown");
+      }
+      if (view === "raw") {
+        await vscode.window.showTextDocument(doc, {
+          preview: false,
+          preserveFocus: true,
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+        return;
+      }
+      // Built-in Markdown preview (no raw ** / `). User can still open Raw
+      // from the plan card, or use the preview’s “Open Source” action.
+      try {
+        await vscode.commands.executeCommand(
+          "markdown.showPreviewToSide",
+          this.planMarkdownUri
+        );
+      } catch {
+        // Older / minimal VS Code builds without the Markdown extension.
+        await vscode.window.showTextDocument(doc, {
+          preview: false,
+          preserveFocus: true,
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(
+        `Failed to open plan markdown: ${text}`
       );
     }
   }
@@ -3935,6 +4026,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     <div id="chatSearchResults" class="chat-search-results" role="listbox" aria-label="Search results" hidden></div>
     <div id="messages"></div>
     <div class="composer-wrap" id="composerWrap">
+      <div id="composerPlanActions" class="composer-plan-actions" hidden></div>
       <div id="composerScmActions" class="composer-scm-actions" hidden></div>
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
       <div class="composer" id="composer">
