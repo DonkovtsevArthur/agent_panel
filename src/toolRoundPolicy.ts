@@ -38,9 +38,13 @@ export const KIMI_EXPLORE_HARD_CUT_ROUNDS = 6;
  * Plan quality-first: мягкие напоминания про grounding.
  * Hard-cut explore отключён — иначе обрывает незакрытые пункты
  * инвентаря (чеклист / блоки макета). Потолок = maxToolRounds + planQuality gate.
+ * Same soft threshold for all models (was Kimi-only 8) — Claude needs the
+ * extra grounding rounds too before «write the plan now».
  */
-export const PLAN_QUALITY_SOFT_NUDGE_ROUNDS = 6;
-export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS = 8;
+export const PLAN_QUALITY_SOFT_NUDGE_ROUNDS = 8;
+/** @deprecated alias — same as PLAN_QUALITY_SOFT_NUDGE_ROUNDS */
+export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS =
+  PLAN_QUALITY_SOFT_NUDGE_ROUNDS;
 
 /** Сколько раз можно продлить бюджет раундов. */
 export const MAX_ROUND_EXTENSIONS = 1;
@@ -82,9 +86,7 @@ export function exploreRoundLimits(options: {
   }
   if (options.planQuality) {
     return {
-      softNudgeRounds: options.kimi
-        ? PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS
-        : PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
+      softNudgeRounds: PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
       // Unused while hardCutExplore is false — keep a large sentinel for tests.
       hardCutRounds: Number.MAX_SAFE_INTEGER,
       stripExploreOnSoftNudge: false,

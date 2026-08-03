@@ -138,11 +138,17 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
   } = require("../out/toolRoundPolicy.js");
   const plan = exploreRoundLimits({ kimi: false, planQuality: true });
   assert.equal(plan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
+  assert.equal(plan.softNudgeRounds, 8);
   assert.equal(plan.stripExploreOnSoftNudge, false);
   assert.equal(plan.hardCutExplore, false);
   assert.ok(plan.hardCutRounds > 1000);
+  // Same soft threshold for Kimi and Claude/other — Plan grounding needs room.
   const kimiPlan = exploreRoundLimits({ kimi: true, planQuality: true });
-  assert.equal(kimiPlan.softNudgeRounds, PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS);
+  assert.equal(kimiPlan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
+  assert.equal(
+    kimiPlan.softNudgeRounds,
+    PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS
+  );
   assert.equal(kimiPlan.hardCutExplore, false);
   assert.equal(kimiPlan.stripExploreOnSoftNudge, false);
   // implementPlan still wins over planQuality if both were set

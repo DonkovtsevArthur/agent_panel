@@ -273,13 +273,24 @@ export function dropOlderReasoningBlocks(
  * tool-payloads, включая последний.
  */
 export function prepareFragileGatewayMessages(
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options?: { readonly?: boolean }
 ): boolean {
+  const readonly = Boolean(options?.readonly);
+  // Plan/Ask: same pin strategy as Kimi — Figma + grounding reads are the
+  // plan source; aggressive caps that help Agent gateways cause page→tab drift.
+  const preserve = readonly ? ["mcp__figma__"] : [];
   const older = shrinkOlderToolResults(messages, {
-    keepRecent: 2,
-    maxOldChars: 2_000,
+    keepRecent: readonly ? 4 : 2,
+    maxOldChars: readonly ? 2_800 : 2_000,
+    preserveToolPrefixes: preserve,
+    ...(readonly
+      ? { preserveToolResult: looksLikePlanGroundingToolResult }
+      : {}),
   });
-  const all = shrinkToolMessageContents(messages, 2_800);
+  const all = shrinkToolMessageContents(messages, readonly ? 4_000 : 2_800, {
+    preserveToolPrefixes: preserve,
+  });
   const edits = compactCompletedEditToolArguments(messages);
   return older || all || edits;
 }
