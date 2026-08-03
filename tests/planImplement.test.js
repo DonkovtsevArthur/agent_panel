@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   PLAN_IMPLEMENT_MARKER,
+  stripPlanImplementWrapper,
   looksLikePlanImplementRequest,
   looksLikeEditCorrectionRequest,
   buildPlanImplementSystemHint,
@@ -15,6 +16,25 @@ const {
   EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
 } = require("../out/toolRoundPolicy.js");
+
+test("stripPlanImplementWrapper removes marker and RU/EN implement prefixes", () => {
+  assert.equal(
+    stripPlanImplementWrapper(
+      `${PLAN_IMPLEMENT_MARKER}\nРеализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):\n\n**Цель**: страница`
+    ),
+    "**Цель**: страница"
+  );
+  assert.equal(
+    stripPlanImplementWrapper(
+      `${PLAN_IMPLEMENT_MARKER}\nImplement the following plan exactly (components, paths, and steps as written — do not substitute your own):\n\n**Goal**: page`
+    ),
+    "**Goal**: page"
+  );
+  assert.equal(
+    stripPlanImplementWrapper("**Цель**: уже чистый план"),
+    "**Цель**: уже чистый план"
+  );
+});
 
 test("looksLikePlanImplementRequest detects marker and localized prefixes", () => {
   assert.equal(

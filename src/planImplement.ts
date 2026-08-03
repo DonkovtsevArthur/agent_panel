@@ -10,6 +10,27 @@ export const PLAN_IMPLEMENT_PREFIX_EN = "Implement the following plan:";
 export const PLAN_IMPLEMENT_PREFIX_RU = "Реализуй следующий план:";
 
 /**
+ * Strip the Build handoff wrapper (marker + localized implement prefix) so
+ * plan cards / Plan.md / chat display show only the plan markdown.
+ * Does not change the payload sent to the model.
+ */
+export function stripPlanImplementWrapper(text: string): string {
+  let value = String(text || "")
+    .replace(/^\uFEFF/, "")
+    .trim();
+  if (!value) {
+    return "";
+  }
+  // Marker may sit on its own first line or be glued to the prefix.
+  value = value.replace(/\[\[harbor:implement_plan\]\]\s*/gi, "");
+  value = value.replace(
+    /^(?:Implement the following plan(?:\s+exactly)?[^\n]*|Реализуй следующий план(?:\s+точно)?[^\n]*)\s*/i,
+    ""
+  );
+  return value.trim();
+}
+
+/**
  * True when this user message is a Build handoff (or the same phrasing typed
  * manually with the standard prefix).
  */
