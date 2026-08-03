@@ -281,3 +281,32 @@ test("Kimi Plan/Ask skips soft-budget and mid-turn Context compacted", () => {
   );
   assert.ok(String(reads.at(-1)?.content || "").length > 4_000);
 });
+
+test("Claude Plan/Ask also skips soft-budget and mid-turn Context compacted", () => {
+  const messages = buildLongKimiExploreHistory(6);
+  const result = prepareRoundMessages({
+    messages,
+    modelId: "claude-sonnet-4-5",
+    contextWindow: 200_000,
+    reservedOutputTokens: 4_000,
+    kimi: false,
+    readonly: true,
+  });
+  assert.equal(result.summarized, false);
+  assert.equal(result.compacted, false);
+  assert.ok(
+    !messages.some(
+      (m) =>
+        typeof m.content === "string" &&
+        m.content.includes("--- Context compacted ---")
+    )
+  );
+  assert.ok(
+    messages.filter((m) => m.role === "tool" && m.name === "read_file").length >=
+      4
+  );
+  const figma = messages.find(
+    (m) => m.role === "tool" && String(m.name || "").startsWith("mcp__figma__")
+  );
+  assert.ok(String(figma?.content || "").length > 10_000);
+});

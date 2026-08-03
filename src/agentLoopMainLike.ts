@@ -648,12 +648,12 @@ export async function runMainLikeAgentTurn(options: {
   // без capability — undefined (поле не отправляется).
   const turnReasoningEffort = resolveModelReasoningEffort(options.model);
   // Короткие workspace rules (AGENTS.md + .cursor/rules) — что можно/нельзя править.
-  // Kimi: больший кап, чтобы .cursor/rules не отрезались после длинного AGENTS.md.
+  // Единый кап ~12k: иначе длинный AGENTS.md отрезает .cursor/rules у Claude/др.
   const workspaceRules =
     editorWorkspace.rootPath && !agentsMdTurn
       ? await loadWorkspaceRules(editorWorkspace.rootPath, {
           targetPaths: editorWorkspace.targetPaths,
-          charCap: kimiModel ? DEFAULT_WORKSPACE_RULE_CHAR_CAP : 8_000,
+          charCap: DEFAULT_WORKSPACE_RULE_CHAR_CAP,
         })
       : undefined;
   const figmaAntiDrift =
@@ -845,12 +845,12 @@ export async function runMainLikeAgentTurn(options: {
       kimi: kimiModel,
       readonly,
     });
-    // Kimi Plan/Ask: hard-trim may still run under a tight ceiling, but do not
+    // Plan/Ask: hard-trim may still run under a tight ceiling, but do not
     // spam the timeline with «Context compacted» every round — it distracts
     // and the soft/summary paths are already disabled for this mode.
     const showCompactionCard =
       (prep.compacted || prep.summarized) &&
-      !(kimiModel && readonly && !prep.summarized);
+      !(readonly && !prep.summarized);
     if (showCompactionCard) {
       emitStep({
         stepId: nextStepId("compaction"),

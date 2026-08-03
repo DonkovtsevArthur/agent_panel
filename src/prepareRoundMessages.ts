@@ -39,21 +39,24 @@ export interface PrepareRoundMessagesResult {
  * Gateway shrink (Kimi / fragile light models) + context budget + optional
  * extractive mid-turn summary. Mutates `messages` in place when applied.
  *
- * Kimi Plan/Ask: keep explore/read grounding — no soft-target budget and no
- * mid-turn extractive summary. Gateway shrink still runs (Figma preserved);
- * hard context ceiling still applies. Agent mode keeps soft budget + summary.
+ * Plan/Ask (all models): keep explore/read grounding — no soft-target budget
+ * and no mid-turn extractive summary. Hard context ceiling still applies;
+ * Kimi/fragile gateway shrink still runs with Figma + grounding pins.
+ * Agent mode keeps soft budget + summary.
  */
 export function prepareRoundMessages(
   options: PrepareRoundMessagesOptions
 ): PrepareRoundMessagesResult {
-  const kimiPlanAsk = options.kimi && Boolean(options.readonly);
+  const planAsk = Boolean(options.readonly);
 
   if (options.kimi) {
     prepareKimiGatewayMessages(options.messages, {
       readonly: options.readonly,
     });
   } else if (modelNeedsAggressiveToolBudget(options.modelId)) {
-    prepareFragileGatewayMessages(options.messages);
+    prepareFragileGatewayMessages(options.messages, {
+      readonly: options.readonly,
+    });
   }
 
   const budgetTokens = calculateContextBudget({
@@ -61,8 +64,9 @@ export function prepareRoundMessages(
     reservedOutputTokens: options.reservedOutputTokens,
   });
   // Soft target drives proactive "Context compacted" cards before the hard
-  // ceiling. Skip it for Kimi Plan/Ask so early read_file grounding survives.
-  const softTargetTokens = kimiPlanAsk
+  // ceiling. Skip it for Plan/Ask so early read_file grounding survives
+  // (Claude / Kimi / others — summarizing away Figma/reads causes page→tab drift).
+  const softTargetTokens = planAsk
     ? undefined
     : resolveToolSoftTargetTokens({
         hardBudget: budgetTokens,
@@ -73,7 +77,7 @@ export function prepareRoundMessages(
     contextWindow: options.contextWindow,
     reservedOutputTokens: options.reservedOutputTokens,
     ...(softTargetTokens !== undefined ? { softTargetTokens } : {}),
-    ...(kimiPlanAsk
+    ...(planAsk
       ? { preserveToolResult: looksLikePlanGroundingToolResult }
       : {}),
   });
@@ -83,7 +87,7 @@ export function prepareRoundMessages(
   let working = budgeted.messages;
 
   if (
-    !kimiPlanAsk &&
+    !planAsk &&
     softTargetTokens !== undefined &&
     (!budgeted.fits || budgeted.estimatedTokens > softTargetTokens)
   ) {
