@@ -9,7 +9,9 @@ const {
   extractImplementationSection,
   extractUserChecklistItems,
   extractVisionHelperFrameTitle,
+  extractVisionHelperUiLabels,
   diagnosePlanQualityFailure,
+  diagnosisFromReasons,
   looksLikeMissingAnalogueQuote,
   looksLikeIncompleteProposedPlan,
   looksLikePageToTabDrift,
@@ -23,10 +25,15 @@ const {
   looksLikeMissingComponentApiRead,
   looksLikeChecklistCoverageGap,
   looksLikeGoalMissingFrameTitle,
+  looksLikeMissingFigmaBlockInventory,
+  significantChecklistTokens,
+  shouldForceFigmaBeforeExplore,
   turnHadFigmaPlanTools,
   proposedPlanHasWorkspacePath,
   proposedPlanHasGroundedPath,
   PLAN_QUALITY_NUDGE,
+  FIGMA_FIRST_FORCE_HINT,
+  FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
 } = require("../out/planQuality.js");
 
 const FIGMA_TOOL_MESSAGES = [
@@ -639,4 +646,185 @@ test("goal_frame_title requires Goal to include vision-helper Title token", () =
     { userText: user, messages: FIGMA_TOOL_MESSAGES }
   );
   assert.equal(d?.reason, "goal_frame_title");
+});
+
+test("shouldForceFigmaBeforeExplore until Figma MCP ran in Plan", () => {
+  const user =
+    "составь план https://www.figma.com/design/abc/x?node-id=1-2";
+  assert.equal(
+    shouldForceFigmaBeforeExplore({
+      planMode: true,
+      figmaConnected: true,
+      userText: user,
+      messages: [],
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceFigmaBeforeExplore({
+      planMode: true,
+      figmaConnected: true,
+      userText: user,
+      messages: FIGMA_TOOL_MESSAGES,
+    }),
+    false
+  );
+  assert.equal(
+    shouldForceFigmaBeforeExplore({
+      planMode: true,
+      figmaConnected: false,
+      userText: user,
+      messages: [],
+    }),
+    false
+  );
+  assert.equal(
+    shouldForceFigmaBeforeExplore({
+      planMode: false,
+      figmaConnected: true,
+      userText: user,
+      messages: [],
+    }),
+    false
+  );
+  assert.equal(
+    shouldForceFigmaBeforeExplore({
+      planMode: true,
+      figmaConnected: true,
+      userText: "план без ссылки",
+      messages: [],
+    }),
+    false
+  );
+  assert.match(FIGMA_FIRST_FORCE_HINT, /FIRST tool call/i);
+  assert.match(FIGMA_FIRST_EXPLORE_BLOCKED_JSON, /get_design_context|get_figma_data/);
+});
+
+test("diagnosisFromReasons packs multiple reasons into one nudge", () => {
+  const single = diagnosisFromReasons(["missing_grounded_path"]);
+  assert.equal(single?.reason, "missing_grounded_path");
+  assert.deepEqual(single?.reasons, ["missing_grounded_path"]);
+  assert.match(single?.nudge || "", /^False: every Step/i);
+
+  const multi = diagnosisFromReasons([
+    "missing_figma_tools",
+    "page_to_tab",
+    "missing_implementation",
+  ]);
+  assert.equal(multi?.reason, "missing_figma_tools");
+  assert.deepEqual(multi?.reasons, [
+    "missing_figma_tools",
+    "page_to_tab",
+    "missing_implementation",
+  ]);
+  assert.match(multi?.nudge || "", /fix ALL of the following/i);
+  assert.match(multi?.nudge || "", /1\)/);
+  assert.match(multi?.nudge || "", /2\)/);
+  assert.match(multi?.nudge || "", /get_design_context/i);
+  assert.match(multi?.nudge || "", /tab|вкладк/i);
+  assert.match(multi?.nudge || "", /Implementation/i);
+
+  const capped = diagnosisFromReasons([
+    "missing_steps",
+    "missing_figma_tools",
+    "page_to_tab",
+    "missing_implementation",
+    "checklist_coverage",
+    "goal_frame_title",
+  ]);
+  assert.equal(capped?.reasons.length, 4);
+});
+
+test("multi-reason diagnose when Figma URL + page→tab + no Implementation", () => {
+  const user =
+    "составь план страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const plan =
+    "<proposed_plan>\n**Цель**: вкладка на существующей странице\n**Шаги**:\n" +
+    "1. Добавить таб — src/features/ibkc/tabs.tsx\n" +
+    "**Затрагиваемые файлы**: src/features/ibkc/tabs.tsx\n</proposed_plan>";
+  const d = diagnosePlanQualityFailure(plan, { userText: user, messages: [] });
+  assert.ok(d);
+  assert.ok(d.reasons.includes("missing_figma_tools"));
+  assert.ok(d.reasons.includes("page_to_tab"));
+  assert.ok(d.reasons.includes("missing_implementation"));
+  assert.match(d.nudge, /fix ALL of the following/i);
+});
+
+test("figma_block_inventory requires vision-helper labels in the plan", () => {
+  const richVision = [
+    {
+      role: "tool",
+      name: "mcp__figma__get_design_context",
+      content: JSON.stringify({ ok: true }),
+    },
+    {
+      role: "tool",
+      name: "mcp__figma__get_screenshot",
+      content:
+        "[Harbor vision helper · vision-model]\n\n## Visible UI (from screenshot)\n" +
+        "Title: Удостоверение\n" +
+        "Columns: Вид работ, Статус, Организация\n" +
+        "Actions: Создать, Экспорт\n",
+    },
+  ];
+  assert.deepEqual(extractVisionHelperUiLabels(richVision).sort(), [
+    "Вид работ",
+    "Организация",
+    "Создать",
+    "Статус",
+    "Экспорт",
+  ].sort());
+
+  const thinBody =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeMissingFigmaBlockInventory(thinBody, richVision), true);
+
+  const coveredBody =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Таблица — колонки Вид работ, Статус, Организация — src/pages/cert/table.tsx\n" +
+    "2. Actions — Создать / Экспорт — src/pages/cert/actions.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/table.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeMissingFigmaBlockInventory(coveredBody, richVision), false);
+
+  // Single Column label is below the inventory threshold (need ≥2 labels).
+  assert.equal(
+    looksLikeMissingFigmaBlockInventory(thinBody, FIGMA_TOOL_MESSAGES),
+    false
+  );
+
+  const user =
+    "составь план страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const d = diagnosePlanQualityFailure(
+    `<proposed_plan>\n${thinBody}\n</proposed_plan>`,
+    { userText: user, messages: richVision }
+  );
+  assert.ok(d?.reasons.includes("figma_block_inventory"));
+  assert.match(d?.nudge || "", /Columns|Filters|Actions|Tabs|labels/i);
+});
+
+test("checklist_coverage is semantic: count alone is not enough", () => {
+  const user =
+    "план:\n1. Роут\n2. Таблица\n3. Фильтры\nhttps://www.figma.com/design/abc/x?node-id=1-2";
+  assert.ok(significantChecklistTokens("3. Фильтры").includes("фильтры"));
+  const collapsed =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "2. Роут дубль — src/pages/cert/route2.tsx\n" +
+    "3. Ещё роут — src/pages/cert/route3.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  // 3 steps ≥ 3 items, but «Таблица» / «Фильтры» never appear → semantic gap.
+  assert.equal(looksLikeChecklistCoverageGap(collapsed, user), true);
+  const covered =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "2. Таблица — новый src/pages/cert/table.tsx\n" +
+    "3. Фильтры — новый src/pages/cert/filters.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeChecklistCoverageGap(covered, user), false);
 });

@@ -41,6 +41,7 @@ export function messageHasFigmaUrl(text: string): boolean {
 export function figmaPlanAntiDriftHint(): string {
   return [
     "The user pasted a Figma URL — default intent in Plan: plan implementation of that frame as a page/screen (WHAT). Do not ask «what do they want?» / «which page?» before fetching the design; call Figma MCP first, then ground blocks in the repo.",
+    "Runtime enforces Figma-first: list_files / read_file / search_text / delegate_task stay unavailable until get_design_context+get_screenshot (or get_figma_data on PAT) succeeds this turn.",
     "After Figma MCP / vision-helper results arrive, keep that frame/page title and UI labels as ground truth — put the Figma frame title in the plan Goal.",
     "Surface = page / route / screen unless vision-helper or the design clearly shows the whole deliverable is only a tab strip. Finding a Tabs component in the repo must NOT redefine WHAT as «add a tab».",
     "Split the mockup into blocks (header, filters, table/columns, actions, …).",
