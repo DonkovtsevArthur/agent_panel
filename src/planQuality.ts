@@ -4,6 +4,7 @@
  */
 
 import { messageHasFigmaUrl } from "./mcp/figma";
+import { HARBOR_VISION_HELPER_MARKER } from "./figmaVisionFormat";
 
 export const PLAN_QUALITY_NUDGE =
   "False: your plan deliverable is not decision-complete. " +
@@ -25,6 +26,59 @@ export type PlanQualityMessage = {
   name?: string;
   /** Tool payloads are strings; assistant content may be richer — ignored. */
   content?: unknown;
+  tool_calls?: Array<{ function?: { name?: string } | null } | null> | null;
+};
+
+export type PlanQualityReason =
+  | "plan_file_write"
+  | "prose_already_exists"
+  | "unfixed_fields"
+  | "missing_grounded_path"
+  | "missing_steps"
+  | "missing_figma_tools"
+  | "page_to_tab"
+  | "page_to_similar"
+  | "already_exists_no_inventory"
+  | "missing_analogue_quote"
+  | "missing_implementation"
+  | "missing_component_api_read"
+  | "checklist_coverage"
+  | "goal_frame_title";
+
+export type PlanQualityDiagnosis = {
+  reason: PlanQualityReason;
+  nudge: string;
+};
+
+const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
+  plan_file_write:
+    "False: do not write_file a PLAN.md / implementation-plan. Emit a FULL <proposed_plan>…</proposed_plan> card instead (write_file is forbidden in Plan).",
+  prose_already_exists:
+    "False: do not conclude «already implemented / page already exists» in prose. Call Figma MCP if the user pasted a Figma URL, inventory each mockup block with reuse path or an explicit gap, then emit a FULL <proposed_plan>…</proposed_plan>.",
+  unfixed_fields:
+    "False: the plan still says fields/columns/labels are not fixed. Call Figma MCP / screenshot_url or request_user_input, then rewrite the FULL <proposed_plan> with concrete labels — never ship «fields not fixed» inside the plan.",
+  missing_grounded_path:
+    "False: every Step and Affected files must name a concrete workspace path with a directory (e.g. src/pages/Foo.tsx) — not bare filenames or «several files». Use search_text / list_files / read_file, then rewrite the FULL <proposed_plan>.",
+  missing_steps:
+    "False: the plan needs a **Steps** / **Шаги** section with numbered items (1. 2. …), each grounded to a workspace path. Rewrite the FULL <proposed_plan>.",
+  missing_figma_tools:
+    "False: the user pasted a Figma URL but you did not call Figma MCP yet. Call get_design_context AND get_screenshot on the URL node (or get_figma_data on PAT), then ground blocks and rewrite the FULL <proposed_plan>.",
+  page_to_tab:
+    "False: Goal/Steps redefined the requested page/screen as adding a tab on an existing page. Goal must be the Figma/page route; keep tabs only as inner UI of that new page. Rewrite the FULL <proposed_plan>.",
+  page_to_similar:
+    "False: Steps ground in a different feature area (src/pages|entities|features/<dir>/) than the Figma/user message. Re-ground to the requested area or create new paths by pattern; rewrite the FULL <proposed_plan>.",
+  already_exists_no_inventory:
+    "False: «already implemented / fully matches» requires a per-block inventory (each mockup block → reuse path or explicit gap). List every block, then rewrite the FULL <proposed_plan>.",
+  missing_analogue_quote:
+    "False: every Step with reuse / by-pattern / «как в» <path> — and every Step citing a path you already read_file'd — needs a backtick observed quote copied from that file's content (≥6 chars, not the path). Rewrite the FULL <proposed_plan> with those quotes.",
+  missing_implementation:
+    "False: for this UI/page/Figma plan add an **Implementation** section with exact props/imports of target shared components (from read_file of the component source) and key types/signatures — the Build contract. Rewrite the FULL <proposed_plan>.",
+  missing_component_api_read:
+    "False: the plan names a shared primitive (Table, Layout, Modal, …) but you did not read_file that component's source (shared/ui or components path). search_text → read_file the component itself (not only a call site), put exact props/imports in **Implementation**, rewrite the FULL <proposed_plan>.",
+  checklist_coverage:
+    "False: the user gave a numbered/bulleted checklist — Steps must cover every item (at least as many numbered Steps as checklist items, 1:1). Do not collapse items. Rewrite the FULL <proposed_plan>.",
+  goal_frame_title:
+    "False: Goal must include the Figma frame/page title from the vision-helper Visible UI (Title). Do not replace it with a similar repo page name. Rewrite the FULL <proposed_plan> with that title in **Goal**.",
 };
 
 export const PLAN_QUALITY_USER_VISIBLE =
@@ -588,6 +642,342 @@ export type PlanQualityOptions = {
   messages?: PlanQualityMessage[];
 };
 
+/** Shared UI primitives that require reading component source, not only a call site. */
+const SHARED_PRIMITIVE_NAMES = [
+  "Table",
+  "LayoutPageContent",
+  "Layout",
+  "InlineMessage",
+  "Alert",
+  "Checkbox",
+  "Modal",
+  "Form",
+] as const;
+
+function diagnosis(reason: PlanQualityReason): PlanQualityDiagnosis {
+  return { reason, nudge: PLAN_QUALITY_NUDGES[reason] };
+}
+
+function toolNameEndsWith(name: string, suffix: string): boolean {
+  return name === suffix || name.endsWith(`__${suffix}`) || name.endsWith(`/${suffix}`);
+}
+
+/** True when turn called modern Figma pair or legacy get_figma_data. */
+export function turnHadFigmaPlanTools(
+  messages?: PlanQualityMessage[]
+): boolean {
+  if (!messages?.length) {
+    return false;
+  }
+  let hasDesignContext = false;
+  let hasScreenshot = false;
+  let hasLegacyData = false;
+  for (const message of messages) {
+    const names: string[] = [];
+    if (message.role === "tool" && message.name) {
+      names.push(String(message.name));
+    }
+    if (message.role === "assistant" && message.tool_calls?.length) {
+      for (const call of message.tool_calls) {
+        const n = call?.function?.name;
+        if (n) {
+          names.push(String(n));
+        }
+      }
+    }
+    for (const name of names) {
+      if (toolNameEndsWith(name, "get_design_context")) {
+        hasDesignContext = true;
+      }
+      if (toolNameEndsWith(name, "get_screenshot")) {
+        hasScreenshot = true;
+      }
+      if (toolNameEndsWith(name, "get_figma_data")) {
+        hasLegacyData = true;
+      }
+    }
+  }
+  return (hasDesignContext && hasScreenshot) || hasLegacyData;
+}
+
+function looksLikeUiOrFigmaPlan(userText?: string): boolean {
+  const value = String(userText || "");
+  if (!value.trim()) {
+    return false;
+  }
+  return looksLikeUserAskedForPageSurface(value) || messageHasFigmaUrl(value);
+}
+
+/** Extract **Implementation** / **Реализация** section body, or null. */
+export function extractImplementationSection(planBody: string): string | null {
+  const body = String(planBody || "");
+  const match = body.match(
+    /\*\*\s*(?:Implementation|Реализация)\s*\*\*\s*:?\s*([\s\S]*?)(?=\n\s*\*\*[^*\n]+\*\*|\s*$)/i
+  );
+  const section = match ? String(match[1] || "").trim() : "";
+  return section || null;
+}
+
+const IMPLEMENTATION_API_SIGNAL_RE =
+  /(?:\bimport\s|props\b|columns\s*=|\btype\s+[A-Z]\w+|children\b|<[A-Z]\w+)/i;
+
+export function looksLikeMissingImplementationSection(
+  planBody: string,
+  userText?: string
+): boolean {
+  if (!looksLikeUiOrFigmaPlan(userText)) {
+    return false;
+  }
+  const section = extractImplementationSection(planBody);
+  if (!section) {
+    return true;
+  }
+  if (!proposedPlanHasGroundedPath(section)) {
+    return true;
+  }
+  if (!IMPLEMENTATION_API_SIGNAL_RE.test(section)) {
+    return true;
+  }
+  return false;
+}
+
+function pathLooksLikeComponentSource(path: string, primitive: string): boolean {
+  const p = normalizePlanPath(path).toLowerCase();
+  const name = primitive.toLowerCase();
+  if (!p.includes(name)) {
+    return false;
+  }
+  return (
+    /(?:^|\/)shared\/ui\//i.test(p) ||
+    /(?:^|\/)components\//i.test(p) ||
+    /(?:^|\/)shared\/components\//i.test(p) ||
+    new RegExp(`(?:^|/)${name}\\.[\\w]+$`, "i").test(p)
+  );
+}
+
+/** Primitives named in the plan that lack a matching component-source read_file. */
+export function looksLikeMissingComponentApiRead(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  const body = String(planBody || "");
+  if (!body.trim()) {
+    return false;
+  }
+  const mentioned = SHARED_PRIMITIVE_NAMES.filter((name) =>
+    new RegExp(`\\b${name}\\b`).test(body)
+  );
+  if (!mentioned.length) {
+    return false;
+  }
+  if (!messages?.length) {
+    return false;
+  }
+  const reads = collectReadFileContents(messages);
+  if (!reads.size) {
+    return false;
+  }
+  for (const primitive of mentioned) {
+    let found = false;
+    for (const path of reads.keys()) {
+      if (pathLooksLikeComponentSource(path, primitive)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Numbered / bulleted checklist items from the user message (Figma URLs stripped). */
+export function extractUserChecklistItems(userText: string): string[] {
+  const cleaned = String(userText || "")
+    .replace(FIGMA_URL_STRIP, "\n")
+    .replace(/\r/g, "");
+  const items: string[] = [];
+  for (const line of cleaned.split("\n")) {
+    const trimmed = line.trim();
+    if (/^\d+[.)]\s+\S/.test(trimmed) || /^[-*•]\s+\S/.test(trimmed)) {
+      items.push(trimmed);
+    }
+  }
+  return items;
+}
+
+export function looksLikeChecklistCoverageGap(
+  planBody: string,
+  userText?: string
+): boolean {
+  if (!userText) {
+    return false;
+  }
+  const items = extractUserChecklistItems(userText);
+  if (items.length < 2) {
+    return false;
+  }
+  const steps = extractNumberedPlanSteps(planBody);
+  return steps.length < items.length;
+}
+
+function collectVisionHelperTexts(
+  messages?: PlanQualityMessage[]
+): string[] {
+  if (!messages?.length) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "tool") {
+      continue;
+    }
+    const content =
+      typeof message.content === "string" ? message.content : "";
+    if (content.includes(HARBOR_VISION_HELPER_MARKER)) {
+      out.push(content);
+    }
+  }
+  return out;
+}
+
+/** Best-effort Title from vision-helper Visible UI section. */
+export function extractVisionHelperFrameTitle(
+  messages?: PlanQualityMessage[]
+): string | null {
+  for (const content of collectVisionHelperTexts(messages)) {
+    const titleLine =
+      content.match(
+        /(?:^|\n)\s*(?:#{1,3}\s*)?Title\s*:?\s*([^\n]+)/i
+      ) ||
+      content.match(
+        /(?:^|\n)\s*\*\*Title\*\*\s*:?\s*([^\n]+)/i
+      );
+    if (!titleLine?.[1]) {
+      continue;
+    }
+    const title = String(titleLine[1] || "")
+      .replace(/^["'«»]+|["'«»]+$/g, "")
+      .trim();
+    if (title.length >= 4) {
+      return title;
+    }
+  }
+  return null;
+}
+
+function significantTitleTokens(title: string): string[] {
+  return String(title || "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4 && !GENERIC_CODE_WORDS.has(t));
+}
+
+export function looksLikeGoalMissingFrameTitle(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  const title = extractVisionHelperFrameTitle(messages);
+  if (!title) {
+    return false;
+  }
+  const tokens = significantTitleTokens(title);
+  if (!tokens.length) {
+    return false;
+  }
+  const goal = extractGoalLine(planBody).toLowerCase();
+  if (!goal) {
+    return true;
+  }
+  return !tokens.some((token) => goal.includes(token));
+}
+
+function diagnoseIncompleteProposedPlan(
+  text: string,
+  options?: PlanQualityOptions
+): PlanQualityDiagnosis | null {
+  const body = extractProposedPlanBody(text);
+  if (!body) {
+    return null;
+  }
+  if (UNFIXED_FIELDS_RE.test(body)) {
+    return diagnosis("unfixed_fields");
+  }
+  if (ABSTRACT_FILES_RE.test(body) && !proposedPlanHasGroundedPath(body)) {
+    return diagnosis("missing_grounded_path");
+  }
+  if (!proposedPlanHasGroundedPath(body)) {
+    return diagnosis("missing_grounded_path");
+  }
+  const hasStepsHeader =
+    /\*\*\s*(?:Шаги|Steps)\s*\*\*/i.test(body) ||
+    /(?:^|\n)\s*(?:Шаги|Steps)\s*:/i.test(body);
+  const hasNumberedStep = /(?:^|\n)\s*\d+\.\s+\S/.test(body);
+  if (!hasStepsHeader || !hasNumberedStep) {
+    return diagnosis("missing_steps");
+  }
+  if (
+    options?.userText &&
+    messageHasFigmaUrl(options.userText) &&
+    !turnHadFigmaPlanTools(options.messages)
+  ) {
+    return diagnosis("missing_figma_tools");
+  }
+  if (
+    options?.userText &&
+    looksLikePageToTabDrift(options.userText, body)
+  ) {
+    return diagnosis("page_to_tab");
+  }
+  if (
+    options?.userText &&
+    looksLikePageToSimilarPageDrift(options.userText, body)
+  ) {
+    return diagnosis("page_to_similar");
+  }
+  if (looksLikeAlreadyExistsWithoutInventory(text, options?.userText)) {
+    return diagnosis("already_exists_no_inventory");
+  }
+  if (looksLikeMissingAnalogueQuote(body, options?.messages)) {
+    return diagnosis("missing_analogue_quote");
+  }
+  if (looksLikeMissingImplementationSection(body, options?.userText)) {
+    return diagnosis("missing_implementation");
+  }
+  if (looksLikeMissingComponentApiRead(body, options?.messages)) {
+    return diagnosis("missing_component_api_read");
+  }
+  if (looksLikeChecklistCoverageGap(body, options?.userText)) {
+    return diagnosis("checklist_coverage");
+  }
+  if (looksLikeGoalMissingFrameTitle(body, options?.messages)) {
+    return diagnosis("goal_frame_title");
+  }
+  return null;
+}
+
+/**
+ * Diagnose why a Plan-mode finale is not decision-complete.
+ * Returns the first failing reason + a targeted nudge, or null when OK.
+ */
+export function diagnosePlanQualityFailure(
+  text: string,
+  options?: PlanQualityOptions
+): PlanQualityDiagnosis | null {
+  if (looksLikePlanFileWriteClaim(text)) {
+    return diagnosis("plan_file_write");
+  }
+  if (looksLikeProseAlreadyExistsSkip(text, options?.userText)) {
+    return diagnosis("prose_already_exists");
+  }
+  if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
+    return diagnoseIncompleteProposedPlan(text, options);
+  }
+  return null;
+}
+
 /**
  * True when a Plan-mode finale wraps <proposed_plan> but is not
  * grounded enough for Build (paths missing, abstract files, unfixed Figma,
@@ -598,48 +988,7 @@ export function looksLikeIncompleteProposedPlan(
   text: string,
   options?: PlanQualityOptions
 ): boolean {
-  const body = extractProposedPlanBody(text);
-  if (!body) {
-    return false;
-  }
-  if (UNFIXED_FIELDS_RE.test(body)) {
-    return true;
-  }
-  if (ABSTRACT_FILES_RE.test(body) && !proposedPlanHasGroundedPath(body)) {
-    return true;
-  }
-  if (!proposedPlanHasGroundedPath(body)) {
-    return true;
-  }
-  // Must have a Steps / Шаги section with at least one numbered item.
-  const hasStepsHeader =
-    /\*\*\s*(?:Шаги|Steps)\s*\*\*/i.test(body) ||
-    /(?:^|\n)\s*(?:Шаги|Steps)\s*:/i.test(body);
-  const hasNumberedStep = /(?:^|\n)\s*\d+\.\s+\S/.test(body);
-  if (!hasStepsHeader || !hasNumberedStep) {
-    return true;
-  }
-  if (
-    options?.userText &&
-    looksLikePageToTabDrift(options.userText, body)
-  ) {
-    return true;
-  }
-  if (
-    options?.userText &&
-    looksLikePageToSimilarPageDrift(options.userText, body)
-  ) {
-    return true;
-  }
-  if (
-    looksLikeAlreadyExistsWithoutInventory(text, options?.userText)
-  ) {
-    return true;
-  }
-  if (looksLikeMissingAnalogueQuote(body, options?.messages)) {
-    return true;
-  }
-  return false;
+  return diagnoseIncompleteProposedPlan(text, options) !== null;
 }
 
 /** Any Plan-mode quality failure (with or without <proposed_plan>). */
@@ -647,14 +996,5 @@ export function looksLikePlanQualityFailure(
   text: string,
   options?: PlanQualityOptions
 ): boolean {
-  if (looksLikePlanFileWriteClaim(text)) {
-    return true;
-  }
-  if (looksLikeProseAlreadyExistsSkip(text, options?.userText)) {
-    return true;
-  }
-  if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
-    return looksLikeIncompleteProposedPlan(text, options);
-  }
-  return false;
+  return diagnosePlanQualityFailure(text, options) !== null;
 }

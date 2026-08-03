@@ -419,6 +419,7 @@ test("readonly mode: incomplete proposed_plan without paths nudges plan quality"
     allowNudgePlanQuality: true,
   });
   assert.equal(nudged.kind, "nudge_plan_quality");
+  assert.match(nudged.nudge || "", /concrete workspace path|Steps|Шаги|proposed_plan/i);
 
   // z.ai-style: nudges exhausted but a <proposed_plan> card exists → show it
   // (with the Build button), do NOT replace with the blocking error.
@@ -449,6 +450,10 @@ test("readonly mode: page→tab drift after nudges still shows the Build card", 
     kimi: true,
   });
   assert.equal(nudged.kind, "nudge_plan_quality");
+  assert.match(
+    nudged.nudge || "",
+    /get_design_context|tab|вкладк|Figma|proposed_plan/i
+  );
 
   // After nudges: show the imperfect card (Kimi included) — never a dead-end
   // error when a <proposed_plan> exists.
@@ -525,6 +530,7 @@ test("readonly mode: prose «already exists» without proposed_plan nudges plan 
     allowNudgePlanQuality: true,
   });
   assert.equal(decision.kind, "nudge_plan_quality");
+  assert.match(decision.nudge || "", /already implemented|proposed_plan|Figma/i);
 });
 
 test("readonly mode: Figma abstract-payload prose clarification nudges (no question marks)", () => {

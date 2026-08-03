@@ -6,6 +6,10 @@ const {
   extractAnaloguePathsFromStep,
   extractGroundedPathsFromStep,
   extractObservedQuotesFromStep,
+  extractImplementationSection,
+  extractUserChecklistItems,
+  extractVisionHelperFrameTitle,
+  diagnosePlanQualityFailure,
   looksLikeMissingAnalogueQuote,
   looksLikeIncompleteProposedPlan,
   looksLikePageToTabDrift,
@@ -15,10 +19,40 @@ const {
   looksLikeProseAlreadyExistsSkip,
   looksLikePlanFileWriteClaim,
   looksLikePlanQualityFailure,
+  looksLikeMissingImplementationSection,
+  looksLikeMissingComponentApiRead,
+  looksLikeChecklistCoverageGap,
+  looksLikeGoalMissingFrameTitle,
+  turnHadFigmaPlanTools,
   proposedPlanHasWorkspacePath,
   proposedPlanHasGroundedPath,
   PLAN_QUALITY_NUDGE,
 } = require("../out/planQuality.js");
+
+const FIGMA_TOOL_MESSAGES = [
+  {
+    role: "tool",
+    name: "mcp__figma__get_design_context",
+    content: JSON.stringify({ ok: true }),
+  },
+  {
+    role: "tool",
+    name: "mcp__figma__get_screenshot",
+    content:
+      "[Harbor vision helper · vision-model]\n\n## Visible UI (from screenshot)\nTitle: Удостоверение\nColumns: Вид работ\n",
+  },
+];
+
+const UI_IMPLEMENTATION = [
+  "**Implementation**:",
+  "- page `src/pages/cert/page.tsx`: import `CertificatePage`, type `CertificateDto`",
+].join("\n");
+
+/** Implementation that matches notification-* plans (avoids page→similar false fail). */
+const UI_IMPLEMENTATION_NOTIFICATION = [
+  "**Implementation**:",
+  "- page `src/pages/notification-certificate/ui/page.tsx`: import `CertificatePage`, type `CertificateDto`",
+].join("\n");
 
 test("extractProposedPlanBody takes the last plan block", () => {
   const text =
@@ -267,13 +301,20 @@ test("page→similar-page: not drift when domain word matches user text", () => 
   const user =
     "составь план реализации страницы notification certificate https://www.figma.com/design/abc/x?node-id=1-2";
   const ok =
-    "<proposed_plan>\n**Цель**: страница notification certificate\n**Шаги**:\n" +
+    "<proposed_plan>\n**Цель**: страница notification certificate Удостоверение\n**Шаги**:\n" +
     "1. Таблица — reuse src/pages/notification-certificate/ui/page.tsx — observed: `CertificateTable`\n" +
     "2. Модель — reuse src/entities/notification/notifications-certification/model.ts — observed: `certificationModel`\n" +
-    "**Затрагиваемые файлы**: src/pages/notification-certificate/ui/page.tsx\n</proposed_plan>";
+    "**Затрагиваемые файлы**: src/pages/notification-certificate/ui/page.tsx\n" +
+    UI_IMPLEMENTATION_NOTIFICATION +
+    "\n</proposed_plan>";
   assert.equal(looksLikePageToSimilarPageDrift(user, ok), false);
-  // No tool messages → structural quotes present → quality ok (content not verified).
-  assert.equal(looksLikePlanQualityFailure(ok, { userText: user }), false);
+  assert.equal(
+    looksLikePlanQualityFailure(ok, {
+      userText: user,
+      messages: FIGMA_TOOL_MESSAGES,
+    }),
+    false
+  );
 });
 
 test("page→similar-page: not drift when plan creates new files (no existing feature-area paths)", () => {
@@ -437,4 +478,165 @@ test("create-only path never read does not require observed quote", () => {
     },
   ];
   assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), false);
+});
+
+test("diagnosePlanQualityFailure returns targeted nudge for missing grounded path", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n1. Сделать таблицу.\n**Затрагиваемые файлы**: несколько файлов\n</proposed_plan>";
+  const d = diagnosePlanQualityFailure(plan);
+  assert.equal(d?.reason, "missing_grounded_path");
+  assert.match(d?.nudge || "", /concrete workspace path/i);
+});
+
+test("missing_figma_tools when user pasted Figma URL but no MCP calls", () => {
+  const user =
+    "составь план страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const plan =
+    "<proposed_plan>\n**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION +
+    "\n</proposed_plan>";
+  assert.equal(turnHadFigmaPlanTools([]), false);
+  const d = diagnosePlanQualityFailure(plan, { userText: user, messages: [] });
+  assert.equal(d?.reason, "missing_figma_tools");
+  assert.match(d?.nudge || "", /get_design_context/i);
+  assert.equal(
+    diagnosePlanQualityFailure(plan, {
+      userText: user,
+      messages: FIGMA_TOOL_MESSAGES,
+    }),
+    null
+  );
+});
+
+test("turnHadFigmaPlanTools accepts design_context+screenshot or get_figma_data", () => {
+  assert.equal(turnHadFigmaPlanTools(FIGMA_TOOL_MESSAGES), true);
+  assert.equal(
+    turnHadFigmaPlanTools([
+      { role: "tool", name: "mcp__figma__get_figma_data", content: "{}" },
+    ]),
+    true
+  );
+  assert.equal(
+    turnHadFigmaPlanTools([
+      {
+        role: "assistant",
+        tool_calls: [
+          { function: { name: "mcp__figma__get_design_context" } },
+          { function: { name: "mcp__figma__get_screenshot" } },
+        ],
+      },
+    ]),
+    true
+  );
+});
+
+test("missing_implementation for UI/Figma page plans", () => {
+  const user =
+    "составь план страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const body =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx";
+  assert.equal(looksLikeMissingImplementationSection(body, user), true);
+  const plan = `<proposed_plan>\n${body}\n</proposed_plan>`;
+  const d = diagnosePlanQualityFailure(plan, {
+    userText: user,
+    messages: FIGMA_TOOL_MESSAGES,
+  });
+  assert.equal(d?.reason, "missing_implementation");
+  assert.match(
+    extractImplementationSection(body + "\n" + UI_IMPLEMENTATION) || "",
+    /CertificatePage/
+  );
+});
+
+test("missing_component_api_read when Table mentioned but source not read", () => {
+  const planBody =
+    "**Цель**: x\n**Шаги**:\n" +
+    "1. Таблица — reuse `src/pages/foo/page.tsx` — observed: `<Table`\n" +
+    "**Implementation**:\n- Table from call site — import `Table`, columns=\n" +
+    "**Затрагиваемые файлы**: src/pages/foo/page.tsx";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/pages/foo/page.tsx",
+        content: "import { Table } from 'shared/ui';\n<Table columns={c} />\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingComponentApiRead(planBody, messages), true);
+  const fixedMessages = [
+    ...messages,
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/shared/ui/table/Table.tsx",
+        content: "export type TableProps = { columns: unknown[] };\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingComponentApiRead(planBody, fixedMessages), false);
+});
+
+test("checklist_coverage requires at least as many Steps as user bullets", () => {
+  const user =
+    "план:\n1. Роут\n2. Таблица\n3. Фильтры\nhttps://www.figma.com/design/abc/x?node-id=1-2";
+  assert.equal(extractUserChecklistItems(user).length, 3);
+  const thin =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "2. Таблица — новый src/pages/cert/table.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeChecklistCoverageGap(thin, user), true);
+  const full =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "2. Таблица — новый src/pages/cert/table.tsx\n" +
+    "3. Фильтры — новый src/pages/cert/filters.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeChecklistCoverageGap(full, user), false);
+  const d = diagnosePlanQualityFailure(`<proposed_plan>\n${thin}\n</proposed_plan>`, {
+    userText: user,
+    messages: FIGMA_TOOL_MESSAGES,
+  });
+  assert.equal(d?.reason, "checklist_coverage");
+});
+
+test("goal_frame_title requires Goal to include vision-helper Title token", () => {
+  assert.equal(
+    extractVisionHelperFrameTitle(FIGMA_TOOL_MESSAGES),
+    "Удостоверение"
+  );
+  const driftedGoal =
+    "**Цель**: страница notification certificate\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(
+    looksLikeGoalMissingFrameTitle(driftedGoal, FIGMA_TOOL_MESSAGES),
+    true
+  );
+  const okGoal =
+    "**Цель**: страница Удостоверение по макету\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx — observed: `createRoute`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(
+    looksLikeGoalMissingFrameTitle(okGoal, FIGMA_TOOL_MESSAGES),
+    false
+  );
+  const user =
+    "составь план страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  const d = diagnosePlanQualityFailure(
+    `<proposed_plan>\n${driftedGoal}\n</proposed_plan>`,
+    { userText: user, messages: FIGMA_TOOL_MESSAGES }
+  );
+  assert.equal(d?.reason, "goal_frame_title");
 });

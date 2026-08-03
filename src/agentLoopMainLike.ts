@@ -1455,7 +1455,10 @@ export async function runMainLikeAgentTurn(options: {
     }
     if (decision.kind === "nudge_plan_quality") {
       planQualityNudgeAttempts += 1;
-      messages.push({ role: "user", content: PLAN_QUALITY_NUDGE });
+      messages.push({
+        role: "user",
+        content: decision.nudge || PLAN_QUALITY_NUDGE,
+      });
       if (round >= roundBudget - 1) {
         roundBudget = round + 2;
       }
