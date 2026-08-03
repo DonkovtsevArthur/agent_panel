@@ -324,7 +324,6 @@
       proposedPlanTitle: "Plan",
       proposedPlanBuild: "Build",
       proposedPlanOpenTab: "Preview",
-      proposedPlanOpenRaw: "Raw",
       proposedPlanExpand: "Show plan",
       proposedPlanCollapse: "Hide plan",
       proposedPlanCodeSection: "Plan code",
@@ -635,7 +634,6 @@
       proposedPlanTitle: "План",
       proposedPlanBuild: "Собрать",
       proposedPlanOpenTab: "Просмотр",
-      proposedPlanOpenRaw: "Сырой",
       proposedPlanExpand: "Показать план",
       proposedPlanCollapse: "Скрыть план",
       proposedPlanCodeSection: "Код плана",
@@ -8214,11 +8212,7 @@
       const key = plan.replace(/\s+/g, " ").trim();
       if (forceOpen || key !== lastOpenedPlanKey) {
         lastOpenedPlanKey = key;
-        vscode.postMessage({
-          type: "openPlanMarkdown",
-          text: plan,
-          view: "preview",
-        });
+        vscode.postMessage({ type: "openPlanMarkdown", text: plan });
       }
     }
     return true;
@@ -8723,9 +8717,48 @@
   const PLAN_SECTION_NEXT_RE =
     /^(Цель|Goal|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Affected(?:\s+files)?|Риски|Risks|Acceptance)\b/i;
 
+  /** Drop blank paragraphs / lone <br> that inflate vertical gaps. */
+  function stripEmptyPlanBlocks(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    root.querySelectorAll(".md-p").forEach((el) => {
+      if (!(el instanceof HTMLElement)) {
+        return;
+      }
+      const text = String(el.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text) {
+        return;
+      }
+      el.remove();
+    });
+    root.querySelectorAll("br").forEach((br) => {
+      const prev = br.previousSibling;
+      const next = br.nextSibling;
+      const onlyPad =
+        (!prev || (prev.nodeType === 3 && !String(prev.textContent || "").trim())) &&
+        (!next || (next.nodeType === 3 && !String(next.textContent || "").trim()));
+      if (onlyPad && br.parentElement && br.parentElement.children.length === 1) {
+        br.parentElement.remove();
+        return;
+      }
+      if (
+        prev &&
+        prev.nodeName === "BR" &&
+        br.parentElement &&
+        br.parentElement.classList.contains("md-p")
+      ) {
+        br.remove();
+      }
+    });
+  }
+
   /**
-   * After marked.parse: highlight Implementation as a code section and give
-   * every fenced block a chrome bar (language / line count / collapse).
+   * After marked.parse: wrap optional Implementation section.
+   * Keeps preview-like code blocks (no chat chrome bars).
    */
   function enhancePlanBodyHtml(html) {
     const raw = String(html || "");
@@ -8734,6 +8767,7 @@
     }
     const root = document.createElement("div");
     root.innerHTML = raw;
+    stripEmptyPlanBlocks(root);
 
     const kids = Array.from(root.children);
     let implStart = -1;
@@ -8775,63 +8809,26 @@
       }
     }
 
-    root.querySelectorAll(".md-pre-wrap").forEach((wrap) => {
-      if (!(wrap instanceof HTMLElement)) {
-        return;
-      }
-      const pre = wrap.querySelector(".md-pre");
-      if (!pre) {
-        return;
-      }
-      const codeText = String(pre.textContent || "");
-      const lineCount = codeText ? codeText.split("\n").length : 0;
-      let meta = wrap.querySelector(".md-pre-meta");
-      if (!meta) {
-        meta = document.createElement("div");
-        const collapsible = lineCount > 10;
-        meta.className =
-          "md-pre-meta" + (collapsible ? " md-pre-toggle" : "");
-        if (collapsible) {
-          meta.setAttribute("role", "button");
-          meta.tabIndex = 0;
-          meta.setAttribute("aria-expanded", "false");
-          meta.setAttribute("aria-label", t("proposedPlanCodeToggle"));
-        }
-        meta.innerHTML =
-          `<span class="md-pre-meta-main">` +
-          `<span class="material-symbols-outlined md-pre-code-icon" aria-hidden="true">terminal</span>` +
-          `<span class="md-pre-path">${escapeHtml(t("proposedPlanCodeBlock"))}</span>` +
-          (lineCount
-            ? `<span class="md-pre-meta-sep">·</span>` +
-              `<span class="md-pre-lines">${escapeHtml(
-                t("proposedPlanCodeLines", lineCount)
-              )}</span>`
-            : "") +
-          `</span>` +
-          (collapsible
-            ? `<span class="material-symbols-outlined md-pre-chevron" aria-hidden="true">expand_more</span>`
-            : "");
-        wrap.insertBefore(meta, wrap.firstChild);
-        if (collapsible) {
-          wrap.classList.add("is-collapsible", "is-collapsed");
-        }
-      }
-      wrap.classList.add("proposed-plan-code");
-    });
-
     return root.innerHTML;
   }
 
-  /** Markdown for plan card body only — no nested proposed_plan extraction. */
+  /**
+   * Markdown for plan card body — same GFM pipeline as chat / Preview
+   * (no nested proposed_plan extraction).
+   */
   function renderPlanBodyHtml(planBody) {
     const text = String(planBody || "");
     if (!text) {
       return "";
     }
+    const extracted = replaceCitationFences(text);
     const api = getMarkedApi();
     if (ensureMarkdownRenderer() && api) {
       try {
-        return enhancePlanBodyHtml(api.parse(text, { async: false }));
+        const html = api.parse(extracted.text, { async: false });
+        return enhancePlanBodyHtml(
+          restoreCitationFences(html, extracted.blocks)
+        );
       } catch {
         // fall through
       }
@@ -8847,7 +8844,6 @@
     const raw = stripPlanImplementWrapper(planBody);
     const title = escapeHtml(t("proposedPlanTitle"));
     const openTab = escapeHtml(t("proposedPlanOpenTab"));
-    const openRaw = escapeHtml(t("proposedPlanOpenRaw"));
     const expand = escapeHtml(t("proposedPlanExpand"));
     return `<div class="proposed-plan-card is-collapsed" data-plan-raw="${escapeHtml(raw)}">`
       + `<div class="proposed-plan-head">`
@@ -8859,10 +8855,6 @@
       + `<button class="proposed-plan-open-tab" type="button" data-plan-action="open-tab" title="${openTab}">`
       + `<span class="material-symbols-outlined" aria-hidden="true">preview</span>`
       + `<span>${openTab}</span>`
-      + `</button>`
-      + `<button class="proposed-plan-open-raw" type="button" data-plan-action="open-raw" title="${openRaw}">`
-      + `<span class="material-symbols-outlined" aria-hidden="true">code</span>`
-      + `<span>${openRaw}</span>`
       + `</button>`
       + `</div>`
       + `</div>`
@@ -8887,7 +8879,7 @@
       : t("proposedPlanCollapse");
   }
 
-  function openProposedPlanInTab(card, view = "preview") {
+  function openProposedPlanInTab(card) {
     if (!(card instanceof HTMLElement)) {
       return;
     }
@@ -8897,11 +8889,7 @@
     }
     const key = raw.replace(/\s+/g, " ").trim();
     lastOpenedPlanKey = key;
-    vscode.postMessage({
-      type: "openPlanMarkdown",
-      text: raw,
-      view: view === "raw" ? "raw" : "preview",
-    });
+    vscode.postMessage({ type: "openPlanMarkdown", text: raw });
   }
 
   function getMarkedApi() {
@@ -11666,17 +11654,7 @@
       event.stopPropagation();
       const card = planOpenTabBtn.closest(".proposed-plan-card");
       if (card) {
-        openProposedPlanInTab(card, "preview");
-      }
-      return;
-    }
-    const planOpenRawBtn = event.target.closest("[data-plan-action='open-raw']");
-    if (planOpenRawBtn && messagesEl.contains(planOpenRawBtn)) {
-      event.preventDefault();
-      event.stopPropagation();
-      const card = planOpenRawBtn.closest(".proposed-plan-card");
-      if (card) {
-        openProposedPlanInTab(card, "raw");
+        openProposedPlanInTab(card);
       }
       return;
     }

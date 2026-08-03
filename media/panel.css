@@ -1257,7 +1257,7 @@ body.vscode-dark .md-pre .syntax-property {
 .proposed-plan-card {
   align-self: stretch;
   margin-top: 8px;
-  padding: 12px;
+  padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   background: var(--vscode-input-background);
@@ -1317,8 +1317,7 @@ body.vscode-dark .md-pre .syntax-property {
   flex-shrink: 0;
 }
 
-.proposed-plan-open-tab,
-.proposed-plan-open-raw {
+.proposed-plan-open-tab {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1333,20 +1332,27 @@ body.vscode-dark .md-pre .syntax-property {
   white-space: nowrap;
 }
 
-.proposed-plan-open-tab .material-symbols-outlined,
-.proposed-plan-open-raw .material-symbols-outlined {
+.proposed-plan-open-tab .material-symbols-outlined {
   font-size: 16px;
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }
 
-.proposed-plan-open-tab:hover,
-.proposed-plan-open-raw:hover {
+.proposed-plan-open-tab:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
 }
 
+/* Plan card body ≈ Markdown Preview, compact vertical rhythm. */
 .proposed-plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.28));
+  background: var(--vscode-editor-background, #1e1e1e);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
   color: var(--vscode-editor-foreground, #ccc);
   word-break: break-word;
 }
@@ -1356,47 +1362,173 @@ body.vscode-dark .md-pre .syntax-property {
   display: none;
 }
 
-.proposed-plan-body .md-p {
-  margin: 0 0 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.proposed-plan-body .md-p:last-child {
+.proposed-plan-body > * {
+  margin-top: 0;
   margin-bottom: 0;
 }
 
-.proposed-plan-body .md-list {
-  margin: 0 0 8px;
-  padding-left: 1.35em;
+.proposed-plan-body .md-p {
+  margin: 0;
+  white-space: normal;
+  word-break: break-word;
 }
 
-.proposed-plan-body .md-code {
+.proposed-plan-body .md-p:empty {
+  display: none;
+}
+
+.proposed-plan-body .md-strong {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.proposed-plan-body .md-em {
+  font-style: italic;
+}
+
+.proposed-plan-body .md-del {
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.proposed-plan-body .md-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 0;
+  list-style-position: outside;
+}
+
+.proposed-plan-body ol.md-list,
+.proposed-plan-body .md-ol {
+  /* место под «1.» без глубокого сдвига текста */
+  padding-left: 1.35em;
+  margin-left: 0;
+}
+
+.proposed-plan-body ul.md-list,
+.proposed-plan-body .md-ul {
+  padding-left: 0.95em;
+  margin-left: 0;
+  gap: 2px;
+}
+
+.proposed-plan-body .md-li {
+  margin: 0;
+  padding-left: 0;
+}
+
+.proposed-plan-body .md-li > .md-p {
+  margin: 0;
+  display: block;
+}
+
+/* Вложенные списки — почти без доп. сдвига */
+.proposed-plan-body .md-li > .md-list,
+.proposed-plan-body .md-li > ul.md-list,
+.proposed-plan-body .md-li > ol.md-list,
+.proposed-plan-body .md-li > .md-ul,
+.proposed-plan-body .md-li > .md-ol {
+  margin: 2px 0 0;
+  padding-left: 0.85em;
+  gap: 2px;
+}
+
+.proposed-plan-body .md-li > .md-pre-wrap,
+.proposed-plan-body .md-li .md-pre-wrap {
+  margin: 2px 0 0;
+}
+
+.proposed-plan-body .md-h {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  margin: 0;
+  line-height: 1.3;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  padding-bottom: 2px;
+}
+
+.proposed-plan-body .md-h1 {
+  font-size: 1.15em;
+}
+
+.proposed-plan-body .md-h2 {
+  font-size: 1.08em;
+}
+
+.proposed-plan-body .md-h3 {
+  font-size: 1.02em;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.proposed-plan-body .md-quote {
+  margin: 0;
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.proposed-plan-body .md-hr {
+  margin: 2px 0;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+.proposed-plan-body .md-link {
+  color: var(--vscode-textLink-foreground, #006ab1);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.proposed-plan-body .md-link:hover {
+  color: var(--vscode-textLink-activeForeground, #006ab1);
+  text-decoration: underline;
+}
+
+.proposed-plan-body .md-file {
   font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
   font-size: 0.92em;
   padding: 1px 5px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-textLink-foreground, #006ab1);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.proposed-plan-body .md-file:hover {
+  text-decoration: underline;
+  color: var(--vscode-textLink-activeForeground, #006ab1);
+}
+
+.proposed-plan-body .md-code {
+  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-size: 0.92em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   color: var(--vscode-foreground);
 }
 
 .proposed-plan-body .md-pre,
 .proposed-plan-impl .md-pre {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
   overflow-x: auto;
-  max-height: 320px;
+  max-height: 280px;
   overflow-y: auto;
-  border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.35));
+  border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.28));
   background: var(
     --vscode-textCodeBlock-background,
-    var(--vscode-editor-background, #1e1e1e)
+    color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 92%, #000)
   );
   color: var(--vscode-editor-foreground);
   font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1411,42 +1543,71 @@ body.vscode-dark .md-pre .syntax-property {
 
 .proposed-plan-body .md-pre-wrap,
 .proposed-plan-impl .md-pre-wrap {
-  margin: 10px 0;
+  margin: 0;
 }
 
-.proposed-plan-body .md-pre-wrap:first-child,
-.proposed-plan-impl-body > .md-pre-wrap:first-child {
-  margin-top: 0;
+.proposed-plan-body .md-pre-wrap .md-pre-meta {
+  display: none;
 }
 
-.proposed-plan-code .md-pre-code-icon {
-  font-size: 16px;
-  opacity: 0.85;
-  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+.proposed-plan-body .md-table-wrap {
+  margin: 0;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.proposed-plan-body .md-table {
+  width: max-content;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  line-height: 1.4;
+}
+
+.proposed-plan-body .md-td {
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.proposed-plan-body .md-table th.md-td {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  white-space: nowrap;
+}
+
+.proposed-plan-body .md-task {
+  margin: 0 4px 0 0;
+  vertical-align: middle;
 }
 
 .proposed-plan-impl {
-  margin: 12px 0 4px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-  background: color-mix(
-    in srgb,
-    var(--vscode-editor-background, #1e1e1e) 88%,
-    var(--vscode-input-background, transparent)
-  );
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .proposed-plan-impl-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--vscode-descriptionForeground, #888);
+}
+
+.proposed-plan-impl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .proposed-plan-impl-label .material-symbols-outlined {
