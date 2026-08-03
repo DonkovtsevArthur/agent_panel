@@ -108,10 +108,14 @@ function shrinkOneToolContent(raw: string, maxChars: number): string {
 export function shrinkToolMessageContents(
   messages: ChatMessage[],
   maxToolChars = DEFAULT_MAX_TOOL_CHARS,
-  options?: { preserveToolPrefixes?: string[] }
+  options?: {
+    preserveToolPrefixes?: string[];
+    preserveToolResult?: (message: ChatMessage) => boolean;
+  }
 ): boolean {
   const limit = Math.max(400, Math.floor(maxToolChars));
   const preserve = options?.preserveToolPrefixes ?? [];
+  const preserveExtra = options?.preserveToolResult;
   let changed = false;
   for (const message of messages) {
     if (message.role !== "tool") {
@@ -124,6 +128,9 @@ export function shrinkToolMessageContents(
       continue;
     }
     if (preserve.length && message.name && preserve.some((p) => message.name!.startsWith(p))) {
+      continue;
+    }
+    if (preserveExtra?.(message)) {
       continue;
     }
     const next = shrinkOneToolContent(message.content, limit);
@@ -202,13 +209,23 @@ export function shrinkOlderToolResults(
  * В readonly (Plan/Ask) сохраняем Figma MCP payloads целиком — они
  * primary source для плана, урезание до 2.5 КБ убивает точные ColumnDef.
  * Также pin'им grounding reads (paths / routes / shared UI / pages index).
+ * В Agent — Figma + implement pins (grounding paths + reads of edited files).
  */
 export function prepareKimiGatewayMessages(
   messages: ChatMessage[],
-  options?: { readonly?: boolean }
+  options?: {
+    readonly?: boolean;
+    preserveToolResult?: (message: ChatMessage) => boolean;
+  }
 ): boolean {
   const readonly = Boolean(options?.readonly);
-  const preserve = readonly ? ["mcp__figma__"] : [];
+  // Always keep Figma MCP full in Plan/Ask; in Agent too when implement pins
+  // are active so screenshot/design_context survive soft shrink.
+  const preserve =
+    readonly || options?.preserveToolResult ? ["mcp__figma__"] : [];
+  const preserveToolResult =
+    options?.preserveToolResult ||
+    (readonly ? looksLikePlanGroundingToolResult : undefined);
   // Plan/Ask: keep Figma + grounding reads; shrink other older explore so the
   // gateway does not 400 on JSON parse. keepRecent/maxOldChars softer than
   // before so early page/tab evidence survives longer.
@@ -216,9 +233,7 @@ export function prepareKimiGatewayMessages(
     keepRecent: readonly ? 4 : 3,
     maxOldChars: readonly ? 2_800 : 2_500,
     preserveToolPrefixes: preserve,
-    ...(readonly
-      ? { preserveToolResult: looksLikePlanGroundingToolResult }
-      : {}),
+    ...(preserveToolResult ? { preserveToolResult } : {}),
   });
   const edits = compactCompletedEditToolArguments(messages);
   const reasoning = dropOlderReasoningBlocks(messages, {
@@ -274,22 +289,29 @@ export function dropOlderReasoningBlocks(
  */
 export function prepareFragileGatewayMessages(
   messages: ChatMessage[],
-  options?: { readonly?: boolean }
+  options?: {
+    readonly?: boolean;
+    preserveToolResult?: (message: ChatMessage) => boolean;
+  }
 ): boolean {
   const readonly = Boolean(options?.readonly);
   // Plan/Ask: same pin strategy as Kimi — Figma + grounding reads are the
   // plan source; aggressive caps that help Agent gateways cause page→tab drift.
-  const preserve = readonly ? ["mcp__figma__"] : [];
+  // Agent: Figma + implement pins when provided by prepareRoundMessages.
+  const preserve =
+    readonly || options?.preserveToolResult ? ["mcp__figma__"] : [];
+  const preserveToolResult =
+    options?.preserveToolResult ||
+    (readonly ? looksLikePlanGroundingToolResult : undefined);
   const older = shrinkOlderToolResults(messages, {
     keepRecent: readonly ? 4 : 2,
     maxOldChars: readonly ? 2_800 : 2_000,
     preserveToolPrefixes: preserve,
-    ...(readonly
-      ? { preserveToolResult: looksLikePlanGroundingToolResult }
-      : {}),
+    ...(preserveToolResult ? { preserveToolResult } : {}),
   });
   const all = shrinkToolMessageContents(messages, readonly ? 4_000 : 2_800, {
     preserveToolPrefixes: preserve,
+    ...(preserveToolResult ? { preserveToolResult } : {}),
   });
   const edits = compactCompletedEditToolArguments(messages);
   return older || all || edits;

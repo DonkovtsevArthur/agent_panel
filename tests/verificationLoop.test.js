@@ -304,6 +304,34 @@ test("buildVerificationNudge covers each gate step", () => {
   assert.equal(buildVerificationNudge({ kind: "none" }), undefined);
 });
 
+test("buildVerificationNudge prefers search_replace over bare write_file", () => {
+  const request = buildVerificationNudge({
+    kind: "request_diagnostics",
+    paths: ["src/a.ts"],
+  });
+  const fixDiag = buildVerificationNudge({
+    kind: "fix_diagnostics",
+    errors: ["src/a.ts:1: broken"],
+  });
+  const imports = buildVerificationNudge({
+    kind: "fix_imports",
+    warnings: ["Missing module '@/x'"],
+  });
+  const noOp = buildVerificationNudge({
+    kind: "handle_no_op_writes",
+    paths: ["src/a.ts"],
+  });
+  const project = buildVerificationNudge({
+    kind: "run_project_command",
+    command: "npm run typecheck",
+  });
+  for (const text of [request, fixDiag, imports, noOp, project]) {
+    assert.match(String(text), /search_replace/);
+  }
+  assert.match(String(request), /search_replace \(preferred\) or write_file/);
+  assert.match(String(fixDiag), /search_replace \(preferred\) or write_file/);
+});
+
 test("applyWriteFileToVerification tracks edits and attached diagnostics", () => {
   const s = createVerificationState({
     agentMode: true,

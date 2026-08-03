@@ -14,8 +14,7 @@ import { looksLikeRefusedRequestedEdit } from "./versionBump";
 import {
   PLAN_QUALITY_NUDGE,
   PLAN_QUALITY_USER_VISIBLE,
-  extractProposedPlanBody,
-  looksLikePageToTabDrift,
+  extractLastProposedPlanFromMessages,
   looksLikePlanQualityFailure,
 } from "./planQuality";
 
@@ -220,12 +219,15 @@ export function looksLikeSharedUiEditPath(path: string): boolean {
     return false;
   }
   return (
+    // Shared / root UI kits only — not FSD `pages|features|entities/.../ui/`.
     /(^|\/)shared\/ui\//.test(p) ||
+    /(^|\/)src\/ui\//.test(p) ||
     /(^|\/)(components|widgets)\//.test(p) ||
-    /(^|\/)ui\//.test(p) ||
-    p.includes("notification") ||
-    p.includes("toast") ||
-    p.includes("modal")
+    // Toast/modal primitives by folder or filename — not «notification-certificate».
+    /(^|\/)[^/]*toast[^/]*\.(tsx?|jsx?)$/.test(p) ||
+    /(^|\/)[^/]*modal[^/]*\.(tsx?|jsx?)$/.test(p) ||
+    /(^|\/)toast\//.test(p) ||
+    /(^|\/)modal\//.test(p)
   );
 }
 
@@ -448,23 +450,17 @@ export function decideHonestFinale(input: {
       if (allowNudgePlanQuality) {
         return { kind: "nudge_plan_quality" };
       }
-      // Nudges exhausted. z.ai-style: if the model still produced a
-      // <proposed_plan> card (even a structurally imperfect one — missing
-      // paths, «already exists» without inventory), show THAT plan to the
-      // user with the Build button rather than blocking them with an error.
-      // Exception — Kimi + page→tab WHAT drift: do NOT show a misleading
-      // Build card (Kimi often buries «добавить вкладку» after soft nudges).
-      // Only fall back to the error message when there is no plan card at all
-      // (prose «already exists» / PLAN.md file-write claim) — those never
-      // rendered as a card and the user would see nothing useful otherwise.
+      // Nudges exhausted. z.ai-style: always prefer a Build card over a dead-end
+      // error — even an imperfect plan (missing quotes / page→tab drift / soft
+      // inventory gaps). Recover a card from earlier assistant turns when the
+      // finale dropped it after nudges. Hard error only when no plan exists
+      // anywhere in the turn (pure prose «already exists» / PLAN.md claim).
       if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
-        if (kimi) {
-          const body = extractProposedPlanBody(text) || text;
-          if (looksLikePageToTabDrift(input.userText || "", body)) {
-            return { kind: "replace", text: PLAN_QUALITY_USER_VISIBLE };
-          }
-        }
         return { kind: "ok", text };
+      }
+      const recovered = extractLastProposedPlanFromMessages(input.messages);
+      if (recovered) {
+        return { kind: "ok", text: recovered };
       }
       return { kind: "replace", text: PLAN_QUALITY_USER_VISIBLE };
     }

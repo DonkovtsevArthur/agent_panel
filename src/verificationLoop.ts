@@ -328,33 +328,33 @@ export function buildVerificationNudge(
       return [
         "Post-edit verification: call get_diagnostics now with",
         `paths ${JSON.stringify(step.paths)}.`,
-        "Fix any errors with write_file before finishing.",
+        "Fix any errors with search_replace (preferred) or write_file before finishing.",
       ].join(" ");
     case "fix_diagnostics":
       return [
         "Post-edit verification: diagnostics still have errors:",
         ...step.errors.map((error) => `- ${error}`),
-        "Call write_file to fix them now, then finish briefly.",
+        "Fix them now with search_replace (preferred) or write_file, then finish briefly.",
         "Do not claim done while errors remain.",
       ].join("\n");
     case "fix_imports":
       return [
         "Post-edit verification: unresolved imports:",
         ...step.warnings.map((warning) => `- ${warning}`),
-        "Fix with write_file using real paths from tsconfig / sibling files.",
+        "Fix with search_replace (preferred) or write_file using real paths from tsconfig / sibling files.",
       ].join("\n");
     case "handle_no_op_writes":
       return [
-        "Post-edit verification: write_file reported unchanged for:",
+        "Post-edit verification: search_replace / write_file reported unchanged for:",
         step.paths.join(", ") + ".",
-        "Either write different content that actually changes the file,",
+        "Either apply a different edit that actually changes the file,",
         "or explain honestly that it was already correct — do not claim you fixed it.",
       ].join(" ");
     case "run_project_command":
       return [
         "Post-edit verification: diagnostics are clean.",
         `Run exactly this command via run_command now: ${step.command}`,
-        "If it fails only on files you edited this turn, fix those with write_file.",
+        "If it fails only on files you edited this turn, fix those with search_replace (preferred) or write_file.",
         "If failures are elsewhere (pre-existing), finish briefly — do not clean the whole repo.",
       ].join("\n");
     case "none":

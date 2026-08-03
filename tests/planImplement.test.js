@@ -8,6 +8,9 @@ const {
   looksLikeEditCorrectionRequest,
   buildPlanImplementSystemHint,
   buildEditCorrectionSystemHint,
+  extractPlanTargetPaths,
+  remainingPlanTargetPaths,
+  buildPlanChecklistNudge,
 } = require("../out/planImplement.js");
 
 const {
@@ -127,4 +130,38 @@ test("implementPlan explore soft nudge asks to edit with complete contents", () 
   });
   assert.match(nudge, /search_replace/i);
   assert.match(nudge, /COMPLETE|project patterns/i);
+});
+
+test("extractPlanTargetPaths reads Affected files and reuse/create targets", () => {
+  const plan = `${PLAN_IMPLEMENT_MARKER}
+Реализуй следующий план:
+
+**Цель**: страница
+**Шаги**:
+1. reuse src/entities/foo/index.ts — observed: \`export\`
+2. новый по паттерну src/pages/old/page.tsx — создать экран
+3. Кнопки — src/features/cert/certificate-actions.tsx
+**Затрагиваемые файлы**: src/pages/certificate/page.tsx, src/shared/api/initial-briefing/get-certificate-detail/types.ts
+**Acceptance**: ок
+`;
+  const paths = extractPlanTargetPaths(plan);
+  assert.ok(paths.includes("src/pages/certificate/page.tsx"));
+  assert.ok(
+    paths.includes("src/shared/api/initial-briefing/get-certificate-detail/types.ts")
+  );
+  assert.ok(paths.includes("src/entities/foo/index.ts"));
+  assert.ok(paths.includes("src/features/cert/certificate-actions.tsx"));
+  // analogue-only «по паттерну» without create/reuse keyword should not force the analogue path
+  assert.equal(paths.includes("src/pages/old/page.tsx"), false);
+});
+
+test("remainingPlanTargetPaths and checklist nudge", () => {
+  const plan = `
+**Затрагиваемые файлы**: src/a.ts, src/b.ts
+`;
+  assert.deepEqual(remainingPlanTargetPaths(plan, ["src/a.ts"]), ["src/b.ts"]);
+  const nudge = buildPlanChecklistNudge(["src/b.ts"]);
+  assert.match(nudge, /Plan checklist incomplete/);
+  assert.match(nudge, /src\/b\.ts/);
+  assert.match(nudge, /search_replace/);
 });

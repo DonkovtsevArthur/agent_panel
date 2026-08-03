@@ -53,20 +53,147 @@ export function looksLikePlanGroundingToolResult(
   );
 }
 
+function normalizeRepoPath(path: string): string {
+  return String(path || "")
+    .toLowerCase()
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
+}
+
+/** Paths from successful write_file / search_replace tool results this turn. */
+export function collectSuccessfulEditPaths(
+  messages: readonly ChatMessage[]
+): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    if (
+      message.role !== "tool" ||
+      (message.name !== "write_file" && message.name !== "search_replace")
+    ) {
+      continue;
+    }
+    const raw =
+      typeof message.content === "string" ? message.content : "";
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { ok?: boolean; path?: string };
+      if (parsed.ok === false) {
+        continue;
+      }
+      const path = normalizeRepoPath(String(parsed.path || ""));
+      if (!path || seen.has(path)) {
+        continue;
+      }
+      seen.add(path);
+      paths.push(path);
+    } catch {
+      // non-json tool payload
+    }
+  }
+  return paths;
+}
+
+function toolResultPath(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as { path?: string };
+    if (typeof parsed.path === "string" && parsed.path.trim()) {
+      return normalizeRepoPath(parsed.path);
+    }
+  } catch {
+    // fall through
+  }
+  const match = content.match(/"path"\s*:\s*"([^"]+)"/);
+  return match ? normalizeRepoPath(match[1]) : "";
+}
+
+function pathMatchesEdited(
+  toolPath: string,
+  editedPaths: readonly string[]
+): boolean {
+  if (!toolPath || !editedPaths.length) {
+    return false;
+  }
+  for (const edited of editedPaths) {
+    if (
+      toolPath === edited ||
+      toolPath.endsWith(`/${edited}`) ||
+      edited.endsWith(`/${toolPath}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
- * Pull completed tool rounds that contain preserved Figma/vision results out
- * of `messages` (order kept). Used by mid-turn summary so Figma is not replaced
- * by a one-line snippet while list/read rounds are summarized away.
+ * Agent implement grounding: Plan-style path pins + reads of files this turn
+ * already edited successfully. Soft-budget may still compact noise; these
+ * stay so Build/UI edits do not lose HOW after mid-turn summary.
  */
-export function pullPreservedToolRounds(messages: readonly ChatMessage[]): {
+export function looksLikeAgentImplementToolResult(
+  message: ChatMessage,
+  editedPaths: readonly string[] = []
+): boolean {
+  if (looksLikePlanGroundingToolResult(message)) {
+    return true;
+  }
+  if (message.role !== "tool") {
+    return false;
+  }
+  const name = String(message.name || "");
+  if (name !== "read_file" && name !== "list_files") {
+    return false;
+  }
+  const content =
+    typeof message.content === "string" ? message.content : "";
+  if (!content || !editedPaths.length) {
+    return false;
+  }
+  const toolPath = toolResultPath(content);
+  if (pathMatchesEdited(toolPath, editedPaths)) {
+    return true;
+  }
+  const lower = content.toLowerCase();
+  for (const edited of editedPaths) {
+    if (edited.length >= 6 && lower.includes(edited)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Predicate closed over successful edit paths in `messages`. */
+export function createAgentImplementPreserve(
+  messages: readonly ChatMessage[]
+): (message: ChatMessage) => boolean {
+  const editedPaths = collectSuccessfulEditPaths(messages);
+  return (message) => looksLikeAgentImplementToolResult(message, editedPaths);
+}
+
+/**
+ * Pull completed tool rounds that contain preserved Figma/vision (and optional
+ * extra) results out of `messages` (order kept). Used by mid-turn summary so
+ * Figma / implement reads are not replaced by a one-line snippet.
+ */
+export function pullPreservedToolRounds(
+  messages: readonly ChatMessage[],
+  options?: { preserveToolResult?: (message: ChatMessage) => boolean }
+): {
   pinned: ChatMessage[];
   remainder: ChatMessage[];
 } {
   const rounds = completedToolRoundIndexes(messages);
   const pinnedIndexes = new Set<number>();
+  const preserveExtra = options?.preserveToolResult;
   for (const round of rounds) {
-    const preserve = round.tools.some((toolIndex) =>
-      shouldPreserveToolResultFromCompaction(messages[toolIndex])
+    const preserve = round.tools.some(
+      (toolIndex) =>
+        shouldPreserveToolResultFromCompaction(messages[toolIndex]) ||
+        Boolean(preserveExtra?.(messages[toolIndex]))
     );
     if (!preserve) {
       continue;

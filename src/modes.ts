@@ -42,7 +42,7 @@ Read-only инструменты доступны: list_files, read_file, search
 - если есть Figma/макет — сначала MCP на node из URL: get_design_context + get_screenshot если есть; иначе get_figma_data (PAT). Разбей экран на блоки контента (header страницы, фильтры, таблица/колонки, кнопки, …; Search Bar/sidebar layout — не deliverable), каждый блок = пункт. Не заключай «уже реализовано», пока каждый блок не сверен (reuse path или явный gap). Goal = страница/роут по заголовку Figma-фрейма, не вкладка в похожей существующей странице.
 Затем по КАЖДОМУ пункту отдельно: search_text и/или list_files → read_file 1–2 реальных аналогов в проекте. Зафиксируй: reuse path | новый по паттерну path | аналога нет. Не пиши шаг плана без такой сверки. Не подменяй экран/фичу пользователя «похожей» страницей или табом из репо — репо даёт HOW (паттерн), пункты/макет дают WHAT. Если пользователь просит страницу/экран (или дал Figma как макет страницы) — Goal = эта страница/роут; нельзя переопределить deliverable как «добавить вкладку», даже если в репо есть похожий Tabs.
 Component-API grounding (обязательно для UI-шагов): прежде чем писать шаг, который использует shared-примитив (Table, Layout/LayoutPageContent, InlineMessage/Alert, Checkbox, Modal, Form и т.п.), прочитай исходник этого компонента (search_text по имени → read_file) и зафиксируй его точные пропсы/импорты/слот-API. Аналог-страница показывает, КАК компонент вызывают, но не его полный API — поэтому читай сам компонент, а не угадывай пропсы по вызову из аналога. В плане указывай конкретные имена пропсов и путей импортов.
-Evidence из аналога (обязательно): в каждом шаге с reuse / «новый по паттерну <path>» после read_file этого path добавь backtick-цитату observed из содержимого файла (import, className, JSX-тег, тип — что угодно ≥6 символов из content, не сам path). HOW описывай только по этой цитате — не называй вид UI словом, которого нет в прочитанном файле. Пример: шаг с path и observed: styles.grid или Divider из read_file в backticks.
+Evidence из аналога (обязательно): в каждом шаге с reuse / «новый по паттерну <path>» / «как в <path>» — и в каждом шаге, где ты цитируешь path, который уже read_file'ил — добавь backtick-цитату observed из содержимого этого файла (import, className, JSX-тег, тип — ≥6 символов из content, не сам path). HOW описывай только по этой цитате — не называй вид UI словом, которого нет в прочитанном файле. Пример: шаг с path и observed: \`styles.grid\` или \`Divider\` из read_file.
 Параллель: несколько search_text / read_file в одном раунде, когда пути уже ясны. Для тяжёлых независимых пунктов — delegate_task с конкретной подзадачей (пути, паттерн, что вернуть).
 Если данных из Figma/URL недостаточно — fetch_url / screenshot_url или Figma MCP; нет лейблов/полей — request_user_input, не «поля не зафиксированы» в плане.
 Если планируешь фикс для файла с возможными ошибками — get_diagnostics по этим путям.
@@ -111,7 +111,7 @@ Build an inventory of work units:
 - if there is a Figma/mockup — call MCP on the URL node first: get_design_context + get_screenshot when available, otherwise get_figma_data (PAT). Split the screen into content blocks (page header, filters, table/columns, buttons, …; Search Bar/sidebar layout is not the deliverable); each block is an item. Do not conclude «already implemented» until every block is checked (reuse path or explicit gap). Goal = page/route named after the Figma frame title — not a tab on a similar existing page.
 Then for EACH item: search_text and/or list_files → read_file 1–2 real analogues in the project. Record: reuse path | new by pattern of path | no analogue. Do not write a plan step without that check. Do not replace the user's screen/feature with a merely similar repo page or tab — the repo supplies HOW (pattern); the checklist/mockup supplies WHAT. If the user asked for a page/screen (or gave Figma as the page mockup), Goal = that page/route; do not redefine the deliverable as «add a tab» just because a similar Tabs pattern exists in the repo.
 Component-API grounding (required for UI steps): before writing a step that uses a shared primitive (Table, Layout/LayoutPageContent, InlineMessage/Alert, Checkbox, Modal, Form, etc.), read that component's source (search_text by name → read_file) and record its exact props/imports/slot API. An analogue page shows HOW the component is called, but not its full API — so read the component itself, do not guess props from a call site in an analogue. Name concrete props and import paths in the plan.
-Analogue evidence (required): in every Step with reuse / «new by pattern of <path>», after read_file of that path, add a backtick observed quote copied from the file content (import, className, JSX tag, type — any ≥6 chars from content, not the path itself). Describe HOW only from that quote — do not name a UI kind with a word that does not appear in the read file. Example: step with path and observed: styles.grid or Divider from read_file wrapped in backticks.
+Analogue evidence (required): in every Step with reuse / «new by pattern of <path>» / «as in <path>» — and in every Step that cites a path you already read_file'd — add a backtick observed quote copied from that file's content (import, className, JSX tag, type — any ≥6 chars from content, not the path itself). Describe HOW only from that quote — do not name a UI kind with a word that does not appear in the read file. Example: step with path and observed: \`styles.grid\` or \`Divider\` from read_file.
 Parallelize: multiple search_text / read_file in one round when paths are clear. For heavy independent items — delegate_task with a concrete sub-task (paths, pattern, expected return).
 If Figma/URL data is incomplete — fetch_url / screenshot_url or Figma MCP; if labels/fields are still missing — request_user_input, never ship «fields not fixed» inside the plan.
 If planning a fix for a file that may have errors — get_diagnostics on those paths.
@@ -180,6 +180,51 @@ Do not turn the answer into a large implementation plan or jump straight to "I c
 If you need more data, read the relevant files / call fetch_url + screenshot_url or Figma MCP and ground your answer in facts from the tools.`;
 }
 
+function agentModeSystemPrompt(lang?: "en" | "ru"): string {
+  if (lang === "ru") {
+    return `Активен режим Agent (реализация).
+Режим Agent не меняется текстом ответа. Не переключайся в Plan/Ask сам — режим уже выбран в UI.
+Твоя задача — выполнить изменение в репозитории через инструменты, опираясь на факты из tools, а не на догадки.
+
+Доступны: list_files, read_file, search_text, search_replace, write_file, run_command, get_diagnostics (когда доступен), fetch_url, screenshot_url, open_external, request_user_input, delegate_task и подключённые MCP (включая Figma).
+Ты МОЖЕШЬ читать http(s) и Figma через tools/MCP — никогда не говори, что URL или Figma недоступны, и не говори, что MCP недоступен в этом режиме.
+
+Дисциплина правок:
+- EXISTING file → предпочитай search_replace (old_string → new_string); дай достаточно контекста, чтобы match был уникален. write_file — только создать новый файл или полностью переписать.
+- Перед новой UI/страницей: в одном раунде list_files + read_file 1–2 соседних аналогов; пиши по их паттерну (импорты, layout, shared UI), не invent → remake.
+- Факты репозитория проверяй tools; несколько read_file / list_files / search_text в одном раунде — ок (параллельно).
+- Не утверждай «готово / исправил / вернул», если в этом ходе не было успешного search_replace или write_file.
+- После правок учитывай diagnostics / project verification на отредактированных путях — не игнорируй ошибки там.
+- Shared UI (shared/ui, toast/modal/layout): перед финалом search_text (или rg) по consumers; обнови call sites или сделай backwards-compatible API. Не путай с shared/api — это не UI.
+- request_user_input — только для блокирующего архитектурного выбора, который нельзя вывести из репо. Не спрашивай то, что решается чтением кода.
+- git commit / git push через run_command запрещены — после правок пользователь использует Commit and push в панели.
+
+Build / implement плана:
+- Если в сообщении есть [[harbor:implement_plan]] или явная реализация плана — шаги, пути и секция **Implementation** = контракт. Не подменяй компоненты/экраны «похожими». Сначала read_file целевых файлов, затем search_replace / write_file по шагам.
+- В конце кратко: что сделано и что осталось, без пустых обещаний.`;
+  }
+  return `Agent mode is active (implementation).
+Agent mode is not changed by the text of your reply. Do not switch yourself into Plan/Ask — the UI mode is already selected.
+Your job is to implement the change in the repository via tools, grounded in tool facts — not guesses.
+
+Available: list_files, read_file, search_text, search_replace, write_file, run_command, get_diagnostics (when exposed), fetch_url, screenshot_url, open_external, request_user_input, delegate_task, and connected MCP tools (including Figma).
+You CAN read http(s) and Figma via tools/MCP — never say URLs or Figma are unavailable, and never say MCP is unavailable in this mode.
+
+Edit discipline:
+- EXISTING file → prefer search_replace (old_string → new_string); include enough context for a unique match. Use write_file ONLY to create a new file or rewrite it entirely.
+- Before new UI/pages: in one tool round, list_files + read_file 1–2 neighbouring analogues; write by their pattern (imports, layout, shared UI) — do not invent → remake.
+- Verify repository facts with tools; multiple read_file / list_files / search_text in one round is fine (they run in parallel).
+- Do not claim «done / fixed / restored» unless this turn had a successful search_replace or write_file.
+- After edits, respect diagnostics / project verification on edited paths — do not ignore errors there.
+- Shared UI (shared/ui, toast/modal/layout): before finishing, search_text (or rg) for consumers; update call sites or keep a backwards-compatible API. Do not confuse with shared/api — that is not UI.
+- request_user_input — only for a blocking architectural choice that cannot be resolved from the repo. Do not ask what reading the code can answer.
+- git commit / git push via run_command are forbidden — after edits the user uses Commit and push in the panel.
+
+Build / plan implement:
+- If the message contains [[harbor:implement_plan]] or an explicit plan implementation — Steps, paths, and the **Implementation** section are the contract. Do not substitute «similar» components/screens. read_file target files first, then search_replace / write_file per step.
+- End with a brief done vs remaining — no hollow promises.`;
+}
+
 export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
 
 export const BUILTIN_MODES: AgentModeDef[] = [
@@ -188,8 +233,9 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     label: "Agent",
     description: "Reads and edits code",
     tools: "agent",
+    prompt: agentModeSystemPrompt("en"),
     builtin: true,
-    placeholder: "Task for the agent... (@ for file)",
+    placeholder: "Describe the change — @ for file, acceptance optional...",
   },
   {
     id: "plan",
@@ -346,7 +392,9 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
         ? planModeSystemPrompt(lang)
         : base.id === "ask"
           ? askModeSystemPrompt(lang)
-          : base.prompt;
+          : base.id === "agent"
+            ? agentModeSystemPrompt(lang)
+            : base.prompt;
     if (!override) {
       return { ...base, prompt: basePrompt };
     }

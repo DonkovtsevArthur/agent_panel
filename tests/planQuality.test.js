@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   extractProposedPlanBody,
   extractAnaloguePathsFromStep,
+  extractGroundedPathsFromStep,
   extractObservedQuotesFromStep,
   looksLikeMissingAnalogueQuote,
   looksLikeIncompleteProposedPlan,
@@ -43,7 +44,7 @@ test("looksLikeIncompleteProposedPlan requires paths and numbered steps", () => 
   );
   assert.equal(
     looksLikeIncompleteProposedPlan(
-      "<proposed_plan>\n**Цель**: x\n**Шаги**:\n1. Таблица — reuse `src/ui/Table.tsx`.\n**Затрагиваемые файлы**: `src/ui/Table.tsx`\n</proposed_plan>"
+      "<proposed_plan>\n**Цель**: x\n**Шаги**:\n1. Таблица — reuse `src/ui/Table.tsx` — observed: `ColumnDef`.\n**Затрагиваемые файлы**: `src/ui/Table.tsx`\n</proposed_plan>"
     ),
     false
   );
@@ -267,10 +268,11 @@ test("page→similar-page: not drift when domain word matches user text", () => 
     "составь план реализации страницы notification certificate https://www.figma.com/design/abc/x?node-id=1-2";
   const ok =
     "<proposed_plan>\n**Цель**: страница notification certificate\n**Шаги**:\n" +
-    "1. Таблица — reuse src/pages/notification-certificate/ui/page.tsx\n" +
-    "2. Модель — reuse src/entities/notification/notifications-certification/model.ts\n" +
+    "1. Таблица — reuse src/pages/notification-certificate/ui/page.tsx — observed: `CertificateTable`\n" +
+    "2. Модель — reuse src/entities/notification/notifications-certification/model.ts — observed: `certificationModel`\n" +
     "**Затрагиваемые файлы**: src/pages/notification-certificate/ui/page.tsx\n</proposed_plan>";
   assert.equal(looksLikePageToSimilarPageDrift(user, ok), false);
+  // No tool messages → structural quotes present → quality ok (content not verified).
   assert.equal(looksLikePlanQualityFailure(ok, { userText: user }), false);
 });
 
@@ -353,4 +355,86 @@ test("looksLikeMissingAnalogueQuote flags quote not found in file", () => {
 
 test("PLAN_QUALITY_NUDGE mentions analogue evidence quote", () => {
   assert.match(PLAN_QUALITY_NUDGE, /observed|Analogue evidence|backtick/i);
+});
+
+test("analogue quote required structurally even without tool messages", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Editor — новый по паттерну `src/features/foo/editor.tsx`\n" +
+    "**Затрагиваемые файлы**: src/features/bar/editor.tsx\n</proposed_plan>";
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan)), true);
+  assert.equal(looksLikePlanQualityFailure(plan), true);
+});
+
+test("как в <path> counts as analogue marker", () => {
+  assert.deepEqual(
+    extractAnaloguePathsFromStep("1. Таблица — как в `src/pages/cert/page.tsx` — observed: `DataTable`"),
+    ["src/pages/cert/page.tsx"]
+  );
+});
+
+test("bare cited path that was read_file'd requires observed quote from that file", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Таблица — src/features/notification-certificate/notifications-certificate/search.tsx\n" +
+    "**Затрагиваемые файлы**: src/features/x/table.tsx\n</proposed_plan>";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/features/notification-certificate/notifications-certificate/search.tsx",
+        content: "export const Search = () => <input className={styles.search} />;\n",
+      }),
+    },
+  ];
+  assert.deepEqual(
+    extractGroundedPathsFromStep(
+      "1. Таблица — src/features/notification-certificate/notifications-certificate/search.tsx"
+    ),
+    ["src/features/notification-certificate/notifications-certificate/search.tsx"]
+  );
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), true);
+
+  const fixed =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Таблица — src/pages/notification-certificate/ui/notification-certificate-page.tsx — observed: `styles.search`\n" +
+    "**Затрагиваемые файлы**: src/features/x/table.tsx\n</proposed_plan>";
+  // Wrong quote source: quote from search file but path is page → still fail when page was read.
+  const pageMessages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/pages/notification-certificate/ui/notification-certificate-page.tsx",
+        content: "export const Page = () => <Table columns={cols} />;\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(fixed), pageMessages), true);
+
+  const grounded =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Таблица — src/pages/notification-certificate/ui/notification-certificate-page.tsx — observed: `<Table columns`\n" +
+    "**Затрагиваемые файлы**: src/features/x/table.tsx\n</proposed_plan>";
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(grounded), pageMessages), false);
+});
+
+test("create-only path never read does not require observed quote", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Роут — новый src/pages/cert/page.tsx\n" +
+    "2. Таблица — новый src/pages/cert/table.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx, src/pages/cert/table.tsx\n</proposed_plan>";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/shared/ui/button.tsx",
+        content: "export const Button = () => null;\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), false);
 });

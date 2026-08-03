@@ -30,23 +30,34 @@ export interface WriteFileGuardOptions {
 export function validateWriteFileAgainstExisting(
   options: WriteFileGuardOptions
 ): string | null {
-  if (options.created) {
-    return null;
-  }
   const before = String(options.before ?? "");
   const content = String(options.content ?? "");
-  const beforeTrimmed = before.trim();
-  if (!beforeTrimmed) {
-    return null;
-  }
 
+  // Empty content is never useful — blocks both wipes and empty "creates"
+  // that mark a plan path as done while leaving a zero-byte stub.
   if (!content.trim()) {
+    if (options.created || !before.trim()) {
+      return [
+        "Refused write_file: content is empty.",
+        "Do not create an empty stub. Call write_file again with the FULL file contents,",
+        "or skip the path until you can write a complete file.",
+        "Do not claim you created/rewrote the file.",
+      ].join(" ");
+    }
     return [
       "Refused write_file: new content is empty, but the existing file is not.",
       "This would wipe the file. Prefer search_replace for a focused fix,",
       "or call write_file again with the FULL file contents.",
       "Do not claim you rewrote/fixed the file.",
     ].join(" ");
+  }
+
+  if (options.created) {
+    return null;
+  }
+  const beforeTrimmed = before.trim();
+  if (!beforeTrimmed) {
+    return null;
   }
 
   const beforeLen = before.length;

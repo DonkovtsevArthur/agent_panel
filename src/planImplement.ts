@@ -124,3 +124,138 @@ export function buildEditCorrectionSystemHint(): string {
     "Keep the correction scoped: fix what the user named; do not redesign unrelated screens.",
   ].join(" ");
 }
+
+function normalizePlanPath(path: string): string {
+  return String(path || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^[`'"]+|[`'"]+$/g, "")
+    .replace(/^\.\//, "")
+    .replace(/^\/+/, "");
+}
+
+const PLAN_FILE_PATH_RE =
+  /(?:^|[\s,;`'"(])((?:src\/|\.\/|app\/|pages\/|shared\/|entities\/|features\/|widgets\/|media\/|tests\/)?[\w.-]+(?:\/[\w.-]+)+\.\w{1,8})\b/g;
+
+function collectPathTokens(chunk: string, into: Set<string>): void {
+  const text = String(chunk || "");
+  PLAN_FILE_PATH_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PLAN_FILE_PATH_RE.exec(text))) {
+    const path = normalizePlanPath(match[1]);
+    if (path.length >= 6) {
+      into.add(path);
+    }
+  }
+}
+
+/**
+ * Explicit deliverable paths from a Build plan: **Affected files** /
+ * **Затрагиваемые файлы**, plus reuse/create targets in Steps.
+ * Skips bare «по паттерну / by pattern» analogues without a create path.
+ */
+export function extractPlanTargetPaths(planText: string): string[] {
+  const value = stripPlanImplementWrapper(planText);
+  if (!value) {
+    return [];
+  }
+  const paths = new Set<string>();
+
+  const affected = value.match(
+    /\*\*(?:Затрагиваемые файлы|Affected files)\*\*\s*:?\s*([^\n*]+(?:\n(?!\*\*)[^\n]+)*)/i
+  );
+  if (affected?.[1]) {
+    collectPathTokens(affected[1], paths);
+  }
+
+  // Explicit reuse / create targets in the plan body (not «by pattern of X» alone).
+  const reuseOrCreate =
+    /(?:reuse|созда[йть](?:\s+файл)?|create(?:\s+file)?|new(?:\s+file)?|новый(?:\s+файл)?|новая|новое)\s*[:=]?\s*[`'"]?((?:src\/|\.\/|app\/|pages\/|shared\/|entities\/|features\/|widgets\/)[\w./-]+\.\w{1,8})/gi;
+  let match: RegExpExecArray | null;
+  while ((match = reuseOrCreate.exec(value))) {
+    const path = normalizePlanPath(match[1]);
+    if (path.length >= 6) {
+      paths.add(path);
+    }
+  }
+
+  // Numbered Steps: keep grounded paths that are deliverables, skip pure
+  // analogue citations («по паттерну / by pattern of <path>» only).
+  const stepChunks = value.split(/(?:^|\n)\s*(?=\d+\.\s+)/);
+  const groundedInStep =
+    /(?:^|[\s`'"(—–-])((?:src\/|\.\/|app\/|pages\/|shared\/|entities\/|features\/|widgets\/)[\w./-]+\.\w{1,8})\b/gi;
+  const analogueOnly =
+    /(?:по\s+паттерну|by\s+pattern(?:\s+of)?)\s*[`«"']?((?:src\/|\.\/|app\/|pages\/|shared\/|entities\/|features\/|widgets\/)[\w./-]+\.\w{1,8})/gi;
+  for (const chunk of stepChunks) {
+    const step = chunk.trim();
+    if (!/^\d+\.\s+\S/.test(step)) {
+      continue;
+    }
+    const analogue = new Set<string>();
+    analogueOnly.lastIndex = 0;
+    while ((match = analogueOnly.exec(step))) {
+      analogue.add(normalizePlanPath(match[1]));
+    }
+    groundedInStep.lastIndex = 0;
+    while ((match = groundedInStep.exec(step))) {
+      const path = normalizePlanPath(match[1]);
+      if (path.length < 6 || analogue.has(path)) {
+        continue;
+      }
+      paths.add(path);
+    }
+  }
+
+  return [...paths];
+}
+
+function pathCoveredByEdits(
+  target: string,
+  editedPaths: readonly string[]
+): boolean {
+  const want = normalizePlanPath(target).toLowerCase();
+  if (!want) {
+    return false;
+  }
+  for (const edited of editedPaths) {
+    const have = normalizePlanPath(edited).toLowerCase();
+    if (!have) {
+      continue;
+    }
+    if (
+      have === want ||
+      have.endsWith(`/${want}`) ||
+      want.endsWith(`/${have}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Plan paths not yet touched by successful edits this turn. */
+export function remainingPlanTargetPaths(
+  planText: string,
+  editedPaths: readonly string[]
+): string[] {
+  return extractPlanTargetPaths(planText).filter(
+    (path) => !pathCoveredByEdits(path, editedPaths)
+  );
+}
+
+export function buildPlanChecklistNudge(remainingPaths: string[]): string {
+  const listed = remainingPaths
+    .slice(0, 8)
+    .map((path) => `- ${path}`)
+    .join("\n");
+  const more =
+    remainingPaths.length > 8
+      ? `\n…and ${remainingPaths.length - 8} more`
+      : "";
+  return [
+    "Plan checklist incomplete: these explicit plan paths were not edited this turn yet:",
+    listed + more,
+    "Continue with search_replace (preferred) or write_file on the remaining paths.",
+    "Do not claim the plan is fully done until those steps are applied (or explain honestly why a path is blocked).",
+  ].join("\n");
+}
