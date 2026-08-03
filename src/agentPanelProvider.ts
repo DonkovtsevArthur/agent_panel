@@ -229,22 +229,6 @@ const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 /** Интервал фоновой проверки, пока виден чат. */
 const PROVIDER_PROBE_POLL_MS = 15_000;
 
-/** Virtual markdown buffer for Plan cards opened in the editor. */
-class PlanMarkdownContentProvider implements vscode.TextDocumentContentProvider {
-  private content = "";
-  private readonly _onDidChange = new vscode.EventEmitter<vscode.Uri>();
-  readonly onDidChange = this._onDidChange.event;
-
-  set(content: string, uri: vscode.Uri): void {
-    this.content = content;
-    this._onDidChange.fire(uri);
-  }
-
-  provideTextDocumentContent(): string {
-    return this.content;
-  }
-}
-
 export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
 
@@ -296,24 +280,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         language: string;
       }
     | undefined;
-  /** Virtual markdown doc for the latest proposed plan (auto-opened in editor). */
-  private readonly planMarkdownProvider = new PlanMarkdownContentProvider();
-  private planMarkdownUri = vscode.Uri.from({
-    scheme: "harbor-plan",
-    path: "/Plan.md",
-  });
+  /** Real on-disk markdown used for Plan «Просмотр» (built-in preview needs file:). */
+  private planPreviewUri: vscode.Uri | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly context: vscode.ExtensionContext
   ) {
     this.loadStore();
-    this.disposables.push(
-      vscode.workspace.registerTextDocumentContentProvider(
-        "harbor-plan",
-        this.planMarkdownProvider
-      )
-    );
     const mcp = getMcpManager();
     if (mcp) {
       this.disposables.push(
@@ -2214,7 +2188,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Open/update the latest Plan-mode markdown as a rendered preview tab. */
+  /**
+   * Open/update the latest Plan as a rendered Markdown preview.
+   * Writes a real file under globalStorage — built-in preview stays blank for
+   * custom schemes like harbor-plan:.
+   */
   private async openPlanMarkdown(markdown: string): Promise<void> {
     const content = stripPlanImplementWrapper(markdown);
     if (!content) {
@@ -2222,21 +2200,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     const fileName =
       resolveUiLanguage(getConfig().language) === "ru" ? "План.md" : "Plan.md";
-    this.planMarkdownUri = vscode.Uri.from({
-      scheme: "harbor-plan",
-      path: `/${fileName}`,
-    });
-    this.planMarkdownProvider.set(content, this.planMarkdownUri);
     try {
-      const doc = await vscode.workspace.openTextDocument(this.planMarkdownUri);
+      const dir = vscode.Uri.joinPath(
+        this.context.globalStorageUri,
+        "plan-preview"
+      );
+      await vscode.workspace.fs.createDirectory(dir);
+      const uri = vscode.Uri.joinPath(dir, fileName);
+      await vscode.workspace.fs.writeFile(
+        uri,
+        Buffer.from(content, "utf8")
+      );
+      this.planPreviewUri = uri;
+
+      const doc = await vscode.workspace.openTextDocument(uri);
       if (doc.languageId !== "markdown") {
         await vscode.languages.setTextDocumentLanguage(doc, "markdown");
       }
       try {
-        await vscode.commands.executeCommand(
-          "markdown.showPreviewToSide",
-          this.planMarkdownUri
-        );
+        await vscode.commands.executeCommand("markdown.showPreviewToSide", uri);
       } catch {
         // Older / minimal VS Code builds without the Markdown extension.
         await vscode.window.showTextDocument(doc, {

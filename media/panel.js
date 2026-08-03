@@ -4197,12 +4197,37 @@
     return null;
   }
 
+  /** While a run is active, keep the timeline open so tool progress is visible. */
+  function expandLiveToolGroup(group) {
+    if (!group || !busy || group.dataset.sealed === "1") {
+      return;
+    }
+    if (!group.classList.contains("is-collapsed")) {
+      return;
+    }
+    group.classList.remove("is-collapsed");
+    const toggle = group.querySelector(".tool-group-toggle");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.title = t("hideSteps");
+    }
+  }
+
   function ensureActiveToolGroup() {
     const existing = getActiveToolGroup();
     if (existing) {
+      expandLiveToolGroup(existing);
       return existing;
     }
     const group = createToolGroup();
+    // Start expanded during a live run; sealToolGroups collapses when done.
+    if (busy) {
+      group.classList.remove("is-collapsed");
+      const toggle = group.querySelector(".tool-group-toggle");
+      if (toggle) {
+        toggle.setAttribute("aria-expanded", "true");
+      }
+    }
     ensureChatTurn().appendChild(group);
     keepStatusAtEnd();
     return group;
@@ -4376,6 +4401,7 @@
       }
     }
 
+    expandLiveToolGroup(group);
     updateToolGroupSummary(group);
     keepStatusAtEnd();
     scrollToBottom();
@@ -8155,13 +8181,19 @@
     if (!text || busy) {
       return;
     }
+    const payload =
+      `[[harbor:implement_plan]]\n${t("proposedPlanImplementPrefix")}\n\n${text}`;
     setAgentMode("agent", { notify: true });
     stickToBottom = true;
+    // Mirror sendPrompt: keep implement handoff in local cache so Build stays
+    // hidden after syncComposerPlanFromCache / history re-renders.
+    uiMessagesCache.push({ role: "user", text: payload, attachments: [] });
+    appendMessage("user", payload, uiMessagesCache.length - 1, -1, []);
     setBusy(true);
     setComposerPlanBuild("", false);
     vscode.postMessage({
       type: "send",
-      text: `[[harbor:implement_plan]]\n${t("proposedPlanImplementPrefix")}\n\n${text}`,
+      text: payload,
       model: getSelectedModel(),
       agentMode: "agent",
       attachments: [],
@@ -8195,9 +8227,21 @@
     composerPlanActionsEl.appendChild(btn);
   }
 
+  /** True when a user message after the plan already started Build. */
+  function planAlreadyImplementedAfter(list, planIndex) {
+    for (let j = planIndex + 1; j < list.length; j++) {
+      const item = list[j];
+      if (item?.role === "user" && looksLikePlanImplementDisplay(item.text)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * When a complete proposed_plan is available: show composer Build tag.
    * Opening the markdown tab is opt-in (card «Open in tab» button).
+   * Skip if Build was already started for this plan (implement handoff in history).
    */
   function presentProposedPlan(
     raw,
@@ -8206,6 +8250,19 @@
     const plan = extractLatestProposedPlan(raw);
     if (!plan) {
       return false;
+    }
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (
+        list[i]?.role === "assistant" &&
+        extractLatestProposedPlan(list[i].text) === plan
+      ) {
+        if (planAlreadyImplementedAfter(list, i)) {
+          setComposerPlanBuild("", false);
+          return false;
+        }
+        break;
+      }
     }
     setComposerPlanBuild(plan, true);
     if (openEditor) {
@@ -8226,10 +8283,15 @@
         continue;
       }
       const plan = extractLatestProposedPlan(item.text);
-      if (plan) {
-        presentProposedPlan(item.text, { openEditor });
+      if (!plan) {
+        continue;
+      }
+      if (planAlreadyImplementedAfter(list, i)) {
+        setComposerPlanBuild("", false);
         return;
       }
+      presentProposedPlan(item.text, { openEditor });
+      return;
     }
     setComposerPlanBuild("", false);
     lastOpenedPlanKey = "";
@@ -12111,7 +12173,9 @@
           msg.step
         );
         if (msg.role === "assistant") {
-          presentProposedPlan(msg.text || "", { openEditor: false });
+          if (!presentProposedPlan(msg.text || "", { openEditor: false })) {
+            syncComposerPlanFromCache({ openEditor: false });
+          }
         }
         break;
       case "step":
@@ -12211,8 +12275,15 @@
         editingModeId = "";
         setBusy(false);
         ensureRegenerateButton();
-        if (assistantDoneText) {
-          presentProposedPlan(assistantDoneText, { openEditor: false });
+        // Re-sync Build from history: hide if Build already ran; show only for
+        // a fresh unanswered plan (do not resurrect after implement).
+        if (
+          assistantDoneText &&
+          !presentProposedPlan(assistantDoneText, { openEditor: false })
+        ) {
+          syncComposerPlanFromCache({ openEditor: false });
+        } else if (!assistantDoneText) {
+          syncComposerPlanFromCache({ openEditor: false });
         }
         break;
       }
