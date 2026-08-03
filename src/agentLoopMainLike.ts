@@ -690,9 +690,8 @@ export async function runMainLikeAgentTurn(options: {
           },
         ]
       : []),
-    // Kimi «read analogous UI» conflicts with Build/correction/discard.
-    ...(kimiModel &&
-    !agentsMdTurn &&
+    // «Read analogous UI» — all Agent models; skip for Build/correction/discard.
+    ...(!agentsMdTurn &&
     !readonly &&
     !focusedPlanEdit &&
     !discardScope
@@ -710,9 +709,8 @@ export async function runMainLikeAgentTurn(options: {
     toApiMessage({ role: "user", content: userApiContent }),
   ];
 
-  // Post-edit verification (diagnostics + lint/typecheck) — только Kimi в Agent.
-  const enablePostEditVerification =
-    !readonly && kimiModel;
+  // Post-edit verification (diagnostics + lint/typecheck) — Agent, все модели.
+  const enablePostEditVerification = !readonly;
   const projectCommand = enablePostEditVerification
     ? selectProjectVerificationCommand(
         await readPackageScripts(editorWorkspace.rootPath)
@@ -1773,7 +1771,13 @@ export async function runMainLikeAgentTurn(options: {
       break;
     }
 
-    options.callbacks.onPhase("thinking", modeThinkingLabel(mode));
+    // Between tool waves keep the last tool phase («Читаю…») — flashing
+    // «Планирую…» / Thinking is UI noise. Show mode thinking only on the
+    // first model call of the turn (before any tool_results intent).
+    // Soft-nudge / hard-cut / collect labels below still emit on purpose.
+    if (completionIntent !== "tool_results") {
+      options.callbacks.onPhase("thinking", modeThinkingLabel(mode));
+    }
 
     // После soft-nudge убираем list/read (+ delegate в readonly — под-агент ask
     // это тоже исследование); URL/MCP tools оставляем. Применяется и в readonly,

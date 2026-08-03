@@ -48,6 +48,11 @@ test("all models use main-like agent loop and tools", () => {
   assert.match(mainLikeSrc, /EMPTY_WRITE_USER_NUDGE|forceNonEmptyTextReply/);
   assert.match(mainLikeSrc, /VERIFY_REPO_FACTS_HINT|prepareRoundMessages/);
   assert.match(mainLikeSrc, /ensureToolResultsIntentHint|completionIntent/);
+  // Skip «Планирую…» flash between tool waves — only before first model call.
+  assert.match(
+    mainLikeSrc,
+    /completionIntent !== "tool_results"[\s\S]*?modeThinkingLabel/
+  );
   assert.match(mainLikeSrc, /onToolLifecycle|emitToolLifecycle|onStep/);
   assert.match(mainLikeSrc, /requestAssistant|onDelta/);
   assert.match(mainLikeSrc, /assistantTurnFromApi|reasoning_content/);
@@ -102,7 +107,7 @@ test("main-like tools expose search_replace as a write tool (Zed-style focused e
   assert.match(toolsSrc, /ПРЕДПОЧИТАЙ этот инструмент для точечных правок/);
 });
 
-test("post-edit verification is gated to Kimi agent turns only", () => {
+test("post-edit verification is enabled for all Agent turns", () => {
   const { isKimiFamilyModel } = require("../out/openaiClient.js");
   assert.equal(isKimiFamilyModel("kimi-k2.6"), true);
   assert.equal(isKimiFamilyModel("moonshot/kimi-k2.5"), true);
@@ -113,11 +118,21 @@ test("post-edit verification is gated to Kimi agent turns only", () => {
     "utf8"
   );
   assert.match(mainLikeSrc, /const kimiModel = isKimiFamilyModel\(options\.model\)/);
+  // Gate is Agent (!readonly), not Kimi-only.
   assert.match(
     mainLikeSrc,
-    /enablePostEditVerification[\s\S]*?kimiModel/
+    /enablePostEditVerification\s*=\s*!readonly/
+  );
+  assert.doesNotMatch(
+    mainLikeSrc,
+    /enablePostEditVerification\s*=\s*!readonly\s*&&\s*kimiModel/
   );
   assert.match(mainLikeSrc, /buildKimiWorkspaceFollowHint/);
+  // Analogue-UI hint is injected for all Agent models (not kimiModel && …).
+  assert.match(
+    mainLikeSrc,
+    /!agentsMdTurn &&\s*!readonly &&\s*!focusedPlanEdit &&\s*!discardScope/
+  );
   assert.match(mainLikeSrc, /looksLikePlanImplementRequest/);
   assert.match(mainLikeSrc, /looksLikeEditCorrectionRequest/);
   assert.match(mainLikeSrc, /buildPlanImplementSystemHint/);

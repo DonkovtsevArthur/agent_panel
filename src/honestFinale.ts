@@ -46,7 +46,7 @@ export const DENIED_WRITE_USER_VISIBLE =
   "Модель успешно применила правку через инструмент, но в ответе отрицает это («уже было / правок не потребовалось»). Повторите запрос — нужен краткий отчёт о реальном изменении.";
 
 export const IMPACT_USER_NUDGE =
-  "You changed (or claim to change) shared UI layout/structure. Before finishing: run_command with rg/grep to find imports and usages of this component, check whether other call sites break, update them if needed, and report the impact. Do NOT say «скажи — верну/переделаю». Prefer backwards-compatible API (optional props) over breaking shared components unilaterally.";
+  "You changed (or claim to change) shared UI layout/structure. Before finishing: search_text (preferred) or run_command with rg/grep to find imports and usages of this component, check whether other call sites break, update them if needed, and report the impact. Do NOT say «скажи — верну/переделаю». Prefer backwards-compatible API (optional props) over breaking shared components unilaterally.";
 
 export const IMPACT_USER_VISIBLE =
   "Модель поменяла (или описала) shared UI без проверки других мест использования. Повторите запрос — нужно найти consumers и учесть влияние на другие компоненты.";
@@ -170,6 +170,12 @@ function turnHadUsageSearch(messages: ChatMessage[]): boolean {
     for (const call of m.tool_calls) {
       const name = call.function?.name || "";
       const args = String(call.function?.arguments || "").toLowerCase();
+      // Built-in workspace search — primary Harbor tool for finding consumers.
+      // Models often use this instead of shell rg; without counting it the
+      // impact gate false-fires after a real usage pass.
+      if (name === "search_text") {
+        return true;
+      }
       if (name === "run_command") {
         if (
           /\brg\b/.test(args) ||
@@ -407,7 +413,10 @@ export function decideHonestFinale(input: {
     // without block inventory, or shipping PLAN.md instead of the card.
     // Runs before hedge so Risks/future-tense steps in a good plan still pass.
     if (
-      looksLikePlanQualityFailure(text, { userText: input.userText })
+      looksLikePlanQualityFailure(text, {
+        userText: input.userText,
+        messages: input.messages,
+      })
     ) {
       if (allowNudgePlanQuality) {
         return { kind: "nudge_plan_quality" };

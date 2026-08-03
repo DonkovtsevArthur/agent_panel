@@ -4,8 +4,9 @@
  * 2) soft-nudge после серии только explore (list/read);
  * 3) hard-cut — дальше без explore, только write или финальный ответ.
  *
- * Kimi: soft позже (успеть прочитать 1–2 аналога), но soft уже снимает
- * list/read — иначе gateway падает на раздутом tool-контексте.
+ * Agent (все модели): soft позже (успеть прочитать 1–2 аналога), soft
+ * снимает list/read — иначе gateway/контекст раздувается. Build→Agent
+ * (implementPlan) — более жёсткий бюджет.
  */
 
 export const EXPLORE_ONLY_TOOLS = new Set([
@@ -22,17 +23,23 @@ export const EXPLORE_ONLY_TOOLS = new Set([
  */
 export const DELEGATE_TASK_TOOL = "delegate_task";
 
-/** После стольких explore-only раундов подряд — soft nudge. */
-export const EXPLORE_SOFT_NUDGE_ROUNDS = 2;
+/** Agent: soft-nudge после стольких explore-only раундов (все модели). */
+export const EXPLORE_SOFT_NUDGE_ROUNDS = 4;
 
-/** После стольких — hard-cut explore. */
-export const EXPLORE_HARD_CUT_ROUNDS = 4;
+/** Agent: hard-cut explore (все модели). */
+export const EXPLORE_HARD_CUT_ROUNDS = 6;
 
-/** Kimi: soft-nudge позже — успеть прочитать соседние файлы. */
-export const KIMI_EXPLORE_SOFT_NUDGE_ROUNDS = 4;
+/** Build→Agent: tighter explore — plan already named files. */
+export const IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS = 2;
 
-/** Kimi: hard-cut (после soft без explore). */
-export const KIMI_EXPLORE_HARD_CUT_ROUNDS = 6;
+/** Build→Agent: hard-cut explore. */
+export const IMPLEMENT_EXPLORE_HARD_CUT_ROUNDS = 4;
+
+/** @deprecated alias — same as EXPLORE_SOFT_NUDGE_ROUNDS */
+export const KIMI_EXPLORE_SOFT_NUDGE_ROUNDS = EXPLORE_SOFT_NUDGE_ROUNDS;
+
+/** @deprecated alias — same as EXPLORE_HARD_CUT_ROUNDS */
+export const KIMI_EXPLORE_HARD_CUT_ROUNDS = EXPLORE_HARD_CUT_ROUNDS;
 
 /**
  * Plan quality-first: мягкие напоминания про grounding.
@@ -75,11 +82,11 @@ export function exploreRoundLimits(options: {
   planQuality?: boolean;
 }): ExploreRoundLimits {
   // Implement-from-plan: plan already named files/components — do not spend
-  // Kimi's long explore budget re-browsing analogous pages.
+  // the long explore budget re-browsing analogous pages.
   if (options.implementPlan) {
     return {
-      softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
-      hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
+      softNudgeRounds: IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: IMPLEMENT_EXPLORE_HARD_CUT_ROUNDS,
       stripExploreOnSoftNudge: true,
       hardCutExplore: true,
     };
@@ -93,14 +100,7 @@ export function exploreRoundLimits(options: {
       hardCutExplore: false,
     };
   }
-  if (options.kimi) {
-    return {
-      softNudgeRounds: KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
-      hardCutRounds: KIMI_EXPLORE_HARD_CUT_ROUNDS,
-      stripExploreOnSoftNudge: true,
-      hardCutExplore: true,
-    };
-  }
+  // Agent: same explore budget for all models (was Kimi-only 4/6).
   return {
     softNudgeRounds: EXPLORE_SOFT_NUDGE_ROUNDS,
     hardCutRounds: EXPLORE_HARD_CUT_ROUNDS,
@@ -109,10 +109,10 @@ export function exploreRoundLimits(options: {
   };
 }
 
-/** Kimi-only: follow AGENTS.md by reading analogous UI before inventing. */
+/** Agent: follow workspace rules by reading analogous UI before inventing. */
 export function buildKimiWorkspaceFollowHint(): string {
   return [
-    "Workspace rules follow-through (required for this model):",
+    "Workspace rules follow-through (required):",
     "Obey injected Workspace rules (AGENTS.md / .cursor/rules).",
     "Before creating a new page, screen, or UI component: list_files in the relevant folder and read_file 1–2 similar existing files in the same tool round (parallel reads); match their structure, imports, styling, and shared primitives.",
     "Do not invent a one-off layout and rewrite it later to look similar — start from the existing pattern.",
@@ -227,19 +227,12 @@ export function buildExploreSoftNudge(options: {
       "Match the project patterns from the files you read. Do not invent a substitute component. Never wipe a file with empty/truncated content. List any remaining steps.",
     ].join(" ");
   }
-  if (options.kimi) {
-    return [
-      "Stop exploring the repository.",
-      "list_files and read_file are no longer available this turn.",
-      "Call write_file now matching the analogous files you already read (same structure, imports, styling, shared UI).",
-      "Do not invent a layout from scratch. If no edits are needed, reply briefly.",
-    ].join(" ");
-  }
+  // Agent (all models): write by analogy — same soft text that used to be Kimi-only.
   return [
     "Stop exploring the repository.",
-    "You already have enough context from the tools above.",
-    "Do not call list_files or read_file again.",
-    "If you need to change files, call write_file now; otherwise reply briefly to the user.",
+    "list_files and read_file are no longer available this turn.",
+    "Call write_file / search_replace now matching the analogous files you already read (same structure, imports, styling, shared UI).",
+    "Do not invent a layout from scratch. If no edits are needed, reply briefly.",
   ].join(" ");
 }
 

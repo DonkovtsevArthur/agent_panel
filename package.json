@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.107",
+  "version": "1.0.120",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -381,7 +381,7 @@
         },
         "agentPanel.maxResponseChars": {
           "type": "number",
-          "default": 12000,
+          "default": 64000,
           "minimum": 1000,
           "maximum": 200000,
           "description": "%config.maxResponseChars.description%"

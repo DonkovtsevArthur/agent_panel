@@ -424,7 +424,7 @@ export function getConfig(): AgentPanelConfig {
     })(),
     maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
     maxTokens: cfg.get<number>("maxTokens") ?? 4096,
-    maxResponseChars: cfg.get<number>("maxResponseChars") ?? 12_000,
+    maxResponseChars: cfg.get<number>("maxResponseChars") ?? 64_000,
     visionRouting: (() => {
       const rawIds = cfg.get<unknown>("visionRouting.preferredModelIds");
       const fromArray = Array.isArray(rawIds)

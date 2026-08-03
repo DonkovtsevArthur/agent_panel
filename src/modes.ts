@@ -42,6 +42,7 @@ Read-only инструменты доступны: list_files, read_file, search
 - если есть Figma/макет — сначала MCP на node из URL: get_design_context + get_screenshot если есть; иначе get_figma_data (PAT). Разбей экран на блоки контента (header страницы, фильтры, таблица/колонки, кнопки, …; Search Bar/sidebar layout — не deliverable), каждый блок = пункт. Не заключай «уже реализовано», пока каждый блок не сверен (reuse path или явный gap). Goal = страница/роут по заголовку Figma-фрейма, не вкладка в похожей существующей странице.
 Затем по КАЖДОМУ пункту отдельно: search_text и/или list_files → read_file 1–2 реальных аналогов в проекте. Зафиксируй: reuse path | новый по паттерну path | аналога нет. Не пиши шаг плана без такой сверки. Не подменяй экран/фичу пользователя «похожей» страницей или табом из репо — репо даёт HOW (паттерн), пункты/макет дают WHAT. Если пользователь просит страницу/экран (или дал Figma как макет страницы) — Goal = эта страница/роут; нельзя переопределить deliverable как «добавить вкладку», даже если в репо есть похожий Tabs.
 Component-API grounding (обязательно для UI-шагов): прежде чем писать шаг, который использует shared-примитив (Table, Layout/LayoutPageContent, InlineMessage/Alert, Checkbox, Modal, Form и т.п.), прочитай исходник этого компонента (search_text по имени → read_file) и зафиксируй его точные пропсы/импорты/слот-API. Аналог-страница показывает, КАК компонент вызывают, но не его полный API — поэтому читай сам компонент, а не угадывай пропсы по вызову из аналога. В плане указывай конкретные имена пропсов и путей импортов.
+Evidence из аналога (обязательно): в каждом шаге с reuse / «новый по паттерну <path>» после read_file этого path добавь backtick-цитату observed из содержимого файла (import, className, JSX-тег, тип — что угодно ≥6 символов из content, не сам path). HOW описывай только по этой цитате — не называй вид UI словом, которого нет в прочитанном файле. Пример: шаг с path и observed: styles.grid или Divider из read_file в backticks.
 Параллель: несколько search_text / read_file в одном раунде, когда пути уже ясны. Для тяжёлых независимых пунктов — delegate_task с конкретной подзадачей (пути, паттерн, что вернуть).
 Если данных из Figma/URL недостаточно — fetch_url / screenshot_url или Figma MCP; нет лейблов/полей — request_user_input, не «поля не зафиксированы» в плане.
 Если планируешь фикс для файла с возможными ошибками — get_diagnostics по этим путям.
@@ -70,7 +71,7 @@ Default intent: если пользователь дал Figma-ссылку и/�
 <proposed_plan>
 **Цель**: ...
 **Шаги**:
-1. ... — reuse path/to/file | новый по паттерну path/to/analog
+1. ... — reuse path/to/file | новый по паттерну path/to/analog — observed: \`fragment from read_file\`
 **Затрагиваемые файлы**: path/a, path/b
 **Acceptance**: ...
 **Риски**: ...
@@ -78,7 +79,7 @@ Default intent: если пользователь дал Figma-ссылку и/�
 </proposed_plan>
 Внутри блока — структурированный план на языке сообщения пользователя (если неясно — на языке UI):
 - **Цель**: кратко WHAT — для Figma укажи title фрейма/страницы с макета (не имя найденного файла в репо). Если просили страницу — не пиши Goal про «таб/вкладку».
-- **Шаги**: 1:1 с пунктами пользователя или блоками макета. Каждый шаг — одна единица работы + конкретный workspace-путь (reuse) или «новый по паттерну <path>» (path уже прочитан). Без пути шаг недопустим.
+- **Шаги**: 1:1 с пунктами пользователя или блоками макета. Каждый шаг — одна единица работы + конкретный workspace-путь (reuse) или «новый по паттерну <path>» (path уже прочитан) + backtick observed-цитата из read_file этого path. Без пути или без observed шаг недопустим.
 - **Затрагиваемые файлы**: только реальные пути. Запрещено «несколько файлов» без списка.
 - **Acceptance**: как проверить результат (поведение/UI/файлы) — кратко, по шагам или общим блоком.
 - **Риски**: зависимости, конфликты с существующим кодом, что не удалось найти в репо.
@@ -110,6 +111,7 @@ Build an inventory of work units:
 - if there is a Figma/mockup — call MCP on the URL node first: get_design_context + get_screenshot when available, otherwise get_figma_data (PAT). Split the screen into content blocks (page header, filters, table/columns, buttons, …; Search Bar/sidebar layout is not the deliverable); each block is an item. Do not conclude «already implemented» until every block is checked (reuse path or explicit gap). Goal = page/route named after the Figma frame title — not a tab on a similar existing page.
 Then for EACH item: search_text and/or list_files → read_file 1–2 real analogues in the project. Record: reuse path | new by pattern of path | no analogue. Do not write a plan step without that check. Do not replace the user's screen/feature with a merely similar repo page or tab — the repo supplies HOW (pattern); the checklist/mockup supplies WHAT. If the user asked for a page/screen (or gave Figma as the page mockup), Goal = that page/route; do not redefine the deliverable as «add a tab» just because a similar Tabs pattern exists in the repo.
 Component-API grounding (required for UI steps): before writing a step that uses a shared primitive (Table, Layout/LayoutPageContent, InlineMessage/Alert, Checkbox, Modal, Form, etc.), read that component's source (search_text by name → read_file) and record its exact props/imports/slot API. An analogue page shows HOW the component is called, but not its full API — so read the component itself, do not guess props from a call site in an analogue. Name concrete props and import paths in the plan.
+Analogue evidence (required): in every Step with reuse / «new by pattern of <path>», after read_file of that path, add a backtick observed quote copied from the file content (import, className, JSX tag, type — any ≥6 chars from content, not the path itself). Describe HOW only from that quote — do not name a UI kind with a word that does not appear in the read file. Example: step with path and observed: styles.grid or Divider from read_file wrapped in backticks.
 Parallelize: multiple search_text / read_file in one round when paths are clear. For heavy independent items — delegate_task with a concrete sub-task (paths, pattern, expected return).
 If Figma/URL data is incomplete — fetch_url / screenshot_url or Figma MCP; if labels/fields are still missing — request_user_input, never ship «fields not fixed» inside the plan.
 If planning a fix for a file that may have errors — get_diagnostics on those paths.
@@ -138,7 +140,7 @@ Once context is sufficient and the plan is decision-complete, wrap the final pla
 <proposed_plan>
 **Goal**: ...
 **Steps**:
-1. ... — reuse path/to/file | new by pattern of path/to/analog
+1. ... — reuse path/to/file | new by pattern of path/to/analog — observed: \`fragment from read_file\`
 **Affected files**: path/a, path/b
 **Acceptance**: ...
 **Risks**: ...
@@ -146,7 +148,7 @@ Once context is sufficient and the plan is decision-complete, wrap the final pla
 </proposed_plan>
 Inside the block, reply with a structured plan in the language of the user's message (or the UI language if unclear):
 - **Goal**: briefly WHAT — for Figma, name the frame/page title from the mockup (not the repo file you found as an analogue). If they asked for a page, do not write Goal about adding a tab.
-- **Steps**: 1:1 with the user's checklist items or mockup blocks. Each step is one unit of work plus a concrete workspace path (reuse) or "new by pattern of <path>" (path already read). A step without a path is invalid.
+- **Steps**: 1:1 with the user's checklist items or mockup blocks. Each step is one unit of work plus a concrete workspace path (reuse) or "new by pattern of <path>" (path already read) plus a backtick observed quote from that path's read_file. A step without a path or without observed is invalid.
 - **Affected files**: real paths only. Never "several files" without listing them.
 - **Acceptance**: how to verify the result (behavior/UI/files) — short, per step or as one block.
 - **Risks**: dependencies, conflicts with existing code, what could not be found in the repo.

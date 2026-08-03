@@ -107,12 +107,16 @@ test("buildEditCorrectionSystemHint prefers search_replace and Figma labels", ()
   assert.match(hint, /read_file/i);
 });
 
-test("implementPlan uses tighter explore limits even for Kimi", () => {
-  const kimi = exploreRoundLimits({ kimi: true });
+test("implementPlan uses tighter explore limits than Agent default", () => {
+  const {
+    IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS,
+  } = require("../out/toolRoundPolicy.js");
+  const agent = exploreRoundLimits({ kimi: false });
   const implement = exploreRoundLimits({ kimi: true, implementPlan: true });
-  assert.equal(kimi.softNudgeRounds, KIMI_EXPLORE_SOFT_NUDGE_ROUNDS);
-  assert.equal(implement.softNudgeRounds, EXPLORE_SOFT_NUDGE_ROUNDS);
-  assert.ok(implement.softNudgeRounds < kimi.softNudgeRounds);
+  assert.equal(agent.softNudgeRounds, KIMI_EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(agent.softNudgeRounds, EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(implement.softNudgeRounds, IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.ok(implement.softNudgeRounds < agent.softNudgeRounds);
 });
 
 test("implementPlan explore soft nudge asks to edit with complete contents", () => {

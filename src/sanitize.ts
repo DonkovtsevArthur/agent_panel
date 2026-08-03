@@ -5,7 +5,7 @@ export function sanitizeAssistantText(
   input: string,
   options?: { maxChars?: number }
 ): string {
-  const maxChars = options?.maxChars ?? 12_000;
+  const maxChars = options?.maxChars ?? 64_000;
   let text = (input ?? "").trim();
   if (!text) {
     return text;
