@@ -3624,7 +3624,7 @@
         parts.push(t("toolTypeCount", toolKindLabel(kind), n));
       }
     }
-    return parts;
+    return parts.length ? parts.join(" · ") : "";
   }
 
   /** Count timeline steps: tools + thinking + compaction/retry (not text deltas). */
@@ -3672,11 +3672,12 @@
         continue;
       }
       group.dataset.sealed = "1";
-      // Zed-like: keep the interleaved timeline visible (no collapse to «N шагов»).
-      group.classList.remove("is-collapsed");
+      // Collapse the whole work timeline into a single header («N шагов»).
+      group.classList.add("is-collapsed");
       const toggle = group.querySelector(".tool-group-toggle");
       if (toggle) {
-        toggle.hidden = true;
+        toggle.hidden = false;
+        toggle.setAttribute("aria-expanded", "false");
       }
       updateToolGroupSummary(group);
       // Auto-collapse long Thinking blocks once the turn advances to tools/text.
@@ -4094,17 +4095,55 @@
       return;
     }
     const toggle = group.querySelector(".tool-group-toggle");
-    // Unified timeline: no «N шагов» chrome — Zed-like open stream.
     if (toggle) {
-      toggle.hidden = true;
+      toggle.hidden = false;
+      toggle.setAttribute(
+        "aria-expanded",
+        group.classList.contains("is-collapsed") ? "false" : "true"
+      );
+    }
+    const summary = group.querySelector(".tool-group-summary");
+    if (summary) {
+      const stepCount = countAgentSteps(group);
+      if (!stepCount) {
+        summary.textContent = t("toolWorking");
+      } else if (group.dataset.sealed === "1") {
+        const types = toolTypesSummary(group);
+        summary.textContent =
+          types || stepsCountLabel(stepCount) || t("stepsZero");
+      } else {
+        const body = group.querySelector(".tool-group-body");
+        const steps = agentStepsInBody(body);
+        const last = steps[steps.length - 1];
+        const lastKind = last?.dataset?.stepKind || "";
+        if (lastKind === "thinking") {
+          summary.textContent = t("thinkingWorking");
+        } else if (lastKind === "compaction") {
+          summary.textContent = t("toolWorking");
+        } else if (lastKind === "retry") {
+          summary.textContent = t("toolWorking");
+        } else {
+          const name =
+            last?.dataset?.toolName ||
+            parseToolName(last?.dataset?.raw || "");
+          summary.textContent = name
+            ? toolWorkingLabel(toolKind(name))
+            : t("toolWorking");
+        }
+      }
+    }
+    if (toggle) {
+      toggle.title = group.classList.contains("is-collapsed")
+        ? t("showSteps")
+        : t("hideSteps");
     }
   }
 
   function createToolGroup() {
     const group = document.createElement("div");
-    group.className = "tool-group agent-timeline";
+    group.className = "tool-group agent-timeline is-collapsed";
     group.innerHTML =
-      `<button type="button" class="tool-group-toggle" hidden aria-expanded="true">` +
+      `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
       `<span class="tool-group-summary">${escapeHtml(t("toolWorking"))}</span>` +
       `</button>` +
