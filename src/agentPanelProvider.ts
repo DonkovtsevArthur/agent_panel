@@ -152,7 +152,7 @@ type WebviewToHost =
   | { type: "modeChanged"; mode: string; chatId?: string }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
-  | { type: "openPlanMarkdown"; text: string; view?: "preview" | "raw" }
+  | { type: "openPlanMarkdown"; text: string }
   | { type: "commitAndPush"; paths: string[] }
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
@@ -1849,10 +1849,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.openWorkspaceFileDiff(message.path);
         break;
       case "openPlanMarkdown":
-        await this.openPlanMarkdown(
-          String(message.text || ""),
-          message.view === "raw" ? "raw" : "preview"
-        );
+        await this.openPlanMarkdown(String(message.text || ""));
         break;
       case "commitAndPush":
         await this.handleCommitAndPush(
@@ -2192,14 +2189,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /**
-   * Open/update the latest Plan-mode markdown in the editor area.
-   * Default: rendered Markdown preview; `raw` shows the source buffer.
-   */
-  private async openPlanMarkdown(
-    markdown: string,
-    view: "preview" | "raw" = "preview"
-  ): Promise<void> {
+  /** Open/update the latest Plan-mode markdown as a rendered preview tab. */
+  private async openPlanMarkdown(markdown: string): Promise<void> {
     const content = stripPlanImplementWrapper(markdown);
     if (!content) {
       return;
@@ -2216,16 +2207,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (doc.languageId !== "markdown") {
         await vscode.languages.setTextDocumentLanguage(doc, "markdown");
       }
-      if (view === "raw") {
-        await vscode.window.showTextDocument(doc, {
-          preview: false,
-          preserveFocus: true,
-          viewColumn: vscode.ViewColumn.Beside,
-        });
-        return;
-      }
-      // Built-in Markdown preview (no raw ** / `). User can still open Raw
-      // from the plan card, or use the preview’s “Open Source” action.
       try {
         await vscode.commands.executeCommand(
           "markdown.showPreviewToSide",
