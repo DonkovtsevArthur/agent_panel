@@ -11,6 +11,10 @@ const {
   summarizeMarkdownText,
   buildAgentsList,
   getAgentDisplayName,
+  capUiMessageReasoning,
+  collapseOldToolUiMessages,
+  touchChat,
+  MAX_PERSISTED_UI_REASONING_CHARS,
 } = require("../out/sessionStore.js");
 
 test("branchChatFromMessage creates an isolated branch and activates it", () => {
@@ -168,6 +172,60 @@ test("searchChatMessages respects scope, role and query length", () => {
   assert.equal(userHits.length, 1);
   assert.equal(userHits[0].role, "user");
   assert.equal(userHits[0].chatId, chat.id);
+});
+
+test("capUiMessageReasoning truncates long Thinking for persist", () => {
+  const messages = [
+    { role: "assistant", text: "ok", reasoning: "R".repeat(MAX_PERSISTED_UI_REASONING_CHARS + 500) },
+    { role: "user", text: "hi" },
+  ];
+  assert.equal(capUiMessageReasoning(messages), true);
+  assert.equal(messages[0].reasoning.length, MAX_PERSISTED_UI_REASONING_CHARS);
+  assert.ok(messages[0].reasoning.endsWith("…"));
+  assert.equal(capUiMessageReasoning(messages), false);
+});
+
+test("touchChat caps reasoning on uiMessages patch", () => {
+  const store = createDefaultStore("gpt-4.1");
+  const chatId = store.activeChatId;
+  touchChat(store, chatId, {
+    uiMessages: [
+      {
+        role: "assistant",
+        text: "done",
+        reasoning: "T".repeat(MAX_PERSISTED_UI_REASONING_CHARS + 10),
+      },
+    ],
+  });
+  assert.equal(
+    store.chats[chatId].uiMessages[0].reasoning.length,
+    MAX_PERSISTED_UI_REASONING_CHARS
+  );
+});
+
+test("collapseOldToolUiMessages keeps recent tools and inserts summary", () => {
+  const messages = [
+    { role: "user", text: "go" },
+    ...Array.from({ length: 20 }, (_, i) => ({
+      role: "tool",
+      text: `⚙ read_file(${i})`,
+      step: { stepId: `t${i}`, kind: "tool", name: "read_file", status: "done" },
+    })),
+    { role: "assistant", text: "plan" },
+  ];
+  const next = collapseOldToolUiMessages(messages, { keepRecentTools: 4 });
+  assert.notStrictEqual(next, messages);
+  const tools = next.filter((m) => m.role === "tool");
+  // 1 summary + 4 recent
+  assert.equal(tools.length, 5);
+  assert.match(tools[0].text, /earlier tools compacted \(16\)/);
+  assert.equal(tools[0].step?.kind, "compaction");
+  assert.equal(next[0].role, "user");
+  assert.equal(next[next.length - 1].role, "assistant");
+  assert.equal(
+    collapseOldToolUiMessages(messages, { keepRecentTools: 50 }),
+    messages
+  );
 });
 
 test("list summaries remove markdown and prefer prompt after selection fences", () => {

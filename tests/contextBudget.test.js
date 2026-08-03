@@ -5,6 +5,7 @@ const {
   applyContextBudget,
   calculateContextBudget,
   estimateTokens,
+  looksLikePlanGroundingToolResult,
   pullPreservedToolRounds,
   shouldPreserveToolResultFromCompaction,
 } = require("../out/contextBudget.js");
@@ -160,6 +161,31 @@ function figmaRound(id, result) {
   ];
 }
 
+test("looksLikePlanGroundingToolResult detects paths/routes/shared UI reads", () => {
+  assert.equal(
+    looksLikePlanGroundingToolResult({
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/shared/paths.ts",
+        content: "export const PATHS = {}",
+      }),
+    }),
+    true
+  );
+  assert.equal(
+    looksLikePlanGroundingToolResult({
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/features/foo/bar.tsx",
+        content: "export const X = 1",
+      }),
+    }),
+    false
+  );
+});
+
 test("shouldPreserveToolResultFromCompaction detects Figma and vision helper", () => {
   assert.equal(
     shouldPreserveToolResultFromCompaction({
@@ -224,4 +250,44 @@ test("pullPreservedToolRounds pins Figma rounds and leaves the rest", () => {
   assert.equal(pinned[1].content, figmaBody);
   assert.equal(remainder.length, 4);
   assert.ok(remainder.every((m) => m.name !== "mcp__figma__get_screenshot"));
+});
+
+test("applyContextBudget skips deep clone when already under budget", () => {
+  const big = "V".repeat(50_000);
+  const toolMsg = {
+    role: "tool",
+    tool_call_id: "t1",
+    name: "mcp__figma__get_screenshot",
+    content: big,
+  };
+  const messages = [
+    { role: "system", content: "policy" },
+    { role: "user", content: "plan" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "t1",
+          type: "function",
+          function: {
+            name: "mcp__figma__get_screenshot",
+            arguments: "{}",
+          },
+        },
+      ],
+    },
+    toolMsg,
+  ];
+  const result = applyContextBudget(messages, {
+    contextWindow: 200_000,
+    reservedOutputTokens: 4_000,
+    safetyMarginTokens: 1_000,
+  });
+  assert.equal(result.compacted, false);
+  assert.equal(result.fits, true);
+  // Shallow array copy, shared message/content refs — no peak ×2 on Figma.
+  assert.notStrictEqual(result.messages, messages);
+  assert.strictEqual(result.messages[3], toolMsg);
+  assert.strictEqual(result.messages[3].content, big);
 });

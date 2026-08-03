@@ -1,4 +1,5 @@
 import type { ChatMessage } from "./openaiClient";
+import { looksLikePlanGroundingToolResult } from "./contextBudget";
 
 const DEFAULT_MAX_TOOL_CHARS = 2_500;
 const AGGRESSIVE_MAX_TOOL_CHARS = 900;
@@ -147,6 +148,8 @@ export function shrinkOlderToolResults(
      * Plan/Ask mode to keep Figma MCP payloads intact — they are the
      * primary source for the plan and must not be shrunk to 2.5 KB. */
     preserveToolPrefixes?: string[];
+    /** Extra per-message preserve (e.g. Plan grounding read_file). */
+    preserveToolResult?: (message: ChatMessage) => boolean;
   }
 ): boolean {
   const keepRecent = Math.max(0, Math.floor(options?.keepRecent ?? 4));
@@ -155,6 +158,7 @@ export function shrinkOlderToolResults(
     Math.floor(options?.maxOldChars ?? PROACTIVE_OLD_TOOL_CHARS)
   );
   const preserve = options?.preserveToolPrefixes ?? [];
+  const preserveExtra = options?.preserveToolResult;
   const toolIndexes: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].role === "tool") {
@@ -177,6 +181,9 @@ export function shrinkOlderToolResults(
     if (preserve.length && message.name && preserve.some((p) => message.name!.startsWith(p))) {
       continue;
     }
+    if (preserveExtra?.(message)) {
+      continue;
+    }
     const next = shrinkOneToolContent(message.content, maxOldChars).replace(
       "[truncated for recovery after model error]",
       "[older tool result compacted]"
@@ -194,22 +201,28 @@ export function shrinkOlderToolResults(
  * старые read_file и аргументы завершённых write_file.
  * В readonly (Plan/Ask) сохраняем Figma MCP payloads целиком — они
  * primary source для плана, урезание до 2.5 КБ убивает точные ColumnDef.
+ * Также pin'им grounding reads (paths / routes / shared UI / pages index).
  */
 export function prepareKimiGatewayMessages(
   messages: ChatMessage[],
   options?: { readonly?: boolean }
 ): boolean {
-  const preserve = options?.readonly ? ["mcp__figma__"] : [];
-  // Plan/Ask: long explore + full Figma — keep Figma intact, shrink older
-  // list/read/search harder so the gateway does not 400 on JSON parse.
+  const readonly = Boolean(options?.readonly);
+  const preserve = readonly ? ["mcp__figma__"] : [];
+  // Plan/Ask: keep Figma + grounding reads; shrink other older explore so the
+  // gateway does not 400 on JSON parse. keepRecent/maxOldChars softer than
+  // before so early page/tab evidence survives longer.
   const older = shrinkOlderToolResults(messages, {
-    keepRecent: options?.readonly ? 2 : 3,
-    maxOldChars: options?.readonly ? 1_600 : 2_500,
+    keepRecent: readonly ? 4 : 3,
+    maxOldChars: readonly ? 2_800 : 2_500,
     preserveToolPrefixes: preserve,
+    ...(readonly
+      ? { preserveToolResult: looksLikePlanGroundingToolResult }
+      : {}),
   });
   const edits = compactCompletedEditToolArguments(messages);
   const reasoning = dropOlderReasoningBlocks(messages, {
-    keepRecent: options?.readonly ? 1 : 2,
+    keepRecent: readonly ? 1 : 2,
   });
   return older || edits || reasoning;
 }

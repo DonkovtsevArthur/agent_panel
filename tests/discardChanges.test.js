@@ -66,6 +66,8 @@ test("buildDiscardSystemHint encodes scope rules", () => {
   const all = buildDiscardSystemHint({ scope: "all", agentEditedPaths: [] });
   assert.match(all, /ALL local/i);
   assert.match(all, /git restore \./i);
+  assert.match(all, /STOP/i);
+  assert.match(all, /Do NOT re-implement/i);
   assert.doesNotMatch(all, /request_user_input/);
 
   const agent = buildDiscardSystemHint({
@@ -75,10 +77,13 @@ test("buildDiscardSystemHint encodes scope rules", () => {
   assert.match(agent, /src\/a\.ts/);
   assert.match(agent, /never `git restore \.`/i);
   assert.match(agent, /write_file/);
+  assert.match(agent, /STOP/i);
+  assert.match(agent, /Do NOT re-implement/i);
 
   const amb = buildDiscardSystemHint({ scope: "ambiguous", agentEditedPaths: [] });
   assert.match(amb, /request_user_input/);
   assert.match(amb, /Only this agent's recent edits/);
+  assert.doesNotMatch(amb, /Do NOT re-implement/);
 });
 
 test("isWorkspaceDiscardCommand covers git discard and rm -rf", () => {

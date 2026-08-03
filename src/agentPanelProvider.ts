@@ -55,6 +55,7 @@ import {
   buildArchiveList,
   chatHasMessages,
   cloneStore,
+  collapseOldToolUiMessages,
   createEmptyAgent,
   deleteAgentFromStore,
   ensureActiveVisible,
@@ -274,6 +275,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   >();
   private providerConnPollTimer?: ReturnType<typeof setInterval>;
   private readonly disposables: vscode.Disposable[] = [];
+  /** Webview-scoped listeners; replaced when the view is re-resolved. */
+  private webviewDisposables: vscode.Disposable[] = [];
+  private workspaceListenersBound = false;
   private scmRefreshTimer?: ReturnType<typeof setTimeout>;
   private gitApiBound = false;
   private pendingScmReturnRefresh = false;
@@ -321,45 +325,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         })
       );
     }
+    this.bindWorkspaceListeners();
   }
 
-  private setScreen(screen: AgentsStoreV2["screen"]): void {
-    this.store.screen = screen;
-  }
-
-  resolveWebviewView(
-    webviewView: vscode.WebviewView,
-    _context: vscode.WebviewViewResolveContext,
-    _token: vscode.CancellationToken
-  ): void {
-    this.view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, "media"),
-      ],
-    };
-
+  /**
+   * Workspace/window listeners once per provider lifetime. Must not be
+   * re-registered in resolveWebviewView (that can run again and would leak).
+   */
+  private bindWorkspaceListeners(): void {
+    if (this.workspaceListenersBound) {
+      return;
+    }
+    this.workspaceListenersBound = true;
     this.disposables.push(
-      webviewView.webview.onDidReceiveMessage(async (raw) => {
-        const message = raw as WebviewToHost;
-        await this.onMessage(message);
-      }),
-      webviewView.onDidChangeVisibility(() => {
-        if (webviewView.visible) {
-          // Не пересобираем HTML: иначе очищается черновик в composer
-          // и теряется UI-состояние. retainContextWhenHidden уже держит DOM.
-          void this.postInit();
-          this.scheduleScmRefresh();
-          this.syncProviderConnPolling();
-          if (this.pendingScmReturnRefresh) {
-            this.pendingScmReturnRefresh = false;
-            setTimeout(() => this.scheduleScmRefresh(), 700);
-          }
-        } else {
-          this.syncProviderConnPolling();
-        }
-      }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("agentPanel")) {
           this.postModels();
@@ -379,6 +357,49 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
       })
     );
+  }
+
+  private setScreen(screen: AgentsStoreV2["screen"]): void {
+    this.store.screen = screen;
+  }
+
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken
+  ): void {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.extensionUri, "media"),
+      ],
+    };
+
+    for (const d of this.webviewDisposables) {
+      d.dispose();
+    }
+    this.webviewDisposables = [
+      webviewView.webview.onDidReceiveMessage(async (raw) => {
+        const message = raw as WebviewToHost;
+        await this.onMessage(message);
+      }),
+      webviewView.onDidChangeVisibility(() => {
+        if (webviewView.visible) {
+          // Не пересобираем HTML: иначе очищается черновик в composer
+          // и теряется UI-состояние. retainContextWhenHidden уже держит DOM.
+          void this.postInit();
+          this.scheduleScmRefresh();
+          this.syncProviderConnPolling();
+          if (this.pendingScmReturnRefresh) {
+            this.pendingScmReturnRefresh = false;
+            setTimeout(() => this.scheduleScmRefresh(), 700);
+          }
+        } else {
+          this.syncProviderConnPolling();
+        }
+      }),
+    ];
     this.bindGitStatusRefresh();
 
     webviewView.webview.html = this.getHtml(webviewView.webview);
@@ -492,6 +513,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.saveStore();
     this.settingsPanel?.dispose();
     this.settingsPanel = undefined;
+    for (const d of this.webviewDisposables) {
+      d.dispose();
+    }
+    this.webviewDisposables = [];
     for (const d of this.disposables) {
       d.dispose();
     }
@@ -2760,6 +2785,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           );
           void vscode.window.showWarningMessage(statusText);
         }
+      }
+      // Drop older tool cards from persisted UI (API history unchanged). Keeps
+      // the 200-message window useful after long Plan/Agent explore turns.
+      const collapsedUi = collapseOldToolUiMessages(runUiMessages);
+      if (collapsedUi !== runUiMessages) {
+        runUiMessages = collapsedUi;
       }
       syncRunChat();
       if (

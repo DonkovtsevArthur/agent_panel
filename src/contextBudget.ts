@@ -24,6 +24,36 @@ export function shouldPreserveToolResultFromCompaction(
 }
 
 /**
+ * Plan grounding reads: paths / routes / shared UI / page entrypoints.
+ * Keep these intact under Kimi Plan shrink so page-vs-tab decisions do not
+ * flip after early explore is truncated.
+ */
+export function looksLikePlanGroundingToolResult(
+  message: ChatMessage
+): boolean {
+  if (message.role !== "tool") {
+    return false;
+  }
+  const name = String(message.name || "");
+  if (name !== "read_file" && name !== "list_files") {
+    return false;
+  }
+  const content =
+    typeof message.content === "string" ? message.content : "";
+  if (!content) {
+    return false;
+  }
+  return (
+    /"path"\s*:\s*"[^"]*(?:paths\.ts|app\/app\.tsx|pages\/index\.(?:ts|tsx)|shared\/modules\/routes\/|shared\/ui\/)/i.test(
+      content
+    ) ||
+    /(?:^|[\s"`'/])(?:\.\/)?(?:src\/)?(?:shared\/paths\.ts|app\/app\.tsx|pages\/index\.(?:ts|tsx)|shared\/modules\/routes\/|shared\/ui\/)/i.test(
+      content
+    )
+  );
+}
+
+/**
  * Pull completed tool rounds that contain preserved Figma/vision results out
  * of `messages` (order kept). Used by mid-turn summary so Figma is not replaced
  * by a one-line snippet while list/read rounds are summarized away.
@@ -71,6 +101,8 @@ export interface ContextBudgetOptions {
    * until estimated tokens fit this target (proactive, before the hard limit).
    */
   softTargetTokens?: number;
+  /** Extra tool-result preservation (e.g. Plan grounding reads). */
+  preserveToolResult?: (message: ChatMessage) => boolean;
 }
 
 export interface ContextBudgetResult {
@@ -266,6 +298,11 @@ function compactOldConversationMessage(
  * Fits a request by compacting only old, completed tool rounds. Messages that
  * establish policy/current intent and the newest tool round remain byte-for-byte
  * equivalent, while tool_call ids and matching tool results are always retained.
+ *
+ * When already under the soft target, returns a shallow array copy that shares
+ * message object references with `input` (no deep clone of tool/vision payloads).
+ * Callers must not mutate the result unless `compacted` is true — then the
+ * returned array is a deep clone safe to edit.
  */
 export function applyContextBudget(
   input: readonly ChatMessage[],
@@ -278,21 +315,29 @@ export function applyContextBudget(
     options.softTargetTokens > 0
       ? Math.min(budgetTokens, Math.floor(options.softTargetTokens))
       : budgetTokens;
-  const messages = input.map(cloneMessage);
-  let estimatedTokens = estimateTokens(messages);
-  if (estimatedTokens <= softTarget) {
+  // Estimate on the input first — deep-cloning Figma/vision base64 every round
+  // doubles peak RAM on long Plan turns when no compaction is needed.
+  const estimatedTokensIn = estimateTokens(input);
+  if (estimatedTokensIn <= softTarget) {
     return {
-      messages,
+      messages: input.slice() as ChatMessage[],
       budgetTokens,
-      estimatedTokens,
+      estimatedTokens: estimatedTokensIn,
       compacted: false,
-      fits: estimatedTokens <= budgetTokens,
+      fits: estimatedTokensIn <= budgetTokens,
     };
   }
+
+  const messages = input.map(cloneMessage);
+  let estimatedTokens = estimatedTokensIn;
 
   const rounds = completedToolRoundIndexes(messages);
   const oldRounds = rounds.slice(0, -1);
   let compacted = false;
+  const preserveExtra = options.preserveToolResult;
+  const preserveTool = (message: ChatMessage): boolean =>
+    shouldPreserveToolResultFromCompaction(message) ||
+    Boolean(preserveExtra?.(message));
 
   // First preserve useful beginnings/endings and remove only as much as needed.
   // Skip Figma MCP / vision-helper payloads — they are the plan's UI source.
@@ -302,7 +347,7 @@ export function applyContextBudget(
         break;
       }
       const message = messages[toolIndex];
-      if (shouldPreserveToolResultFromCompaction(message)) {
+      if (preserveTool(message)) {
         continue;
       }
       const chars =
@@ -326,11 +371,7 @@ export function applyContextBudget(
     if (estimatedTokens <= softTarget) {
       break;
     }
-    if (
-      round.tools.some((toolIndex) =>
-        shouldPreserveToolResultFromCompaction(messages[toolIndex])
-      )
-    ) {
+    if (round.tools.some((toolIndex) => preserveTool(messages[toolIndex]))) {
       continue;
     }
     const shortened = compactOldAssistantRound(messages[round.assistant]);

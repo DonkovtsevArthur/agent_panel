@@ -42,6 +42,7 @@ test("context resolution uses config, registry, then fallback", () => {
 test("Kimi request quirks come from the registry", () => {
   const kimi = resolveModelCapabilities("moonshot/kimi-k2.6");
   assert.equal(kimi.family, "kimi");
+  assert.equal(kimi.contextWindow, 128_000);
   assert.equal(kimi.omitTemperature, true);
   assert.equal(kimi.requiresReasoningContentForToolCalls, true);
   assert.equal(kimi.minimumOutputTokens, KIMI_MIN_MAX_TOKENS);
@@ -49,6 +50,12 @@ test("Kimi request quirks come from the registry", () => {
   assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096), KIMI_MIN_MAX_TOKENS);
   assert.equal(resolveModelRequestMaxTokens("kimi-k2.6", 4096, 2048), 4096);
   assert.equal(resolveModelRequestMaxTokens("gpt-4.1", 4096, 8192), 4096);
+});
+
+test("Kimi context window floors undersized Settings values to 128k", () => {
+  assert.equal(resolveModelContextWindow("Kimi-K2.5", 32_000, 8_000), 128_000);
+  assert.equal(resolveModelContextWindow("Kimi-K2.5", undefined, 8_000), 128_000);
+  assert.equal(resolveModelContextWindow("Kimi-K2.5", 256_000, 8_000), 256_000);
 });
 
 test("Claude 3.5+/4 supports reasoning_effort, Claude 3.0 does not", () => {

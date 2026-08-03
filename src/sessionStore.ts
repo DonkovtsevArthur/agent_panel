@@ -35,6 +35,80 @@ export interface UiMessage {
   step?: UiMessageStep;
 }
 
+/** Cap persisted Thinking text so long Kimi/Claude traces do not bloat workspaceState. */
+export const MAX_PERSISTED_UI_REASONING_CHARS = 8_000;
+
+/** Keep this many newest tool cards; older ones collapse to one summary row. */
+export const DEFAULT_KEEP_RECENT_TOOL_UI = 16;
+
+/**
+ * Truncate oversized `reasoning` fields in place (store / sync path).
+ * Live streaming to the webview is unaffected until the next hydrate.
+ */
+export function capUiMessageReasoning(
+  messages: UiMessage[],
+  maxChars: number = MAX_PERSISTED_UI_REASONING_CHARS
+): boolean {
+  const limit = Math.max(256, Math.floor(maxChars));
+  let changed = false;
+  for (const msg of messages) {
+    if (typeof msg.reasoning !== "string" || msg.reasoning.length <= limit) {
+      continue;
+    }
+    msg.reasoning = `${msg.reasoning.slice(0, Math.max(0, limit - 1))}…`;
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Collapse older `role: "tool"` UI rows into one compaction summary so the
+ * 200-message window is not filled with explore noise. Does not touch
+ * user/assistant/review/error — safe for history↔ui branching counts.
+ */
+export function collapseOldToolUiMessages(
+  messages: UiMessage[],
+  options?: { keepRecentTools?: number }
+): UiMessage[] {
+  const keepRecent = Math.max(
+    0,
+    Math.floor(options?.keepRecentTools ?? DEFAULT_KEEP_RECENT_TOOL_UI)
+  );
+  const toolIndexes: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "tool") {
+      toolIndexes.push(i);
+    }
+  }
+  if (toolIndexes.length <= keepRecent) {
+    return messages;
+  }
+  const dropCount = toolIndexes.length - keepRecent;
+  const dropSet = new Set(toolIndexes.slice(0, dropCount));
+  const out: UiMessage[] = [];
+  let insertedSummary = false;
+  for (let i = 0; i < messages.length; i++) {
+    if (!dropSet.has(i)) {
+      out.push(messages[i]);
+      continue;
+    }
+    if (insertedSummary) {
+      continue;
+    }
+    out.push({
+      role: "tool",
+      text: `⚙ earlier tools compacted (${dropCount})`,
+      step: {
+        stepId: `ui-tools-compacted-${dropCount}`,
+        kind: "compaction",
+        text: `Earlier tool cards compacted (${dropCount})`,
+      },
+    });
+    insertedSummary = true;
+  }
+  return out;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -511,6 +585,9 @@ export function touchChat(
   const chat = store.chats[chatId];
   if (!chat) {
     return;
+  }
+  if (Array.isArray(patch.uiMessages)) {
+    capUiMessageReasoning(patch.uiMessages);
   }
   const next: ChatSession = {
     ...chat,
