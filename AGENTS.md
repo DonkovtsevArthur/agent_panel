@@ -27,7 +27,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Vision routing (image attachments) | `agentPanel.visionRouting.preferredModelIds` → `VISION_MODEL_PREFERENCE` (whole-turn switch only for attached images) |
 | Figma / page screenshot vision | `src/figmaVisionHelper.ts` + `src/screenshotUrl.ts` + `src/visionDelivery.ts` — MCP `get_screenshot` / `screenshot_url` deliver PNG; if Settings preferred vision is set and the chat planner is not in that list, preferred always OCR’s under the hood (planner stays Kimi/etc.); raw pixels only when planner ∈ preferred (or preferred empty + planner has vision). Harbor forces `enableBase64Response` on Figma screenshots; `get_figma_data` is hidden only when `get_design_context`/`get_screenshot` exist (PAT keeps legacy). Kimi page→tab drift after plan-quality nudges → hard replace (no soft Build card) |
 | Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; plan's optional `**Implementation**` section (props/types/signatures) is the HOW contract the implementer builds against; correction follow-ups get the same discipline; `stripPlanImplementWrapper` keeps marker/prefix out of plan cards / Plan.md / user-bubble display |
-| Plan quality | Per-item grounding + Component-API grounding (read the target shared UI component's source for exact props/imports) + page→tab / «already exists» / PLAN.md gates (`planQuality.ts`); Figma requires `get_design_context`+`get_screenshot`; `<proposed_plan>` may include an optional `**Implementation**` section; soft explore (no hard-cut, soft nudge after **8** rounds for all models); plan card collapsed by default + open-in-tab Preview (Markdown preview; Build stays in composer); **Plan/Ask (all models):** no soft-budget / mid-turn summary / compaction-card spam; hard ceiling pins grounding reads (`paths.ts` / routes / `shared/ui` / pages index); Kimi/fragile gateway shrink also preserves Figma + grounding; Kimi contextWindow floor **128k** (ignores undersized Settings like 32k) |
+| Plan quality | Per-item grounding + Component-API grounding + **analogue observed quote** (each reuse/by-pattern Step must backtick-quote a fragment from that path's `read_file`; no UI-label dictionaries) + page→tab / «already exists» / PLAN.md gates (`planQuality.ts`); Figma requires `get_design_context`+`get_screenshot`; `<proposed_plan>` may include an optional `**Implementation**` section; soft explore (no hard-cut, soft nudge after **8** rounds for all models); plan card collapsed by default + open-in-tab Preview (Markdown preview; Build stays in composer); **Plan/Ask (all models):** no soft-budget / mid-turn summary / compaction-card spam; hard ceiling pins grounding reads (`paths.ts` / routes / `shared/ui` / pages index); Kimi/fragile gateway shrink also preserves Figma + grounding; Kimi contextWindow floor **128k** (ignores undersized Settings like 32k) |
 | Destructive write guard | `src/writeFileGuard.ts` — refuse empty/truncated `write_file` over substantial existing files |
 | Discard scope | `src/discardChanges.ts` — «отмени изменения» = last agent paths; «все» = whole dirty; bare «отмени» → ask; successful restore/clean/rm skips write_file honestFinale; after discard STOP — do not re-implement prior plan from history |
 | Commit message generation | `src/commitMessage.ts` |
@@ -80,24 +80,25 @@ Do **not** tell the user that external URLs / Figma are unavailable when `fetch_
 
 ### Tool-round policy
 
-- After **2** explore-only rounds (`list_files` / `read_file` / `search_text`): soft nudge — stop reading, write or answer.
-- After **4** explore-only rounds: hard-cut — no more explore; write-only or final answer.
+- After **4** explore-only rounds (`list_files` / `read_file` / `search_text`): soft nudge — stop reading, write by analogy (or answer). Soft strips explore tools.
+- After **6** explore-only rounds: hard-cut — no more explore; write-only or final answer. Build→Agent keeps tighter **2 / 4**.
 - **Plan mode:** soft grounding reminders only (repeatable); **no hard-cut explore** — finish per-item grounding; ceiling is `maxToolRounds` + incomplete-plan gate.
 - If the turn is productive (`write_file` / `run_command`) and the round budget ends: auto-extend once (+8 rounds).
 - Soft verify hint (`VERIFY_REPO_FACTS_HINT`): rules are guidance; verify repo facts with tools; prefer multiple `read_file` / `list_files` in one turn (they run in parallel).
-- **Kimi:** soft after **4**, hard-cut after **6**; soft nudge **strips** `list_files` / `read_file` (write by the analogous files already read). Before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`) **and** drop `reasoning_content` from older assistant rounds (`dropOlderReasoningBlocks`, keep recent 2) — Zed-like `drop_reasoning_blocks`: API still gets the required placeholder for tool-call rounds via `toApiMessages`, but stale thinking no longer eats context. Context window floored at **128k** (Settings values below that are ignored). Gateway shrink in Plan/Ask keeps Figma and grounding reads with softer `keepRecent`/`maxOldChars` (Plan/Ask soft-budget skip is shared — see above). Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`. Extra system hint: before new UI/pages, read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`).
+- **Agent explore (all models):** soft after **4**, hard-cut after **6**; soft nudge **strips** `list_files` / `read_file` and asks to write by the analogous files already read. Soft system hint before new UI/pages: read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`). Build→Agent (`implementPlan`) keeps a tighter **2 / 4** explore budget.
+- **Kimi transport:** before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`) **and** drop `reasoning_content` from older assistant rounds (`dropOlderReasoningBlocks`, keep recent 2) — Zed-like `drop_reasoning_blocks`: API still gets the required placeholder for tool-call rounds via `toApiMessages`, but stale thinking no longer eats context. Context window floored at **128k** (Settings values below that are ignored). Gateway shrink in Plan/Ask keeps Figma and grounding reads with softer `keepRecent`/`maxOldChars`. Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`.
 - **Fragile light models** (DeepSeek / Haiku / flash / mini / gemma): before each API call, `prepareFragileGatewayMessages` caps even the latest `read_file` (gateway often 500s on a full `package.json`); in Plan/Ask the same Figma/grounding pins apply as for Kimi.
 
-### Post-edit verification (Kimi only, Agent mode)
+### Post-edit verification (Agent mode, all models)
 
-After successful edits, before the finale, Kimi runs a bounded quality gate (`verificationLoop.ts` via `agentLoopMainLike.ts`):
+After successful edits, before the finale, Agent runs a bounded quality gate (`verificationLoop.ts` via `agentLoopMainLike.ts`):
 
 1. `get_diagnostics` on edited paths (auto if missing)
 2. nudge to fix diagnostic errors / import warnings **on those edited paths** (capped retries)
 3. one project command from `package.json` scripts, preference **typecheck → lint → build** (not full `test`) — **skipped** for metadata-only edits (`package.json`, nls, changelog, readme, license)
 4. if the project command fails but reports only paths **outside** this turn's edits → allow finale (do not fix whole-repo lint debt)
 
-Other models keep the previous behavior (no forced gate). `get_diagnostics` is exposed in main-like tools only when this gate is on.
+`get_diagnostics` is exposed in main-like tools only when this gate is on (Agent; not Plan/Ask).
 
 ### Deterministic version bump (no LLM)
 

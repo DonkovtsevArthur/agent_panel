@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   EXPLORE_SOFT_NUDGE_ROUNDS,
   EXPLORE_HARD_CUT_ROUNDS,
+  IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_HARD_CUT_ROUNDS,
   ROUND_EXTENSION_SIZE,
@@ -54,27 +55,22 @@ test("round extension policy", () => {
     false
   );
   assert.equal(ROUND_EXTENSION_SIZE, 8);
-  assert.equal(EXPLORE_SOFT_NUDGE_ROUNDS, 2);
-  assert.equal(EXPLORE_HARD_CUT_ROUNDS, 4);
+  assert.equal(EXPLORE_SOFT_NUDGE_ROUNDS, 4);
+  assert.equal(EXPLORE_HARD_CUT_ROUNDS, 6);
 });
 
-test("Kimi explore limits allow more reads then strip explore on soft", () => {
-  assert.equal(KIMI_EXPLORE_SOFT_NUDGE_ROUNDS, 4);
-  assert.equal(KIMI_EXPLORE_HARD_CUT_ROUNDS, 6);
+test("Agent explore limits match for all models and strip explore on soft", () => {
+  assert.equal(KIMI_EXPLORE_SOFT_NUDGE_ROUNDS, EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(KIMI_EXPLORE_HARD_CUT_ROUNDS, EXPLORE_HARD_CUT_ROUNDS);
   const defaultLimits = exploreRoundLimits({ kimi: false });
   assert.deepEqual(defaultLimits, {
-    softNudgeRounds: 2,
-    hardCutRounds: 4,
-    stripExploreOnSoftNudge: true,
-    hardCutExplore: true,
-  });
-  const kimiLimits = exploreRoundLimits({ kimi: true });
-  assert.deepEqual(kimiLimits, {
     softNudgeRounds: 4,
     hardCutRounds: 6,
     stripExploreOnSoftNudge: true,
     hardCutExplore: true,
   });
+  const kimiLimits = exploreRoundLimits({ kimi: true });
+  assert.deepEqual(kimiLimits, defaultLimits);
 });
 
 test("explore nudges mention AGENTS.md when needed", () => {
@@ -89,18 +85,20 @@ test("explore nudges mention AGENTS.md when needed", () => {
   assert.doesNotMatch(ask, /write_file/);
 });
 
-test("Kimi soft nudge stops explore and asks to write by analogy", () => {
-  const soft = buildExploreSoftNudge({
-    agentsMd: false,
-    readonly: false,
-    kimi: true,
-  });
-  assert.match(soft, /analogous|already read/i);
-  assert.match(soft, /write_file/);
-  assert.match(soft, /no longer available|Stop exploring/i);
+test("Agent soft nudge stops explore and asks to write by analogy", () => {
+  for (const kimi of [true, false]) {
+    const soft = buildExploreSoftNudge({
+      agentsMd: false,
+      readonly: false,
+      kimi,
+    });
+    assert.match(soft, /analogous|already read/i);
+    assert.match(soft, /write_file|search_replace/);
+    assert.match(soft, /no longer available|Stop exploring/i);
+  }
 });
 
-test("Kimi workspace follow hint requires reading analogous UI first", () => {
+test("workspace follow hint requires reading analogous UI first", () => {
   const hint = buildKimiWorkspaceFollowHint();
   assert.match(hint, /AGENTS\.md/);
   assert.match(hint, /read_file/);
@@ -157,7 +155,7 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
     implementPlan: true,
     planQuality: true,
   });
-  assert.equal(implement.softNudgeRounds, EXPLORE_SOFT_NUDGE_ROUNDS);
+  assert.equal(implement.softNudgeRounds, IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS);
   assert.equal(implement.stripExploreOnSoftNudge, true);
   assert.equal(implement.hardCutExplore, true);
 });

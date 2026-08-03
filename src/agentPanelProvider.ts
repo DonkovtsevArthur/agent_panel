@@ -891,6 +891,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return this.store.screen === "chat" && this.store.activeChatId === chatId;
   }
 
+  /** Active chat id match — for live run UI even if screen briefly drifted. */
+  private isActiveChat(chatId: string | undefined): boolean {
+    return Boolean(chatId && this.store.activeChatId === chatId);
+  }
+
+  private postRunFailed(chatId: string, text: string): void {
+    if (!this.isActiveChat(chatId)) {
+      return;
+    }
+    this.view?.webview.postMessage({
+      type: "runFailed",
+      chatId,
+      text,
+    });
+  }
+
   private syncActiveSnapshotFromChat(
     chatId: string,
     state: {
@@ -1019,7 +1035,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     };
   }
 
-  private isChatRunCurrent(
+  /**
+   * True while this run token still owns `chatId` in chatRuns.
+   * Unlike {@link isChatRunCurrent}, ignores AbortSignal — needed to persist /
+   * surface a final error after the gateway fails (or after Stop removes the
+   * run from the map via abortChatRun, ownership is already gone).
+   */
+  private isChatRunOwned(
     chatId: string,
     run: {
       controller: AbortController;
@@ -1029,9 +1051,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   ): boolean {
     return (
       this.workspaceGeneration === run.workspaceGeneration &&
-      !run.controller.signal.aborted &&
       this.chatRuns.get(chatId) === run.controller &&
       this.chatRunTokens.get(chatId) === run.token
+    );
+  }
+
+  private isChatRunCurrent(
+    chatId: string,
+    run: {
+      controller: AbortController;
+      token: number;
+      workspaceGeneration: number;
+    }
+  ): boolean {
+    return (
+      this.isChatRunOwned(chatId, run) && !run.controller.signal.aborted
     );
   }
 
@@ -1043,11 +1077,57 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       workspaceGeneration: number;
     }
   ): void {
-    if (!this.isChatRunCurrent(chatId, run)) {
+    // Clear even when the signal is aborted — otherwise a mid-turn abort that
+    // did not go through abortChatRun could leave chatRuns stuck "running".
+    if (!this.isChatRunOwned(chatId, run)) {
       return;
     }
     this.chatRuns.delete(chatId);
     this.chatRunTokens.delete(chatId);
+  }
+
+  /** Persist run UI/history without requiring !aborted (final error / stop). */
+  private persistRunChatSnapshot(
+    chatId: string,
+    patch: {
+      history?: ChatMessage[];
+      uiMessages: UiMessage[];
+      selectedModel?: string;
+      lastTurnModel?: string;
+      contextTokens?: number;
+    }
+  ): void {
+    if (!this.store.chats[chatId]) {
+      return;
+    }
+    const nextUi = patch.uiMessages.slice(-200);
+    touchChat(this.store, chatId, {
+      ...(patch.history ? { history: patch.history } : {}),
+      uiMessages: nextUi,
+      ...(patch.selectedModel ? { selectedModel: patch.selectedModel } : {}),
+      ...(patch.lastTurnModel !== undefined
+        ? { lastTurnModel: patch.lastTurnModel }
+        : {}),
+      ...(typeof patch.contextTokens === "number"
+        ? { contextTokens: patch.contextTokens }
+        : {}),
+    });
+    if (this.isActiveChat(chatId)) {
+      this.uiMessages = nextUi;
+      if (patch.history) {
+        this.history = patch.history;
+      }
+      if (patch.selectedModel) {
+        this.selectedModel = patch.selectedModel;
+      }
+      if (patch.lastTurnModel !== undefined) {
+        this.lastTurnModel = patch.lastTurnModel;
+      }
+      if (typeof patch.contextTokens === "number") {
+        this.contextTokens = patch.contextTokens;
+      }
+    }
+    void this.writeStoreOnly();
   }
 
   private saveSession(): void {
@@ -1723,7 +1803,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "archiveAgent":
-        await this.confirmArchiveAgent(message.agentId);
+        this.archiveAgent(message.agentId);
         break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
@@ -2050,20 +2130,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.postChatScreen();
   }
 
-  private async confirmArchiveAgent(agentId: string): Promise<void> {
+  /** Archive immediately — no confirm modal (restore stays in Archive screen). */
+  private archiveAgent(agentId: string): void {
     const agent = this.store.agents.find((a) => a.id === agentId);
     if (!agent || agent.archivedAt) {
-      return;
-    }
-    const answer = await vscode.window.showWarningMessage(
-      `Archive agent "${agent.name}"?`,
-      {
-        modal: true,
-        detail: "You can restore this agent from the archive later.",
-      },
-      "Archive"
-    );
-    if (answer !== "Archive") {
       return;
     }
 
@@ -2192,6 +2262,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
    * Open/update the latest Plan as a rendered Markdown preview.
    * Writes a real file under globalStorage — built-in preview stays blank for
    * custom schemes like harbor-plan:.
+   *
+   * Same URI every time (`План.md` / `Plan.md`): after the first open, VS Code
+   * keeps the TextDocument / markdown preview buffer. A bare fs.writeFile does
+   * not refresh that buffer — Просмотр then shows the previous plan. Sync the
+   * open document via WorkspaceEdit and refresh the preview.
    */
   private async openPlanMarkdown(markdown: string): Promise<void> {
     const content = stripPlanImplementWrapper(markdown);
@@ -2207,18 +2282,44 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       );
       await vscode.workspace.fs.createDirectory(dir);
       const uri = vscode.Uri.joinPath(dir, fileName);
-      await vscode.workspace.fs.writeFile(
-        uri,
-        Buffer.from(content, "utf8")
-      );
+      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
       this.planPreviewUri = uri;
+
+      const openDoc = vscode.workspace.textDocuments.find(
+        (doc) => doc.uri.toString() === uri.toString()
+      );
+      if (openDoc && openDoc.getText() !== content) {
+        const edit = new vscode.WorkspaceEdit();
+        const fullRange = new vscode.Range(
+          openDoc.positionAt(0),
+          openDoc.positionAt(openDoc.getText().length)
+        );
+        edit.replace(uri, fullRange, content);
+        await vscode.workspace.applyEdit(edit);
+      }
 
       const doc = await vscode.workspace.openTextDocument(uri);
       if (doc.languageId !== "markdown") {
         await vscode.languages.setTextDocumentLanguage(doc, "markdown");
       }
+      // If openTextDocument returned a stale buffer (no prior WorkspaceEdit
+      // path), force-replace once more before showing preview.
+      if (doc.getText() !== content) {
+        const edit = new vscode.WorkspaceEdit();
+        const fullRange = new vscode.Range(
+          doc.positionAt(0),
+          doc.positionAt(doc.getText().length)
+        );
+        edit.replace(uri, fullRange, content);
+        await vscode.workspace.applyEdit(edit);
+      }
       try {
         await vscode.commands.executeCommand("markdown.showPreviewToSide", uri);
+        try {
+          await vscode.commands.executeCommand("markdown.preview.refresh");
+        } catch {
+          // Command missing on older / minimal builds — edit sync is enough.
+        }
       } catch {
         // Older / minimal VS Code builds without the Markdown extension.
         await vscode.window.showTextDocument(doc, {
@@ -2788,32 +2889,50 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postRunFinished(runChatId, "success");
       }
     } catch (error) {
-      if (this.isChatRunCurrent(runChatId, runRef)) {
-        this.setStatusForChat(runChatId, "", true);
-      }
-      if (
-        currentRun.signal.aborted ||
-        (error instanceof Error && error.message === "aborted")
-      ) {
-        // Не оставляем в истории незавершённые tool-строки после Stop.
-        runUiMessages.splice(runTransientStart);
-        syncRunChat();
-        this.setRunStateForChat(runChatId);
-        if (
-          this.isChatRunCurrent(runChatId, runRef) &&
-          this.isViewingChat(runChatId)
-        ) {
-          this.postRegenerateState();
-          this.view?.webview.postMessage({ type: "stopped", chatId: runChatId });
-        }
-        return;
-      }
-      if (!this.isChatRunCurrent(runChatId, runRef)) {
-        return;
-      }
+      const owned = this.isChatRunOwned(runChatId, runRef);
+      const superseded =
+        !owned && this.chatRuns.get(runChatId) !== runRef.controller;
       const rawMessage =
         error instanceof Error ? error.message : String(error);
       const transportKind = classifyModelFallbackError(error)?.kind;
+      // Transport/API 500 must surface even if AbortSignal raced (Stop / socket).
+      // Treating those as a silent abort left «Работаю…» with no error bubble.
+      const aborted =
+        transportKind !== "transport" &&
+        (currentRun.signal.aborted ||
+          (error instanceof Error && error.message === "aborted"));
+
+      if (owned || this.isActiveChat(runChatId)) {
+        this.setStatusForChat(runChatId, "", true);
+      }
+
+      if (aborted) {
+        // Не оставляем в истории незавершённые tool-строки после Stop.
+        // abortChatRun already removed us from chatRuns — persist directly.
+        runUiMessages.splice(runTransientStart);
+        this.persistRunChatSnapshot(runChatId, {
+          history: runHistory,
+          uiMessages: runUiMessages,
+          selectedModel: selectedModelAfterRun,
+          lastTurnModel: runLastTurnModel,
+          contextTokens: runContextTokens,
+        });
+        this.setRunStateForChat(runChatId);
+        if (this.isActiveChat(runChatId)) {
+          this.postRegenerateState();
+          this.view?.webview.postMessage({
+            type: "stopped",
+            chatId: runChatId,
+          });
+        }
+        return;
+      }
+
+      // A newer run replaced this one — do not paint error into the new turn.
+      if (superseded) {
+        return;
+      }
+
       let messageText = rawMessage;
       if (transportKind === "transport") {
         const lang = resolveUiLanguage(getConfig().language);
@@ -2829,17 +2948,34 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             : `Connection to the model was interrupted: ${reason}. Send the request again.`;
         }
       }
-      runUiMessages.push({ role: "error", text: messageText });
-      syncRunChat();
+      const lastUi = runUiMessages[runUiMessages.length - 1];
+      if (!(lastUi?.role === "error" && lastUi.text === messageText)) {
+        runUiMessages.push({ role: "error", text: messageText });
+      }
+      // Persist even if AbortSignal flipped mid-catch; do not rely on
+      // syncRunChat → isChatRunCurrent (!aborted).
+      this.persistRunChatSnapshot(runChatId, {
+        history: runHistory,
+        uiMessages: runUiMessages,
+        selectedModel: selectedModelAfterRun,
+        lastTurnModel: runLastTurnModel,
+        contextTokens: runContextTokens,
+      });
       this.setRunStateForChat(runChatId, "error");
       this.postRunFinished(runChatId, "error");
-      postToRunChat({ type: "append", role: "error", text: messageText });
-      if (this.isViewingChat(runChatId)) {
+      // Dedicated runFailed: append + seal + clear busy in one webview message.
+      // Do not gate on screen==="chat" — activeChatId is enough.
+      this.postRunFailed(runChatId, messageText);
+      if (this.isActiveChat(runChatId)) {
         this.postRegenerateState();
       }
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
     } finally {
       this.finishChatRun(runChatId, runRef);
+      // Belt-and-suspenders: success relies on assistantDone; transport errors
+      // / missing finales must not leave the composer stuck on Stop.
+      if (this.isActiveChat(runChatId) && !this.isChatRunning(runChatId)) {
+        this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      }
     }
   }
 
@@ -3721,7 +3857,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("maxTokens", clamp(raw.maxTokens, 64, 128_000, 4096), target);
     await cfg.update(
       "maxResponseChars",
-      clamp(raw.maxResponseChars, 1000, 200_000, 12_000),
+      clamp(raw.maxResponseChars, 1000, 200_000, 64_000),
       target
     );
     await cfg.update(

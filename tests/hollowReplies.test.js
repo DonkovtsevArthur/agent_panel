@@ -101,6 +101,70 @@ test("decideHonestFinale nudges shared layout without usage search", () => {
   assert.equal(decision.kind, "nudge_impact");
 });
 
+test("decideHonestFinale accepts search_text as shared-UI usage search", () => {
+  const decision = decideHonestFinale({
+    text: "Кнопку закрытия перенес в конец контейнера справа по макету Figma. Consumers проверил — ломающих call sites нет.",
+    canEdit: true,
+    messages: [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "s1",
+            type: "function",
+            function: {
+              name: "search_text",
+              arguments: '{"query":"from \\\"@/shared/ui/toast\\\"","path":"src"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "search_text",
+        tool_call_id: "s1",
+        content: "src/pages/foo.tsx:1: import { Toast } from \"@/shared/ui/toast\"",
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "1",
+            type: "function",
+            function: {
+              name: "search_replace",
+              arguments:
+                '{"path":"src/shared/ui/toast.tsx","old_string":"a","new_string":"b"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "search_replace",
+        tool_call_id: "1",
+        content: JSON.stringify({
+          ok: true,
+          path: "src/shared/ui/toast.tsx",
+          created: false,
+          added: 1,
+          removed: 1,
+        }),
+      },
+      {
+        role: "assistant",
+        content:
+          "Кнопку закрытия перенес в конец контейнера справа по макету Figma. Consumers проверил — ломающих call sites нет.",
+      },
+    ],
+    userText: "поправь layout под figma",
+    allowNudgeImpact: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
 test("decideHonestFinale treats «файл уже содержит» as missing write", () => {
   const decision = decideHonestFinale({
     text: "Файл уже содержит нужные изменения — я просто объяснил. Скажи — перепишу.",

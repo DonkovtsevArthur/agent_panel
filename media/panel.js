@@ -161,6 +161,9 @@
       image: "Image",
       send: "Send",
       stop: "Stop",
+      runFailedSummary: "Error",
+      runFailedTransport:
+        "Model server error: API 500. Send the request again.",
       contextUsage: "Context usage",
       noModels: "No models",
       noModelsInSettings: "No models in settings",
@@ -330,6 +333,7 @@
       proposedPlanCodeBlock: "Code",
       proposedPlanCodeLines: (n) => (n === 1 ? "1 line" : `${n} lines`),
       proposedPlanCodeToggle: "Show or hide code",
+      proposedPlanImplementBubble: "Build plan",
       proposedPlanImplementPrefix:
         "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
     },
@@ -471,6 +475,9 @@
       image: "Изображение",
       send: "Отправить",
       stop: "Остановить",
+      runFailedSummary: "Ошибка",
+      runFailedTransport:
+        "Ошибка сервера модели: API 500. Отправьте запрос ещё раз.",
       contextUsage: "Использование контекста",
       noModels: "Нет моделей",
       noModelsInSettings: "Нет моделей в настройках",
@@ -641,6 +648,7 @@
       proposedPlanCodeLines: (n) =>
         n === 1 ? "1 строка" : n < 5 ? `${n} строки` : `${n} строк`,
       proposedPlanCodeToggle: "Показать или скрыть код",
+      proposedPlanImplementBubble: "Собрать план",
       proposedPlanImplementPrefix:
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
@@ -3662,6 +3670,65 @@
     return t("stepsMany")(n);
   }
 
+  function timelineLooksLikeTransportFailure(group) {
+    if (!group) {
+      return false;
+    }
+    const body = group.querySelector(".tool-group-body");
+    const steps = agentStepsInBody(body);
+    if (!steps.length) {
+      return false;
+    }
+    return steps.some((el) => {
+      if (el.dataset.stepKind !== "retry") {
+        return false;
+      }
+      const label = String(
+        el.querySelector(".agent-step-label")?.textContent ||
+          el.dataset.raw ||
+          ""
+      );
+      return /API\s*5\d\d\b|Internal Server Error|ECONNRESET|fetch failed/i.test(
+        label
+      );
+    });
+  }
+
+  function markFailedToolGroups() {
+    for (const group of messagesEl.querySelectorAll(
+      ".tool-group.agent-timeline"
+    )) {
+      if (!timelineLooksLikeTransportFailure(group)) {
+        continue;
+      }
+      const summary = group.querySelector(".tool-group-summary");
+      if (summary) {
+        summary.textContent = t("runFailedSummary");
+      }
+      group.dataset.failed = "1";
+    }
+  }
+
+  /**
+   * End a failed run in the live UI: seal «Работаю…», show error bubble, clear busy.
+   * Idempotent — safe if host also sent append/idle.
+   */
+  function finishRunWithError(text) {
+    const msg = String(text || "").trim();
+    sealToolGroups();
+    markFailedToolGroups();
+    if (msg) {
+      const last = uiMessagesCache[uiMessagesCache.length - 1];
+      if (!(last && last.role === "error" && String(last.text || "") === msg)) {
+        uiMessagesCache.push({ role: "error", text: msg });
+        appendMessage("error", msg, uiMessagesCache.length - 1, -1);
+      }
+    }
+    setAgentStatus("", true);
+    setBusy(false);
+    scrollToBottom();
+  }
+
   function sealToolGroups() {
     for (const group of messagesEl.querySelectorAll(
       ".tool-group:not([data-sealed])"
@@ -3684,7 +3751,15 @@
         toggle.hidden = false;
         toggle.setAttribute("aria-expanded", "false");
       }
-      updateToolGroupSummary(group);
+      if (timelineLooksLikeTransportFailure(group)) {
+        const summary = group.querySelector(".tool-group-summary");
+        if (summary) {
+          summary.textContent = t("runFailedSummary");
+        }
+        group.dataset.failed = "1";
+      } else {
+        updateToolGroupSummary(group);
+      }
       // Auto-collapse long Thinking blocks once the turn advances to tools/text.
       collapseLongThinkingSteps(group);
     }
@@ -7237,7 +7312,7 @@
     }
     if (settingsMaxResponseChars) {
       settingsMaxResponseChars.value = String(
-        settings.maxResponseChars || 12000
+        settings.maxResponseChars || 64000
       );
     }
     if (settingsSoundNotificationsEnabled) {
@@ -7476,7 +7551,7 @@
       figmaEnabled: figmaStatus.enabled === true,
       maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
       maxTokens: Number(settingsMaxTokens?.value || 4096),
-      maxResponseChars: Number(settingsMaxResponseChars?.value || 12000),
+      maxResponseChars: Number(settingsMaxResponseChars?.value || 64000),
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
         : true,
@@ -8164,14 +8239,29 @@
     );
   }
 
-  /** Inner body of the last closed <proposed_plan>…</proposed_plan>, or "". */
+  /**
+   * Inner body of the latest <proposed_plan>…</proposed_plan>.
+   * Also recovers truncated plans (open tag, no close) — same as the plan card
+   * — so composer «Собрать» still appears when maxResponseChars cut the close tag.
+   */
   function extractLatestProposedPlan(raw) {
+    const text = String(raw || "");
     const re =
       /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*?)\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi;
     let last = "";
     let match;
-    while ((match = re.exec(String(raw || ""))) !== null) {
+    while ((match = re.exec(text)) !== null) {
       last = String(match[1] || "").trim();
+    }
+    if (!last) {
+      const openRe =
+        /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*)/i;
+      const openMatch = openRe.exec(text);
+      if (openMatch) {
+        last = String(openMatch[1] || "")
+          .replace(/\n*\[ответ обрезан[^\]]*\]\s*$/i, "")
+          .trim();
+      }
     }
     return stripPlanImplementWrapper(last);
   }
@@ -9459,9 +9549,14 @@
       el.insertBefore(body, el.firstChild);
     }
     if (role === "user" && looksLikePlanImplementDisplay(raw)) {
-      // Keep full Build payload in dataset.raw for edit/resend; show clean plan.
-      const clean = stripPlanImplementWrapper(raw);
-      body.innerHTML = renderInlineMarkdown(clean || raw);
+      // Keep full Build payload in dataset.raw for the model / edit-resend;
+      // in chat show a short handoff chip — not a second copy of the plan.
+      el.classList.add("is-plan-implement");
+      body.innerHTML =
+        `<span class="plan-implement-chip">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">construction</span>` +
+        `<span>${escapeHtml(t("proposedPlanImplementBubble"))}</span>` +
+        `</span>`;
       return;
     }
     if (role === "assistant" || role === "error" || role === "user") {
@@ -11362,9 +11457,8 @@
       if (closeBtn && chatBranchesEl.contains(closeBtn)) {
         event.preventDefault();
         event.stopPropagation();
-        if (busy) {
-          return;
-        }
+        // Allow delete while a run is active — host abortChatRun(chatId) then
+        // deletes. Blocking on busy left forks undeletable during long Plan turns.
         const chatId = closeBtn.getAttribute("data-chat-id") || "";
         if (!chatId) {
           return;
@@ -12154,7 +12248,26 @@
       case "runFinished":
         playRunFinishedSound(msg.outcome === "error" ? "error" : "success");
         break;
+      case "runFailed":
+        if (msg.chatId && !activeChatId) {
+          activeChatId = msg.chatId;
+        }
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        finishRunWithError(msg.text || "");
+        break;
       case "append":
+        if (msg.chatId && !activeChatId) {
+          activeChatId = msg.chatId;
+        }
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        if (msg.role === "error") {
+          finishRunWithError(msg.text || "");
+          break;
+        }
         uiMessagesCache.push({
           role: msg.role,
           text: msg.text,
@@ -12297,19 +12410,48 @@
         }
         break;
       case "idle":
-        if (msg.chatId && msg.chatId !== activeChatId) {
+        // Only ignore when both sides know a chat id and they disagree.
+        // If activeChatId was never hydrated (empty), still clear busy —
+        // otherwise a 500 leaves the Stop button stuck forever.
+        if (msg.chatId && !activeChatId) {
+          activeChatId = msg.chatId;
+        }
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
         streamingEl = null;
         streamingRenderScheduled = false;
+        sealToolGroups();
+        markFailedToolGroups();
+        // If retries show API 5xx but the host never delivered runFailed/append,
+        // synthesize the error bubble so the user is not stuck on «Работаю…».
+        if (
+          busy &&
+          !uiMessagesCache.some(
+            (m, i) =>
+              i >= uiMessagesCache.length - 3 && m && m.role === "error"
+          )
+        ) {
+          const failedGroup = [...messagesEl.querySelectorAll(".tool-group")].find(
+            (g) => g.dataset.failed === "1" || timelineLooksLikeTransportFailure(g)
+          );
+          if (failedGroup) {
+            finishRunWithError(t("runFailedTransport"));
+            break;
+          }
+        }
         setAgentStatus("", true);
         setBusy(false);
         break;
       case "stopped":
-        if (msg.chatId && msg.chatId !== activeChatId) {
+        if (msg.chatId && !activeChatId) {
+          activeChatId = msg.chatId;
+        }
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
         clearStoppedRunArtifacts();
+        sealToolGroups();
         setAgentStatus("", true);
         setBusy(false);
         break;

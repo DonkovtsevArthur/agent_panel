@@ -16,7 +16,16 @@ export const PLAN_QUALITY_NUDGE =
   "If the user asked for a page/screen (or pasted Figma), Goal = that page/route with the Figma frame title — not a tab/вкладка from a similar repo page, and not a different existing page that merely looks similar. " +
   "Do not ground steps in src/pages|entities|features from a different feature area than the Figma/user message implies. " +
   "Layout chrome (Search Bar, sidebar Menu) is not the page deliverable. " +
+  "Analogue evidence: every Step with reuse / by-pattern of <path> must include a backtick quote (observed) copied from that path's read_file content (import, className, JSX tag, etc. — not the path itself). Describe HOW only from that quote — do not invent a UI kind that is not in the quote/file. " +
   "Use search_text / list_files / read_file / delegate_task, then rewrite the FULL <proposed_plan>.";
+
+/** Minimal message shape for Plan quality checks (avoids vscode/openai imports). */
+export type PlanQualityMessage = {
+  role?: string;
+  name?: string;
+  /** Tool payloads are strings; assistant content may be richer — ignored. */
+  content?: unknown;
+};
 
 export const PLAN_QUALITY_USER_VISIBLE =
   "План не decision-complete: нет нормального <proposed_plan> с путями, цель подменена (таб/«уже есть»), " +
@@ -295,15 +304,197 @@ export function looksLikePageToSimilarPageDrift(
   return domainWords.length > 0 && matched.length === 0;
 }
 
+function normalizePlanPath(path: string): string {
+  return String(path || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .trim();
+}
+
+function collectReadFileContents(
+  messages: PlanQualityMessage[] | undefined
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!messages?.length) {
+    return map;
+  }
+  for (const message of messages) {
+    if (message.role !== "tool" || message.name !== "read_file") {
+      continue;
+    }
+    if (typeof message.content !== "string") {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(message.content) as {
+        path?: string;
+        content?: string;
+        error?: string;
+      };
+      if (parsed.error || !parsed.path || typeof parsed.content !== "string") {
+        continue;
+      }
+      map.set(normalizePlanPath(parsed.path), parsed.content);
+    } catch {
+      // ignore non-JSON tool payloads
+    }
+  }
+  return map;
+}
+
+function findReadContentForPath(
+  reads: Map<string, string>,
+  path: string
+): string | undefined {
+  const key = normalizePlanPath(path);
+  const direct = reads.get(key);
+  if (direct !== undefined) {
+    return direct;
+  }
+  for (const [readPath, content] of reads) {
+    if (readPath.endsWith(key) || key.endsWith(readPath)) {
+      return content;
+    }
+  }
+  return undefined;
+}
+
+const ANALOGUE_PATH_CAPTURE =
+  /(?:reuse|по\s+паттерну|новый\s+по\s+паттерну|by\s+pattern(?:\s+of)?|new\s+by\s+pattern(?:\s+of)?)\s*[`«"']?((?:\.\/)?(?:[\w@.-]+\/)+[\w@.-]+\.[\w]{1,12})/gi;
+
+/** Minimum length for an observed backtick quote (path-only quotes are excluded). */
+export const MIN_ANALOGUE_QUOTE_CHARS = 6;
+
+/** Numbered Step chunks from a plan body (1. … 2. …). */
+export function extractNumberedPlanSteps(planBody: string): string[] {
+  const body = String(planBody || "").trim();
+  if (!body) {
+    return [];
+  }
+  const parts = body.split(/(?:^|\n)\s*(?=\d+\.\s+)/);
+  const steps: string[] = [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (/^\d+\.\s+\S/.test(trimmed)) {
+      steps.push(trimmed);
+    }
+  }
+  return steps;
+}
+
+/** Grounded analogue paths cited via reuse / by-pattern in a step. */
+export function extractAnaloguePathsFromStep(step: string): string[] {
+  const found: string[] = [];
+  ANALOGUE_PATH_CAPTURE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = ANALOGUE_PATH_CAPTURE.exec(String(step || ""))) !== null) {
+    const p = normalizePlanPath(match[1]);
+    if (p) {
+      found.push(p);
+    }
+  }
+  return [...new Set(found)];
+}
+
+/**
+ * Backtick spans in a step that can count as observed evidence.
+ * Excludes the cited path itself and very short tokens.
+ */
+export function extractObservedQuotesFromStep(
+  step: string,
+  analoguePaths: string[] = []
+): string[] {
+  const pathKeys = new Set(analoguePaths.map(normalizePlanPath));
+  const quotes: string[] = [];
+  const re = /`([^`]+)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(step || ""))) !== null) {
+    const raw = String(match[1] || "").trim();
+    if (raw.length < MIN_ANALOGUE_QUOTE_CHARS) {
+      continue;
+    }
+    const asPath = normalizePlanPath(raw);
+    if (pathKeys.has(asPath)) {
+      continue;
+    }
+    // Skip pure path-shaped quotes that are just the analogue path in another form.
+    if (GROUNDED_PATH_RE.test(` ${raw}`) && /\/.+\./.test(raw)) {
+      continue;
+    }
+    quotes.push(raw);
+  }
+  return quotes;
+}
+
+function contentContainsQuote(content: string, quote: string): boolean {
+  const hay = String(content || "");
+  const needle = String(quote || "");
+  if (!hay || !needle) {
+    return false;
+  }
+  if (hay.includes(needle)) {
+    return true;
+  }
+  // Tolerate quote taken from a single line with different surrounding spaces.
+  const compactHay = hay.replace(/\s+/g, " ");
+  const compactNeedle = needle.replace(/\s+/g, " ");
+  return compactHay.includes(compactNeedle);
+}
+
+/**
+ * A reuse / by-pattern Step lacks a backtick quote that appears in the
+ * analogue's read_file content (or the analogue was never read).
+ * Skipped when messages are absent (can't verify) or there are no analogue Steps.
+ */
+export function looksLikeMissingAnalogueQuote(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  if (!messages?.length) {
+    return false;
+  }
+  const reads = collectReadFileContents(messages);
+  if (!reads.size) {
+    return false;
+  }
+  const steps = extractNumberedPlanSteps(planBody);
+  for (const step of steps) {
+    const paths = extractAnaloguePathsFromStep(step);
+    if (!paths.length) {
+      continue;
+    }
+    const quotes = extractObservedQuotesFromStep(step, paths);
+    for (const path of paths) {
+      const content = findReadContentForPath(reads, path);
+      if (content === undefined) {
+        return true;
+      }
+      if (!quotes.length) {
+        return true;
+      }
+      const matched = quotes.some((q) => contentContainsQuote(content, q));
+      if (!matched) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export type PlanQualityOptions = {
+  userText?: string;
+  messages?: PlanQualityMessage[];
+};
+
 /**
  * True when a Plan-mode finale wraps <proposed_plan> but is not
  * grounded enough for Build (paths missing, abstract files, unfixed Figma,
- * page→tab WHAT drift, page→similar-page drift, or «already exists»
- * without block inventory).
+ * page→tab WHAT drift, page→similar-page drift, missing analogue observed
+ * quote, or «already exists» without inventory).
  */
 export function looksLikeIncompleteProposedPlan(
   text: string,
-  options?: { userText?: string }
+  options?: PlanQualityOptions
 ): boolean {
   const body = extractProposedPlanBody(text);
   if (!body) {
@@ -343,13 +534,16 @@ export function looksLikeIncompleteProposedPlan(
   ) {
     return true;
   }
+  if (looksLikeMissingAnalogueQuote(body, options?.messages)) {
+    return true;
+  }
   return false;
 }
 
 /** Any Plan-mode quality failure (with or without <proposed_plan>). */
 export function looksLikePlanQualityFailure(
   text: string,
-  options?: { userText?: string }
+  options?: PlanQualityOptions
 ): boolean {
   if (looksLikePlanFileWriteClaim(text)) {
     return true;

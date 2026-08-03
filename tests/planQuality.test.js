@@ -3,6 +3,9 @@ const assert = require("node:assert/strict");
 
 const {
   extractProposedPlanBody,
+  extractAnaloguePathsFromStep,
+  extractObservedQuotesFromStep,
+  looksLikeMissingAnalogueQuote,
   looksLikeIncompleteProposedPlan,
   looksLikePageToTabDrift,
   looksLikePageToSimilarPageDrift,
@@ -280,4 +283,74 @@ test("page→similar-page: not drift when plan creates new files (no existing fe
     "2. Таблица — новый src/pages/cert/table.tsx\n" +
     "**Затрагиваемые файлы**: src/pages/cert/page.tsx, src/pages/cert/table.tsx\n</proposed_plan>";
   assert.equal(looksLikePageToSimilarPageDrift(user, ok), false);
+});
+
+test("looksLikeMissingAnalogueQuote flags step without observed quote from read_file", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. Editor — новый по паттерну `src/features/foo/editor.tsx`\n" +
+    "**Затрагиваемые файлы**: src/features/bar/editor.tsx\n</proposed_plan>";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/features/foo/editor.tsx",
+        content: "export const Editor = () => <div className={styles.grid} />;\n",
+      }),
+    },
+  ];
+  assert.deepEqual(extractAnaloguePathsFromStep("1. Editor — новый по паттерну `src/features/foo/editor.tsx`"), [
+    "src/features/foo/editor.tsx",
+  ]);
+  assert.deepEqual(
+    extractObservedQuotesFromStep(
+      "1. Editor — новый по паттерну `src/features/foo/editor.tsx`",
+      ["src/features/foo/editor.tsx"]
+    ),
+    []
+  );
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), true);
+  assert.equal(looksLikePlanQualityFailure(plan, { messages }), true);
+});
+
+test("looksLikeMissingAnalogueQuote ok with quote present in file content", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. list/grid editor — новый по паттерну `src/features/foo/editor.tsx` — observed: `styles.grid`\n" +
+    "**Затрагиваемые файлы**: src/features/bar/editor.tsx\n</proposed_plan>";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/features/foo/editor.tsx",
+        content: "export const Editor = () => <div className={styles.grid} />;\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), false);
+  assert.equal(looksLikePlanQualityFailure(plan, { messages }), false);
+});
+
+test("looksLikeMissingAnalogueQuote flags quote not found in file", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: x\n**Шаги**:\n" +
+    "1. table — новый по паттерну `src/features/foo/editor.tsx` — observed: `ColumnDef`\n" +
+    "**Затрагиваемые файлы**: src/features/bar/editor.tsx\n</proposed_plan>";
+  const messages = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/features/foo/editor.tsx",
+        content: "export const Editor = () => <div className={styles.grid} />;\n",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnalogueQuote(extractProposedPlanBody(plan), messages), true);
+});
+
+test("PLAN_QUALITY_NUDGE mentions analogue evidence quote", () => {
+  assert.match(PLAN_QUALITY_NUDGE, /observed|Analogue evidence|backtick/i);
 });
