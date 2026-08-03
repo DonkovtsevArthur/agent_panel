@@ -108,13 +108,34 @@ test("prepareKimiGatewayMessages readonly preserves Figma and shrinks explore ha
     },
     { role: "tool", name: "read_file", content: "c".repeat(6_000) },
     { role: "tool", name: "read_file", content: "d".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "e".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "f".repeat(6_000) },
   ];
   assert.equal(prepareKimiGatewayMessages(messages, { readonly: true }), true);
-  // keepRecent=2 → first three non-preserved older tools shrink; Figma intact
-  assert.ok(String(messages[0].content).length < 2_000);
-  assert.ok(String(messages[1].content).length < 2_000);
+  // keepRecent=4 → older non-preserved tools shrink; Figma + recent intact
+  assert.ok(String(messages[0].content).length < 3_200);
+  assert.ok(String(messages[1].content).length < 3_200);
   assert.equal(String(messages[2].content), figmaPayload);
-  assert.equal(String(messages[4].content).length, 6_000);
+  assert.equal(String(messages[6].content).length, 6_000);
+});
+
+test("prepareKimiGatewayMessages readonly pins grounding read_file paths", () => {
+  const pathsPayload = JSON.stringify({
+    path: "src/shared/paths.ts",
+    content: "export const PATHS = {};\n".repeat(400),
+  });
+  const noise = "x".repeat(6_000);
+  const messages = [
+    { role: "tool", name: "read_file", content: pathsPayload },
+    { role: "tool", name: "search_text", content: noise },
+    { role: "tool", name: "read_file", content: "a".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "b".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "c".repeat(6_000) },
+    { role: "tool", name: "read_file", content: "d".repeat(6_000) },
+  ];
+  assert.equal(prepareKimiGatewayMessages(messages, { readonly: true }), true);
+  assert.equal(String(messages[0].content), pathsPayload);
+  assert.ok(String(messages[1].content).length < 3_200);
 });
 
 test("prepareFragileGatewayMessages caps even the latest read_file", () => {

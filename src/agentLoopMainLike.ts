@@ -845,7 +845,13 @@ export async function runMainLikeAgentTurn(options: {
       kimi: kimiModel,
       readonly,
     });
-    if (prep.compacted || prep.summarized) {
+    // Kimi Plan/Ask: hard-trim may still run under a tight ceiling, but do not
+    // spam the timeline with «Context compacted» every round — it distracts
+    // and the soft/summary paths are already disabled for this mode.
+    const showCompactionCard =
+      (prep.compacted || prep.summarized) &&
+      !(kimiModel && readonly && !prep.summarized);
+    if (showCompactionCard) {
       emitStep({
         stepId: nextStepId("compaction"),
         kind: "compaction",

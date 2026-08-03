@@ -84,6 +84,9 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     pattern: /kimi|moonshot/i,
     capabilities: {
       family: "kimi",
+      // Plan+Figma+explore needs headroom; 32k configured windows cause
+      // hard-budget «Context compacted · ~25856» every round.
+      contextWindow: 128_000,
       omitTemperature: true,
       requiresReasoningContentForToolCalls: true,
       minimumOutputTokens: KIMI_MIN_MAX_TOKENS,
@@ -195,6 +198,16 @@ export function resolveModelContextWindow(
   configured: number | undefined,
   fallback: number
 ): number {
+  const registered = resolveModelCapabilities(modelId);
+  const registryWindow = registered.contextWindow;
+  // Kimi: honor larger explicit windows, but never shrink below the registry
+  // floor (128k). Undersized Settings values (e.g. 32k) make Plan unusable.
+  if (registered.family === "kimi" && isPositiveInteger(registryWindow)) {
+    if (isPositiveInteger(configured)) {
+      return Math.max(configured, registryWindow);
+    }
+    return registryWindow;
+  }
   const capabilities = resolveModelCapabilities(modelId, {
     contextWindow: configured,
   });

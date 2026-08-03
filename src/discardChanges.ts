@@ -117,13 +117,19 @@ export function buildDiscardSystemHint(options: {
     ].join(" ");
   }
 
+  const stopAfterDiscard =
+    "After a successful discard: STOP. Reply briefly what was restored/removed. " +
+    "Do NOT re-implement an earlier plan, recreate deleted files, or continue Build/Agent work from chat history — " +
+    "the discard IS the completed user request. Only write files again if the user explicitly asks in a later message.";
+
   if (options.scope === "all") {
     return [
       "The user asked to discard ALL local workspace changes.",
       "Procedure: run_command `git status --short`, then `git restore .` and if untracked remain `git clean -fd`.",
       "Do NOT use write_file or search_replace to empty/rewrite files as an undo.",
-      "Do NOT re-read the whole repo. After shell succeeds, reply briefly that the workspace is clean.",
+      "Do NOT re-read the whole repo.",
       "A successful git restore/clean/rm discard counts as completing the task — do not claim you need write_file.",
+      stopAfterDiscard,
     ].join(" ");
   }
 
@@ -135,6 +141,7 @@ export function buildDiscardSystemHint(options: {
     "Procedure: run_command `git status --short`, then for tracked paths among the list: `git restore -- <path...>` (never `git restore .`).",
     "For untracked paths from that list only: `rm -rf -- <path...>` or `git clean -fd -- <path...>` — do not clean the whole repo.",
     "If the path list is empty: report that there are no recorded agent edits; show git status; do not wipe unrelated dirty files.",
-    "Do NOT use write_file / search_replace to undo. After shell succeeds, reply briefly what was restored/removed.",
+    "Do NOT use write_file / search_replace to undo.",
+    stopAfterDiscard,
   ].join("\n");
 }

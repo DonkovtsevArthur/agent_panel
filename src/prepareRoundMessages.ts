@@ -3,6 +3,7 @@ import {
   applyContextBudget,
   calculateContextBudget,
   estimateTokens,
+  looksLikePlanGroundingToolResult,
   pullPreservedToolRounds,
 } from "./contextBudget";
 import { buildEarlierConversationSummary } from "./historySummary";
@@ -72,6 +73,9 @@ export function prepareRoundMessages(
     contextWindow: options.contextWindow,
     reservedOutputTokens: options.reservedOutputTokens,
     ...(softTargetTokens !== undefined ? { softTargetTokens } : {}),
+    ...(kimiPlanAsk
+      ? { preserveToolResult: looksLikePlanGroundingToolResult }
+      : {}),
   });
 
   let compacted = budgeted.compacted;
