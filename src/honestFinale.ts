@@ -51,6 +51,10 @@ export const IMPACT_USER_NUDGE =
 export const IMPACT_USER_VISIBLE =
   "Модель поменяла (или описала) shared UI без проверки других мест использования. Повторите запрос — нужно найти consumers и учесть влияние на другие компоненты.";
 
+/** After impact nudges are exhausted: keep the model's draft, don't dead-end. */
+export const IMPACT_USER_SOFT_VISIBLE =
+  "Внимание: shared UI изменён (или описан) без проверки consumers через search_text/rg. Ниже ответ модели — проверьте call sites или повторите запрос с поиском usages.";
+
 export const ASK_USER_VIA_TOOL_NUDGE =
   "False: do NOT write clarifying questions as plain chat text (no numbered lists, no «Есть несколько уточняющих вопросов»). Call request_user_input — one question per call, with 2–4 mutually exclusive options and a recommended default. The UI shows QuickPick plus a free-text custom answer. Ask every blocking question via that tool before any <proposed_plan>. Do not finish this turn with prose questions.";
 
@@ -195,6 +199,36 @@ function turnHadUsageSearch(messages: ChatMessage[]): boolean {
   return false;
 }
 
+/**
+ * Path looks like shared/reusable UI (layout, primitives), not data/api/lib.
+ * Bare `shared/api` / `shared/lib` must NOT trip the consumers impact gate —
+ * that gate is for breaking Toast/Modal/Layout call sites, not new API modules.
+ */
+export function looksLikeSharedUiEditPath(path: string): boolean {
+  const p = String(path || "")
+    .toLowerCase()
+    .replace(/\\/g, "/");
+  if (!p) {
+    return false;
+  }
+  // Explicit non-UI shared layers (api, lib, config, types, constants, …).
+  if (
+    /(^|\/)shared\/(api|lib|config|types|constants|model|models|helpers?|utils?|hooks?|store|stores|effects?|i18n|assets?)\b/.test(
+      p
+    )
+  ) {
+    return false;
+  }
+  return (
+    /(^|\/)shared\/ui\//.test(p) ||
+    /(^|\/)(components|widgets)\//.test(p) ||
+    /(^|\/)ui\//.test(p) ||
+    p.includes("notification") ||
+    p.includes("toast") ||
+    p.includes("modal")
+  );
+}
+
 function editedSharedLookingPath(messages: ChatMessage[]): boolean {
   for (const m of messages) {
     if (
@@ -209,14 +243,7 @@ function editedSharedLookingPath(messages: ChatMessage[]): boolean {
       if (parsed.ok === false) {
         continue;
       }
-      const p = String(parsed.path || "").toLowerCase().replace(/\\/g, "/");
-      if (
-        /(^|\/)(shared|components|widgets|ui)\//.test(p) ||
-        /\/ui\//.test(p) ||
-        p.includes("notification") ||
-        p.includes("toast") ||
-        p.includes("modal")
-      ) {
+      if (looksLikeSharedUiEditPath(String(parsed.path || ""))) {
         return true;
       }
     } catch {
@@ -524,6 +551,15 @@ export function decideHonestFinale(input: {
   ) {
     if (allowNudgeImpact) {
       return { kind: "nudge_impact" };
+    }
+    // Soft dead-end: keep the draft so the user sees what was done; only
+    // hard-replace when there is nothing useful to show.
+    const draft = String(text || "").trim();
+    if (draft && draft !== "(пустой ответ)") {
+      return {
+        kind: "ok",
+        text: `${IMPACT_USER_SOFT_VISIBLE}\n\n${draft}`,
+      };
     }
     return { kind: "replace", text: IMPACT_USER_VISIBLE };
   }

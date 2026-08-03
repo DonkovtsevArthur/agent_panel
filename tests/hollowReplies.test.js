@@ -6,6 +6,7 @@ const {
   decideHonestFinale,
   HOLLOW_USER_VISIBLE,
   IMPACT_USER_VISIBLE,
+  IMPACT_USER_SOFT_VISIBLE,
 } = require("../out/honestFinale.js");
 
 test("detects hollow «я объяснил / скажи перепишу»", () => {
@@ -163,6 +164,187 @@ test("decideHonestFinale accepts search_text as shared-UI usage search", () => {
     allowNudgeImpact: true,
   });
   assert.equal(decision.kind, "ok");
+});
+
+test("looksLikeSharedUiEditPath: UI yes, shared/api no", () => {
+  const { looksLikeSharedUiEditPath } = require("../out/honestFinale.js");
+  assert.equal(
+    looksLikeSharedUiEditPath("src/shared/ui/toast.tsx"),
+    true
+  );
+  assert.equal(
+    looksLikeSharedUiEditPath("src/components/header/header.tsx"),
+    true
+  );
+  assert.equal(
+    looksLikeSharedUiEditPath(
+      "src/shared/api/initial-briefing/get-certificate-detail/types.ts"
+    ),
+    false
+  );
+  assert.equal(
+    looksLikeSharedUiEditPath("src/shared/lib/http/client.ts"),
+    false
+  );
+});
+
+test("decideHonestFinale does not impact-nudge shared/api creates", () => {
+  const decision = decideHonestFinale({
+    text: "Добавил get-certificate-detail API и экспортировал типы.",
+    canEdit: true,
+    messages: [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "1",
+            type: "function",
+            function: {
+              name: "write_file",
+              arguments:
+                '{"relativePath":"src/shared/api/initial-briefing/get-certificate-detail/types.ts"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "write_file",
+        tool_call_id: "1",
+        content: JSON.stringify({
+          ok: true,
+          path: "src/shared/api/initial-briefing/get-certificate-detail/types.ts",
+          created: true,
+          added: 20,
+          removed: 0,
+        }),
+      },
+      {
+        role: "assistant",
+        content: "Добавил get-certificate-detail API и экспортировал типы.",
+      },
+    ],
+    userText: "реализуй план",
+    allowNudgeImpact: true,
+  });
+  assert.equal(decision.kind, "ok");
+});
+
+test("decideHonestFinale still impact-nudges shared/ui edits without usage search", () => {
+  const decision = decideHonestFinale({
+    text: "Обновил Toast: closeButton теперь справа.",
+    canEdit: true,
+    messages: [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "1",
+            type: "function",
+            function: {
+              name: "search_replace",
+              arguments:
+                '{"path":"src/shared/ui/toast.tsx","old_string":"a","new_string":"b"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "search_replace",
+        tool_call_id: "1",
+        content: JSON.stringify({
+          ok: true,
+          path: "src/shared/ui/toast.tsx",
+          created: false,
+          added: 1,
+          removed: 1,
+        }),
+      },
+      {
+        role: "assistant",
+        content: "Обновил Toast: closeButton теперь справа.",
+      },
+    ],
+    userText: "поправь toast",
+    allowNudgeImpact: true,
+  });
+  assert.equal(decision.kind, "nudge_impact");
+});
+
+test("decideHonestFinale soft-keeps draft after impact nudges exhausted", () => {
+  const draft = "Обновил Toast: closeButton теперь справа.";
+  const decision = decideHonestFinale({
+    text: draft,
+    canEdit: true,
+    messages: [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "1",
+            type: "function",
+            function: {
+              name: "search_replace",
+              arguments:
+                '{"path":"src/shared/ui/toast.tsx","old_string":"a","new_string":"b"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        name: "search_replace",
+        tool_call_id: "1",
+        content: JSON.stringify({
+          ok: true,
+          path: "src/shared/ui/toast.tsx",
+          created: false,
+          added: 1,
+          removed: 1,
+        }),
+      },
+      {
+        role: "assistant",
+        content: draft,
+      },
+    ],
+    userText: "поправь toast",
+    allowNudgeImpact: false,
+  });
+  assert.equal(decision.kind, "ok");
+  assert.ok(decision.text.startsWith(IMPACT_USER_SOFT_VISIBLE));
+  assert.ok(decision.text.includes("closeButton теперь справа"));
+  assert.equal(decision.text.includes(IMPACT_USER_VISIBLE), false);
+});
+
+test("decideHonestFinale hard-replaces empty impact finale", () => {
+  const decision = decideHonestFinale({
+    text: "(пустой ответ)",
+    canEdit: true,
+    messages: [
+      {
+        role: "tool",
+        name: "write_file",
+        tool_call_id: "1",
+        content: JSON.stringify({
+          ok: true,
+          path: "src/shared/ui/toast.tsx",
+          created: false,
+          added: 2,
+          removed: 1,
+        }),
+      },
+    ],
+    userText: "поправь toast",
+    hadSuccessfulWrite: true,
+    allowNudgeImpact: false,
+  });
+  assert.equal(decision.kind, "replace");
+  assert.equal(decision.text, IMPACT_USER_VISIBLE);
 });
 
 test("decideHonestFinale treats «файл уже содержит» as missing write", () => {
