@@ -862,11 +862,15 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 0;
   margin: 4px 0 8px;
   padding-left: 2px;
+}
+
+.tool-group.agent-timeline:not(.is-collapsed) {
   border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .tool-group.agent-timeline .tool-group-toggle {
-  display: none !important;
+  margin-left: -2px;
+  opacity: 0.9;
 }
 
 .tool-group.agent-timeline .tool-group-body,
@@ -876,6 +880,11 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 10px;
   width: 100%;
   padding: 0 0 0 10px;
+}
+
+.tool-group.agent-timeline.is-collapsed .tool-group-body,
+.tool-group.agent-timeline.is-collapsed .agent-timeline-body {
+  display: none;
 }
 
 .agent-step {
