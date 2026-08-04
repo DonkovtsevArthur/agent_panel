@@ -695,7 +695,35 @@ export function looksLikeMissingAnalogueQuote(
 export type PlanQualityOptions = {
   userText?: string;
   messages?: PlanQualityMessage[];
+  /**
+   * Follow-up after a prior `<proposed_plan>` in chat history.
+   * Skips re-fetch gates (Figma tools / component API read / vision inventory)
+   * so a scope edit can ship a full replacement card without re-explore.
+   */
+  planRevision?: boolean;
 };
+
+/** True when an earlier assistant turn already shipped a `<proposed_plan>`. */
+export function historyHasProposedPlan(
+  messages?: PlanQualityMessage[]
+): boolean {
+  return extractLastProposedPlanFromMessages(messages) != null;
+}
+
+/**
+ * System hint for Plan follow-ups: full card replacement from the last plan,
+ * without restarting Phase 1 / Figma / broad repo explore.
+ */
+export const PLAN_REVISION_HINT =
+  "Plan revision: a <proposed_plan> already exists earlier in this chat. " +
+  "Start from that last plan. Apply ONLY the user's latest delta (scope, constraints, wording). " +
+  "Emit a FULL replacement <proposed_plan>…</proposed_plan> card " +
+  "(complete Goal / Steps / Affected / Acceptance / Implementation as needed). " +
+  "Do NOT restart Phase 1: do not re-call Figma MCP and do not re-explore the repo with " +
+  "list_files / search_text / read_file / delegate_task unless the user changes WHAT " +
+  "(new screen, new checklist items, new Figma node) or a previously cited path is no longer valid. " +
+  "When removing scope (e.g. no backend/API), delete matching Steps and trim Affected / " +
+  "Implementation / Acceptance — keep grounded UI steps and their observed quotes intact.";
 
 /** Shared UI primitives that require reading component source, not only a call site. */
 const SHARED_PRIMITIVE_NAMES = [
@@ -1122,7 +1150,9 @@ function diagnoseIncompleteProposedPlan(
   if (!hasStepsHeader || !hasNumberedStep) {
     reasons.push("missing_steps");
   }
+  const revision = options?.planRevision === true;
   if (
+    !revision &&
     options?.userText &&
     messageHasFigmaUrl(options.userText) &&
     !turnHadFigmaPlanTools(options.messages)
@@ -1150,16 +1180,26 @@ function diagnoseIncompleteProposedPlan(
   if (looksLikeMissingImplementationSection(body, options?.userText)) {
     reasons.push("missing_implementation");
   }
-  if (looksLikeMissingComponentApiRead(body, options?.messages)) {
+  // Revision turns reuse prior component/Figma grounding — do not force re-read.
+  if (
+    !revision &&
+    looksLikeMissingComponentApiRead(body, options?.messages)
+  ) {
     reasons.push("missing_component_api_read");
   }
   if (looksLikeChecklistCoverageGap(body, options?.userText)) {
     reasons.push("checklist_coverage");
   }
-  if (looksLikeGoalMissingFrameTitle(body, options?.messages)) {
+  if (
+    !revision &&
+    looksLikeGoalMissingFrameTitle(body, options?.messages)
+  ) {
     reasons.push("goal_frame_title");
   }
-  if (looksLikeMissingFigmaBlockInventory(body, options?.messages)) {
+  if (
+    !revision &&
+    looksLikeMissingFigmaBlockInventory(body, options?.messages)
+  ) {
     reasons.push("figma_block_inventory");
   }
 

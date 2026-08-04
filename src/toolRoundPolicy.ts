@@ -61,6 +61,12 @@ export const PLAN_QUALITY_SOFT_NUDGE_ROUNDS = 8;
 export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS =
   PLAN_QUALITY_SOFT_NUDGE_ROUNDS;
 
+/**
+ * Plan revision (prior `<proposed_plan>` in chat): stop re-explore quickly and
+ * emit a full replacement card from the last plan + user delta.
+ */
+export const PLAN_REVISION_SOFT_NUDGE_ROUNDS = 2;
+
 /** Сколько раз можно продлить бюджет раундов. */
 export const MAX_ROUND_EXTENSIONS = 1;
 
@@ -137,6 +143,11 @@ export function exploreRoundLimits(options: {
    * Soft reminders only — no hard-cut that would strand ungrounded items.
    */
   planQuality?: boolean;
+  /**
+   * Plan follow-up after a prior plan card: soft-strip explore soon so the
+   * model revises the card instead of restarting Phase 1.
+   */
+  planRevision?: boolean;
   /** User message — adaptive Agent explore (focused path / cold page). */
   userText?: string;
 }): ExploreRoundLimits {
@@ -148,6 +159,15 @@ export function exploreRoundLimits(options: {
       hardCutRounds: IMPLEMENT_EXPLORE_HARD_CUT_ROUNDS,
       stripExploreOnSoftNudge: true,
       hardCutExplore: true,
+    };
+  }
+  if (options.planQuality && options.planRevision) {
+    return {
+      softNudgeRounds: PLAN_REVISION_SOFT_NUDGE_ROUNDS,
+      // Soft-strip only — no hard-cut; quality gate still applies.
+      hardCutRounds: Number.MAX_SAFE_INTEGER,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: false,
     };
   }
   if (options.planQuality) {
@@ -288,8 +308,19 @@ export function buildExploreSoftNudge(options: {
   kimi?: boolean;
   /** Build → Agent: правь по плану, не ищи «лучший» аналог. */
   implementPlan?: boolean;
+  /** Plan follow-up: stop re-explore, emit revised full card. */
+  planRevision?: boolean;
 }): string {
   if (options.readonly) {
+    if (options.plan && options.planRevision) {
+      return [
+        "Stop re-exploring the repository.",
+        "list_files, read_file, search_text, and delegate_task are no longer available this turn.",
+        "A prior <proposed_plan> already exists — apply ONLY the user's latest delta and emit a FULL replacement <proposed_plan>…</proposed_plan> now.",
+        "Keep grounded UI steps and observed quotes; remove/adjust Steps, Affected, Implementation, and Acceptance for the delta (e.g. drop backend/API scope).",
+        "Do not restart Phase 1 or re-call Figma. Do not answer in prose — the revised plan card is the deliverable.",
+      ].join(" ");
+    }
     if (options.plan) {
       return [
         "Progress check (explore tools remain available — this is not a hard stop):",

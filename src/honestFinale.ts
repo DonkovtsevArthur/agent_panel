@@ -423,6 +423,8 @@ export function decideHonestFinale(input: {
   allowNudgeAskUser?: boolean;
   /** Plan: nudge incomplete <proposed_plan> (no paths / unfixed fields). */
   allowNudgePlanQuality?: boolean;
+  /** Plan follow-up after a prior plan card — softens re-fetch quality gates. */
+  planRevision?: boolean;
 }): HonestFinaleDecision {
   const text = String(input.text || "").trim();
   const allowNudgeWrite = input.allowNudgeWrite !== false;
@@ -444,6 +446,7 @@ export function decideHonestFinale(input: {
     const planQualityDiagnosis = diagnosePlanQualityFailure(text, {
       userText: input.userText,
       messages: input.messages,
+      planRevision: input.planRevision === true,
     });
     if (planQualityDiagnosis) {
       if (allowNudgePlanQuality) {

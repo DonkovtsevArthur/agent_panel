@@ -221,6 +221,7 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
   const {
     PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
     PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS,
+    PLAN_REVISION_SOFT_NUDGE_ROUNDS,
   } = require("../out/toolRoundPolicy.js");
   const plan = exploreRoundLimits({ kimi: false, planQuality: true });
   assert.equal(plan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
@@ -237,6 +238,24 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
   );
   assert.equal(kimiPlan.hardCutExplore, false);
   assert.equal(kimiPlan.stripExploreOnSoftNudge, false);
+  // Revision: soft-strip explore soon; still no hard-cut.
+  const revision = exploreRoundLimits({
+    kimi: false,
+    planQuality: true,
+    planRevision: true,
+  });
+  assert.equal(revision.softNudgeRounds, PLAN_REVISION_SOFT_NUDGE_ROUNDS);
+  assert.equal(revision.softNudgeRounds, 2);
+  assert.equal(revision.stripExploreOnSoftNudge, true);
+  assert.equal(revision.hardCutExplore, false);
+  const revNudge = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: true,
+    plan: true,
+    planRevision: true,
+  });
+  assert.match(revNudge, /FULL replacement/i);
+  assert.match(revNudge, /no longer available/i);
   // implementPlan still wins over planQuality if both were set
   const implement = exploreRoundLimits({
     kimi: true,
