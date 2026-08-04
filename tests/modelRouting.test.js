@@ -5,6 +5,7 @@ const {
   classifyModelFallbackError,
   looksLikeUtilityModel,
   modelFallbackEligibility,
+  persistedModelAfterVisionTurn,
   resolveVisionPreferenceIds,
   routeModel,
   selectFallbackModel,
@@ -12,6 +13,30 @@ const {
   UTILITY_MODEL_PREFERENCE,
   VISION_MODEL_PREFERENCE,
 } = require("../out/modelRouting.js");
+
+test("persistedModelAfterVisionTurn keeps picker on user selection", () => {
+  assert.equal(
+    persistedModelAfterVisionTurn({
+      requestedModelId: "kimi-k2.5",
+      runModelId: "Gemini 2.5 Flash",
+    }),
+    "kimi-k2.5"
+  );
+  assert.equal(
+    persistedModelAfterVisionTurn({
+      requestedModelId: "kimi-k2.5",
+      runModelId: "kimi-k2.5",
+    }),
+    "kimi-k2.5"
+  );
+  assert.equal(
+    persistedModelAfterVisionTurn({
+      requestedModelId: "",
+      runModelId: "Gemini 2.5 Flash",
+    }),
+    "Gemini 2.5 Flash"
+  );
+});
 
 test("manual eligible selection always wins", () => {
   const result = routeModel(

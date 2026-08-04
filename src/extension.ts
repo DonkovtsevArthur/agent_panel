@@ -4,9 +4,11 @@ import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
 import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
+import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
 
 export function activate(context: vscode.ExtensionContext): void {
+  applyFigmaTlsCaFromSettings();
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);

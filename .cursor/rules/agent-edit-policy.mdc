@@ -12,6 +12,7 @@ alwaysApply: true
 - **Agent** — можно `search_replace` / `write_file`, полный набор tools + MCP (Figma). Builtin `agentModeSystemPrompt` (en/ru).
 - **Plan / Ask** — нельзя `write_file` / `search_replace` / `run_command`. MCP (включая **все** Figma tools) доступны. Также `list_files`, `read_file`, `search_text`, `fetch_url`, `open_external`.
 - **Нельзя** подменять Agent → Ask по тексту вопроса (это уже убрано из `agentPanelProvider.ts`).
+- **Можно** на вопрос без явной правки в Agent: soft-readonly tools + `AGENT_QUESTION_HINT` (`agentQuestionTurn` в `agentLoopMainLike.ts`) — отвечать, не писать «Реализация завершена».
 - **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.
 - **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` / `search_replace` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
 

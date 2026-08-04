@@ -893,7 +893,7 @@ export class McpManager {
       await this.adoptFigmaClient(client, "pat");
     };
 
-    // Harbor Agents is usually blocked on remote Figma MCP (403). Prefer PAT.
+    // Prefer remote OAuth when tokens exist; PAT is the fallback.
     const order = preferPat ? [tryPat, tryRemote] : [tryRemote, tryPat];
     let lastError: unknown;
     for (const attempt of order) {

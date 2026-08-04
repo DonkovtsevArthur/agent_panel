@@ -3,8 +3,16 @@
  * bind the model to the approved plan and to how the project already writes code.
  */
 
+import {
+  looksLikeColdPageExploreRequest,
+  userMessageHasFocusedPath,
+} from "./toolRoundPolicy";
+
 /** Stable marker prepended by the Build button (language-independent). */
 export const PLAN_IMPLEMENT_MARKER = "[[harbor:implement_plan]]";
+
+/** Short follow-up with a known target file — structural correction lane (no phrase dictionary). */
+export const DIRECTIVE_FIX_MAX_CHARS = 500;
 
 export const PLAN_IMPLEMENT_PREFIX_EN = "Implement the following plan:";
 export const PLAN_IMPLEMENT_PREFIX_RU = "Реализуй следующий план:";
@@ -78,6 +86,8 @@ export function looksLikePlanImplementRequest(text: string): boolean {
 /**
  * Follow-up after Build / an earlier edit: user says the UI/table/component
  * was wrong or they mixed something up.
+ * (Narrow legacy patterns — prefer {@link looksLikeDirectiveFixRequest} for
+ * universal short fixes against an open/edited file.)
  */
 export function looksLikeEditCorrectionRequest(text: string): boolean {
   const value = String(text || "").trim();
@@ -108,6 +118,81 @@ export function looksLikeEditCorrectionRequest(text: string): boolean {
 }
 
 /**
+ * Heavy greenfield work that must NOT take the short directive-fix lane.
+ * Narrower than looksLikeComplexPlanRequest — mentioning «layout» / «table»
+ * in a fix request is normal and should stay on the fast path.
+ */
+function looksLikeHeavyNewWorkForDirective(userText: string): boolean {
+  const value = String(userText || "").trim();
+  if (!value) {
+    return false;
+  }
+  if (/figma\.com/i.test(value)) {
+    return true;
+  }
+  if (looksLikeColdPageExploreRequest(value)) {
+    return true;
+  }
+  const numbered = value.match(/(?:^|\n)\s*\d+[.)]\s+\S/g);
+  if (numbered && numbered.length >= 3) {
+    return true;
+  }
+  if (
+    /(?:архитектур|спроектируй|миграци|несколько\s+модул|multiple\s+modules|end[\s-]?to[\s-]?end|большой\s+рефактор|large\s+refactor)/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Universal correction / focused-fix lane — no phrase dictionary.
+ * True when the message is short AND there is a concrete target file:
+ * path in the message, an open editor, or a path from the previous agent edit.
+ * Excludes Build handoff, cold page/Figma-heavy asks, and bare Q&A.
+ */
+export function looksLikeDirectiveFixRequest(
+  userText: string,
+  options?: {
+    openPaths?: readonly string[];
+    lastEditedPaths?: readonly string[];
+  }
+): boolean {
+  const value = String(userText || "").trim();
+  if (!value || value.length > DIRECTIVE_FIX_MAX_CHARS) {
+    return false;
+  }
+  if (looksLikePlanImplementRequest(value)) {
+    return false;
+  }
+  if (looksLikeHeavyNewWorkForDirective(value)) {
+    return false;
+  }
+  // Bare questions — not an edit directive.
+  const lower = value.toLowerCase().replace(/ё/g, "е");
+  if (
+    /^(?:какая|какой|какое|какие|сколько)(?:\s|$|[?!.:,])/i.test(lower) ||
+    /^(?:что\s+делает|где\s+|почему\s+|зачем\s+)/i.test(lower) ||
+    /^(?:why|what|which|how\s+does)\b/i.test(lower)
+  ) {
+    return false;
+  }
+
+  if (userMessageHasFocusedPath(value)) {
+    return true;
+  }
+  const hasOpen = (options?.openPaths || []).some((p) =>
+    Boolean(String(p || "").trim())
+  );
+  const hasLast = (options?.lastEditedPaths || []).some((p) =>
+    Boolean(String(p || "").trim())
+  );
+  return hasOpen || hasLast;
+}
+
+/**
  * System contract for Agent mode after Build.
  * Plan = what; repository files = how (style/imports/patterns).
  */
@@ -134,12 +219,15 @@ export function buildPlanImplementSystemHint(): string {
  */
 export function buildEditCorrectionSystemHint(): string {
   return [
-    "The user is correcting a previous implementation (wrong table, columns, component, screen, or they mixed something up).",
-    "Before any write_file / search_replace: read_file the current target file(s) you will change.",
+    "The user sent a short directive against a known target file (open editor, @path, or a file you edited last turn) — or is correcting / verifying a previous implementation.",
+    "Apply the request with search_replace / write_file — do not only describe the fix.",
+    "Before search_replace: read_file the current target file(s) you will change.",
     "Prefer search_replace for a focused fix. Do NOT full-rewrite with write_file unless creating a new file — and never write empty or drastically shorter content over a substantial file.",
+    "Follow the user's wording literally (unwrap a layout, rename a prop, remove a block, fix a route, etc.). Do not invent a different design.",
     "Match existing project patterns in the file you edit (imports, shared UI, table API, FSD layout).",
+    "Paired sites: if the change is a path / route / PATHS key / navigate() / link href / exported name — call search_text for that symbol (and the old value) and update ALL related call sites in the same turn (routes model, paths.ts, buttons, redirects). Do not claim done after fixing only one side.",
     "If the task involved Figma: re-use vision-helper / Figma labels already in the conversation, or call get_screenshot again on the correct node — do not invent a different table from a random repo page.",
-    "Keep the correction scoped: fix what the user named; do not redesign unrelated screens.",
+    "Keep unrelated screens untouched; still finish every call site of the thing the user named.",
   ].join(" ");
 }
 
@@ -276,4 +364,41 @@ export function buildPlanChecklistNudge(remainingPaths: string[]): string {
     "Continue with search_replace (preferred) or write_file on the remaining paths.",
     "Do not claim the plan is fully done until those steps are applied (or explain honestly why a path is blocked).",
   ].join("\n");
+}
+
+/**
+ * After checklist nudges are exhausted, keep an honest partial finale instead of
+ * «готово» when plan paths remain untouched.
+ */
+export function buildPlanChecklistPartialFinale(
+  draftText: string,
+  remainingPaths: string[]
+): string {
+  const remaining = (remainingPaths || []).filter(Boolean);
+  if (!remaining.length) {
+    return String(draftText || "").trim();
+  }
+  const listed = remaining
+    .slice(0, 10)
+    .map((path) => `- ${path}`)
+    .join("\n");
+  const more =
+    remaining.length > 10 ? `\n…и ещё ${remaining.length - 10}` : "";
+  const draft = String(draftText || "").trim();
+  const header = [
+    "План выполнен частично: эти пути из плана ещё не менялись в этом ходе:",
+    listed + more,
+    "Можно продолжить тем же Build/запросом или уточнить, что пропустить.",
+  ].join("\n");
+  if (!draft) {
+    return header;
+  }
+  // Avoid duplicating if the model already listed remaining paths honestly.
+  if (
+    remaining.some((path) => draft.includes(path)) &&
+    /остал|не\s+сдела|blocked|remaining|частич|не\s+закры/i.test(draft)
+  ) {
+    return draft;
+  }
+  return `${header}\n\n---\n\n${draft}`;
 }

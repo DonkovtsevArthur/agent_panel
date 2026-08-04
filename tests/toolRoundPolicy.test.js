@@ -9,6 +9,9 @@ const {
   FOCUSED_EXPLORE_HARD_CUT_ROUNDS,
   COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS,
   COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS,
+  AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS,
+  AGENT_MECHANICAL_HARD_CUT_ROUNDS,
+  AGENT_MECHANICAL_HINT,
   KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_HARD_CUT_ROUNDS,
   ROUND_EXTENSION_SIZE,
@@ -21,6 +24,8 @@ const {
   hardCutAllowsSearchText,
   userMessageHasFocusedPath,
   looksLikeColdPageExploreRequest,
+  looksLikeAgentMechanicalRequest,
+  looksLikeMechanicalPlanRequest,
   buildExploreSoftNudge,
   buildExploreHardNudge,
   buildKimiWorkspaceFollowHint,
@@ -105,6 +110,13 @@ test("adaptive explore: focused path / cold page / implement", () => {
     classifyExploreBudgetSignal({ implementPlan: true, userText: "new page" }),
     "implement"
   );
+  assert.equal(
+    classifyExploreBudgetSignal({
+      agentMechanical: true,
+      userText: "поправь src/a.ts",
+    }),
+    "mechanical"
+  );
   const focused = exploreRoundLimits({
     kimi: false,
     userText: "поправь src/pages/foo.tsx",
@@ -117,6 +129,84 @@ test("adaptive explore: focused path / cold page / implement", () => {
   });
   assert.equal(cold.softNudgeRounds, COLD_PAGE_EXPLORE_SOFT_NUDGE_ROUNDS);
   assert.equal(cold.hardCutRounds, COLD_PAGE_EXPLORE_HARD_CUT_ROUNDS);
+});
+
+test("Agent mechanical fast lane: version / named files, not tests", () => {
+  assert.equal(looksLikeAgentMechanicalRequest("поменяй версию на 1.2.3"), true);
+  assert.equal(
+    looksLikeAgentMechanicalRequest("поставь version в package.json на 0.0.22"),
+    true
+  );
+  assert.equal(
+    looksLikeAgentMechanicalRequest("поменяй title в src/config.ts"),
+    true
+  );
+  assert.equal(looksLikeAgentMechanicalRequest("напиши тесты на форму"), false);
+  assert.equal(looksLikeAgentMechanicalRequest("добавь unit test"), false);
+  assert.equal(looksLikeAgentMechanicalRequest("исправь баг"), false);
+  assert.equal(
+    looksLikeAgentMechanicalRequest("создай новую страницу Отделы"),
+    false
+  );
+  // Plan mechanical may still catch short change intents; Agent must not.
+  assert.equal(looksLikeMechanicalPlanRequest("исправь баг быстро"), true);
+  assert.equal(looksLikeAgentMechanicalRequest("исправь баг быстро"), false);
+
+  const mech = exploreRoundLimits({
+    kimi: false,
+    userText: "поменяй версию на 1.0.2",
+  });
+  assert.equal(mech.softNudgeRounds, AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS);
+  assert.equal(mech.hardCutRounds, AGENT_MECHANICAL_HARD_CUT_ROUNDS);
+  assert.equal(mech.stripExploreOnSoftNudge, true);
+  assert.equal(mech.hardCutExplore, true);
+
+  // Mechanical wins over focused path budget (package.json path).
+  const mechFocused = exploreRoundLimits({
+    kimi: false,
+    userText: "подними version в package.json",
+  });
+  assert.equal(mechFocused.softNudgeRounds, AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS);
+
+  // Implement still wins over mechanical text.
+  const implement = exploreRoundLimits({
+    kimi: false,
+    implementPlan: true,
+    userText: "поменяй версию",
+  });
+  assert.equal(implement.softNudgeRounds, IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS);
+
+  assert.match(AGENT_MECHANICAL_HINT, /Mechanical Agent/i);
+  assert.match(AGENT_MECHANICAL_HINT, /search_replace/i);
+
+  const soft = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: false,
+    agentMechanical: true,
+  });
+  assert.match(soft, /mechanical edit/i);
+  const hard = buildExploreHardNudge({
+    agentsMd: false,
+    readonly: false,
+    agentMechanical: true,
+  });
+  assert.match(hard, /Mechanical edit/i);
+});
+
+test("editCorrection explore is tight and soft nudge asks to apply fix", () => {
+  const limits = exploreRoundLimits({
+    kimi: false,
+    editCorrection: true,
+    userText: "не нужно оборачивать layout content",
+  });
+  assert.equal(limits.softNudgeRounds, AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS);
+  assert.equal(limits.hardCutRounds, AGENT_MECHANICAL_HARD_CUT_ROUNDS);
+  const soft = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: false,
+    editCorrection: true,
+  });
+  assert.match(soft, /correction|LayoutContent|search_replace/i);
 });
 
 test("hardCutAllowsSearchText only after productive Agent edits", () => {
@@ -223,6 +313,7 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
     PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS,
     PLAN_REVISION_SOFT_NUDGE_ROUNDS,
     PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS,
+    PLAN_SCREENSHOT_PREFLIGHT_SOFT_NUDGE_ROUNDS,
     looksLikeMechanicalPlanRequest,
   } = require("../out/toolRoundPolicy.js");
   const plan = exploreRoundLimits({ kimi: false, planQuality: true });
@@ -240,6 +331,18 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
   );
   assert.equal(kimiPlan.hardCutExplore, false);
   assert.equal(kimiPlan.stripExploreOnSoftNudge, false);
+  // Screenshot preflight: nudge sooner (host already explored).
+  const shot = exploreRoundLimits({
+    kimi: false,
+    planQuality: true,
+    screenshotPreflight: true,
+  });
+  assert.equal(
+    shot.softNudgeRounds,
+    PLAN_SCREENSHOT_PREFLIGHT_SOFT_NUDGE_ROUNDS
+  );
+  assert.equal(shot.softNudgeRounds, 3);
+  assert.equal(shot.hardCutExplore, false);
   // Revision: soft-strip explore soon; still no hard-cut.
   const revision = exploreRoundLimits({
     kimi: false,

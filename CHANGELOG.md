@@ -2,6 +2,45 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.0.171] — 2026-08-04
+
+- **Figma Connect:** если браузер не открылся — toast «Открыть ссылку» + URL в буфере; CA bundle из Settings применяется и к Figma MCP (NODE_EXTRA_CA_CERTS)
+
+## [1.0.170] — 2026-08-04
+
+- **Figma MCP:** remote OAuth работает из коробки для всех пользователей плагина — DCR идёт под whitelisted именем `Codex` (раньше `Harbor Agents` получал 403 Forbidden). Кнопка **Connect Figma** снова основной путь; PAT — запасной вариант
+
+## [1.0.169] — 2026-08-04
+
+- **Plan + скриншот:** баланс anti-drift — имя папки ≠ done, но после `read_file` и совпадения OCR → план «уже совпадает / no new work» с inventory; Implementation не требуется, если работы нет
+
+## [1.0.168] — 2026-08-04
+
+- **Plan + скриншот:** anti-drift — похожая страница в репо ≠ «уже реализовано»; soft-nudge к `<proposed_plan>` после **3** раундов (хост уже сделал OCR + explore probes)
+
+## [1.0.162] — 2026-08-04
+
+- **Agent:** короткие follow-up «а в роутах поменял?» — это правка (не soft-readonly Q&A); paired sites (path/route/navigate) через `search_text`; «✅ Исправлено» без реального write режется даже в readonly
+
+## [1.0.161] — 2026-08-04
+
+- **Agent:** вопрос без явной просьбы править (`looksLikeQuestionRequest`) — soft-readonly tools + `AGENT_QUESTION_HINT`; UI-режим Agent не меняется, модель отвечает фактами вместо чеклиста «Реализация завершена»
+
+## [1.0.158] — 2026-08-04
+
+- Кнопки «Ответвить» и «Обновить» у ответа доступны во время работы модели (ветка создаётся сразу; regenerate останавливает текущий ход)
+
+## [1.0.155] — 2026-08-04
+
+- **Plan / Build:** живой `План.md` / `Plan.md`, компактная карточка с Preview, быстрый revision без пересборки Phase 1, Figma-first и multi-reason quality; после Build — честный partial-финал, если пути из плана ещё не тронуты
+- **Agent:** mechanical fast lane для версии / ≤2 файлов (короткий explore, только diagnostics); память выученных ошибок в `.harbor/learned-errors.md` (коррекции пользователя, plan-quality, verification)
+- **Архив:** кнопка «Удалить все», локализованные даты и диалоги удаления
+- Discard правок агента надёжнее матчит dirty-пути; review-пути нормализуются относительно корня репозитория
+- Контекстное меню: Add File / Selection to Chat Harbor с хоткеями
+- Plan/Ask: цвет пикера, обводка сообщений и лоадер в списке; активный агент и чат заметнее
+- Thinking только по реальному reasoning (без пустого «Thinking…»); изоляция выбранной модели между чатами
+- Защита `version` в `package.json` от записи без semver; убран Speed routing
+
 ## [1.0.3] — 2026-07-31
 
 - В статусе хода («Думаю…» и др.) серым показывать текущую модель

@@ -61,6 +61,12 @@ export const ASK_USER_VIA_TOOL_NUDGE =
 export const ASK_USER_VIA_TOOL_USER_VISIBLE =
   "Модель задала уточняющие вопросы текстом вместо tool request_user_input. Повторите запрос — вопросы должны прийти через выбор вариантов (и «Свой ответ…») в VS Code.";
 
+/** Plan: model claimed file edits instead of shipping the plan card. */
+export const PLAN_CLAIMED_EDIT_NUDGE =
+  "False: you are in Plan mode — write_file / search_replace are forbidden and you must NOT claim files were edited. " +
+  "Emit a FULL <proposed_plan>…</proposed_plan> grounded in Visible UI / tools (paths, Steps, Acceptance). " +
+  "If mocks are needed, put mock API paths and fixtures in the plan — do not pretend you already wrote them.";
+
 export type HonestFinaleDecision =
   | { kind: "ok"; text: string }
   | { kind: "nudge_write" }
@@ -433,6 +439,8 @@ export function decideHonestFinale(input: {
   planRevision?: boolean;
   /** Plan mechanical (version / one-field) — skip UI/Figma quality gates. */
   planMechanical?: boolean;
+  /** User attached an image this turn (screenshot mockup for Plan quality). */
+  hasImageAttachment?: boolean;
 }): HonestFinaleDecision {
   const text = String(input.text || "").trim();
   const allowNudgeWrite = input.allowNudgeWrite !== false;
@@ -451,11 +459,37 @@ export function decideHonestFinale(input: {
     // Plan quality: incomplete <proposed_plan>, page→tab drift, «уже есть»
     // without block inventory, or shipping PLAN.md instead of the card.
     // Runs before hedge so Risks/future-tense steps in a good plan still pass.
+    //
+    // Soft-readonly Agent Q&A (and Ask): still forbid «✅ Исправлено» without a
+    // real write_file / search_replace this turn.
+    const hadWriteReadonly =
+      input.hadSuccessfulWrite === true ||
+      precedingToolRoundHadSuccessfulWrite(input.messages);
+    const claimsEditReadonly =
+      looksLikeClaimedFileChanges(text) || looksLikeManualPatchReply(text);
+    if (!hadWriteReadonly && claimsEditReadonly) {
+      // Plan card may mention files/changes as future work — never ship the
+      // Agent-style «файлы не изменены» when a <proposed_plan> is present.
+      if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
+        // fall through to plan-quality / ok
+      } else if (input.allowNudgePlanQuality === true) {
+        // Plan without a card: nudge toward the plan deliverable, not write_file.
+        // Require explicit true — default allowNudgePlanQuality is on for other
+        // gates, but Ask/readonly claimed-edit must still be MISSING_WRITE.
+        return {
+          kind: "nudge_plan_quality",
+          nudge: PLAN_CLAIMED_EDIT_NUDGE,
+        };
+      } else {
+        return { kind: "replace", text: MISSING_WRITE_USER_VISIBLE };
+      }
+    }
     const planQualityDiagnosis = diagnosePlanQualityFailure(text, {
       userText: input.userText,
       messages: input.messages,
       planRevision: input.planRevision === true,
       planMechanical: input.planMechanical === true,
+      hasImageAttachment: input.hasImageAttachment === true,
     });
     if (planQualityDiagnosis) {
       if (allowNudgePlanQuality) {

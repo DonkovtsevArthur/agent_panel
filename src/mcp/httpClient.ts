@@ -5,18 +5,71 @@ import * as vscode from "vscode";
 import { listenForOAuthCallback } from "./callbackServer";
 import { FIGMA_MCP_REMOTE_URL } from "./figma";
 import { VsCodeFigmaOAuthProvider } from "./oauthProvider";
+import { applyFigmaTlsCaFromSettings } from "./tlsCa";
+
+function isUnauthorizedError(error: unknown): boolean {
+  if (error instanceof UnauthorizedError) {
+    return true;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { name?: string }).name === "UnauthorizedError"
+  ) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /re-?authorization required|unauthorized|authentication required/i.test(
+    message
+  );
+}
+
+async function openFigmaAuthInBrowser(url: URL): Promise<void> {
+  const href = url.toString();
+  try {
+    await vscode.env.clipboard.writeText(href);
+  } catch {
+    // ignore clipboard failures
+  }
+
+  let opened = false;
+  try {
+    opened = await vscode.env.openExternal(vscode.Uri.parse(href));
+  } catch {
+    opened = false;
+  }
+
+  // Non-blocking: keep waiting for the OAuth callback while offering a manual open.
+  void vscode.window
+    .showInformationMessage(
+      opened
+        ? "Откройте вкладку Figma и подтвердите доступ. Если браузер пустой — нажмите «Открыть ссылку»."
+        : "Браузер не открылся автоматически. Нажмите «Открыть ссылку» и подтвердите доступ Figma.",
+      "Открыть ссылку"
+    )
+    .then(async (choice) => {
+      if (choice === "Открыть ссылку") {
+        try {
+          await vscode.env.openExternal(vscode.Uri.parse(href));
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Не удалось открыть браузер: ${
+              error instanceof Error ? error.message : String(error)
+            }. Ссылка скопирована в буфер.`
+          );
+        }
+      }
+    });
+}
 
 export async function connectFigmaRemote(options: {
   secrets: vscode.SecretStorage;
   interactive: boolean;
   signal?: AbortSignal;
 }): Promise<Client> {
-  const openBrowser = async (url: URL) => {
-    await vscode.env.openExternal(vscode.Uri.parse(url.toString()));
-  };
+  applyFigmaTlsCaFromSettings();
 
   if (!options.interactive) {
-    // Reuse stored tokens; fail fast if re-auth is required.
     const provider = new VsCodeFigmaOAuthProvider(
       options.secrets,
       "http://127.0.0.1/unused",
@@ -36,12 +89,13 @@ export async function connectFigmaRemote(options: {
     const provider = new VsCodeFigmaOAuthProvider(
       options.secrets,
       callback.redirectUrl,
-      openBrowser
+      openFigmaAuthInBrowser
     );
     await provider.ensureLoaded();
+    await provider.invalidateCredentials("client");
 
     const client = new Client(
-      { name: "harbor-agents", version: "1.0.0" },
+      { name: "Codex", version: "1.0.0" },
       { capabilities: {} }
     );
 
@@ -54,7 +108,7 @@ export async function connectFigmaRemote(options: {
       await client.connect(transport);
       return client;
     } catch (error) {
-      if (!(error instanceof UnauthorizedError)) {
+      if (!isUnauthorizedError(error)) {
         throw error;
       }
       const { code, state } = await callback.waitForCode();
@@ -78,7 +132,7 @@ async function connectWithProvider(
     throw new Error("aborted");
   }
   const client = new Client(
-    { name: "harbor-agents", version: "1.0.0" },
+    { name: "Codex", version: "1.0.0" },
     { capabilities: {} }
   );
   const transport = new StreamableHTTPClientTransport(
@@ -106,17 +160,26 @@ export function looksLikeCatalogBlockedError(error: unknown): boolean {
   );
 }
 
-/** Short user-facing message for Settings / toasts. */
 export function formatFigmaRemoteError(
   error: unknown,
   lang: "en" | "ru" = "en"
 ): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("certificate") ||
+    lower.includes("unable to get local issuer") ||
+    lower.includes("self signed")
+  ) {
+    return lang === "ru"
+      ? "TLS/сертификат: укажите CA bundle в Settings → CA bundle path (system + корпоративный CA), Reload Window, затем Connect Figma снова."
+      : "TLS/certificate error: set Settings → CA bundle path (system + corporate CA), Reload Window, then Connect Figma again.";
+  }
   if (looksLikeCatalogBlockedError(error)) {
     return lang === "ru"
-      ? "Remote Figma MCP недоступен этому клиенту (403 Forbidden). Используйте Personal Access Token ниже (Figma → Settings → Security → Personal access tokens)."
-      : "Remote Figma MCP rejected this client (403 Forbidden). Use a Personal Access Token below (Figma → Settings → Security → Personal access tokens).";
+      ? "Remote Figma MCP отклонил OAuth (403). Нажмите Connect Figma ещё раз или используйте Personal Access Token ниже."
+      : "Remote Figma MCP rejected OAuth (403). Try Connect Figma again, or use a Personal Access Token below.";
   }
-  const message = error instanceof Error ? error.message : String(error);
   const trimmed = message.replace(/\s+/g, " ").trim();
   if (trimmed.length > 220) {
     return `${trimmed.slice(0, 217)}…`;
@@ -129,3 +192,4 @@ export function formatFigmaRemoteError(
   );
 }
 
+export { applyFigmaTlsCaFromSettings } from "./tlsCa";

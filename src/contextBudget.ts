@@ -1,5 +1,6 @@
 import type { ChatMessage, ContentPart, ToolCall } from "./openaiClient";
 import { HARBOR_VISION_HELPER_MARKER } from "./figmaVisionFormat";
+import { HARBOR_SCREENSHOT_EXPLORE_MARKER } from "./screenshotPlanExplore";
 
 export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 2_048;
 
@@ -7,10 +8,19 @@ export const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 2_048;
  * Figma MCP + under-the-hood vision-helper tool results are the authoritative
  * UI source in Plan. Do not shrink them when fitting the context budget —
  * otherwise the model drifts to a similar page found in the repo.
+ * Also pin host-injected screenshot OCR / explore summaries (system role).
  */
 export function shouldPreserveToolResultFromCompaction(
   message: ChatMessage
 ): boolean {
+  const content =
+    typeof message.content === "string" ? message.content : "";
+  if (
+    content.includes(HARBOR_VISION_HELPER_MARKER) ||
+    content.includes(HARBOR_SCREENSHOT_EXPLORE_MARKER)
+  ) {
+    return true;
+  }
   if (message.role !== "tool") {
     return false;
   }
@@ -18,9 +28,7 @@ export function shouldPreserveToolResultFromCompaction(
   if (name.startsWith("mcp__figma__")) {
     return true;
   }
-  const content =
-    typeof message.content === "string" ? message.content : "";
-  return content.includes(HARBOR_VISION_HELPER_MARKER);
+  return false;
 }
 
 /**

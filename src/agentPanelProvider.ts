@@ -25,9 +25,11 @@ import type { AgentPhase } from "./agentLoop";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
+  persistedModelAfterVisionTurn,
   routeModel,
   selectFallbackModel,
 } from "./modelRouting";
+import { shouldWholeTurnRouteForImageAttachment } from "./planQuality";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -38,6 +40,7 @@ import { commitAndPushPaths } from "./commitAndPush";
 import { discardPaths } from "./discardPaths";
 import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
+import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import {
   isReadonlyPolicy,
@@ -62,6 +65,7 @@ import {
   collapseOldToolUiMessages,
   createEmptyAgent,
   deleteAgentFromStore,
+  deleteAllArchivedAgentsFromStore,
   ensureActiveVisible,
   formatListTime,
   findAgentByChatId,
@@ -153,6 +157,7 @@ type WebviewToHost =
   | { type: "archiveAgent"; agentId: string }
   | { type: "restoreAgent"; agentId: string }
   | { type: "deleteAgent"; agentId: string }
+  | { type: "deleteAllArchived" }
   | { type: "modelChanged"; model: string; chatId?: string }
   | { type: "modeChanged"; mode: string; chatId?: string }
   | { type: "openFile"; path: string }
@@ -1665,12 +1670,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private postAgentsList(): void {
+    const lang = resolveUiLanguage(getConfig().language);
     const list = buildAgentsList(this.store).map((a) => ({
       id: a.id,
       name: a.name,
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
-      time: formatListTime(a.updatedAt),
+      time: formatListTime(a.updatedAt, lang),
       active: a.active,
       empty: a.empty,
       runState: this.runStateForAgent(a.id),
@@ -1684,6 +1690,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private postArchiveList(): void {
+    const lang = resolveUiLanguage(getConfig().language);
     const archive = buildArchiveList(this.store);
     this.view?.webview.postMessage({
       type: "archiveList",
@@ -1691,7 +1698,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         id: a.id,
         name: a.name,
         preview: a.preview,
-        time: formatListTime(a.archivedAt),
+        time: formatListTime(a.archivedAt, lang),
       })),
       screen: "archive",
     });
@@ -1913,6 +1920,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "deleteAgent":
         await this.confirmDeleteAgent(message.agentId);
         break;
+      case "deleteAllArchived":
+        await this.confirmDeleteAllArchived();
+        break;
       case "stop":
         this.abortChatRun(this.store.activeChatId);
         this.setStatusForChat(this.store.activeChatId, "", true);
@@ -1970,7 +1980,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           limit: 50,
         }).map((hit) => ({
           ...hit,
-          time: formatListTime(hit.updatedAt),
+          time: formatListTime(
+            hit.updatedAt,
+            resolveUiLanguage(getConfig().language)
+          ),
         }));
         this.view?.webview.postMessage({
           type: "chatSearchResults",
@@ -2139,12 +2152,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private branchFromMessage(messageIndex: number): void {
-    if (this.isChatRunning(this.store.activeChatId)) {
-      void vscode.window.showWarningMessage(
-        "Wait for the current response to finish, then create a branch."
-      );
-      return;
-    }
+    // Allowed while the source chat is still running: we snapshot history into
+    // a new branch and switch to it; the old run keeps going on fromChatId
+    // (same pattern as switchBranch / deleteBranch during a turn).
     const agentId = this.store.activeAgentId;
     const fromChatId = this.store.activeChatId;
     if (!agentId || !fromChatId) {
@@ -2293,19 +2303,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const empty = getAgentChatIds(agent).every(
       (id) => !chatHasMessages(this.store.chats[id]?.uiMessages)
     );
+    const isRu = resolveUiLanguage(getConfig().language) === "ru";
+    const deleteLabel = isRu ? "Удалить" : "Delete";
     const answer = await vscode.window.showWarningMessage(
       empty
-        ? `Delete empty agent "${agent.name}"?`
-        : `Delete "${agent.name}" permanently?`,
+        ? isRu
+          ? `Удалить пустого агента «${agent.name}»?`
+          : `Delete empty agent "${agent.name}"?`
+        : isRu
+          ? `Удалить «${agent.name}» безвозвратно?`
+          : `Delete "${agent.name}" permanently?`,
       {
         modal: true,
         detail: empty
-          ? "This agent has no messages and will be deleted without archiving."
-          : "Message history will be deleted permanently.",
+          ? isRu
+            ? "У агента нет сообщений — он будет удалён без архивации."
+            : "This agent has no messages and will be deleted without archiving."
+          : isRu
+            ? "История сообщений будет удалена безвозвратно."
+            : "Message history will be deleted permanently.",
       },
-      "Delete"
+      deleteLabel
     );
-    if (answer !== "Delete") {
+    if (answer !== deleteLabel) {
       return;
     }
 
@@ -2327,6 +2347,47 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       void this.postChatScreen();
       this.view?.webview.postMessage({ type: "showAgents" });
     }
+  }
+
+  private async confirmDeleteAllArchived(): Promise<void> {
+    const archived = buildArchiveList(this.store);
+    if (!archived.length) {
+      return;
+    }
+    const isRu = resolveUiLanguage(getConfig().language) === "ru";
+    const deleteLabel = isRu ? "Удалить все" : "Delete all";
+    const answer = await vscode.window.showWarningMessage(
+      isRu
+        ? `Удалить все агенты из архива (${archived.length})?`
+        : `Delete all archived agents (${archived.length})?`,
+      {
+        modal: true,
+        detail: isRu
+          ? "История сообщений будет удалена безвозвратно."
+          : "Message history will be deleted permanently.",
+      },
+      deleteLabel
+    );
+    if (answer !== deleteLabel) {
+      return;
+    }
+
+    for (const item of archived) {
+      const agent = this.store.agents.find((a) => a.id === item.id);
+      if (!agent) {
+        continue;
+      }
+      for (const chatId of getAgentChatIds(agent)) {
+        this.abortChatRun(chatId);
+      }
+    }
+    this.persistActiveChat();
+    deleteAllArchivedAgentsFromStore(this.store);
+    this.hydrateActiveChat();
+    this.saveStore();
+    this.setScreen("archive");
+    this.postArchiveList();
+    this.postAgentsList();
   }
 
   private async pickModel(): Promise<void> {
@@ -2597,14 +2658,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const hasImageAttachment = attachments.some(
       (attachment) => attachment.kind === "image"
     );
-    // Vision routing (whole-turn switch) только для вложений-картинок.
-    // Figma URL не переключает весь ход: выбранная модель остаётся planner'ом.
-    // MCP get_screenshot / screenshot_url: если в Settings задан preferred
-    // vision и planner не в этом списке — under-the-hood helper (preferred
-    // смотрит PNG → текстовые лейблы). Raw image-message planner'у — только
-    // когда он сам в preferred (или preferred пуст и у planner есть vision).
-    // См. shouldDeliverRawScreenshotToPlanner / deliverVisionMedia.
-    const needsVision = hasImageAttachment;
+    const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
+    // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask:
+    // иначе Figma MCP / write_file пропадают на вопросах вроде «посмотри макет».
+    const modeForRun = selectedMode;
+    // Vision routing (whole-turn switch) только для вложений-картинок в Agent/Ask.
+    // Plan + screenshot (без Figma URL): host OCR preflight — выбранная модель
+    // (Kimi и т.п.) остаётся planner'ом, как при Figma MCP. См. also
+    // shouldDeliverRawScreenshotToPlanner / deliverVisionMedia.
+    const needsVision = shouldWholeTurnRouteForImageAttachment({
+      planMode: modeForRun.id === "plan",
+      hasImageAttachment,
+      userText: trimmed,
+    });
     const visionPreferenceIds = needsVision
       ? config.visionRouting.preferredModelIds
       : undefined;
@@ -2618,22 +2684,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : undefined,
     });
     let chosen = routed?.modelId || requestedModel;
-    const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
-    // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask:
-    // иначе Figma MCP / write_file пропадают на вопросах вроде «посмотри макет».
-    const modeForRun = selectedMode;
     this.selectedMode = modeForRun.id;
     if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
       touchChat(this.store, this.store.activeChatId, {
         selectedMode: this.selectedMode,
       });
     }
-    const selectedModelAfterRun = chosen;
+    // Vision whole-turn switch is turn-local only: run with `chosen`, but keep the
+    // chat picker on the user's selection (e.g. Kimi) so the next text-only turn
+    // does not stick on Gemini/Flash.
+    const selectedModelAfterRun = persistedModelAfterVisionTurn({
+      requestedModelId: requestedModel,
+      runModelId: chosen,
+    });
     if (chosen !== requestedModel) {
       const label =
         enabledModels.find((item) => item.id === chosen)?.label || chosen;
+      const requestedLabel =
+        enabledModels.find((item) => item.id === requestedModel)?.label ||
+        requestedModel;
       void vscode.window.showInformationMessage(
-        `Using ${label} because the message contains an image.`
+        `Using ${label} for this message because it contains an image. Selected model stays ${requestedLabel}.`
       );
     }
     if (!runChatId || !this.store.chats[runChatId]) {
@@ -2684,7 +2755,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.saveSession();
     this.ensureProviderProbe(chosen);
 
-    if (!resolveModelSupportsVision(chosen)) {
+    // Plan + screenshot: keep image attachments for host OCR preflight even when
+    // the planner (Kimi) has no vision — do not strip, do not scare with a toast.
+    const screenshotPlanPreflight =
+      modeForRun.id === "plan" &&
+      hasImageAttachment &&
+      !needsVision;
+    if (!resolveModelSupportsVision(chosen) && !screenshotPlanPreflight) {
       const withoutImages = attachments.filter((a) => a.kind !== "image");
       if (withoutImages.length < attachments.length) {
         this.pushUiToChat(
@@ -3466,10 +3543,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     try {
       const remaining = await resolveRemainingReviewFiles(paths);
-      const targets = remaining.length
-        ? remaining.map((f) => f.path)
-        : paths;
+      const chat = this.store.chats[runChatId];
+      const fallbackPaths = Array.isArray(chat?.lastAgentEditedPaths)
+        ? chat.lastAgentEditedPaths
+        : [];
+      // Prefer live dirty review paths; always keep the UI paths + last edits as seeds.
+      const targets = [
+        ...new Set([
+          ...(remaining.length ? remaining.map((f) => f.path) : []),
+          ...paths.map(String).filter(Boolean),
+        ]),
+      ];
       const result = await discardPaths(targets, {
+        fallbackPaths,
         signal: runRef.controller.signal,
         onPhase: (detail) => {
           if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -3562,7 +3648,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     // Keep every path the turn reported — including shell-side dirty files
     // whose numstat may be 0 (mode-only / binary). Empty path only is dropped.
-    const unique = mergeEdits(edits).filter((e) => Boolean(e.path));
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const unique = mergeEdits(edits)
+      .map((e) => ({
+        ...e,
+        path: folder ? toRepoRelativePath(e.path, folder) || e.path : e.path,
+      }))
+      .filter((e) => Boolean(e.path));
     if (!unique.length) {
       this.setStatusForChat(chatId, "", true);
       return;
@@ -4556,10 +4648,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   <section id="archiveScreen" class="screen" hidden>
     <div class="agents-top">
-      <button type="button" class="icon-btn" id="backFromArchiveBtn" title="Back to agents" aria-label="Back to agents">
+      <button type="button" class="icon-btn" id="backFromArchiveBtn" title="К списку агентов" aria-label="К списку агентов">
         <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       </button>
-      <div class="agents-title">Archive</div>
+      <div class="agents-title">Архив</div>
+      <button type="button" class="text-btn archive-delete-all" id="deleteAllArchiveBtn" hidden>
+        Удалить все
+      </button>
     </div>
     <div id="archiveList" class="agents-list"></div>
   </section>
@@ -4889,7 +4984,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </button>
         </div>
         <div class="settings-modal-body">
-          <p class="settings-section-note" id="mcpEditNote">Use a Personal Access Token. Remote OAuth from Figma is usually unavailable to Harbor Agents.</p>
+          <p class="settings-section-note" id="mcpEditNote">Connect Figma via browser OAuth. Personal Access Token is an optional fallback.</p>
           <p class="settings-section-note" id="mcpEditStatus">Status: Disconnected</p>
           <div class="settings-figma-actions">
             <button type="button" class="text-btn" id="settingsFigmaConnectBtn">Connect Figma</button>

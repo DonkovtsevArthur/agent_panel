@@ -284,6 +284,13 @@ export async function persistIncomingAttachments(
         mime,
         storageKey,
         size: buf.byteLength,
+        // Keep inline preview so Plan OCR preflight works even if storage
+        // read fails later (and so UI thumbnails do not re-read disk).
+        ...(kind === "image"
+          ? {
+              previewDataUrl: `data:${mime || "image/png"};base64,${item.dataBase64}`,
+            }
+          : {}),
       });
       continue;
     }

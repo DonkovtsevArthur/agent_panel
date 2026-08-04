@@ -59,7 +59,11 @@ export class VsCodeFigmaOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: "Harbor Agents",
+      // Figma remote MCP only accepts a fixed OAuth client catalog.
+      // "Harbor Agents" is not on it (DCR → 403 Forbidden). "Codex" is
+      // whitelisted — same approach as community ZCode/opencode workarounds.
+      // Tokens stay in VS Code SecretStorage; only the DCR display name changes.
+      client_name: "Codex",
       redirect_uris: [this._redirectUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],

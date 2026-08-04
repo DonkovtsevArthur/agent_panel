@@ -7,6 +7,10 @@ const {
   archiveAgentInStore,
   restoreAgentInStore,
   deleteAgentBranch,
+  deleteAllArchivedAgentsFromStore,
+  buildArchiveList,
+  formatListTime,
+  createEmptyAgent,
   searchChatMessages,
   summarizeMarkdownText,
   buildAgentsList,
@@ -228,6 +232,49 @@ test("collapseOldToolUiMessages keeps recent tools and inserts summary", () => {
   );
 });
 
+test("collapseOldToolUiMessages pins screenshot Plan preflight cards", () => {
+  const messages = [
+    { role: "user", text: "plan from screenshot" },
+    {
+      role: "tool",
+      text: "⚙ vision_attached_screenshot",
+      step: {
+        stepId: "vision-1",
+        kind: "tool",
+        name: "vision_attached_screenshot",
+        status: "done",
+      },
+    },
+    {
+      role: "tool",
+      text: "⚙ screenshot_plan_explore",
+      step: {
+        stepId: "explore-1",
+        kind: "tool",
+        name: "screenshot_plan_explore",
+        status: "done",
+      },
+    },
+    ...Array.from({ length: 20 }, (_, i) => ({
+      role: "tool",
+      text: `⚙ read_file(${i})`,
+      step: {
+        stepId: `t${i}`,
+        kind: "tool",
+        name: "read_file",
+        status: "done",
+      },
+    })),
+  ];
+  const next = collapseOldToolUiMessages(messages, { keepRecentTools: 4 });
+  const names = next
+    .filter((m) => m.role === "tool")
+    .map((m) => m.step?.name)
+    .filter(Boolean);
+  assert.ok(names.includes("vision_attached_screenshot"));
+  assert.ok(names.includes("screenshot_plan_explore"));
+});
+
 test("list summaries remove markdown and prefer prompt after selection fences", () => {
   const message =
     "```8:8:src/shared/libs/get-weather.ts\nfetchWeather()\n```\n\n**Перепиши** этот вызов";
@@ -250,4 +297,35 @@ test("list summaries remove markdown and prefer prompt after selection fences", 
     getAgentDisplayName(agent, chat),
     "Перепиши этот вызов"
   );
+});
+
+test("formatListTime localizes yesterday and dates", () => {
+  const now = Date.now();
+  const yesterday = now - 24 * 60 * 60 * 1000;
+  assert.equal(formatListTime(yesterday, "en"), "yesterday");
+  assert.equal(formatListTime(yesterday, "ru"), "вчера");
+  assert.match(formatListTime(now, "ru"), /^\d{2}:\d{2}$/);
+});
+
+test("deleteAllArchivedAgentsFromStore removes only archived agents", () => {
+  const store = createDefaultStore("gpt-4.1");
+  const keep = store.agents[0];
+  keep.name = "Keep me";
+  store.chats[keep.chatId].uiMessages = [
+    { role: "user", text: "active chat" },
+  ];
+
+  const { agent: archived, chat: archivedChat } = createEmptyAgent("gpt-4.1");
+  archived.name = "Archived";
+  archivedChat.uiMessages = [{ role: "user", text: "old" }];
+  store.agents.push(archived);
+  store.chats[archivedChat.id] = archivedChat;
+  assert.equal(archiveAgentInStore(store, archived.id), true);
+  assert.equal(buildArchiveList(store).length, 1);
+
+  const deleted = deleteAllArchivedAgentsFromStore(store);
+  assert.equal(deleted, 1);
+  assert.equal(buildArchiveList(store).length, 0);
+  assert.ok(store.agents.some((a) => a.id === keep.id));
+  assert.equal(store.agents.some((a) => a.id === archived.id), false);
 });

@@ -14,6 +14,7 @@ const {
   extractPlanTargetPaths,
   remainingPlanTargetPaths,
   buildPlanChecklistNudge,
+  buildPlanChecklistPartialFinale,
 } = require("../out/planImplement.js");
 
 const {
@@ -89,6 +90,14 @@ test("looksLikeEditCorrectionRequest detects wrong-table / mixed-up follow-ups",
     looksLikeEditCorrectionRequest("wrong table, I mixed up the screen"),
     true
   );
+  // Layout unwrap without open-file context is NOT the legacy regex path —
+  // use looksLikeDirectiveFixRequest (structural) instead.
+  assert.equal(
+    looksLikeEditCorrectionRequest(
+      "не нужно оборачивать layout content он уже есть внутри таблицы"
+    ),
+    false
+  );
   assert.equal(
     looksLikeEditCorrectionRequest("добавь кнопку сохранить в шапку"),
     false
@@ -97,6 +106,49 @@ test("looksLikeEditCorrectionRequest detects wrong-table / mixed-up follow-ups",
     looksLikeEditCorrectionRequest(
       `${PLAN_IMPLEMENT_MARKER}\nРеализуй следующий план:\n\nтаблица`
     ),
+    false
+  );
+});
+
+test("looksLikeDirectiveFixRequest is structural: short + target file", () => {
+  const { looksLikeDirectiveFixRequest } = require("../out/planImplement.js");
+  assert.equal(
+    looksLikeDirectiveFixRequest(
+      "не нужно оборачивать layout content он уже есть внутри таблицы",
+      { openPaths: ["src/features/cert/certificate-table.tsx"] }
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeDirectiveFixRequest("убери лишнюю обёртку", {
+      lastEditedPaths: ["src/a.tsx"],
+    }),
+    true
+  );
+  assert.equal(
+    looksLikeDirectiveFixRequest("поправь title в src/config.ts"),
+    true
+  );
+  // No target → not a directive-fix lane.
+  assert.equal(
+    looksLikeDirectiveFixRequest("убери лишнюю обёртку", {
+      openPaths: [],
+      lastEditedPaths: [],
+    }),
+    false
+  );
+  // Complex / page → no.
+  assert.equal(
+    looksLikeDirectiveFixRequest("создай новую страницу Отделы", {
+      openPaths: ["src/pages/x.tsx"],
+    }),
+    false
+  );
+  // Bare question → no.
+  assert.equal(
+    looksLikeDirectiveFixRequest("что делает эта функция?", {
+      openPaths: ["src/a.ts"],
+    }),
     false
   );
 });
@@ -120,10 +172,12 @@ test("buildPlanImplementSystemHint treats the plan Implementation section as the
 
 test("buildEditCorrectionSystemHint prefers search_replace and Figma labels", () => {
   const hint = buildEditCorrectionSystemHint();
-  assert.match(hint, /correcting/i);
+  assert.match(hint, /correcting|short directive|known target/i);
   assert.match(hint, /search_replace/i);
   assert.match(hint, /Figma|vision-helper/i);
   assert.match(hint, /read_file/i);
+  assert.match(hint, /paired sites|search_text/i);
+  assert.match(hint, /do not only describe the fix/i);
 });
 
 test("implementPlan uses tighter explore limits than Agent default", () => {
@@ -180,4 +234,26 @@ test("remainingPlanTargetPaths and checklist nudge", () => {
   assert.match(nudge, /Plan checklist incomplete/);
   assert.match(nudge, /src\/b\.ts/);
   assert.match(nudge, /search_replace/);
+});
+
+test("buildPlanChecklistPartialFinale prepends honest remaining paths", () => {
+  const partial = buildPlanChecklistPartialFinale("Готово, всё сделал.", [
+    "src/b.ts",
+    "src/c.ts",
+  ]);
+  assert.match(partial, /частично/i);
+  assert.match(partial, /src\/b\.ts/);
+  assert.match(partial, /src\/c\.ts/);
+  assert.match(partial, /Готово, всё сделал/);
+
+  const alreadyHonest = buildPlanChecklistPartialFinale(
+    "Сделано частично. Осталось: src/b.ts — blocked by missing API.",
+    ["src/b.ts"]
+  );
+  assert.equal(
+    alreadyHonest,
+    "Сделано частично. Осталось: src/b.ts — blocked by missing API."
+  );
+
+  assert.equal(buildPlanChecklistPartialFinale("ok", []), "ok");
 });

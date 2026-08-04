@@ -22,6 +22,8 @@ export interface DelegateTaskOptions {
   model: string;
   storageUri?: vscode.Uri;
   signal?: AbortSignal;
+  /** Override default sub-agent tool-round budget (default 8). */
+  maxToolRounds?: number;
 }
 
 export async function runDelegateTask(
@@ -55,7 +57,7 @@ export async function runDelegateTask(
       agentMode: options.mode,
       callbacks: silentCallbacks,
       excludeToolNames,
-      maxToolRounds: DELEGATE_MAX_TOOL_ROUNDS,
+      maxToolRounds: options.maxToolRounds ?? DELEGATE_MAX_TOOL_ROUNDS,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

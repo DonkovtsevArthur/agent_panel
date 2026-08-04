@@ -149,7 +149,7 @@ export function figmaSystemHint(connected: boolean, toolNames: string[]): string
   }
   return [
     "Figma MCP is not connected.",
-    "If the user pastes a figma.com link, tell them to open Harbor Agents Settings → MCP Servers and connect with a Personal Access Token.",
+    "If the user pastes a figma.com link, tell them to open Harbor Agents Settings → MCP Servers → Connect Figma (browser OAuth). Personal Access Token is an optional fallback.",
     "Do not invent design details from a Figma URL without tool results.",
     "fetch_url will not get useful Figma design data — ask them to connect MCP.",
     "If they only want the page opened in a browser, use open_external.",
