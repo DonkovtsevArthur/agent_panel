@@ -87,7 +87,7 @@ Default intent: если пользователь дал Figma-ссылку и/�
 
 Не включай в <proposed_plan> секцию «Открытые вопросы» и не пиши уточняющие вопросы текстом в плане — на них нельзя ответить из карточки. Если остались неоднозначности, которые блокируют реализацию — сначала request_user_input (фаза 2), дождись ответов, и только потом выдавай proposed_plan. Decision-complete план = реализатору не нужно ни о чём спрашивать; каждый шаг grounded путём из tools.
 
-Не спрашивай «начать реализацию?» — пользователь сам переключит режим через кнопку Build. Не повторяй весь план в развёрнутом виде — структура выше достаточна. Не начинай реализацию. План — это артефакт для review, не код. Если пользователь просит правки после плана — новый план должен быть полной заменой, не патчем к старому.`;
+Не спрашивай «начать реализацию?» — пользователь сам переключит режим через кнопку Build. Не повторяй весь план в развёрнутом виде — структура выше достаточна. Не начинай реализацию. План — это артефакт для review, не код. Если пользователь просит правки после уже выданного <proposed_plan> — выдай полную замену карточки (полный <proposed_plan>), но правь от последнего плана: примени только дельту пользователя. Не перезапускай Фазу 1 и не перевызывай Figma/широкий explore, если WHAT (экран/чеклист/node) не изменился и ранее процитированные пути всё ещё валидны.`;
   }
   return `Plan mode is active.
 Plan mode is not changed by user intent, tone, or imperative language. If a user asks for execution while still in Plan Mode, treat it as a request to plan the execution, not perform it.
@@ -156,7 +156,7 @@ Inside the block, reply with a structured plan in the language of the user's mes
 
 Do not put an "Open questions" section (or clarifying questions as prose) inside <proposed_plan> — the card has no way to answer them. If blocking ambiguity remains, use request_user_input first (phase 2), wait for answers, then emit proposed_plan. A decision-complete plan means the implementer need not ask anything; every step is grounded with a tool-verified path.
 
-Do not ask "should I proceed?" — the user will switch modes via the Build button. Do not repeat the full plan in expanded prose — the structure above is sufficient. Do not start implementation. The plan is a review artifact, not code. If the user asks for revisions after a prior plan, any new plan must be a complete replacement, not a patch.`;
+Do not ask "should I proceed?" — the user will switch modes via the Build button. Do not repeat the full plan in expanded prose — the structure above is sufficient. Do not start implementation. The plan is a review artifact, not code. If the user asks for revisions after an already emitted <proposed_plan>, emit a full replacement card (complete <proposed_plan>), but edit from the last plan: apply only the user's delta. Do not restart Phase 1 or re-call Figma / broad explore unless WHAT (screen/checklist/node) changed or a previously cited path is no longer valid.`;
 }
 
 function askModeSystemPrompt(lang?: "en" | "ru"): string {

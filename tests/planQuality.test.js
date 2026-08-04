@@ -29,9 +29,11 @@ const {
   significantChecklistTokens,
   shouldForceFigmaBeforeExplore,
   turnHadFigmaPlanTools,
+  historyHasProposedPlan,
   proposedPlanHasWorkspacePath,
   proposedPlanHasGroundedPath,
   PLAN_QUALITY_NUDGE,
+  PLAN_REVISION_HINT,
   FIGMA_FIRST_FORCE_HINT,
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
 } = require("../out/planQuality.js");
@@ -646,6 +648,56 @@ test("goal_frame_title requires Goal to include vision-helper Title token", () =
     { userText: user, messages: FIGMA_TOOL_MESSAGES }
   );
   assert.equal(d?.reason, "goal_frame_title");
+});
+
+test("historyHasProposedPlan and PLAN_REVISION_HINT", () => {
+  assert.equal(historyHasProposedPlan([]), false);
+  assert.equal(
+    historyHasProposedPlan([
+      { role: "user", content: "plan it" },
+      {
+        role: "assistant",
+        content:
+          "<proposed_plan>\n**Цель**: x\n**Шаги**:\n1. reuse `src/a/b.ts` — observed: `Foo`\n</proposed_plan>",
+      },
+    ]),
+    true
+  );
+  assert.match(PLAN_REVISION_HINT, /Plan revision/i);
+  assert.match(PLAN_REVISION_HINT, /FULL replacement/i);
+  assert.match(PLAN_REVISION_HINT, /Do NOT restart Phase 1/i);
+});
+
+test("planRevision diagnose skips re-fetch gates", () => {
+  const user =
+    "бекенд не предусмотрен https://www.figma.com/design/abc/x?node-id=1-2";
+  const plan = [
+    "<proposed_plan>",
+    "**Цель**: Удостоверение",
+    "**Шаги**:",
+    "1. Таблица — новый по паттерну `src/pages/notification-certificate/ui/page.tsx` — observed: `CertificatePage`",
+    "**Затрагиваемые файлы**: `src/pages/notification-certificate/ui/page.tsx`",
+    "**Acceptance**: UI без API",
+    UI_IMPLEMENTATION_NOTIFICATION,
+    "</proposed_plan>",
+  ].join("\n");
+  // Fresh turn without tool reads would fail component API / Figma tools.
+  const fresh = diagnosePlanQualityFailure(plan, {
+    userText: user,
+    messages: [],
+  });
+  assert.ok(fresh);
+  assert.ok(
+    (fresh?.reasons || []).includes("missing_figma_tools") ||
+      (fresh?.reasons || []).includes("missing_component_api_read")
+  );
+  // Revision: same card + scope note — do not force re-Figma / re-read.
+  const rev = diagnosePlanQualityFailure(plan, {
+    userText: "бекенд не предусмотрен",
+    messages: [],
+    planRevision: true,
+  });
+  assert.equal(rev, null);
 });
 
 test("shouldForceFigmaBeforeExplore until Figma MCP ran in Plan", () => {

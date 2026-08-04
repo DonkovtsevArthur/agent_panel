@@ -84,6 +84,8 @@ import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
 import {
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
   FIGMA_FIRST_FORCE_HINT,
+  historyHasProposedPlan,
+  PLAN_REVISION_HINT,
   shouldForceFigmaBeforeExplore,
 } from "./planQuality";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
@@ -635,6 +637,9 @@ export async function runMainLikeAgentTurn(options: {
     looksLikeEditCorrectionRequest(options.userText);
   const focusedPlanEdit = implementPlan || editCorrection;
   const planQuality = readonly && mode.id === "plan";
+  // Follow-up after a prior plan card: revise from last plan, don't restart Phase 1.
+  const planRevision =
+    planQuality && historyHasProposedPlan(priorApi);
   const discardScope =
     !readonly && !implementPlan && !editCorrection
       ? resolveDiscardScope(options.userText)
@@ -650,6 +655,7 @@ export async function runMainLikeAgentTurn(options: {
     kimi: kimiModel,
     implementPlan: focusedPlanEdit,
     planQuality,
+    planRevision,
     userText: options.userText,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
@@ -690,7 +696,13 @@ export async function runMainLikeAgentTurn(options: {
     ...(figmaAntiDrift
       ? [{ role: "system" as const, content: figmaAntiDrift }]
       : []),
+    ...(planRevision
+      ? [{ role: "system" as const, content: PLAN_REVISION_HINT }]
+      : []),
+    // Fresh plan only — revision uses PLAN_REVISION_HINT (no Phase-1 Figma force
+    // unless the user re-pastes a Figma URL, handled by shouldForceFigma*).
     ...(planQuality &&
+    !planRevision &&
     figmaConnected &&
     messageHasFigmaUrl(options.userText)
       ? [{ role: "system" as const, content: FIGMA_FIRST_FORCE_HINT }]
@@ -1356,6 +1368,7 @@ export async function runMainLikeAgentTurn(options: {
           hadSuccessfulWrite: turnHadRealFileEdit(),
           kimi: kimiModel,
           gitOperationCompleted: turnHadGitOperation,
+          planRevision,
           allowNudgeWrite: false,
           allowNudgeHedge: false,
           allowNudgeHollow: false,
@@ -1412,6 +1425,7 @@ export async function runMainLikeAgentTurn(options: {
       hadSuccessfulWrite: turnHadRealFileEdit(),
       kimi: kimiModel,
       gitOperationCompleted: turnHadGitOperation,
+      planRevision,
       allowNudgeWrite: writeNudgeAttempts < maxWriteNudges,
       allowNudgeHedge: hedgeNudgeAttempts < maxHedgeNudges,
       allowNudgeHollow:
@@ -2063,7 +2077,11 @@ export async function runMainLikeAgentTurn(options: {
       lastSoftNudgeAtStreak = exploreStreak;
       options.callbacks.onPhase(
         "thinking",
-        planQuality ? "Сверяю пункты с репо…" : "Сокращаю обзор…"
+        planRevision
+          ? "Уточняю план…"
+          : planQuality
+            ? "Сверяю пункты с репо…"
+            : "Сокращаю обзор…"
       );
       messages.push({
         role: "user",
@@ -2073,6 +2091,7 @@ export async function runMainLikeAgentTurn(options: {
           plan: mode.id === "plan",
           kimi: kimiModel,
           implementPlan: focusedPlanEdit,
+          planRevision,
         }),
       });
     }
@@ -2172,6 +2191,7 @@ export async function runMainLikeAgentTurn(options: {
       hadSuccessfulWrite: turnHadRealFileEdit(),
       kimi: kimiModel,
       gitOperationCompleted: turnHadGitOperation,
+      planRevision,
       allowNudgeWrite: false,
       allowNudgeHedge: false,
       allowNudgeHollow: false,

@@ -139,8 +139,10 @@ test("post-edit verification is enabled for all Agent turns", () => {
   assert.match(mainLikeSrc, /buildEditCorrectionSystemHint/);
   assert.match(
     mainLikeSrc,
-    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality/
+    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality[\s\S]*?planRevision/
   );
+  assert.match(mainLikeSrc, /PLAN_REVISION_HINT/);
+  assert.match(mainLikeSrc, /historyHasProposedPlan/);
   assert.match(mainLikeSrc, /PLAN_QUALITY_NUDGE/);
   assert.match(mainLikeSrc, /nudge_plan_quality/);
   assert.match(mainLikeSrc, /DEFAULT_WORKSPACE_RULE_CHAR_CAP/);
