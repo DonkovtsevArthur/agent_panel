@@ -8136,6 +8136,40 @@
     promptEl.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  /** Вставить @path упоминания в composer (как из @-меню). */
+  function insertComposerMentions(paths) {
+    if (!promptEl) {
+      return;
+    }
+    const list = (Array.isArray(paths) ? paths : [])
+      .map((p) => String(p || "").trim().replace(/^@+/, ""))
+      .filter(Boolean);
+    if (!list.length) {
+      return;
+    }
+    showScreen("chat");
+    const snippet = list.map((p) => `@${p}`).join(" ") + " ";
+    const cur = promptEl.value || "";
+    const start =
+      typeof promptEl.selectionStart === "number"
+        ? promptEl.selectionStart
+        : cur.length;
+    const end =
+      typeof promptEl.selectionEnd === "number"
+        ? promptEl.selectionEnd
+        : start;
+    const before = cur.slice(0, start);
+    const after = cur.slice(end);
+    const padBefore = before.length && !/\s$/.test(before) ? " " : "";
+    const next = before + padBefore + snippet + after;
+    const caret = (before + padBefore + snippet).length;
+    promptEl.value = next;
+    promptEl.disabled = false;
+    promptEl.focus();
+    promptEl.setSelectionRange(caret, caret);
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
   function parseReviewData(raw) {
     if (Array.isArray(raw)) {
       return { files: raw, showScm: false };

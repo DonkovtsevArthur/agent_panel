@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.141",
+  "version": "1.0.151",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -34,6 +34,8 @@
     "onCommand:agentPanel.clearChat",
     "onCommand:agentPanel.addSelectionToChat",
     "onCommand:agentPanel.addSelectionToNewChat",
+    "onCommand:agentPanel.addFileToChat",
+    "onCommand:agentPanel.addFileToNewChat",
     "onCommand:agentPanel.generateCommitMessage"
   ],
   "main": "./out/extension.js",
@@ -94,6 +96,16 @@
         "category": "%command.category%"
       },
       {
+        "command": "agentPanel.addFileToChat",
+        "title": "%command.addFile.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addFileToNewChat",
+        "title": "%command.addFileToNewChat.title%",
+        "category": "%command.category%"
+      },
+      {
         "command": "agentPanel.generateCommitMessage",
         "title": "%command.generateCommitMessage.title%",
         "category": "%command.category%",
@@ -120,10 +132,28 @@
           "when": "editorHasSelection"
         },
         {
+          "command": "agentPanel.addFileToChat",
+          "when": "resourceScheme == file || resourceScheme == untitled"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "resourceScheme == file || resourceScheme == untitled"
+        },
+        {
           "command": "agentPanel.generateCommitMessage"
         }
       ],
       "editor/context": [
+        {
+          "command": "agentPanel.addFileToChat",
+          "when": "resourceScheme == file || resourceScheme == untitled",
+          "group": "navigation@8"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "resourceScheme == file || resourceScheme == untitled",
+          "group": "navigation@8.5"
+        },
         {
           "command": "agentPanel.addSelectionToChat",
           "when": "editorHasSelection",
@@ -132,6 +162,18 @@
         {
           "command": "agentPanel.addSelectionToNewChat",
           "when": "editorHasSelection",
+          "group": "navigation@10"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "agentPanel.addFileToChat",
+          "when": "!explorerResourceIsFolder",
+          "group": "navigation@9"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "!explorerResourceIsFolder",
           "group": "navigation@10"
         }
       ],
@@ -155,6 +197,18 @@
         "key": "ctrl+alt+shift+l",
         "mac": "cmd+alt+shift+l",
         "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "agentPanel.addFileToChat",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h",
+        "when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
+      },
+      {
+        "command": "agentPanel.addFileToNewChat",
+        "key": "ctrl+alt+shift+h",
+        "mac": "cmd+alt+shift+h",
+        "when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
       }
     ],
     "configuration": {

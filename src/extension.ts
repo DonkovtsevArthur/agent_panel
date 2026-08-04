@@ -45,6 +45,15 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.addSelectionToNewChat()
     ),
     vscode.commands.registerCommand(
+      "agentPanel.addFileToChat",
+      (uri?: vscode.Uri, uris?: vscode.Uri[]) => provider.addFileToChat(uri, uris)
+    ),
+    vscode.commands.registerCommand(
+      "agentPanel.addFileToNewChat",
+      (uri?: vscode.Uri, uris?: vscode.Uri[]) =>
+        provider.addFileToNewChat(uri, uris)
+    ),
+    vscode.commands.registerCommand(
       "agentPanel.generateCommitMessage",
       (...args: unknown[]) => generateCommitMessage(args[0])
     ),

@@ -188,6 +188,90 @@ function appendCursorAndSelection(
   }
 }
 
+/** Путь для @mention: workspace-relative для file, `untitled.lang` для черновиков. */
+export function fileMentionPathFromUri(
+  uri: vscode.Uri,
+  languageId?: string
+): string | undefined {
+  if (uri.scheme === "file") {
+    return relativeOrFsPath(uri);
+  }
+  if (uri.scheme === "untitled") {
+    const lang = String(languageId || "").trim();
+    return lang ? `untitled.${lang}` : "untitled";
+  }
+  return undefined;
+}
+
+/**
+ * Файлы для Harbor: с диска — как вложения (любой тип), untitled — как @mention.
+ * `uri` / `uris` — из explorer/context; иначе — активный (или последний) редактор.
+ */
+export function resolveFilesForHarbor(
+  uri?: vscode.Uri,
+  uris?: readonly vscode.Uri[]
+): { fileUris: vscode.Uri[]; mentionPaths: string[] } {
+  const candidates: vscode.Uri[] = [];
+  if (Array.isArray(uris) && uris.length) {
+    for (const item of uris) {
+      if (item instanceof vscode.Uri) {
+        candidates.push(item);
+      }
+    }
+  } else if (uri instanceof vscode.Uri) {
+    candidates.push(uri);
+  } else {
+    const editor = resolveEditor();
+    if (editor && !editor.document.isClosed) {
+      candidates.push(editor.document.uri);
+    }
+  }
+
+  const seenFile = new Set<string>();
+  const seenMention = new Set<string>();
+  const fileUris: vscode.Uri[] = [];
+  const mentionPaths: string[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.scheme === "file") {
+      const key = candidate.toString();
+      if (seenFile.has(key)) {
+        continue;
+      }
+      seenFile.add(key);
+      fileUris.push(candidate);
+      continue;
+    }
+    if (candidate.scheme === "untitled") {
+      const open = vscode.workspace.textDocuments.find(
+        (doc) => doc.uri.toString() === candidate.toString()
+      );
+      const path = fileMentionPathFromUri(candidate, open?.languageId);
+      if (!path || seenMention.has(path)) {
+        continue;
+      }
+      seenMention.add(path);
+      mentionPaths.push(path);
+    }
+  }
+  return { fileUris, mentionPaths };
+}
+
+/**
+ * Пути файлов для @mention в composer.
+ * `uri` / `uris` — из explorer/context; иначе — активный (или последний) редактор.
+ */
+export function resolveFileMentionPaths(
+  uri?: vscode.Uri,
+  uris?: readonly vscode.Uri[]
+): string[] {
+  const { fileUris, mentionPaths } = resolveFilesForHarbor(uri, uris);
+  const fromDisk = fileUris
+    .map((item) => fileMentionPathFromUri(item))
+    .filter((p): p is string => Boolean(p));
+  return [...fromDisk, ...mentionPaths];
+}
+
 /**
  * Выделение редактора для чипа в composer.
  * Без выделения / редактора — undefined.
@@ -217,9 +301,8 @@ export function getEditorSelectionPayload():
   const startLine = selection.start.line + 1;
   const endLine = selection.end.line + 1;
   const path =
-    document.uri.scheme === "untitled"
-      ? `untitled${document.languageId ? `.${document.languageId}` : ""}`
-      : relativeOrFsPath(document.uri);
+    fileMentionPathFromUri(document.uri, document.languageId) ||
+    relativeOrFsPath(document.uri);
   return {
     path,
     startLine,
