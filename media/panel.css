@@ -3,6 +3,9 @@
   --radius-msg: 14px;
   --radius-composer: 16px;
   --radius-control: 999px;
+  /* Mode accent colors (Plan / Ask) */
+  --mode-plan: #a67c00;
+  --mode-ask: #2d6a4f;
 }
 
 * {
@@ -183,6 +186,14 @@ body {
   white-space: normal;
 }
 
+.msg.user[data-mode="plan"] {
+  border-color: var(--mode-plan);
+}
+
+.msg.user[data-mode="ask"] {
+  border-color: var(--mode-ask);
+}
+
 .msg.user.is-editing {
   padding: 0;
   background: transparent;
@@ -250,6 +261,14 @@ body {
   border-radius: var(--radius-composer);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
+}
+
+.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="plan"]) {
+  border-color: var(--mode-plan);
+}
+
+.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="ask"]) {
+  border-color: var(--mode-ask);
 }
 
 .msg-edit-input {
@@ -1775,6 +1794,14 @@ body.vscode-dark .md-pre .syntax-property {
   position: relative;
 }
 
+.composer[data-mode="plan"] {
+  border-color: var(--mode-plan);
+}
+
+.composer[data-mode="ask"] {
+  border-color: var(--mode-ask);
+}
+
 .composer-wrap.is-drop-target .composer,
 .composer.is-drop-target {
   border-color: var(--vscode-focusBorder, #007fd4);
@@ -2264,6 +2291,28 @@ body.vscode-dark .md-pre .syntax-property {
 .composer-footer-left > .mode-picker {
   flex: 0 1 auto;
   max-width: 38%;
+}
+
+.mode-picker[data-mode="plan"] .model-trigger,
+.mode-picker[data-mode="plan"] .model-trigger:hover:not(:disabled),
+.mode-picker[data-mode="plan"].is-open .model-trigger {
+  color: var(--mode-plan);
+}
+
+.mode-picker[data-mode="ask"] .model-trigger,
+.mode-picker[data-mode="ask"] .model-trigger:hover:not(:disabled),
+.mode-picker[data-mode="ask"].is-open .model-trigger {
+  color: var(--mode-ask);
+}
+
+.mode-picker .model-option[data-mode="plan"] .model-option-label {
+  color: var(--mode-plan);
+  font-weight: 500;
+}
+
+.mode-picker .model-option[data-mode="ask"] .model-option-label {
+  color: var(--mode-ask);
+  font-weight: 500;
 }
 
 .mode-picker .model-option {
@@ -4212,6 +4261,15 @@ html[data-surface="settings"] .settings-layout {
   width: 12px;
   height: 12px;
   opacity: 0.95;
+  --cube-accent: var(--vscode-charts-blue, #3794ff);
+}
+
+.agent-run-status-running[data-mode="plan"] {
+  --cube-accent: var(--mode-plan);
+}
+
+.agent-run-status-running[data-mode="ask"] {
+  --cube-accent: var(--mode-ask);
 }
 
 .agent-run-status-running .cube-bit {
@@ -4305,19 +4363,19 @@ html[data-surface="settings"] .settings-layout {
   100% {
     opacity: 0.45;
     transform: scale(0.9);
-    border-color: color-mix(in srgb, var(--vscode-foreground) 24%, transparent);
-    background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+    border-color: color-mix(in srgb, var(--cube-accent, var(--vscode-foreground)) 35%, transparent);
+    background: color-mix(in srgb, var(--cube-accent, var(--vscode-foreground)) 10%, transparent);
   }
   50% {
     opacity: 1;
     transform: scale(1);
-    border-color: var(--vscode-charts-blue, #3794ff);
-    background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 30%, transparent);
+    border-color: var(--cube-accent, var(--vscode-charts-blue, #3794ff));
+    background: color-mix(
+      in srgb,
+      var(--cube-accent, var(--vscode-charts-blue, #3794ff)) 30%,
+      transparent
+    );
   }
-}
-
-.agent-name:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
 
 .agent-name.is-renaming {

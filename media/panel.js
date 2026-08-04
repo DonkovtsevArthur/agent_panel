@@ -2748,7 +2748,7 @@
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
-    editingModeId = agentMode || "agent";
+    editingModeId = normalizeAgentModeUi(item.mode || agentMode || "agent");
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
@@ -7932,9 +7932,12 @@
           : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="${t("archive")}" aria-label="${t("archive")}">` +
             ARCHIVE_ICON +
             `</button>`;
+        const runMode =
+          a.runMode === "plan" || a.runMode === "ask" ? a.runMode : "";
+        const runModeAttr = runMode ? ` data-mode="${runMode}"` : "";
         const statusHtml =
           a.runState === "running"
-            ? '<span class="agent-run-status agent-run-status-running" aria-label="Running"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
+            ? `<span class="agent-run-status agent-run-status-running"${runModeAttr} aria-label="Running"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>`
             : a.runState === "success"
               ? '<span class="agent-run-status agent-run-status-success" aria-label="Done"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
               : a.runState === "error"
@@ -9625,6 +9628,15 @@
     if (typeof index === "number") {
       el.dataset.index = String(index);
     }
+    if (role === "user") {
+      const cachedMode =
+        typeof index === "number"
+          ? String(uiMessagesCache[index]?.mode || "").trim()
+          : "";
+      if (cachedMode === "plan" || cachedMode === "ask") {
+        el.dataset.mode = cachedMode;
+      }
+    }
 
     const body = document.createElement("div");
     body.className = "msg-body";
@@ -10114,6 +10126,9 @@
     if (modePicker) {
       modePicker.dataset.mode = agentMode;
     }
+    if (composerEl) {
+      composerEl.dataset.mode = agentMode;
+    }
     if (modeLabel) {
       modeLabel.textContent = meta.label || meta.id;
     }
@@ -10467,7 +10482,12 @@
     editingModeId = "";
     editingAttachments = [];
     stickToBottom = true;
-    uiMessagesCache.push({ role: "user", text, attachments });
+    uiMessagesCache.push({
+      role: "user",
+      text,
+      attachments,
+      mode: modeForSend,
+    });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
     clearDraftPrompt();

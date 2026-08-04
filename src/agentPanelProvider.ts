@@ -970,6 +970,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return states.includes("success") ? "success" : "";
   }
 
+  /** Mode of the chat currently running under this agent (for loader accent). */
+  private runModeForAgent(agentId: string): string {
+    const agent = this.store.agents.find((item) => item.id === agentId);
+    if (!agent) {
+      return "";
+    }
+    for (const chatId of getAgentChatIds(agent)) {
+      if (this.chatRunState.get(chatId) !== "running") {
+        continue;
+      }
+      return getModeById(this.store.chats[chatId]?.selectedMode).id;
+    }
+    return "";
+  }
+
   private postRunFinished(
     chatId: string,
     outcome: "success" | "error"
@@ -1573,6 +1588,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       active: a.active,
       empty: a.empty,
       runState: this.runStateForAgent(a.id),
+      runMode: this.runModeForAgent(a.id),
     }));
     this.view?.webview.postMessage({
       type: "agentsList",
@@ -2546,7 +2562,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const currentRun = runRef.controller;
 
     if (options?.appendUser !== false) {
-      const uiMsg: UiMessage = { role: "user", text: trimmed };
+      const uiMsg: UiMessage = {
+        role: "user",
+        text: trimmed,
+        mode: modeForRun.id,
+      };
       if (attachments.length) {
         uiMsg.attachments = attachments.map(stripAttachmentPayload);
       }
@@ -3071,7 +3091,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.abortChatRun(this.store.activeChatId);
     this.history = this.history.slice(0, Math.max(0, userOrdinal * 2));
     this.uiMessages = this.uiMessages.slice(0, index);
-    const uiMsg: UiMessage = { role: "user", text: nextText };
+    const uiMsg: UiMessage = {
+      role: "user",
+      text: nextText,
+      mode: getModeById(agentMode).id,
+    };
     if (attachments.length) {
       uiMsg.attachments = attachments.map(stripAttachmentPayload);
     }
@@ -4159,7 +4183,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div id="composerPlanActions" class="composer-plan-actions" hidden></div>
       <div id="composerScmActions" class="composer-scm-actions" hidden></div>
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
-      <div class="composer" id="composer">
+      <div class="composer" id="composer" data-mode="agent">
         <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
         <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>

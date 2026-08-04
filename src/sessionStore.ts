@@ -33,6 +33,8 @@ export interface UiMessage {
   reasoning?: string;
   /** Structured agent step (tool cards, compaction, retry) for history replay. */
   step?: UiMessageStep;
+  /** Chat mode at send time (agent / plan / ask) — colors user bubble border. */
+  mode?: string;
 }
 
 /** Cap persisted Thinking text so long Kimi/Claude traces do not bloat workspaceState. */
@@ -822,6 +824,12 @@ function cloneUiMessage(msg: UiMessage): UiMessage {
   }
   if (msg.reasoning) {
     next.reasoning = msg.reasoning;
+  }
+  if (msg.mode) {
+    next.mode = msg.mode;
+  }
+  if (msg.step) {
+    next.step = { ...msg.step };
   }
   return next;
 }
