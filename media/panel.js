@@ -91,7 +91,7 @@
       mcpBadgeUser: "User",
       mcpBadgeTools: (n) => `${n} tools`,
       mcpEditNote:
-        "Use a Personal Access Token. Remote OAuth from Figma is usually unavailable to Harbor Agents.",
+        "Connect Figma via browser OAuth. Personal Access Token is an optional fallback.",
       mcpCustomTitleNew: "Add MCP server",
       mcpCustomTitleEdit: "Edit MCP server",
       mcpCustomName: "Name",
@@ -129,11 +129,11 @@
       figmaConnect: "Connect Figma",
       figmaDisconnect: "Disconnect",
       figmaPatNote:
-        "Create a token in Figma → Settings → Security → Personal access tokens, paste it here, then Connect with token.",
+        "Optional fallback: create a token in Figma → Settings → Security → Personal access tokens, paste it here, then Connect with token.",
       figmaPatLabel: "Personal Access Token",
       figmaPatConnect: "Connect with token",
       figmaNeedsConnectToast:
-        "Figma is not connected — open Settings → MCP Servers",
+        "Figma is not connected — open Settings → MCP Servers → Connect Figma",
       figmaOpenTokenHelp: "Open token settings",
       backToSettings: "Back to settings",
       systemPrompt: "System prompt",
@@ -252,6 +252,7 @@
       archiveEmpty: "Archive is empty.",
       restore: "Restore",
       delete: "Delete",
+      deleteAll: "Delete all",
       noAgentsYet: "No agents yet. Click + to create one.",
       rename: "Rename",
       openFile: "Open file",
@@ -286,6 +287,8 @@
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanDiagnostics: "Diagnostics",
+      toolHumanVisionAttached: "Vision · attached screenshot",
+      toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolWorking: "Working…",
@@ -297,6 +300,8 @@
       toolFetching: "Fetching…",
       toolOpening: "Opening…",
       toolMcp: "MCP…",
+      toolVision: "Vision…",
+      toolExploring: "Exploring…",
       toolKindRead: "read",
       toolKindWrite: "write",
       toolKindReplace: "replace",
@@ -306,6 +311,8 @@
       toolKindFetch: "fetch",
       toolKindOpen: "open",
       toolKindMcp: "mcp",
+      toolKindVision: "vision",
+      toolKindExplore: "explore",
       toolKindTool: "tool",
       toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
@@ -406,7 +413,7 @@
       mcpBadgeUser: "User",
       mcpBadgeTools: (n) => `${n} tools`,
       mcpEditNote:
-        "Подключайте через Personal Access Token. Remote OAuth у Figma для Harbor Agents обычно недоступен.",
+        "Подключайте Figma через Connect Figma (OAuth в браузере). Personal Access Token — запасной вариант.",
       mcpCustomTitleNew: "Добавить MCP-сервер",
       mcpCustomTitleEdit: "Редактировать MCP-сервер",
       mcpCustomName: "Имя",
@@ -444,11 +451,11 @@
       figmaConnect: "Connect Figma",
       figmaDisconnect: "Отключить",
       figmaPatNote:
-        "Создайте токен в Figma → Settings → Security → Personal access tokens, вставьте сюда и нажмите «Подключить по токену».",
+        "Запасной вариант: создайте токен в Figma → Settings → Security → Personal access tokens, вставьте сюда и нажмите «Подключить по токену».",
       figmaPatLabel: "Personal Access Token",
       figmaPatConnect: "Подключить по токену",
       figmaNeedsConnectToast:
-        "Figma не подключён — откройте Settings → MCP Servers",
+        "Figma не подключён — откройте Settings → MCP Servers → Connect Figma",
       figmaOpenTokenHelp: "Открыть настройки токена",
       backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
@@ -567,6 +574,7 @@
       archiveEmpty: "Архив пуст.",
       restore: "Восстановить",
       delete: "Удалить",
+      deleteAll: "Удалить все",
       noAgentsYet: "Нет агентов. Нажмите +, чтобы создать.",
       rename: "Переименовать",
       openFile: "Открыть файл",
@@ -601,6 +609,8 @@
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanDiagnostics: "Diagnostics",
+      toolHumanVisionAttached: "Vision · attached screenshot",
+      toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolWorking: "Работаю…",
@@ -612,6 +622,8 @@
       toolFetching: "Загружаю…",
       toolOpening: "Открываю…",
       toolMcp: "MCP…",
+      toolVision: "Vision…",
+      toolExploring: "Исследую…",
       toolKindRead: "чтение",
       toolKindWrite: "запись",
       toolKindReplace: "замена",
@@ -621,6 +633,8 @@
       toolKindFetch: "загрузка",
       toolKindOpen: "открытие",
       toolKindMcp: "mcp",
+      toolKindVision: "vision",
+      toolKindExplore: "explore",
       toolKindTool: "tool",
       toolTypeCount: (kind, n) => `${kind} ×${n}`,
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
@@ -708,6 +722,7 @@
   const openArchiveBtn = document.getElementById("openArchiveBtn");
   const openSettingsBtn = document.getElementById("openSettingsBtn");
   const backFromArchiveBtn = document.getElementById("backFromArchiveBtn");
+  const deleteAllArchiveBtn = document.getElementById("deleteAllArchiveBtn");
   const settingsSaveStatus = document.getElementById("settingsSaveStatus");
   const addModelBtn = document.getElementById("addModelBtn");
   const settingsModelsHint = document.getElementById("settingsModelsHint");
@@ -1121,6 +1136,12 @@
       backFromArchiveBtn.title =
         backFromArchiveBtn.setAttribute("aria-label", t("backToAgents")) ||
         t("backToAgents");
+    }
+    if (deleteAllArchiveBtn) {
+      deleteAllArchiveBtn.textContent = t("deleteAll");
+      deleteAllArchiveBtn.title =
+        deleteAllArchiveBtn.setAttribute("aria-label", t("deleteAll")) ||
+        t("deleteAll");
     }
     syncAgentsRailToggleUi();
     if (settingsSaveStatus) {
@@ -3467,6 +3488,10 @@
         return t("toolHumanOpen", String(args.url || "").trim());
       case "get_diagnostics":
         return t("toolHumanDiagnostics");
+      case "vision_attached_screenshot":
+        return t("toolHumanVisionAttached");
+      case "screenshot_plan_explore":
+        return t("toolHumanScreenshotExplore");
       default: {
         if (toolName.startsWith("mcp__")) {
           const short = toolName.replace(/^mcp__[^_]+__/, "") || toolName;
@@ -3574,6 +3599,16 @@
     if (n === "open_external") {
       return "open";
     }
+    if (
+      n === "vision_attached_screenshot" ||
+      n === "vision_figma_screenshot" ||
+      n === "vision_page_screenshot"
+    ) {
+      return "vision";
+    }
+    if (n === "screenshot_plan_explore" || n === "delegate_task") {
+      return "explore";
+    }
     if (n.startsWith("mcp__")) {
       return "mcp";
     }
@@ -3598,6 +3633,12 @@
         return t("toolKindOpen");
       case "mcp":
         return t("toolKindMcp");
+      case "vision":
+        return t("toolKindVision");
+      case "explore":
+        return t("toolKindExplore");
+      case "search":
+        return t("toolKindSearch");
       default:
         return t("toolKindTool");
     }
@@ -3620,6 +3661,12 @@
         return t("toolOpening");
       case "mcp":
         return t("toolMcp");
+      case "vision":
+        return t("toolVision");
+      case "explore":
+        return t("toolExploring");
+      case "search":
+        return t("toolSearching");
       default:
         return t("toolWorking");
     }
@@ -3639,8 +3686,11 @@
       counts.set(kind, (counts.get(kind) || 0) + 1);
     }
     const order = [
+      "vision",
+      "explore",
       "read",
       "list",
+      "search",
       "write",
       "replace",
       "run",
@@ -6864,16 +6914,9 @@
     }
     const connected = state === "connected";
     const connecting = state === "connecting";
-    // Remote OAuth usually returns 403 for Harbor Agents — keep PAT as primary.
-    const preferPat =
-      Boolean(figmaStatus.preferPat) ||
-      Boolean(figmaStatus.showPatFallback) ||
-      figmaStatus.mode === "pat" ||
-      Boolean(figmaStatus.hasPat) ||
-      state === "error" ||
-      state === "disconnected";
+    // OAuth Connect Figma is primary; PAT stays visible as fallback.
     if (settingsFigmaConnectBtn) {
-      settingsFigmaConnectBtn.hidden = connected || preferPat;
+      settingsFigmaConnectBtn.hidden = connected;
       settingsFigmaConnectBtn.disabled = connecting;
     }
     if (settingsFigmaDisconnectBtn) {
@@ -7887,6 +7930,9 @@
       return;
     }
     const agents = archiveAgentsData || [];
+    if (deleteAllArchiveBtn) {
+      deleteAllArchiveBtn.hidden = agents.length === 0;
+    }
     if (!agents.length) {
       archiveListEl.innerHTML =
         `<div class="agents-empty">${t("archiveEmpty")}</div>`;
@@ -7904,6 +7950,7 @@
           `<div class="agent-meta"><span class="agent-preview"></span></div>` +
           `</span>` +
           `</div>` +
+          `<span class="agent-time"></span>` +
           `<div class="row-actions">` +
           `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="${t("restore")}" aria-label="${t("restore")}">` +
           RESTORE_ICON +
@@ -7912,7 +7959,6 @@
           DELETE_ICON +
           `</button>` +
           `</div>` +
-          `<span class="agent-time"></span>` +
           `</div>` +
           `</div>`
       )
@@ -10940,6 +10986,12 @@
     });
   }
 
+  if (deleteAllArchiveBtn) {
+    deleteAllArchiveBtn.addEventListener("click", () => {
+      vscode.postMessage({ type: "deleteAllArchived" });
+    });
+  }
+
   const settingsBody = document.getElementById("settingsBody");
   if (settingsBody) {
     settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
@@ -11971,7 +12023,8 @@
     if (regenBtn && messagesEl.contains(regenBtn)) {
       event.preventDefault();
       event.stopPropagation();
-      if (busy || !canRegenerate) {
+      // Allow while busy — host aborts the current run, then regenerates.
+      if (!canRegenerate) {
         return;
       }
       pinChatToBottom();
@@ -11983,9 +12036,7 @@
     if (branchBtn && messagesEl.contains(branchBtn)) {
       event.preventDefault();
       event.stopPropagation();
-      if (busy) {
-        return;
-      }
+      // Allow while busy — host forks into a new chat; the old run keeps going.
       const index = Number(branchBtn.dataset.index);
       if (!Number.isInteger(index) || index < 0) {
         return;

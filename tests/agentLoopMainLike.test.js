@@ -131,15 +131,17 @@ test("post-edit verification is enabled for all Agent turns", () => {
   // Analogue-UI hint is injected for all Agent models (not kimiModel && …).
   assert.match(
     mainLikeSrc,
-    /!agentsMdTurn &&\s*!readonly &&\s*!focusedPlanEdit &&\s*!discardScope/
+    /!agentsMdTurn &&\s*!readonly &&\s*!focusedPlanEdit &&\s*!agentMechanical &&\s*!discardScope/
   );
   assert.match(mainLikeSrc, /looksLikePlanImplementRequest/);
   assert.match(mainLikeSrc, /looksLikeEditCorrectionRequest/);
+  assert.match(mainLikeSrc, /looksLikeDirectiveFixRequest/);
   assert.match(mainLikeSrc, /buildPlanImplementSystemHint/);
   assert.match(mainLikeSrc, /buildEditCorrectionSystemHint/);
+  assert.match(mainLikeSrc, /lessonFromDirectiveFix/);
   assert.match(
     mainLikeSrc,
-    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality[\s\S]*?planRevision[\s\S]*?planMechanical/
+    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan,\s*editCorrection,\s*planQuality[\s\S]*?planRevision[\s\S]*?planMechanical/
   );
   assert.match(mainLikeSrc, /PLAN_REVISION_HINT/);
   assert.match(mainLikeSrc, /PLAN_MECHANICAL_HINT/);
@@ -151,6 +153,11 @@ test("post-edit verification is enabled for all Agent turns", () => {
   assert.match(mainLikeSrc, /loadLearnedErrors|appendLearnedErrors/);
   assert.match(mainLikeSrc, /formatLearnedErrorsForSystem/);
   assert.match(mainLikeSrc, /queueLearnedErrors|lessonsFromPlanQualityReasons/);
+  assert.match(mainLikeSrc, /AGENT_MECHANICAL_HINT|looksLikeAgentMechanicalRequest/);
+  assert.match(mainLikeSrc, /agentMechanical/);
+  assert.match(mainLikeSrc, /buildPlanChecklistPartialFinale/);
+  assert.match(mainLikeSrc, /maxPlanChecklistNudges = 3/);
+  assert.match(mainLikeSrc, /lessonsFromFutureRuleProse|lessonsFromUserCorrection/);
   assert.match(mainLikeSrc, /tool\.function\.name !== "get_diagnostics"/);
 });
 

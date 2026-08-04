@@ -60,6 +60,8 @@ export const PLAN_QUALITY_SOFT_NUDGE_ROUNDS = 8;
 /** @deprecated alias — same as PLAN_QUALITY_SOFT_NUDGE_ROUNDS */
 export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS =
   PLAN_QUALITY_SOFT_NUDGE_ROUNDS;
+/** After host OCR + screenshot explore probes — nudge to <proposed_plan> sooner. */
+export const PLAN_SCREENSHOT_PREFLIGHT_SOFT_NUDGE_ROUNDS = 3;
 
 /**
  * Plan revision (prior `<proposed_plan>` in chat): stop re-explore quickly and
@@ -72,6 +74,33 @@ export const PLAN_REVISION_SOFT_NUDGE_ROUNDS = 2;
  * fix) — early strip so the LLM emits a compact <proposed_plan>.
  */
 export const PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS = 2;
+
+/**
+ * Agent mechanical fast lane: version / one-field / ≤2 files — cut explore
+ * early and push search_replace (not UI/Figma/page work).
+ */
+export const AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS = 1;
+export const AGENT_MECHANICAL_HARD_CUT_ROUNDS = 3;
+
+/**
+ * System hint for Agent mechanical turns — skip analogue-UI ritual.
+ */
+export const AGENT_MECHANICAL_HINT =
+  "Mechanical Agent task: small non-UI change (version bump, one config field, rename, focused fix — not a page/Figma/multi-file feature). " +
+  "At most 1–2 read_file of the target path(s). Prefer search_replace immediately. " +
+  "Do not browse analogous UI pages, shared components, or CHANGELOG unless asked. " +
+  "Skip request_user_input when the target is clear. Finish briefly after the edit.";
+
+/**
+ * Agent stay-in-mode Q&A: question without an explicit edit request.
+ * Tools are stripped to readonly for the turn; this hint reinforces answer-first.
+ */
+export const AGENT_QUESTION_HINT =
+  "This user message is a question — no explicit request to edit code. " +
+  "UI mode stays Agent, but for THIS turn answer like Ask: use list_files / read_file / search_text / fetch_url / MCP to gather facts, then answer the question directly. " +
+  "Do NOT call write_file, search_replace, or run_command. " +
+  "Do NOT dump an implementation checklist («Реализация завершена» / «Что сделано» / «Implementation complete») recycled from earlier turns — answer THIS question (e.g. where navigation comes from). " +
+  "If the user later asks to change code, they will say so explicitly.";
 
 /** Soft cap: longer briefs without trivial/file anchors stay on full Plan path. */
 export const MECHANICAL_PLAN_MAX_CHARS = 280;
@@ -262,16 +291,51 @@ export type ExploreBudgetSignal =
   | "mechanical"
   | "default";
 
+/**
+ * Agent fast lane: stricter than Plan mechanical — requires trivial keywords
+ * or ≤2 named files. Bare short «исправь баг» / «напиши тесты» stay on the
+ * default medium budget.
+ */
+export function looksLikeAgentMechanicalRequest(userText: string): boolean {
+  const value = String(userText || "").trim();
+  if (!value || !looksLikeMechanicalPlanRequest(value)) {
+    return false;
+  }
+  const lower = value.toLowerCase().replace(/ё/g, "е");
+  if (
+    /(?:тест\w*|\btests?\b|\bspec\b|unit\s+test|e2e|покрой|coverage|покрытие)/i.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+  if (
+    /(?:фич\w*|\bfeature\b|рефактор|refactor|миграц|migration|архитектур)/i.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+  const trivialKeywords =
+    /(?:верси\w*|version|package\.json|package-lock|semver|\bbump\b|одно\s+поле|одно\s+значени|одну\s+строк|one\s+field|one\s+line|tsconfig|readme|changelog)/i.test(
+      value
+    );
+  const fileCount = countPlanFileMentions(value);
+  return trivialKeywords || (fileCount > 0 && fileCount <= 2);
+}
+
 export function classifyExploreBudgetSignal(options: {
   implementPlan?: boolean;
   userText?: string;
   /** Plan-only: mechanical small plan. */
   planMechanical?: boolean;
+  /** Agent: mechanical small edit (fast lane). */
+  agentMechanical?: boolean;
 }): ExploreBudgetSignal {
   if (options.implementPlan) {
     return "implement";
   }
-  if (options.planMechanical) {
+  if (options.planMechanical || options.agentMechanical) {
     return "mechanical";
   }
   const userText = String(options.userText || "");
@@ -288,6 +352,8 @@ export function exploreRoundLimits(options: {
   kimi: boolean;
   /** Build → Agent: меньше explore, быстрее к правкам по плану. */
   implementPlan?: boolean;
+  /** User correcting a prior edit — even tighter: read target → search_replace. */
+  editCorrection?: boolean;
   /**
    * Plan mode quality-first: per-item grounding before <proposed_plan>.
    * Soft reminders only — no hard-cut that would strand ungrounded items.
@@ -303,6 +369,16 @@ export function exploreRoundLimits(options: {
    * Ignored when planRevision is set (revision already soft=2).
    */
   planMechanical?: boolean;
+  /**
+   * Plan + attached screenshot: host already ran OCR + explore probes —
+   * soft-remind to write <proposed_plan> sooner than a cold Plan turn.
+   */
+  screenshotPreflight?: boolean;
+  /**
+   * Agent mechanical fast lane (version / ≤2 files). Wins over focused-path
+   * budget; never used for Plan quality (use planMechanical there).
+   */
+  agentMechanical?: boolean;
   /** User message — adaptive Agent explore (focused path / cold page). */
   userText?: string;
 }): ExploreRoundLimits {
@@ -312,6 +388,15 @@ export function exploreRoundLimits(options: {
     return {
       softNudgeRounds: IMPLEMENT_EXPLORE_SOFT_NUDGE_ROUNDS,
       hardCutRounds: IMPLEMENT_EXPLORE_HARD_CUT_ROUNDS,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
+    };
+  }
+  // User correction («убери LayoutContent», «таблица не та») — apply fast.
+  if (options.editCorrection) {
+    return {
+      softNudgeRounds: AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: AGENT_MECHANICAL_HARD_CUT_ROUNDS,
       stripExploreOnSoftNudge: true,
       hardCutExplore: true,
     };
@@ -337,6 +422,14 @@ export function exploreRoundLimits(options: {
       hardCutExplore: false,
     };
   }
+  if (options.planQuality && options.screenshotPreflight) {
+    return {
+      softNudgeRounds: PLAN_SCREENSHOT_PREFLIGHT_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: Number.MAX_SAFE_INTEGER,
+      stripExploreOnSoftNudge: false,
+      hardCutExplore: false,
+    };
+  }
   if (options.planQuality) {
     return {
       softNudgeRounds: PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
@@ -344,6 +437,18 @@ export function exploreRoundLimits(options: {
       hardCutRounds: Number.MAX_SAFE_INTEGER,
       stripExploreOnSoftNudge: false,
       hardCutExplore: false,
+    };
+  }
+  const agentMechanical =
+    options.agentMechanical === true ||
+    (options.agentMechanical !== false &&
+      looksLikeAgentMechanicalRequest(String(options.userText || "")));
+  if (agentMechanical) {
+    return {
+      softNudgeRounds: AGENT_MECHANICAL_SOFT_NUDGE_ROUNDS,
+      hardCutRounds: AGENT_MECHANICAL_HARD_CUT_ROUNDS,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: true,
     };
   }
   const signal = classifyExploreBudgetSignal({
@@ -380,9 +485,14 @@ export function hardCutAllowsSearchText(options: {
   hadProductiveTool: boolean;
   hadSuccessfulWrite?: boolean;
   impactNudgeAttempts?: number;
+  /** Short correction / verification — keep search_text for paired sites. */
+  editCorrection?: boolean;
 }): boolean {
   if (options.readonly) {
     return false;
+  }
+  if (options.editCorrection) {
+    return true;
   }
   return Boolean(
     options.hadProductiveTool ||
@@ -475,10 +585,14 @@ export function buildExploreSoftNudge(options: {
   kimi?: boolean;
   /** Build → Agent: правь по плану, не ищи «лучший» аналог. */
   implementPlan?: boolean;
+  /** User correcting a prior edit — apply named fix now. */
+  editCorrection?: boolean;
   /** Plan follow-up: stop re-explore, emit revised full card. */
   planRevision?: boolean;
   /** Plan mechanical: stop explore, emit short card. */
   planMechanical?: boolean;
+  /** Agent mechanical: stop explore, edit the target now. */
+  agentMechanical?: boolean;
 }): string {
   if (options.readonly) {
     if (options.plan && options.planRevision) {
@@ -531,6 +645,23 @@ export function buildExploreSoftNudge(options: {
       "Match the project patterns from the files you read. Do not invent a substitute component. Never wipe a file with empty/truncated content. List any remaining steps.",
     ].join(" ");
   }
+  if (options.editCorrection) {
+    return [
+      "Stop browsing with list_files / read_file.",
+      "list_files and read_file are no longer available this turn — search_text stays available.",
+      "Apply the user's short directive with search_replace (preferred) on the target file(s).",
+      "If this is a path / route / PATHS / navigate / export change: search_text for the old and new symbols and update every related call site before claiming done.",
+      "Do not redesign unrelated screens. Finish briefly after all paired sites are fixed.",
+    ].join(" ");
+  }
+  if (options.agentMechanical) {
+    return [
+      "Stop exploring the repository.",
+      "list_files and read_file are no longer available this turn.",
+      "This is a mechanical edit — call search_replace (preferred) or write_file on the target path now, then finish briefly.",
+      "Do not browse analogous UI or shared components.",
+    ].join(" ");
+  }
   // Agent (all models): write by analogy — same soft text that used to be Kimi-only.
   return [
     "Stop exploring the repository.",
@@ -545,6 +676,8 @@ export function buildExploreHardNudge(options: {
   readonly: boolean;
   plan?: boolean;
   implementPlan?: boolean;
+  editCorrection?: boolean;
+  agentMechanical?: boolean;
 }): string {
   if (options.readonly) {
     if (options.plan) {
@@ -574,6 +707,21 @@ export function buildExploreHardNudge(options: {
       "list_files and read_file are no longer allowed this turn.",
       "Call search_replace (preferred) or write_file with COMPLETE contents for the remaining plan/correction steps on the named paths. Match project patterns. Do not invent substitutes or wipe files.",
       "After edits, search_text remains available to check consumers of shared UI. No more list_files/read_file.",
+    ].join(" ");
+  }
+  if (options.editCorrection) {
+    return [
+      "Exploration limit reached.",
+      "list_files and read_file are no longer allowed this turn.",
+      "Apply the user's directive with search_replace now.",
+      "search_text remains available to find paired sites (routes, PATHS, navigate, links) — update them before finishing.",
+    ].join(" ");
+  }
+  if (options.agentMechanical) {
+    return [
+      "Exploration limit reached.",
+      "list_files and read_file are no longer allowed this turn.",
+      "Mechanical edit: search_replace (preferred) or write_file the target now, then finish briefly. No more browsing.",
     ].join(" ");
   }
   return [

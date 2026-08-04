@@ -9,6 +9,9 @@ const {
   lessonFromPlanQualityReason,
   lessonsFromPlanQualityReasons,
   lessonFromVerificationFailure,
+  lessonsFromFutureRuleProse,
+  lessonsFromUserCorrection,
+  lessonFromDirectiveFix,
   parseLearnedErrorsMarkdown,
   formatLearnedErrorsMarkdown,
   formatLearnedErrorsForSystem,
@@ -112,4 +115,59 @@ test("appendLearnedErrors writes .harbor/learned-errors.md", async () => {
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("lessonsFromFutureRuleProse captures labeled rules and mass-format", () => {
+  const fromRu = lessonsFromFutureRuleProse(
+    "✅ Готово!\n\n**Правило для будущего:** Буду форматировать только конкретный изменённый файл, не весь проект."
+  );
+  assert.ok(fromRu.length >= 1);
+  assert.equal(fromRu[0].kind, "correction");
+  assert.match(fromRu[0].lesson, /форматир|Format|Correction/i);
+
+  const fromRollback = lessonsFromFutureRuleProse(
+    "Откатил все 330+ файлов после prettier по всему проекту. Больше так не буду."
+  );
+  assert.ok(
+    fromRollback.some((e) =>
+      /no-mass-format|Format\/lint only/i.test(e.key + e.lesson)
+    )
+  );
+
+  assert.deepEqual(lessonsFromFutureRuleProse("Просто ответил без правил."), []);
+});
+
+test("lessonsFromUserCorrection captures format-scope complaints", () => {
+  const lessons = lessonsFromUserCorrection(
+    "Не форматируй весь проект — только изменённый файл"
+  );
+  assert.ok(lessons.length >= 1);
+  assert.ok(lessons.some((e) => e.kind === "correction"));
+  assert.ok(
+    lessons.some((e) =>
+      /Format\/lint only|не форматируй|Correction/i.test(e.lesson)
+    )
+  );
+  const wrap = lessonsFromUserCorrection(
+    "не нужно оборачивать layout content он уже есть внутри таблицы"
+  );
+  assert.ok(
+    wrap.some((e) =>
+      /no-layoutcontent-around-table|LayoutContent|Do not wrap Table/i.test(
+        e.key + e.lesson
+      )
+    )
+  );
+  assert.deepEqual(lessonsFromUserCorrection("как работает Agent?"), []);
+  assert.deepEqual(lessonsFromUserCorrection("напиши тесты на форму"), []);
+});
+
+test("lessonFromDirectiveFix stores arbitrary short user text", () => {
+  const entry = lessonFromDirectiveFix(
+    "не нужно оборачивать layout content он уже есть внутри таблицы"
+  );
+  assert.ok(entry);
+  assert.equal(entry.kind, "correction");
+  assert.match(entry.lesson, /Correction:|оборачив/i);
+  assert.equal(lessonFromDirectiveFix(""), null);
 });

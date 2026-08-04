@@ -11,6 +11,10 @@ export function isParallelSafeTool(name: string): boolean {
     case "screenshot_url":
     case "open_external":
       return true;
+    case "delegate_task":
+      // Plan explore probes (and model-issued parallel research) are read-only
+      // ask sub-agents — safe to run concurrently like search_text.
+      return true;
     case "search_replace":
       return false;
     default:

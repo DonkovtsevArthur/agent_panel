@@ -7,6 +7,7 @@ import * as path from "path";
 import {
   buildUserApiContent,
   MessageAttachment,
+  attachmentPreviewDataUrl,
   stripAttachmentPayload,
   userContentForHistory,
 } from "./attachments";
@@ -75,10 +76,14 @@ import {
   exploreRoundLimits,
   hardCutAllowsSearchText,
   isExploreOrDelegatedTool,
+  looksLikeAgentMechanicalRequest,
   looksLikeMechanicalPlanRequest,
   roundAdvancesExploreStreak,
   shouldExtendToolRounds,
+  AGENT_MECHANICAL_HINT,
+  AGENT_QUESTION_HINT,
 } from "./toolRoundPolicy";
+import { looksLikeQuestionRequest } from "./claimedEdits";
 import { executeToolCallsInOrder } from "./runToolWaves";
 import { getMcpManager } from "./mcpBundle";
 import { figmaPlanAntiDriftHint, messageHasFigmaUrl } from "./mcp/figma";
@@ -86,18 +91,24 @@ import {
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
   FIGMA_FIRST_FORCE_HINT,
   historyHasProposedPlan,
+  messageHasImageAttachment,
   PLAN_MECHANICAL_HINT,
   PLAN_REVISION_HINT,
+  SCREENSHOT_FIRST_HINT,
   shouldForceFigmaBeforeExplore,
+  shouldRunScreenshotPlanPreflight,
 } from "./planQuality";
 import { describeMcpImagesForMainModel } from "./figmaVisionHelper";
 import { shouldDeliverRawScreenshotToPlanner } from "./visionDelivery";
 import type { SplitMcpToolResult } from "./mcp/resultFormat";
 import { captureUrlScreenshot } from "./screenshotUrl";
+import { runScreenshotPlanExploreProbes } from "./screenshotPlanExplore";
 import {
   buildEditCorrectionSystemHint,
   buildPlanChecklistNudge,
+  buildPlanChecklistPartialFinale,
   buildPlanImplementSystemHint,
+  looksLikeDirectiveFixRequest,
   looksLikeEditCorrectionRequest,
   looksLikePlanImplementRequest,
   remainingPlanTargetPaths,
@@ -154,8 +165,11 @@ import {
 import {
   appendLearnedErrors,
   formatLearnedErrorsForSystem,
+  lessonFromDirectiveFix,
   lessonFromVerificationFailure,
+  lessonsFromFutureRuleProse,
   lessonsFromPlanQualityReasons,
+  lessonsFromUserCorrection,
   loadLearnedErrors,
   type LearnedErrorEntry,
 } from "./learnedErrors";
@@ -545,7 +559,9 @@ export async function runMainLikeAgentTurn(options: {
   const mode = getModeById(
     options.agentMode ?? (options.planMode ? "plan" : "agent")
   );
-  const readonly = isReadonlyPolicy(mode.tools);
+  // Mode tools policy from UI (Agent/Plan/Ask). May be soft-readonly below for
+  // Agent question turns — UI mode stays Agent (no silent Ask downgrade).
+  const modeReadonly = isReadonlyPolicy(mode.tools);
   const endpoint = resolveModelEndpoint(options.model);
   if (!endpoint.baseUrl) {
     throw new Error(
@@ -628,9 +644,14 @@ export async function runMainLikeAgentTurn(options: {
   const persistedAttachments = (options.attachments || []).map(
     stripAttachmentPayload
   );
+  // Non-vision planners (Kimi on Plan+screenshot): OCR preflight uses attachments,
+  // but the chat/completions payload must not include raw image_url parts.
+  const attachmentsForApi = resolveModelSupportsVision(options.model)
+    ? options.attachments
+    : (options.attachments || []).filter((a) => a.kind !== "image");
   const userApiContent = await buildUserApiContent(
     options.userText,
-    options.attachments,
+    attachmentsForApi,
     options.storageUri
   );
   const modePrompt = mode.prompt?.trim();
@@ -640,24 +661,60 @@ export async function runMainLikeAgentTurn(options: {
   // Build → Agent / UI correction: bind to plan + project patterns; skip Kimi's
   // "read analogous UI and invent" hint; tighter explore limits.
   const implementPlan =
-    !readonly && looksLikePlanImplementRequest(options.userText);
-  const editCorrection =
-    !readonly &&
+    !modeReadonly && looksLikePlanImplementRequest(options.userText);
+  const discardScope =
+    !modeReadonly && !implementPlan
+      ? resolveDiscardScope(options.userText)
+      : null;
+  // Mechanical before directive: version/≤2-file still gets AGENT_MECHANICAL_HINT.
+  // Computed against modeReadonly first; agentQuestionTurn below may flip readonly.
+  const agentMechanicalCandidate =
+    !modeReadonly &&
     !implementPlan &&
-    looksLikeEditCorrectionRequest(options.userText);
+    discardScope == null &&
+    looksLikeAgentMechanicalRequest(options.userText);
+  const editCorrection =
+    !modeReadonly &&
+    !implementPlan &&
+    discardScope == null &&
+    !agentMechanicalCandidate &&
+    (looksLikeEditCorrectionRequest(options.userText) ||
+      looksLikeDirectiveFixRequest(options.userText, {
+        openPaths: editorWorkspace.targetPaths,
+        lastEditedPaths: options.lastAgentEditedPaths,
+      }));
   const focusedPlanEdit = implementPlan || editCorrection;
-  const planQuality = readonly && mode.id === "plan";
+  // Agent Q&A without edit request: keep UI mode Agent, but strip write tools
+  // for this turn so the model answers instead of continuing a prior Build.
+  const agentQuestionTurn =
+    !modeReadonly &&
+    !implementPlan &&
+    !editCorrection &&
+    discardScope == null &&
+    !agentMechanicalCandidate &&
+    looksLikeQuestionRequest(options.userText);
+  const readonly = modeReadonly || agentQuestionTurn;
+  const agentMechanical = agentMechanicalCandidate && !agentQuestionTurn;
+  const planQuality = modeReadonly && mode.id === "plan";
+  const hasImageAttachment = messageHasImageAttachment(options.attachments);
   // Follow-up after a prior plan card: revise from last plan, don't restart Phase 1.
   const planRevision =
     planQuality && historyHasProposedPlan(priorApi);
+  // Attached screenshot = UI mockup. Never treat as mechanical (version/one-field)
+  // — otherwise OCR + parallel explore preflight is skipped and Plan looks like
+  // a shallow list/read pass without zcode-style grounding.
   const planMechanical =
     planQuality &&
     !planRevision &&
+    !hasImageAttachment &&
     looksLikeMechanicalPlanRequest(options.userText);
-  const discardScope =
-    !readonly && !implementPlan && !editCorrection
-      ? resolveDiscardScope(options.userText)
-      : null;
+  const screenshotPlanPreflight = shouldRunScreenshotPlanPreflight({
+    planMode: planQuality,
+    hasImageAttachment,
+    userText: options.userText,
+    planMechanical,
+    planRevision,
+  });
   const discardHint =
     discardScope != null
       ? buildDiscardSystemHint({
@@ -667,10 +724,13 @@ export async function runMainLikeAgentTurn(options: {
       : "";
   const exploreLimits = exploreRoundLimits({
     kimi: kimiModel,
-    implementPlan: focusedPlanEdit,
+    implementPlan,
+    editCorrection,
     planQuality,
     planRevision,
     planMechanical,
+    screenshotPreflight: screenshotPlanPreflight,
+    agentMechanical,
     userText: options.userText,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
@@ -720,8 +780,13 @@ export async function runMainLikeAgentTurn(options: {
       // Non-fatal — memory is best-effort.
     }
   };
+  // Persist explicit user corrections / structural directives early.
+  queueLearnedErrors(lessonsFromUserCorrection(options.userText));
+  if (editCorrection) {
+    queueLearnedErrors([lessonFromDirectiveFix(options.userText)]);
+  }
   const figmaAntiDrift =
-    readonly && messageHasFigmaUrl(options.userText)
+    planQuality && messageHasFigmaUrl(options.userText)
       ? figmaPlanAntiDriftHint()
       : "";
   // Plan + Figma URL + MCP: strip explore until Figma tools ran (Kimi-like).
@@ -751,6 +816,12 @@ export async function runMainLikeAgentTurn(options: {
     ...(planMechanical
       ? [{ role: "system" as const, content: PLAN_MECHANICAL_HINT }]
       : []),
+    ...(agentMechanical
+      ? [{ role: "system" as const, content: AGENT_MECHANICAL_HINT }]
+      : []),
+    ...(agentQuestionTurn
+      ? [{ role: "system" as const, content: AGENT_QUESTION_HINT }]
+      : []),
     // Fresh plan only — revision uses PLAN_REVISION_HINT (no Phase-1 Figma force
     // unless the user re-pastes a Figma URL, handled by shouldForceFigma*).
     ...(planQuality &&
@@ -759,6 +830,9 @@ export async function runMainLikeAgentTurn(options: {
     figmaConnected &&
     messageHasFigmaUrl(options.userText)
       ? [{ role: "system" as const, content: FIGMA_FIRST_FORCE_HINT }]
+      : []),
+    ...(screenshotPlanPreflight
+      ? [{ role: "system" as const, content: SCREENSHOT_FIRST_HINT }]
       : []),
     ...(implementPlan
       ? [{ role: "system" as const, content: buildPlanImplementSystemHint() }]
@@ -785,10 +859,11 @@ export async function runMainLikeAgentTurn(options: {
           },
         ]
       : []),
-    // «Read analogous UI» — all Agent models; skip for Build/correction/discard.
+    // «Read analogous UI» — all Agent models; skip for Build/correction/discard/mechanical.
     ...(!agentsMdTurn &&
     !readonly &&
     !focusedPlanEdit &&
+    !agentMechanical &&
     !discardScope
       ? [
           {
@@ -805,12 +880,14 @@ export async function runMainLikeAgentTurn(options: {
   ];
 
   // Post-edit verification (diagnostics + lint/typecheck) — Agent, все модели.
+  // Mechanical fast lane: diagnostics only (skip project lint/typecheck).
   const enablePostEditVerification = !readonly;
-  const projectCommand = enablePostEditVerification
-    ? selectProjectVerificationCommand(
-        await readPackageScripts(editorWorkspace.rootPath)
-      )?.command
-    : undefined;
+  const projectCommand =
+    enablePostEditVerification && !agentMechanical
+      ? selectProjectVerificationCommand(
+          await readPackageScripts(editorWorkspace.rootPath)
+        )?.command
+      : undefined;
   const verification: VerificationLoopState = createVerificationState({
     agentMode: enablePostEditVerification,
     projectCommand,
@@ -820,22 +897,31 @@ export async function runMainLikeAgentTurn(options: {
     // verify-facts, focused-edit) — before optional rules/mode prompts.
     messages.splice(5, 0, {
       role: "system",
-      content: [
-        "Post-edit verification is enabled for this model.",
-        "After write_file / search_replace: fix diagnostics/importWarnings from the tool result for the files you edited.",
-        "Before finishing, expect get_diagnostics on edited files.",
-        "For non-metadata code edits, also one project command",
-        projectCommand
-          ? `(${projectCommand})`
-          : "(typecheck/lint/build if present in package.json).",
-        "Metadata-only edits (package.json / changelog / nls / readme) skip the project command.",
-        "If a project command fails on files you did not edit this turn, finish briefly — do not fix unrelated repo debt.",
-        "Do not claim done while verification reports errors on your edited files.",
-      ].join(" "),
+      content: agentMechanical
+        ? [
+            "Post-edit verification (mechanical task): after search_replace / write_file,",
+            "fix diagnostics/importWarnings on edited paths if reported.",
+            "Skip project-wide typecheck/lint/build for this small change.",
+            "Do not claim done while diagnostics still error on your edited files.",
+          ].join(" ")
+        : [
+            "Post-edit verification is enabled for this model.",
+            "After write_file / search_replace: fix diagnostics/importWarnings from the tool result for the files you edited.",
+            "Before finishing, expect get_diagnostics on edited files.",
+            "For non-metadata code edits, also one project command",
+            projectCommand
+              ? `(${projectCommand})`
+              : "(typecheck/lint/build if present in package.json).",
+            "Metadata-only edits (package.json / changelog / nls / readme) skip the project command.",
+            "If a project command fails on files you did not edit this turn, finish briefly — do not fix unrelated repo debt.",
+            "Do not claim done while verification reports errors on your edited files.",
+          ].join(" "),
     });
   }
 
-  let baseTools = mainLikeToolsForPolicy(mode.tools);
+  let baseTools = mainLikeToolsForPolicy(
+    readonly ? "readonly" : mode.tools
+  );
   if (!enablePostEditVerification) {
     baseTools = baseTools.filter(
       (tool) => tool.function.name !== "get_diagnostics"
@@ -878,7 +964,7 @@ export async function runMainLikeAgentTurn(options: {
   let hollowNudgeAttempts = 0;
   let impactNudgeAttempts = 0;
   let planChecklistNudgeAttempts = 0;
-  const maxPlanChecklistNudges = 2;
+  const maxPlanChecklistNudges = 3;
   let deniedWriteNudgeAttempts = 0;
   let askUserNudgeAttempts = 0;
   let planQualityNudgeAttempts = 0;
@@ -1361,12 +1447,22 @@ export async function runMainLikeAgentTurn(options: {
   };
 
   const publishAssistantFinale = async (rawText: string): Promise<void> => {
-    const text = finalizeAssistantText(
+    let text = finalizeAssistantText(
       rawText,
       editsByPath,
       config.maxResponseChars,
       messages
     );
+    // Build→Agent: after checklist nudges, never ship a bare «готово» while
+    // explicit plan paths remain untouched — prepend an honest partial notice.
+    if (implementPlan && !readonly) {
+      const remaining = remainingPlanTargetPaths(options.userText, [
+        ...editsByPath.keys(),
+      ]);
+      if (remaining.length > 0) {
+        text = buildPlanChecklistPartialFinale(text, remaining);
+      }
+    }
     const last = messages[messages.length - 1];
     if (
       last?.role === "assistant" &&
@@ -1387,6 +1483,8 @@ export async function runMainLikeAgentTurn(options: {
     options.callbacks.onAssistant(text, {
       ...(turnReasoning ? { reasoning: turnReasoning } : {}),
     });
+    // Persist «Правило для будущего» / mass-format admissions from the finale.
+    queueLearnedErrors(lessonsFromFutureRuleProse(text));
     await flushLearnedErrors();
     const reviewEdits = await collectReviewEdits();
     await Promise.resolve(options.callbacks.onReview(reviewEdits));
@@ -1460,6 +1558,7 @@ export async function runMainLikeAgentTurn(options: {
           gitOperationCompleted: turnHadGitOperation,
           planRevision,
           planMechanical,
+          hasImageAttachment,
           allowNudgeWrite: false,
           allowNudgeHedge: false,
           allowNudgeHollow: false,
@@ -1518,6 +1617,7 @@ export async function runMainLikeAgentTurn(options: {
       gitOperationCompleted: turnHadGitOperation,
       planRevision,
       planMechanical,
+      hasImageAttachment,
       allowNudgeWrite: writeNudgeAttempts < maxWriteNudges,
       allowNudgeHedge: hedgeNudgeAttempts < maxHedgeNudges,
       allowNudgeHollow:
@@ -1812,6 +1912,113 @@ export async function runMainLikeAgentTurn(options: {
     }
   }
 
+  // Plan + attached screenshot (no Figma URL): OCR Visible UI + parallel explore
+  // probes before the planner's first API call (zcode-like preflight).
+  if (screenshotPlanPreflight) {
+    const visionStepId = nextStepId("vision");
+    options.callbacks.onPhase("reading", "Vision · attached screenshot");
+    emitStep({
+      stepId: visionStepId,
+      kind: "tool",
+      name: "vision_attached_screenshot",
+      status: "running",
+      argsPreview: previewText("attached screenshot OCR", 80),
+    });
+    try {
+      const imageDataUrls: string[] = [];
+      for (const att of options.attachments || []) {
+        if (att.kind !== "image") {
+          continue;
+        }
+        const url = await attachmentPreviewDataUrl(att, options.storageUri);
+        if (url) {
+          imageDataUrls.push(url);
+        }
+      }
+      if (!imageDataUrls.length) {
+        emitStep({
+          stepId: visionStepId,
+          kind: "tool",
+          name: "vision_attached_screenshot",
+          status: "error",
+          resultPreview: previewText(
+            "no readable image bytes (storage/preview missing)",
+            160
+          ),
+        });
+        messages.push({
+          role: "system",
+          content:
+            "[Harbor screenshot preflight] Image attachment present but pixels could not be loaded for OCR. " +
+            "Continue Plan from the attached image if the planner can see it; otherwise call request_user_input.",
+        });
+      } else {
+        const ocrText = await describeMcpImagesForMainModel({
+          imageDataUrls,
+          accompanyingText:
+            "Source: user-attached screenshot (not Figma MCP). Planner may also see the raw image.",
+          visionPreferenceIds: config.visionRouting.preferredModelIds,
+          signal: options.signal,
+        });
+        messages.push({ role: "system", content: ocrText });
+        emitStep({
+          stepId: visionStepId,
+          kind: "tool",
+          name: "vision_attached_screenshot",
+          status: "done",
+          resultPreview: previewText(ocrText, 160),
+        });
+
+        const exploreStepId = nextStepId("explore");
+        options.callbacks.onPhase("reading", "Explore · screenshot probes");
+        emitStep({
+          stepId: exploreStepId,
+          kind: "tool",
+          name: "screenshot_plan_explore",
+          status: "running",
+          argsPreview: previewText("ui-api · pages-routes · print-widgets", 80),
+        });
+        try {
+          const exploreSummary = await runScreenshotPlanExploreProbes({
+            ocrText,
+            model: options.model,
+            storageUri: options.storageUri,
+            signal: options.signal,
+          });
+          messages.push({ role: "system", content: exploreSummary });
+          emitStep({
+            stepId: exploreStepId,
+            kind: "tool",
+            name: "screenshot_plan_explore",
+            status: "done",
+            resultPreview: previewText(exploreSummary, 160),
+          });
+        } catch (exploreError) {
+          const message =
+            exploreError instanceof Error
+              ? exploreError.message
+              : String(exploreError);
+          emitStep({
+            stepId: exploreStepId,
+            kind: "tool",
+            name: "screenshot_plan_explore",
+            status: "error",
+            resultPreview: previewText(message, 160),
+          });
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emitStep({
+        stepId: visionStepId,
+        kind: "tool",
+        name: "vision_attached_screenshot",
+        status: "error",
+        resultPreview: previewText(message, 160),
+      });
+    }
+  }
+
   for (let round = 0; round < roundBudget; round++) {
     if (options.signal?.aborted) {
       throw new Error("aborted");
@@ -1824,6 +2031,7 @@ export async function runMainLikeAgentTurn(options: {
         hadProductiveTool,
         hadSuccessfulWrite: turnHadRealFileEdit(),
         impactNudgeAttempts,
+        editCorrection,
       });
       const hardCutTools = activeTools.filter(
         (tool) =>
@@ -1963,10 +2171,16 @@ export async function runMainLikeAgentTurn(options: {
       figmaFirstForceActive() ||
       (exploreLimits.stripExploreOnSoftNudge &&
         exploreStreak >= exploreLimits.softNudgeRounds);
+    // Short corrections often need search_text for paired sites (route ↔ button).
+    // Soft-strip still drops list_files / read_file; keep search_text for that lane.
     const roundTools = stripExplore
-      ? activeTools.filter(
-          (tool) => !isExploreOrDelegatedTool(tool.function.name, readonly)
-        )
+      ? activeTools.filter((tool) => {
+          const name = tool.function.name;
+          if (editCorrection && name === "search_text") {
+            return true;
+          }
+          return !isExploreOrDelegatedTool(name, readonly);
+        })
       : activeTools;
 
     prepareApiMessages();
@@ -2049,6 +2263,7 @@ export async function runMainLikeAgentTurn(options: {
             hadProductiveTool,
             hadSuccessfulWrite: turnHadRealFileEdit(),
             impactNudgeAttempts,
+            editCorrection,
           });
           if (allowSearchText && call.function.name === "search_text") {
             return invokeTool(call.function.name, call.function.arguments);
@@ -2185,9 +2400,11 @@ export async function runMainLikeAgentTurn(options: {
           readonly,
           plan: mode.id === "plan",
           kimi: kimiModel,
-          implementPlan: focusedPlanEdit,
+          implementPlan,
+          editCorrection,
           planRevision,
           planMechanical,
+          agentMechanical,
         }),
       });
     }
@@ -2206,7 +2423,9 @@ export async function runMainLikeAgentTurn(options: {
           agentsMd: agentsMdTurn,
           readonly,
           plan: mode.id === "plan",
-          implementPlan: focusedPlanEdit,
+          implementPlan,
+          editCorrection,
+          agentMechanical,
         }),
       });
       // Гарантируем ещё одну итерацию под write-only / финал.
@@ -2289,6 +2508,7 @@ export async function runMainLikeAgentTurn(options: {
       gitOperationCompleted: turnHadGitOperation,
       planRevision,
       planMechanical,
+      hasImageAttachment,
       allowNudgeWrite: false,
       allowNudgeHedge: false,
       allowNudgeHollow: false,

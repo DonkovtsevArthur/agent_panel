@@ -143,6 +143,23 @@ export interface FallbackModelSelectionOptions {
   minContextWindow?: number;
 }
 
+/**
+ * Chat picker model after a turn that may have vision-routed away from the
+ * user's selection. The API run can use a vision model for one message with
+ * attachments; the picker must stay on the user's choice (e.g. Kimi) so the
+ * next text-only turn does not stick on Gemini/Flash.
+ */
+export function persistedModelAfterVisionTurn(options: {
+  requestedModelId: string;
+  runModelId: string;
+}): string {
+  const requested = String(options.requestedModelId || "").trim();
+  if (requested) {
+    return requested;
+  }
+  return String(options.runModelId || "").trim();
+}
+
 interface Candidate {
   model: AgentModel;
   index: number;

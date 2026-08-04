@@ -87,6 +87,22 @@ test("looksLikeQuestionRequest detects Q&A prompts", () => {
     true
   );
   assert.equal(looksLikeQuestionRequest("find where resolveSpeedRouting is defined"), true);
+  assert.equal(
+    looksLikeQuestionRequest(
+      "давай внимательно посмотрим откуда мы попадаем на страницу сертификат ?"
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeQuestionRequest(
+      "давай внимательно посомтри откуда мы попадаем на страницу сертификат"
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeQuestionRequest("откуда мы попадаем на страницу сертификат"),
+    true
+  );
 });
 
 test("looksLikeQuestionRequest ignores edit requests", () => {
@@ -96,6 +112,25 @@ test("looksLikeQuestionRequest ignores edit requests", () => {
   assert.equal(looksLikeUserEditRequest("добавь кнопку закрытия"), true);
 });
 
+test("edit verification follow-ups stay editable, not soft-readonly Q&A", () => {
+  const { looksLikeEditVerificationRequest } = require("../out/claimedEdits.js");
+  assert.equal(
+    looksLikeEditVerificationRequest("так а в роутах поменял?"),
+    true
+  );
+  assert.equal(looksLikeUserEditRequest("так а в роутах поменял?"), true);
+  assert.equal(looksLikeQuestionRequest("так а в роутах поменял?"), false);
+  assert.equal(looksLikeQuestionRequest("откуда попадаем на страницу?"), true);
+});
+
+test("claims «✅ Исправлено» route change without write", () => {
+  assert.equal(
+    looksLikeClaimedFileChanges(
+      "✅ **Исправлено:** роут в `model.tsx` изменён на `${PATHS.initialBriefing.knowledgeCheck}/:pageId/certificate`"
+    ),
+    true
+  );
+});
 test("looksLikeQuestionRequest ignores plain tasks without question shape", () => {
   assert.equal(
     looksLikeQuestionRequest("обнови версию в package.json и поставь расширение"),

@@ -35,6 +35,19 @@ export function looksLikeClaimedFileChanges(text: string): boolean {
     "я удалил",
     "я восстановил",
     "я сделал",
+    "исправлено:",
+    "исправлено —",
+    "исправлено -",
+    "**исправлено**",
+    "✅ исправ",
+    "✅исправ",
+    "роут изменен",
+    "роут изменён",
+    "изменен на",
+    "изменён на",
+    "изменена на",
+    "путь изменен",
+    "путь изменён",
     "переименована",
     "переименован",
     "переписан корректно",
@@ -81,6 +94,10 @@ export function looksLikeClaimedFileChanges(text: string): boolean {
     "changes applied",
     "won't break",
     "nothing will break",
+    "route updated",
+    "route changed",
+    "path updated",
+    "path changed",
   ];
   if (hasAny(value, claimNeedles)) {
     return true;
@@ -105,8 +122,14 @@ export function looksLikeClaimedFileChanges(text: string): boolean {
     "заменила",
     "исправил",
     "исправила",
+    "исправлено",
+    "исправлена",
     "поправил",
     "поправила",
+    "изменен",
+    "изменён",
+    "изменена",
+    "изменены",
     "переписал",
     "переписала",
     "перезаписал",
@@ -162,6 +185,12 @@ export function looksLikeClaimedFileChanges(text: string): boolean {
     "css",
     "className",
     "classname",
+    "роут",
+    "route",
+    "path",
+    "paths",
+    "navigate",
+    "model.tsx",
   ]);
 
   if (pastEdit && codeSignals) {
@@ -176,9 +205,10 @@ export function looksLikeClaimedFileChanges(text: string): boolean {
     return true;
   }
 
-  const startsDone = /^(готово|done|fixed|исправлено|сделано)([!.:\s]|$)/i.test(
-    raw
-  );
+  const startsDone =
+    /^(?:✅\s*)?(?:\*\*)?(готово|done|fixed|исправлено|сделано)(?:\*\*)?([!.:\s]|$)/i.test(
+      raw
+    );
   if (startsDone && (pastEdit || codeSignals)) {
     return true;
   }
@@ -232,6 +262,9 @@ export function looksLikeUserEditRequest(text: string): boolean {
   const raw = String(text || "").trim();
   if (!raw) {
     return false;
+  }
+  if (looksLikeEditVerificationRequest(raw)) {
+    return true;
   }
   const value = raw.toLowerCase().replace(/ё/g, "е");
 
@@ -305,12 +338,73 @@ export function looksLikeUserEditRequest(text: string): boolean {
 }
 
 /**
+ * Short follow-up that challenges a prior edit («а в роутах поменял?»).
+ * Not a pure Q&A — Agent must keep write tools and either fix or honestly say no.
+ */
+export function looksLikeEditVerificationRequest(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length > 280) {
+    return false;
+  }
+  const value = raw.toLowerCase().replace(/ё/g, "е");
+  const pastVerbs = [
+    "поменял",
+    "поменяла",
+    "изменил",
+    "изменила",
+    "исправил",
+    "исправила",
+    "поправил",
+    "поправила",
+    "добавил",
+    "добавила",
+    "убрал",
+    "убрала",
+    "удалил",
+    "удалила",
+    "заменил",
+    "заменила",
+    "сделал",
+    "сделала",
+    "вернул",
+    "вернула",
+    "обновил",
+    "обновила",
+    "перенес",
+    "перенесла",
+    "fixed",
+    "changed",
+    "updated",
+    "added",
+    "removed",
+    "renamed",
+  ];
+  if (!hasAny(value, pastVerbs)) {
+    return false;
+  }
+  if (/[?？]/.test(raw)) {
+    return true;
+  }
+  if (/^(?:так\s+)?а\s+/i.test(raw)) {
+    return true;
+  }
+  if (/^(?:did you|have you)\b/i.test(raw)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Вопрос / просьба объяснить — в Agent режиме можно отвечать как Ask
  * (readonly tools, без правок). Не срабатывает, если это запрос на правку.
  */
 export function looksLikeQuestionRequest(text: string): boolean {
   const raw = String(text || "").trim();
-  if (!raw || looksLikeUserEditRequest(raw)) {
+  if (
+    !raw ||
+    looksLikeUserEditRequest(raw) ||
+    looksLikeEditVerificationRequest(raw)
+  ) {
     return false;
   }
 
@@ -328,6 +422,7 @@ export function looksLikeQuestionRequest(text: string): boolean {
     "почему ",
     "зачем ",
     "где ",
+    "откуда ",
     "когда ",
     "какой ",
     "какая ",
@@ -346,6 +441,9 @@ export function looksLikeQuestionRequest(text: string): boolean {
     "объясни ",
     "поясни ",
     "покажи ",
+    "посмотри ",
+    "посомтри ",
+    "посмотрим ",
     "разбери ",
     "проанализируй ",
     "найди ",
@@ -365,6 +463,14 @@ export function looksLikeQuestionRequest(text: string): boolean {
     "в чем разница ",
   ];
   if (ruStarters.some((prefix) => head.startsWith(prefix))) {
+    return true;
+  }
+  // «давай (внимательно) посмотрим / посмотри …» без edit-глаголов
+  if (
+    /(?:^|[^\p{L}\p{N}_])давай\s+(?:внимательно\s+)?(?:посмотрим|посмотри|посомтри)\b/iu.test(
+      head
+    )
+  ) {
     return true;
   }
 
@@ -407,11 +513,20 @@ export function looksLikeQuestionRequest(text: string): boolean {
     "где объявлен",
     "где объявлена",
     "где используется",
+    "откуда попадаем",
+    "откуда мы попадаем",
+    "откуда переход",
+    "откуда навиг",
+    "откуда откры",
+    "откуда вызыва",
+    "куда попадаем",
     "what is",
     "how does",
     "how do",
     "where is",
     "where does",
+    "where do we",
+    "how do we get to",
     "find where",
     "difference between",
   ];

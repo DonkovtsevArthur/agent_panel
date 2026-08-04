@@ -14,3 +14,15 @@ test("Agent mode is not silently downgraded to Ask", () => {
   );
   assert.match(src, /const modeForRun = selectedMode/);
 });
+
+test("Agent question turns soft-readonly tools without switching UI mode", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "../src/agentLoopMainLike.ts"),
+    "utf8"
+  );
+  assert.match(src, /agentQuestionTurn/);
+  assert.match(src, /AGENT_QUESTION_HINT/);
+  assert.match(src, /looksLikeQuestionRequest\(options\.userText\)/);
+  assert.match(src, /const readonly = modeReadonly \|\| agentQuestionTurn/);
+  assert.doesNotMatch(src, /getModeById\("ask"\)/);
+});

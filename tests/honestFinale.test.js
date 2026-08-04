@@ -629,3 +629,61 @@ test("readonly mode: ordinary explanation with «опишите» is not a clari
   });
   assert.equal(decision.kind, "ok");
 });
+test("readonly mode: claimed fix without write is replaced", () => {
+  const answer =
+    "✅ **Исправлено:** роут в `model.tsx` изменён на `${PATHS.x}/certificate`";
+  const decision = decideHonestFinale({
+    text: answer,
+    canEdit: false,
+    messages: [{ role: "assistant", content: answer }],
+    userText: "так а в роутах поменял?",
+    allowNudgeWrite: false,
+  });
+  assert.equal(decision.kind, "replace");
+  assert.equal(decision.text, MISSING_WRITE_USER_VISIBLE);
+});
+
+test("Plan mode: claimed edits nudge toward proposed_plan, not missing-write", () => {
+  const { PLAN_CLAIMED_EDIT_NUDGE } = require("../out/honestFinale.js");
+  const answer =
+    "Я сделал страницу в src/pages/cert.tsx и добавил Table с моками";
+  const decision = decideHonestFinale({
+    text: answer,
+    canEdit: false,
+    messages: [{ role: "assistant", content: answer }],
+    userText: "посмотри и составь план для реализации",
+    allowNudgePlanQuality: true,
+    hasImageAttachment: true,
+  });
+  assert.equal(decision.kind, "nudge_plan_quality");
+  assert.equal(decision.nudge, PLAN_CLAIMED_EDIT_NUDGE);
+});
+
+test("Plan mode: proposed_plan with file paths is not missing-write", () => {
+  const plan =
+    "<proposed_plan>\n**Цель**: Удостоверение\n**Шаги**:\n" +
+    "1. Добавить src/pages/cert/page.tsx — observed: `LayoutPageContent`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    "**Implementation**: import { Table } from `src/shared/ui/table`\n" +
+    "</proposed_plan>";
+  const decision = decideHonestFinale({
+    text: plan,
+    canEdit: false,
+    messages: [
+      {
+        role: "system",
+        content:
+          "[Harbor vision helper · v]\n\n## Visible UI\nTitle: Удостоверение\nColumns: ФИО\n",
+      },
+      { role: "assistant", content: plan },
+    ],
+    userText: "посмотри и составь план для реализации",
+    allowNudgePlanQuality: false,
+    hasImageAttachment: true,
+  });
+  assert.ok(decision.kind === "ok" || decision.kind === "replace");
+  if (decision.kind === "replace") {
+    assert.notEqual(decision.text, MISSING_WRITE_USER_VISIBLE);
+  }
+});
+

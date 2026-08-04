@@ -31,7 +31,7 @@
 
 В панели: **Settings → MCP Servers**.
 
-- **Figma** — встроенное подключение через **Personal Access Token** (Settings → MCP Servers). Remote OAuth у Figma обычно недоступен Harbor Agents (клиент не в каталоге Figma MCP). После подключения можно вставлять ссылки `figma.com/design/…` в чат.
+- **Figma** — встроенное подключение через **Connect Figma** (browser OAuth к `mcp.figma.com`). Personal Access Token — запасной вариант в Settings → MCP Servers. После подключения можно вставлять ссылки `figma.com/design/…` в чат.
 - **Свои серверы** — кнопка **+**:
   - **stdio** — `command` + args (например `npx` / `-y some-mcp --stdio`) и env `KEY=value`
   - **HTTP** — URL MCP endpoint и опциональный Bearer token
@@ -137,7 +137,7 @@ Marketplace and UI name: **Harbor Agents**.
 
 In the panel: **Settings → MCP Servers**.
 
-- **Figma** — built-in connection via **Personal Access Token** (Settings → MCP Servers). Remote OAuth from Figma is usually unavailable to Harbor Agents (not in the Figma MCP client catalog). After connecting, paste `figma.com/design/…` links in chat.
+- **Figma** — built-in connection via **Connect Figma** (browser OAuth to `mcp.figma.com`). Personal Access Token is an optional fallback in Settings → MCP Servers. After connecting, paste `figma.com/design/…` links in chat.
 - **Custom servers** — **+** button:
   - **stdio** — `command` + args (e.g. `npx` / `-y some-mcp --stdio`) and `KEY=value` env lines
   - **HTTP** — MCP endpoint URL and optional Bearer token

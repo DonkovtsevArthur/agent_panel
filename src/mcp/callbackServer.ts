@@ -75,7 +75,9 @@ export async function listenForOAuthCallback(timeoutMs = 5 * 60_000): Promise<{
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    // Bind all interfaces so macOS browsers that resolve localhost → ::1 still
+    // reach the callback (redirect_uri stays on 127.0.0.1 below).
+    server.listen(0, "0.0.0.0", () => resolve());
   });
 
   const address = server.address() as AddressInfo;

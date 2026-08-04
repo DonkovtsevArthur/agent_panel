@@ -94,7 +94,7 @@ const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
   plan_file_write:
     "False: do not write_file a PLAN.md / implementation-plan. Emit a FULL <proposed_plan>…</proposed_plan> card instead (write_file is forbidden in Plan).",
   prose_already_exists:
-    "False: do not conclude «already implemented / page already exists» in prose. Call Figma MCP if the user pasted a Figma URL, inventory each mockup block with reuse path or an explicit gap, then emit a FULL <proposed_plan>…</proposed_plan>.",
+    "False: do not conclude «already implemented» in bare prose. If the page truly matches the mockup, emit a FULL <proposed_plan> that inventories EACH block → reuse path (and «уже совпадает / no new work»). If anything is missing, list gaps. Never skip the plan card.",
   unfixed_fields:
     "False: the plan still says fields/columns/labels are not fixed. Call Figma MCP / screenshot_url or request_user_input, then rewrite the FULL <proposed_plan> with concrete labels — never ship «fields not fixed» inside the plan.",
   missing_grounded_path:
@@ -108,7 +108,7 @@ const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
   page_to_similar:
     "False: Steps ground in a different feature area (src/pages|entities|features/<dir>/) than the Figma/user message. Re-ground to the requested area or create new paths by pattern; rewrite the FULL <proposed_plan>.",
   already_exists_no_inventory:
-    "False: «already implemented / fully matches» requires a per-block inventory (each mockup block → reuse path or explicit gap). List every block, then rewrite the FULL <proposed_plan>.",
+    "False: «already implemented / fully matches» needs a per-block inventory inside <proposed_plan> (each mockup block → reuse path or explicit gap). If it truly matches after read_file, list every block as reuse and note no new work — still emit the FULL plan card.",
   missing_analogue_quote:
     "False: every Step with reuse / by-pattern / «как в» <path> — and every Step citing a path you already read_file'd — needs a backtick observed quote copied from that file's content (≥6 chars, not the path). Rewrite the FULL <proposed_plan> with those quotes.",
   missing_path_read:
@@ -200,7 +200,7 @@ const UNFIXED_FIELDS_RE =
   /(?:ColumnDef|поля|колонки|лейблы|кнопки|фильтры)\s+(?:не\s+)?(?:зафиксирован|не\s+видны|не\s+определен)|(?:fields|columns|labels|buttons)\s+(?:are\s+)?not\s+(?:fixed|captured|visible|defined|finalized)/i;
 
 const ALREADY_EXISTS_RE =
-  /(?:уже\s+(?:есть|реализован|существ|готов|покрыт|сделан)|already\s+(?:exists?|implemented|built|present|covered)|полностью\s+совпада|fully\s+(?:match|matches|covered)|ничего\s+(?:делать|менять)\s+не\s+нужно|nothing\s+to\s+(?:do|build|change)|no\s+changes?\s+needed)/i;
+  /(?:уже\s+(?:есть|реализован|существ|готов|покрыт|сделан|совпада)|already\s+(?:exists?|implemented|built|present|covered)|полностью\s+совпада|fully\s+(?:match|matches|covered)|ничего\s+(?:делать|менять)\s+не\s+нужно|nothing\s+to\s+(?:do|build|change)|no\s+changes?\s+needed)/i;
 
 const BLOCK_INVENTORY_RE =
   /(?:блок|block|макет|frame|figma|header|таблиц|table|фильтр|filter).{0,60}(?:reuse|новый\s+по\s+паттерну|new\s+by\s+pattern|пробел|gap|совпад|match|покрыт)/i;
@@ -457,6 +457,20 @@ export function looksLikeAlreadyExistsWithoutInventory(
     return false;
   }
   return true;
+}
+
+/**
+ * Plan card that correctly documents «already matches»: already-exists language
+ * plus per-block inventory (reuse/match). Used to skip Build-only gates like
+ * a heavy **Implementation** section when there is no new work.
+ */
+export function looksLikeAlreadyMatchesWithInventory(text: string): boolean {
+  const value = String(text || "");
+  if (!ALREADY_EXISTS_RE.test(value)) {
+    return false;
+  }
+  const body = extractProposedPlanBody(value) || value;
+  return BLOCK_INVENTORY_RE.test(body);
 }
 
 /**
@@ -755,6 +769,8 @@ export type PlanQualityOptions = {
    * concrete path (incl. root files like package.json). Skip UI/Figma gates.
    */
   planMechanical?: boolean;
+  /** User attached an image (screenshot mockup) this turn. */
+  hasImageAttachment?: boolean;
 };
 
 /** True when an earlier assistant turn already shipped a `<proposed_plan>`. */
@@ -880,12 +896,97 @@ export const FIGMA_FIRST_EXPLORE_BLOCKED_JSON = JSON.stringify({
     "search_text / delegate_task. Repo explore is HOW after the mockup is fetched.",
 });
 
-function looksLikeUiOrFigmaPlan(userText?: string): boolean {
-  const value = String(userText || "");
-  if (!value.trim()) {
+/**
+ * Plan + attached screenshot (no Figma URL): OCR inventory is already injected.
+ * Explore freely; ground each Visible UI block; Goal uses the screenshot Title.
+ * Does NOT strip explore (unlike Figma-first — the mockup pixels are already here).
+ */
+export const SCREENSHOT_FIRST_HINT =
+  "HARD RULE: the user attached a UI screenshot and there is no Figma URL. " +
+  "Harbor already ran vision OCR — use the Visible UI labels (Title / Columns / Filters / Actions) " +
+  "as the mockup contract (WHAT). Repository explore (search_text / read_file / delegate_task) is HOW. " +
+  "Do not invent fields missing from Visible UI. Put the screenshot Title in **Goal**. " +
+  "Map every Visible UI block into Steps (reuse path, new-by-pattern, or explicit gap). " +
+  "A similarly named folder alone is NOT done. " +
+  "If after read_file the existing page already contains the OCR Title/Columns/Actions, " +
+  "emit <proposed_plan> that says so: each block → reuse that path, note «уже совпадает / no new work» — " +
+  "do NOT invent a new page or fake gaps. " +
+  "Bare prose «already exists» without that inventory is wrong; a full <proposed_plan> with inventory is right. " +
+  "After host screenshot explore probes finish, prefer writing <proposed_plan> over more broad explore. " +
+  "Blocking preferences that cannot be resolved from the screenshot or repo → request_user_input " +
+  "(not prose questions). Prefer parallel delegate_task for independent explore areas.";
+
+/** Soft explore budget after host OCR+probes already ran (Plan screenshot-first). */
+export { PLAN_SCREENSHOT_PREFLIGHT_SOFT_NUDGE_ROUNDS } from "./toolRoundPolicy";
+
+/** True when attachments include at least one image. */
+export function messageHasImageAttachment(
+  attachments?: Array<{ kind?: string } | null> | null
+): boolean {
+  return (attachments || []).some(
+    (item) => item && String(item.kind || "") === "image"
+  );
+}
+
+/**
+ * Plan + image mockup, no Figma URL.
+ * Host runs OCR + parallel explore probes before the planner's first API call.
+ * Any attached image in Plan counts as the mockup (zcode parity) — do not require
+ * the word «страница», and do not skip on plan revision / mechanical.
+ */
+export function shouldRunScreenshotPlanPreflight(options: {
+  planMode: boolean;
+  hasImageAttachment: boolean;
+  userText?: string;
+  planMechanical?: boolean;
+  planRevision?: boolean;
+}): boolean {
+  if (!options.planMode || !options.hasImageAttachment) {
     return false;
   }
-  return looksLikeUserAskedForPageSurface(value) || messageHasFigmaUrl(value);
+  // Figma URL → existing Figma-first path owns the mockup.
+  if (messageHasFigmaUrl(String(options.userText || ""))) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Whole-turn vision route (swap planner to Gemini/Flash) is only for Agent/Ask
+ * turns with image attachments. Plan never swaps the planner for screenshots —
+ * host OCR preflight (no Figma) or Figma MCP owns vision under the hood.
+ */
+export function shouldWholeTurnRouteForImageAttachment(options: {
+  planMode: boolean;
+  hasImageAttachment: boolean;
+  userText?: string;
+}): boolean {
+  if (!options.hasImageAttachment) {
+    return false;
+  }
+  if (options.planMode) {
+    return false;
+  }
+  return true;
+}
+
+function looksLikeUiOrFigmaPlan(
+  userText?: string,
+  hasImageAttachment?: boolean
+): boolean {
+  const value = String(userText || "");
+  if (looksLikeUserAskedForPageSurface(value) || messageHasFigmaUrl(value)) {
+    return true;
+  }
+  if (
+    hasImageAttachment === true &&
+    /(?:реализ|implement|спланир|\bplan\b|\bbuild\b|макет|страниц|экран|\bui\b|интерфейс|скрин)/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Extract **Implementation** / **Реализация** section body, or null. */
@@ -903,9 +1004,21 @@ const IMPLEMENTATION_API_SIGNAL_RE =
 
 export function looksLikeMissingImplementationSection(
   planBody: string,
-  userText?: string
+  userTextOrOptions?: string | Pick<PlanQualityOptions, "userText" | "hasImageAttachment">
 ): boolean {
-  if (!looksLikeUiOrFigmaPlan(userText)) {
+  const userText =
+    typeof userTextOrOptions === "string"
+      ? userTextOrOptions
+      : userTextOrOptions?.userText;
+  const hasImageAttachment =
+    typeof userTextOrOptions === "object"
+      ? userTextOrOptions?.hasImageAttachment
+      : undefined;
+  if (!looksLikeUiOrFigmaPlan(userText, hasImageAttachment)) {
+    return false;
+  }
+  // Already-matches plan with per-block reuse inventory: no new Build contract.
+  if (looksLikeAlreadyMatchesWithInventory(planBody)) {
     return false;
   }
   const section = extractImplementationSection(planBody);
@@ -1039,7 +1152,8 @@ function collectVisionHelperTexts(
   }
   const out: string[] = [];
   for (const message of messages) {
-    if (message.role !== "tool") {
+    // Tool results (Figma MCP) and system injects (attached-screenshot OCR).
+    if (message.role !== "tool" && message.role !== "system") {
       continue;
     }
     const content =
@@ -1370,7 +1484,12 @@ function diagnoseIncompleteProposedPlan(
   ) {
     reasons.push("missing_path_read");
   }
-  if (looksLikeMissingImplementationSection(body, options?.userText)) {
+  if (
+    looksLikeMissingImplementationSection(body, {
+      userText: options?.userText,
+      hasImageAttachment: options?.hasImageAttachment,
+    })
+  ) {
     reasons.push("missing_implementation");
   }
   if (

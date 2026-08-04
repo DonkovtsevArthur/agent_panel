@@ -15,7 +15,14 @@ export async function hasUncommittedChanges(
   }
 
   const cwd = folder.uri.fsPath;
-  const paths = toRepoRelativePaths(relativePaths, cwd);
+  const raw = (relativePaths || []).map(String).filter(Boolean);
+  const paths = toRepoRelativePaths(raw, cwd);
+
+  // Caller passed paths but none normalized → do NOT fall back to whole-repo
+  // status (that kept the SCM bar visible for stale/mangled review paths).
+  if (raw.length > 0 && paths.length === 0) {
+    return false;
+  }
 
   try {
     const args = [

@@ -4145,6 +4145,20 @@ html[data-surface="settings"] .settings-layout {
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 }
 
+.archive-delete-all {
+  flex-shrink: 0;
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.archive-delete-all:hover {
+  color: var(--vscode-errorForeground, #f14c4c);
+  background: color-mix(
+    in srgb,
+    var(--vscode-errorForeground, #f14c4c) 12%,
+    transparent
+  );
+}
+
 .agent-block {
   border-radius: 8px;
   margin-bottom: 2px;
@@ -4553,7 +4567,7 @@ html[data-surface="settings"] .settings-layout {
   color: var(--vscode-descriptionForeground, #888);
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 2.5em;
+  min-width: 4.5em;
   text-align: right;
   padding-top: 0;
 }

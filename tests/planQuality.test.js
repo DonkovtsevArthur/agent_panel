@@ -41,6 +41,9 @@ const {
   PLAN_MECHANICAL_HINT,
   FIGMA_FIRST_FORCE_HINT,
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
+  SCREENSHOT_FIRST_HINT,
+  shouldRunScreenshotPlanPreflight,
+  messageHasImageAttachment,
   proposedPlanHasMechanicalPath,
 } = require("../out/planQuality.js");
 
@@ -166,6 +169,30 @@ test("already-exists without block inventory is a quality failure", () => {
     "**Риски**: частично уже есть\n</proposed_plan>";
   assert.equal(
     looksLikeAlreadyExistsWithoutInventory(planWithInventory, user),
+    false
+  );
+});
+
+test("already-matches with block inventory skips Implementation gate", () => {
+  const {
+    looksLikeAlreadyMatchesWithInventory,
+    looksLikeMissingImplementationSection,
+  } = require("../out/planQuality.js");
+  const user =
+    "посмотри скрин и составь план реализации страницы Удостоверение";
+  const plan =
+    "<proposed_plan>\n**Цель**: Удостоверение — уже совпадает с макетом, новых работ нет\n**Шаги**:\n" +
+    "1. Page header блок макета — reuse `src/pages/initial-briefing-knowledge-check-certificate/ui/page.tsx`\n" +
+    "2. Таблица блок — reuse `src/features/initial-briefing-knowledge-check-certificate/certificate-table.tsx`\n" +
+    "3. Actions Скачать/Распечатать блок — reuse `src/pages/initial-briefing-knowledge-check-certificate/ui/page.tsx`\n" +
+    "**Затрагиваемые файлы**: `src/pages/initial-briefing-knowledge-check-certificate/ui/page.tsx`\n" +
+    "</proposed_plan>";
+  assert.equal(looksLikeAlreadyMatchesWithInventory(plan), true);
+  assert.equal(
+    looksLikeMissingImplementationSection(plan, {
+      userText: user,
+      hasImageAttachment: true,
+    }),
     false
   );
 });
@@ -1024,4 +1051,148 @@ test("checklist_coverage is semantic: count alone is not enough", () => {
     "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
     UI_IMPLEMENTATION;
   assert.equal(looksLikeChecklistCoverageGap(covered, user), false);
+});
+
+test("shouldRunScreenshotPlanPreflight: Plan + image, skip only Figma URL", () => {
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "реализуем данную страницу",
+    }),
+    true
+  );
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "посмотри и составь план для реализации, бекенда пока нет",
+    }),
+    true
+  );
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "ok",
+    }),
+    true
+  );
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: false,
+      hasImageAttachment: true,
+      userText: "реализуем данную страницу",
+    }),
+    false
+  );
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: false,
+      userText: "реализуем данную страницу",
+    }),
+    false
+  );
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: true,
+      userText:
+        "план https://www.figma.com/design/abc/x?node-id=1-2 страницы",
+    }),
+    false
+  );
+  // Revision + image still runs (new/same mockup must be OCR'd).
+  assert.equal(
+    shouldRunScreenshotPlanPreflight({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "посмотри и составь план для реализации",
+      planRevision: true,
+      planMechanical: true,
+    }),
+    true
+  );
+  assert.equal(messageHasImageAttachment([{ kind: "image" }]), true);
+  assert.equal(messageHasImageAttachment([{ kind: "file" }]), false);
+  assert.match(SCREENSHOT_FIRST_HINT, /Visible UI|screenshot/i);
+  assert.match(SCREENSHOT_FIRST_HINT, /request_user_input/i);
+});
+
+test("shouldWholeTurnRouteForImageAttachment: Plan never swaps planner", () => {
+  const {
+    shouldWholeTurnRouteForImageAttachment,
+  } = require("../out/planQuality.js");
+  assert.equal(
+    shouldWholeTurnRouteForImageAttachment({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "составь план по скрину",
+    }),
+    false
+  );
+  assert.equal(
+    shouldWholeTurnRouteForImageAttachment({
+      planMode: false,
+      hasImageAttachment: true,
+      userText: "что на картинке?",
+    }),
+    true
+  );
+  assert.equal(
+    shouldWholeTurnRouteForImageAttachment({
+      planMode: true,
+      hasImageAttachment: true,
+      userText: "план https://www.figma.com/design/abc/x?node-id=1-2",
+    }),
+    false
+  );
+  assert.equal(
+    shouldWholeTurnRouteForImageAttachment({
+      planMode: true,
+      hasImageAttachment: false,
+      userText: "составь план",
+    }),
+    false
+  );
+});
+
+test("vision inventory gates work on system-injected OCR without Figma URL", () => {
+  const systemOcr = {
+    role: "system",
+    content:
+      "[Harbor vision helper · vision-model]\n\n## Visible UI (from screenshot)\n" +
+      "Title: Удостоверение\n" +
+      "Columns: ФИО, Профессия, Вид работ, Тип ПС\n" +
+      "Actions: Скачать, Распечатать\n",
+  };
+  assert.equal(
+    extractVisionHelperFrameTitle([systemOcr]),
+    "Удостоверение"
+  );
+  assert.ok(
+    extractVisionHelperUiLabels([systemOcr]).some((l) => /Вид работ/i.test(l))
+  );
+
+  const thin =
+    "**Цель**: новая страница\n**Шаги**:\n" +
+    "1. Таблица — src/pages/cert/page.tsx — observed: `Table`\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/page.tsx\n" +
+    "**Implementation**: Table props=`data` import from `src/shared/ui/table`\n";
+  assert.equal(looksLikeGoalMissingFrameTitle(thin, [systemOcr]), true);
+  assert.equal(looksLikeMissingFigmaBlockInventory(thin, [systemOcr]), true);
+
+  const d = diagnosePlanQualityFailure(
+    `<proposed_plan>\n${thin}\n</proposed_plan>`,
+    {
+      userText: "реализуем данную страницу",
+      messages: [systemOcr],
+      hasImageAttachment: true,
+    }
+  );
+  assert.ok(
+    d?.reasons.includes("goal_frame_title") ||
+      d?.reasons.includes("figma_block_inventory")
+  );
 });

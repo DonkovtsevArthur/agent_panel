@@ -85,8 +85,24 @@ export function collapseOldToolUiMessages(
   if (toolIndexes.length <= keepRecent) {
     return messages;
   }
-  const dropCount = toolIndexes.length - keepRecent;
-  const dropSet = new Set(toolIndexes.slice(0, dropCount));
+  const isPinnedScreenshotPreflight = (msg: UiMessage): boolean => {
+    const name = String(msg.step?.name || "");
+    return (
+      name === "vision_attached_screenshot" ||
+      name === "screenshot_plan_explore"
+    );
+  };
+  // Drop oldest tools first, but never pin-drop screenshot Plan preflight cards.
+  const droppable = toolIndexes.filter(
+    (index) => !isPinnedScreenshotPreflight(messages[index])
+  );
+  const pinnedCount = toolIndexes.length - droppable.length;
+  const keepDroppable = Math.max(0, keepRecent - pinnedCount);
+  if (droppable.length <= keepDroppable) {
+    return messages;
+  }
+  const dropCount = droppable.length - keepDroppable;
+  const dropSet = new Set(droppable.slice(0, dropCount));
   const out: UiMessage[] = [];
   let insertedSummary = false;
   for (let i = 0; i < messages.length; i++) {
@@ -783,15 +799,33 @@ export function deleteAgentFromStore(
   return true;
 }
 
-export function formatListTime(ts: number): string {
+/** Безвозвратно удаляет всех агентов из архива. Возвращает число удалённых. */
+export function deleteAllArchivedAgentsFromStore(
+  store: AgentsStoreV2
+): number {
+  const ids = buildArchiveList(store).map((a) => a.id);
+  let deleted = 0;
+  for (const id of ids) {
+    if (deleteAgentFromStore(store, id)) {
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+export function formatListTime(
+  ts: number,
+  lang: "en" | "ru" = "en"
+): string {
   const d = new Date(ts);
   const now = new Date();
+  const locale = lang === "ru" ? "ru-RU" : "en-US";
   const sameDay =
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   if (sameDay) {
-    return d.toLocaleTimeString("en-US", {
+    return d.toLocaleTimeString(locale, {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
@@ -804,9 +838,9 @@ export function formatListTime(ts: number): string {
     d.getMonth() === yesterday.getMonth() &&
     d.getDate() === yesterday.getDate()
   ) {
-    return "yesterday";
+    return lang === "ru" ? "вчера" : "yesterday";
   }
-  return d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+  return d.toLocaleDateString(locale, { day: "numeric", month: "short" });
 }
 
 export interface ChatBranchItem {

@@ -12,7 +12,7 @@ export const LEARNED_ERRORS_RELATIVE_PATH = ".harbor/learned-errors.md";
 export const LEARNED_ERRORS_CHAR_CAP = 3_000;
 export const MAX_LEARNED_ERROR_ENTRIES = 20;
 
-export type LearnedErrorKind = "plan_quality" | "verification";
+export type LearnedErrorKind = "plan_quality" | "verification" | "correction";
 
 export type LearnedErrorEntry = {
   /** Stable dedup key: kind + fingerprint. */
@@ -40,7 +40,7 @@ const PLAN_QUALITY_LESSONS: Record<PlanQualityReason, string> = {
   page_to_similar:
     "Plan: do not substitute a different existing page that merely looks similar to the request/Figma.",
   already_exists_no_inventory:
-    "Plan: «already implemented» requires each mockup block listed with reuse path or explicit gap.",
+    "Plan: «already implemented» in prose is wrong; inside <proposed_plan> with each mockup block → reuse (or gap) is OK when the page truly matches.",
   missing_analogue_quote:
     "Plan: every reuse/by-pattern Step needs an observed backtick quote copied from that path's content.",
   missing_path_read:
@@ -61,7 +61,8 @@ const PLAN_QUALITY_LESSONS: Record<PlanQualityReason, string> = {
 
 const HEADER =
   "# Learned errors (Harbor Agents)\n\n" +
-  "Auto-updated short lessons from plan-quality nudges and post-edit verification.\n" +
+  "Auto-updated short lessons from plan-quality nudges, post-edit verification,\n" +
+  "and captured «rule for the future» / user corrections.\n" +
   "Edit or delete freely. Cap ~3k when injected into the agent.\n";
 
 function normalizeFingerprint(raw: string): string {
@@ -173,6 +174,180 @@ export function lessonFromVerificationFailure(input: {
   };
 }
 
+function cleanCorrectionLessonBody(raw: string): string {
+  let body = String(raw || "")
+    .replace(/\s+/g, " ")
+    .replace(/^[*_`~\s]+/, "")
+    .replace(/[*_`~\s]+$/, "")
+    .trim();
+  // Drop trailing markdown / emoji fluff.
+  body = body.replace(/\s*(?:✅|✔️|🙏).*$/u, "").trim();
+  // Cap length — keep the actionable clause.
+  if (body.length > 220) {
+    body = body.slice(0, 217).trimEnd() + "…";
+  }
+  return body;
+}
+
+function correctionEntry(body: string, keyHint?: string): LearnedErrorEntry | null {
+  const cleaned = cleanCorrectionLessonBody(body);
+  if (cleaned.length < 12) {
+    return null;
+  }
+  // Skip empty promises without a concrete constraint.
+  if (
+    /^(?:ок|ok|понял|поняла|хорошо|ладно|sure|got it)[.!]?$/i.test(cleaned)
+  ) {
+    return null;
+  }
+  const fp = normalizeFingerprint(keyHint || cleaned);
+  if (!fp) {
+    return null;
+  }
+  const lesson = cleaned.match(/^(?:Correction|Lesson)\s*:/i)
+    ? cleaned
+    : `Correction: ${cleaned}`;
+  return {
+    key: `correction:${fp}`,
+    kind: "correction",
+    lesson: lesson.slice(0, 280),
+  };
+}
+
+/**
+ * Capture self-declared «Правило для будущего» / "Rule for the future" from
+ * an assistant finale so the next turn actually remembers it.
+ */
+export function lessonsFromFutureRuleProse(text: string): LearnedErrorEntry[] {
+  const raw = String(text || "").replace(/\r\n?/g, "\n");
+  if (!raw.trim()) {
+    return [];
+  }
+  const out: LearnedErrorEntry[] = [];
+  const seen = new Set<string>();
+  const push = (body: string, keyHint?: string): void => {
+    const entry = correctionEntry(body, keyHint);
+    if (!entry || seen.has(entry.key)) {
+      return;
+    }
+    seen.add(entry.key);
+    out.push(entry);
+  };
+
+  const labeled =
+    /(?:^|\n)\s*(?:\*\*)?(?:правило\s+для\s+будущего|rule\s+for\s+the\s+future|going\s+forward|на\s+будущее|впредь(?:\s+буду)?|в\s+следующий\s+раз)(?:\*\*)?\s*[:：—\-]\s*(.+?)(?=\n\n|\n\s*(?:\*\*|#{1,3}\s)|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = labeled.exec(raw)) !== null) {
+    push(match[1], match[1]);
+  }
+
+  // Bold one-liner: **Правило для будущего:** …
+  const boldLine =
+    /\*\*\s*(?:правило\s+для\s+будущего|rule\s+for\s+the\s+future)\s*:\s*\*\*\s*(.+)/gi;
+  while ((match = boldLine.exec(raw)) !== null) {
+    push(match[1], match[1]);
+  }
+
+  // Mass-format rollback admission → durable format-scope lesson.
+  if (
+    /(?:prettier|eslint\s+--fix|форматн\w*|format(?:ted|ting)?)/i.test(raw) &&
+    /(?:весь\s+проект|все\s+(?:\d+\+?\s+)?файл|all\s+(?:\d+\+?\s+)?files|330\+|откатил|rolled?\s+back|git\s+restore|git\s+checkout)/i.test(
+      raw
+    )
+  ) {
+    push(
+      "Format/lint only the specific file(s) edited this turn — never prettier/eslint --fix on the whole project.",
+      "no-mass-format"
+    );
+  }
+
+  return out.slice(0, 3);
+}
+
+/**
+ * Capture explicit user corrections («не форматируй весь проект»,
+ * «только изменённый файл») so they persist across turns.
+ */
+export function lessonsFromUserCorrection(userText: string): LearnedErrorEntry[] {
+  const value = String(userText || "").trim();
+  if (!value || value.length > 1_200) {
+    return [];
+  }
+  const lower = value.toLowerCase().replace(/ё/g, "е");
+  const out: LearnedErrorEntry[] = [];
+  const seen = new Set<string>();
+  const push = (body: string, keyHint?: string): void => {
+    const entry = correctionEntry(body, keyHint);
+    if (!entry || seen.has(entry.key)) {
+      return;
+    }
+    seen.add(entry.key);
+    out.push(entry);
+  };
+
+  const looksCorrective =
+    /(?:не\s+(?:надо|нужно|стоит)?\s*)?(?:не\s+)?(?:форматируй|трогай|пиши|запускай|делай|коммить|пушь|оборачив)|только\s+(?:измененн|конкретн|этот|эту|этот\s+файл)|(?:don't|do\s+not|never)\s+(?:format|touch|run|write|wrap)|format\s+only|только\s+изменен|снова\s+(?:то\s+же|ту\s+же)|хватит\s+формат|убери\s+.{0,40}layout|лишн\w+\s+.{0,24}(?:layout|wrapper|обёрт)/i.test(
+      lower
+    );
+  if (!looksCorrective) {
+    return [];
+  }
+
+  if (
+    /(?:формат|prettier|eslint|format)/i.test(lower) &&
+    /(?:весь\s+проект|все\s+файл|all\s+files|весь\s+репо|whole\s+project)/i.test(
+      lower
+    )
+  ) {
+    push(
+      "Format/lint only the specific file(s) edited this turn — never prettier/eslint --fix on the whole project.",
+      "no-mass-format"
+    );
+  }
+
+  if (
+    /(?:оборачив|wrapper|layout\s*content|layoutcontent|layoutpagecontent)/i.test(
+      lower
+    ) &&
+    /(?:не\s+нужно|не\s+надо|убери|удали|лишн|already|уже\s+есть|dont\s+wrap|don't\s+wrap|do\s+not\s+wrap)/i.test(
+      lower
+    )
+  ) {
+    push(
+      "Do not wrap Table (or components that already include layout) in LayoutContent / LayoutPageContent — render them directly without an extra layout wrapper.",
+      "no-layoutcontent-around-table"
+    );
+  }
+
+  // Capture a short imperative clause from the user message.
+  const imperative =
+    value.match(
+      /(?:^|[.!?]\s+)((?:не\s+[^.!?\n]{8,160}|только\s+[^.!?\n]{8,160}|(?:don't|do\s+not|never)\s+[^.!?\n]{8,160}|format\s+only\s+[^.!?\n]{8,160}))/i
+    ) ||
+    value.match(
+      /^((?:не\s+[^.!?\n]{8,160}|только\s+[^.!?\n]{8,160}))/i
+    );
+  if (imperative?.[1]) {
+    push(imperative[1]);
+  }
+
+  return out.slice(0, 2);
+}
+
+/**
+ * Persist a short user directive as a correction lesson (no keyword dictionary).
+ * Used when the structural directive-fix lane fires.
+ */
+export function lessonFromDirectiveFix(
+  userText: string
+): LearnedErrorEntry | null {
+  const value = String(userText || "").trim();
+  if (!value || value.length > 500) {
+    return null;
+  }
+  return correctionEntry(value, normalizeFingerprint(value));
+}
+
 /** Parse bullet list under optional markdown header. */
 export function parseLearnedErrorsMarkdown(raw: string): LearnedErrorEntry[] {
   const text = String(raw || "").replace(/\r\n?/g, "\n");
@@ -180,7 +355,7 @@ export function parseLearnedErrorsMarkdown(raw: string): LearnedErrorEntry[] {
   const seen = new Set<string>();
   for (const line of text.split("\n")) {
     const match = line.match(
-      /^\s*[-*]\s+(?:\[(plan_quality|verification):([^\]]+)\]\s*)?(.+?)\s*$/
+      /^\s*[-*]\s+(?:\[(plan_quality|verification|correction):([^\]]+)\]\s*)?(.+?)\s*$/
     );
     if (!match) {
       continue;

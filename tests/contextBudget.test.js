@@ -214,6 +214,20 @@ test("shouldPreserveToolResultFromCompaction detects Figma and vision helper", (
     }),
     false
   );
+  assert.equal(
+    shouldPreserveToolResultFromCompaction({
+      role: "system",
+      content: "[Harbor vision helper · Gemini]\n\n## Visible UI\nTitle: X",
+    }),
+    true
+  );
+  assert.equal(
+    shouldPreserveToolResultFromCompaction({
+      role: "system",
+      content: "[Harbor screenshot explore]\n## Probe · ui-api\npaths",
+    }),
+    true
+  );
 });
 
 test("applyContextBudget does not shrink old Figma tool results", () => {
