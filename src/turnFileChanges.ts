@@ -4,15 +4,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import type { FileEditStat } from "./diffStats";
 import { lineDiffStats } from "./diffStats";
+import { toRepoRelativePath } from "./repoPaths";
 
 const execFileAsync = promisify(execFile);
 
-function normalizeRel(filePath: string): string {
-  return filePath
-    .trim()
-    .replace(/^\.\//, "")
-    .replace(/^\/+/, "")
-    .replace(/\\/g, "/");
+function normalizeRel(filePath: string, cwd?: string | null): string {
+  return toRepoRelativePath(filePath, cwd);
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -39,7 +36,7 @@ function workspaceCwd(): string | undefined {
  * Пути из `git status --porcelain=v1` (modified / added / untracked / renames).
  * Rename даёт новый путь; ignored файлы не попадают.
  */
-export function parsePorcelainPaths(stdout: string): string[] {
+export function parsePorcelainPaths(stdout: string, cwd?: string | null): string[] {
   const paths: string[] = [];
   for (const rawLine of String(stdout || "").split(/\r?\n/)) {
     const line = rawLine.replace(/\r$/, "");
@@ -57,7 +54,7 @@ export function parsePorcelainPaths(stdout: string): string[] {
       sep >= 0 && /^R/.test(line.slice(0, 2))
         ? body.slice(sep + renameSep.length)
         : body;
-    const rel = normalizeRel(pathPart);
+    const rel = normalizeRel(pathPart, cwd);
     if (rel) {
       paths.push(rel);
     }
@@ -70,7 +67,9 @@ export function pathsNewlyDirty(
   baseline: Iterable<string>,
   current: Iterable<string>
 ): string[] {
-  const base = new Set([...baseline].map(normalizeRel).filter(Boolean));
+  const base = new Set(
+    [...baseline].map((p) => normalizeRel(p)).filter(Boolean)
+  );
   const out: string[] = [];
   const seen = new Set<string>();
   for (const filePath of current) {
@@ -111,7 +110,7 @@ export function relatedDirtyCompanions(
   editedPaths: Iterable<string>,
   dirtyPaths: Iterable<string>
 ): string[] {
-  const edited = [...editedPaths].map(normalizeRel).filter(Boolean);
+  const edited = [...editedPaths].map((p) => normalizeRel(p)).filter(Boolean);
   if (!edited.length) {
     return [];
   }
@@ -152,7 +151,7 @@ export async function listDirtyPaths(
       "--porcelain=v1",
       "--untracked-files=all",
     ]);
-    return parsePorcelainPaths(stdout);
+    return parsePorcelainPaths(stdout, cwd);
   } catch {
     return [];
   }
@@ -209,7 +208,7 @@ async function statsForPaths(
   paths: string[]
 ): Promise<Map<string, FileEditStat>> {
   const result = new Map<string, FileEditStat>();
-  const scoped = [...new Set(paths.map(normalizeRel).filter(Boolean))];
+  const scoped = [...new Set(paths.map((p) => normalizeRel(p, cwd)).filter(Boolean))];
   if (!scoped.length) {
     return result;
   }
@@ -231,7 +230,7 @@ async function statsForPaths(
     for (const rawLine of status.split(/\r?\n/)) {
       const line = rawLine.replace(/\r$/, "");
       if (line.startsWith("?? ")) {
-        const rel = normalizeRel(line.slice(3));
+        const rel = normalizeRel(line.slice(3), cwd);
         if (rel) {
           untracked.add(rel);
         }
@@ -290,9 +289,9 @@ export async function resolveRemainingReviewFiles(
     return [];
   }
 
-  const dirtySet = new Set(dirty.map(normalizeRel).filter(Boolean));
+  const dirtySet = new Set(dirty.map((p) => normalizeRel(p, cwd)).filter(Boolean));
   const seeds = [
-    ...new Set(reviewPaths.map(normalizeRel).filter(Boolean)),
+    ...new Set(reviewPaths.map((p) => normalizeRel(p, cwd)).filter(Boolean)),
   ];
   if (!seeds.length) {
     return [];
@@ -305,7 +304,7 @@ export async function resolveRemainingReviewFiles(
     }
   }
   for (const filePath of relatedDirtyCompanions(seeds, dirty)) {
-    const rel = normalizeRel(filePath);
+    const rel = normalizeRel(filePath, cwd);
     if (rel && dirtySet.has(rel)) {
       keep.add(rel);
     }
@@ -351,20 +350,31 @@ export async function mergeNewlyDirtyEdits(
 
   const missing = new Set<string>();
   for (const filePath of pathsNewlyDirty(baselineDirty, current)) {
-    const rel = normalizeRel(filePath);
+    const rel = normalizeRel(filePath, cwd);
     if (rel && !editsByPath.has(rel)) {
-      missing.add(rel);
+      // Also skip if an absolute key already covers this relative path.
+      const hasAbs = [...editsByPath.keys()].some(
+        (k) => normalizeRel(k, cwd) === rel
+      );
+      if (!hasAbs) {
+        missing.add(rel);
+      }
     }
   }
   for (const filePath of relatedDirtyCompanions(editsByPath.keys(), current)) {
-    const rel = normalizeRel(filePath);
+    const rel = normalizeRel(filePath, cwd);
     if (rel && !editsByPath.has(rel)) {
-      missing.add(rel);
+      const hasAbs = [...editsByPath.keys()].some(
+        (k) => normalizeRel(k, cwd) === rel
+      );
+      if (!hasAbs) {
+        missing.add(rel);
+      }
     }
   }
 
   if (!missing.size) {
-    return [...editsByPath.values()];
+    return normalizeEditStats([...editsByPath.values()], cwd);
   }
 
   const stats = await statsForPaths(cwd, [...missing]);
@@ -377,5 +387,30 @@ export async function mergeNewlyDirtyEdits(
     };
     editsByPath.set(rel, hit);
   }
-  return [...editsByPath.values()];
+  return normalizeEditStats([...editsByPath.values()], cwd);
+}
+
+function normalizeEditStats(
+  edits: FileEditStat[],
+  cwd: string
+): FileEditStat[] {
+  const map = new Map<string, FileEditStat>();
+  for (const edit of edits) {
+    const rel = normalizeRel(edit.path, cwd) || edit.path;
+    if (!rel) {
+      continue;
+    }
+    const prev = map.get(rel);
+    if (!prev) {
+      map.set(rel, { ...edit, path: rel });
+      continue;
+    }
+    map.set(rel, {
+      path: rel,
+      created: prev.created || edit.created,
+      added: prev.added + edit.added,
+      removed: prev.removed + edit.removed,
+    });
+  }
+  return [...map.values()];
 }

@@ -75,6 +75,7 @@ import {
   exploreRoundLimits,
   hardCutAllowsSearchText,
   isExploreOrDelegatedTool,
+  looksLikeMechanicalPlanRequest,
   roundAdvancesExploreStreak,
   shouldExtendToolRounds,
 } from "./toolRoundPolicy";
@@ -85,6 +86,7 @@ import {
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
   FIGMA_FIRST_FORCE_HINT,
   historyHasProposedPlan,
+  PLAN_MECHANICAL_HINT,
   PLAN_REVISION_HINT,
   shouldForceFigmaBeforeExplore,
 } from "./planQuality";
@@ -149,6 +151,14 @@ import {
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
   loadWorkspaceRules,
 } from "./workspaceRules";
+import {
+  appendLearnedErrors,
+  formatLearnedErrorsForSystem,
+  lessonFromVerificationFailure,
+  lessonsFromPlanQualityReasons,
+  loadLearnedErrors,
+  type LearnedErrorEntry,
+} from "./learnedErrors";
 import type {
   AgentPhase,
   AgentRunCallbacks,
@@ -640,6 +650,10 @@ export async function runMainLikeAgentTurn(options: {
   // Follow-up after a prior plan card: revise from last plan, don't restart Phase 1.
   const planRevision =
     planQuality && historyHasProposedPlan(priorApi);
+  const planMechanical =
+    planQuality &&
+    !planRevision &&
+    looksLikeMechanicalPlanRequest(options.userText);
   const discardScope =
     !readonly && !implementPlan && !editCorrection
       ? resolveDiscardScope(options.userText)
@@ -656,6 +670,7 @@ export async function runMainLikeAgentTurn(options: {
     implementPlan: focusedPlanEdit,
     planQuality,
     planRevision,
+    planMechanical,
     userText: options.userText,
   });
   // OpenAI-style reasoning_effort (Claude 3.5+/4 via gateway) — гейтвей
@@ -671,6 +686,40 @@ export async function runMainLikeAgentTurn(options: {
           charCap: DEFAULT_WORKSPACE_RULE_CHAR_CAP,
         })
       : undefined;
+  // Short lessons from past plan-quality / verification failures in this workspace.
+  let learnedErrorsSystem = "";
+  if (editorWorkspace.rootPath && !agentsMdTurn) {
+    try {
+      const learned = await loadLearnedErrors(editorWorkspace.rootPath);
+      learnedErrorsSystem = formatLearnedErrorsForSystem(learned);
+    } catch {
+      learnedErrorsSystem = "";
+    }
+  }
+  const pendingLearnedErrors: LearnedErrorEntry[] = [];
+  const pendingLearnedKeys = new Set<string>();
+  const queueLearnedErrors = (
+    entries: Array<LearnedErrorEntry | null | undefined>
+  ): void => {
+    for (const entry of entries) {
+      if (!entry?.key || !entry.lesson || pendingLearnedKeys.has(entry.key)) {
+        continue;
+      }
+      pendingLearnedKeys.add(entry.key);
+      pendingLearnedErrors.push(entry);
+    }
+  };
+  const flushLearnedErrors = async (): Promise<void> => {
+    if (!editorWorkspace.rootPath || pendingLearnedErrors.length === 0) {
+      return;
+    }
+    const batch = pendingLearnedErrors.splice(0, pendingLearnedErrors.length);
+    try {
+      await appendLearnedErrors(editorWorkspace.rootPath, batch);
+    } catch {
+      // Non-fatal — memory is best-effort.
+    }
+  };
   const figmaAntiDrift =
     readonly && messageHasFigmaUrl(options.userText)
       ? figmaPlanAntiDriftHint()
@@ -699,10 +748,14 @@ export async function runMainLikeAgentTurn(options: {
     ...(planRevision
       ? [{ role: "system" as const, content: PLAN_REVISION_HINT }]
       : []),
+    ...(planMechanical
+      ? [{ role: "system" as const, content: PLAN_MECHANICAL_HINT }]
+      : []),
     // Fresh plan only — revision uses PLAN_REVISION_HINT (no Phase-1 Figma force
     // unless the user re-pastes a Figma URL, handled by shouldForceFigma*).
     ...(planQuality &&
     !planRevision &&
+    !planMechanical &&
     figmaConnected &&
     messageHasFigmaUrl(options.userText)
       ? [{ role: "system" as const, content: FIGMA_FIRST_FORCE_HINT }]
@@ -721,6 +774,14 @@ export async function runMainLikeAgentTurn(options: {
           {
             role: "system" as const,
             content: `Workspace rules (must follow):\n\n${workspaceRules}`,
+          },
+        ]
+      : []),
+    ...(learnedErrorsSystem
+      ? [
+          {
+            role: "system" as const,
+            content: learnedErrorsSystem,
           },
         ]
       : []),
@@ -834,7 +895,8 @@ export async function runMainLikeAgentTurn(options: {
   const maxImpactNudges = 3;
   const maxDeniedWriteNudges = 2;
   const maxAskUserNudges = 2;
-  const maxPlanQualityNudges = 2;
+  // Extra grounding nudge before shipping an imperfect plan card with Build.
+  const maxPlanQualityNudges = 3;
   const maxEmptyFinalAttempts = 3;
   const MAX_REQUEST_USER_INPUT_CALLS = 5;
   const contextWindow = getContextWindow(options.model);
@@ -1195,6 +1257,16 @@ export async function runMainLikeAgentTurn(options: {
           // файл, а не переписывать уже корректный. Иначе Kimi ломает импорты
           // вместо того, чтобы продолжить создавать фичу по плану.
           const missingModules = missingModuleSpecifiersFromOutput(output);
+          queueLearnedErrors([
+            lessonFromVerificationFailure({
+              source: "project_command",
+              errors: missingModules.length
+                ? missingModules.map((m) => `missing module ${m}`)
+                : [output.slice(0, 200)],
+              paths: verification.editedPaths,
+              command: step.command,
+            }),
+          ]);
           if (missingModules.length > 0) {
             messages.push({
               role: "user",
@@ -1247,6 +1319,23 @@ export async function runMainLikeAgentTurn(options: {
       if (!nudge) {
         return "allow_finale";
       }
+      if (step.kind === "fix_diagnostics") {
+        queueLearnedErrors([
+          lessonFromVerificationFailure({
+            source: "diagnostics",
+            errors: step.errors,
+            paths: verification.editedPaths,
+          }),
+        ]);
+      } else if (step.kind === "fix_imports") {
+        queueLearnedErrors([
+          lessonFromVerificationFailure({
+            source: "imports",
+            errors: step.warnings,
+            paths: verification.editedPaths,
+          }),
+        ]);
+      }
       options.callbacks.onPhase("thinking", "Правит по проверке…");
       messages.push({ role: "user", content: nudge });
       if (round >= roundBudget - 1) {
@@ -1298,6 +1387,7 @@ export async function runMainLikeAgentTurn(options: {
     options.callbacks.onAssistant(text, {
       ...(turnReasoning ? { reasoning: turnReasoning } : {}),
     });
+    await flushLearnedErrors();
     const reviewEdits = await collectReviewEdits();
     await Promise.resolve(options.callbacks.onReview(reviewEdits));
     answered = true;
@@ -1369,6 +1459,7 @@ export async function runMainLikeAgentTurn(options: {
           kimi: kimiModel,
           gitOperationCompleted: turnHadGitOperation,
           planRevision,
+          planMechanical,
           allowNudgeWrite: false,
           allowNudgeHedge: false,
           allowNudgeHollow: false,
@@ -1426,6 +1517,7 @@ export async function runMainLikeAgentTurn(options: {
       kimi: kimiModel,
       gitOperationCompleted: turnHadGitOperation,
       planRevision,
+      planMechanical,
       allowNudgeWrite: writeNudgeAttempts < maxWriteNudges,
       allowNudgeHedge: hedgeNudgeAttempts < maxHedgeNudges,
       allowNudgeHollow:
@@ -1487,6 +1579,7 @@ export async function runMainLikeAgentTurn(options: {
     }
     if (decision.kind === "nudge_plan_quality") {
       planQualityNudgeAttempts += 1;
+      queueLearnedErrors(lessonsFromPlanQualityReasons(decision.reasons));
       messages.push({
         role: "user",
         content: decision.nudge || PLAN_QUALITY_NUDGE,
@@ -1690,7 +1783,7 @@ export async function runMainLikeAgentTurn(options: {
         await fs.writeFile(pkgPath, bump.newContent, "utf8");
         const diff = lineDiffStats(pkgContent, bump.newContent);
         bumpEdit({
-          path: pkgPath,
+          path: "package.json",
           added: diff.added,
           removed: diff.removed,
           created: false,
@@ -2079,9 +2172,11 @@ export async function runMainLikeAgentTurn(options: {
         "thinking",
         planRevision
           ? "Уточняю план…"
-          : planQuality
-            ? "Сверяю пункты с репо…"
-            : "Сокращаю обзор…"
+          : planMechanical
+            ? "Пишу короткий план…"
+            : planQuality
+              ? "Сверяю пункты с репо…"
+              : "Сокращаю обзор…"
       );
       messages.push({
         role: "user",
@@ -2092,6 +2187,7 @@ export async function runMainLikeAgentTurn(options: {
           kimi: kimiModel,
           implementPlan: focusedPlanEdit,
           planRevision,
+          planMechanical,
         }),
       });
     }
@@ -2192,6 +2288,7 @@ export async function runMainLikeAgentTurn(options: {
       kimi: kimiModel,
       gitOperationCompleted: turnHadGitOperation,
       planRevision,
+      planMechanical,
       allowNudgeWrite: false,
       allowNudgeHedge: false,
       allowNudgeHollow: false,
@@ -2243,6 +2340,8 @@ export async function runMainLikeAgentTurn(options: {
   if (persistedAttachments.length) {
     historyUser.attachments = persistedAttachments;
   }
+
+  await flushLearnedErrors();
 
   return compactHistoryMainLike([
     ...prior,

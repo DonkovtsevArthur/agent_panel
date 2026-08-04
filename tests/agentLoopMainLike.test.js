@@ -139,13 +139,18 @@ test("post-edit verification is enabled for all Agent turns", () => {
   assert.match(mainLikeSrc, /buildEditCorrectionSystemHint/);
   assert.match(
     mainLikeSrc,
-    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality[\s\S]*?planRevision/
+    /exploreRoundLimits\(\{\s*kimi: kimiModel,\s*implementPlan:[\s\S]*?planQuality[\s\S]*?planRevision[\s\S]*?planMechanical/
   );
   assert.match(mainLikeSrc, /PLAN_REVISION_HINT/);
+  assert.match(mainLikeSrc, /PLAN_MECHANICAL_HINT/);
+  assert.match(mainLikeSrc, /looksLikeMechanicalPlanRequest/);
   assert.match(mainLikeSrc, /historyHasProposedPlan/);
   assert.match(mainLikeSrc, /PLAN_QUALITY_NUDGE/);
   assert.match(mainLikeSrc, /nudge_plan_quality/);
   assert.match(mainLikeSrc, /DEFAULT_WORKSPACE_RULE_CHAR_CAP/);
+  assert.match(mainLikeSrc, /loadLearnedErrors|appendLearnedErrors/);
+  assert.match(mainLikeSrc, /formatLearnedErrorsForSystem/);
+  assert.match(mainLikeSrc, /queueLearnedErrors|lessonsFromPlanQualityReasons/);
   assert.match(mainLikeSrc, /tool\.function\.name !== "get_diagnostics"/);
 });
 

@@ -8,6 +8,14 @@ const modesSrc = fs.readFileSync(
   "utf8"
 );
 
+test("planModeSystemPrompt has mechanical plan fast-path (en + ru)", () => {
+  assert.match(modesSrc, /Механический план/);
+  assert.match(modesSrc, /Mechanical plan/);
+  assert.match(modesSrc, /≤1–2 tool|≤1–2 tools/);
+  assert.match(modesSrc, /CHANGELOG/);
+  assert.match(modesSrc, /request_user_input/);
+});
+
 test("planModeSystemPrompt requires Component-API grounding (read the target UI component source)", () => {
   assert.match(modesSrc, /Component-API grounding/i);
   assert.match(
@@ -24,7 +32,11 @@ test("planModeSystemPrompt allows an optional Implementation section in <propose
   assert.match(modesSrc, /\*\*Implementation\*\*/i);
   assert.match(
     modesSrc,
-    /optional but recommended|опционально, но рекомендуется/i
+    /required for UI\/page\/Figma|обязательно для UI\/страница\/Figma/i
+  );
+  assert.match(
+    modesSrc,
+    /simple text\/config|простых правок текста\/конфига/i
   );
   assert.match(
     modesSrc,

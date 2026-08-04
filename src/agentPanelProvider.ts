@@ -35,6 +35,7 @@ import {
 } from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
 import { commitAndPushPaths } from "./commitAndPush";
+import { discardPaths } from "./discardPaths";
 import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
@@ -45,7 +46,7 @@ import {
   type AgentModeDef,
 } from "./modes";
 import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
-import { stripPlanImplementWrapper } from "./planImplement";
+import { planMarkdownFileName, stripPlanImplementWrapper } from "./planImplement";
 import { getMcpManager } from "./mcpBundle";
 import type { FigmaStatusPayload } from "./mcpBundle";
 import type { McpServerRuntimeStatus } from "./mcp/types";
@@ -156,8 +157,19 @@ type WebviewToHost =
   | { type: "modeChanged"; mode: string; chatId?: string }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
-  | { type: "openPlanMarkdown"; text: string }
+  | {
+      type: "openPlanMarkdown";
+      text: string;
+      /** Default: editable editor tab (live plan). */
+      reveal?: "editor" | "preview";
+    }
+  | {
+      type: "requestLivePlanForBuild";
+      requestId: string;
+      fallbackText?: string;
+    }
   | { type: "commitAndPush"; paths: string[] }
+  | { type: "discardChanges"; paths: string[] }
   | { type: "openScm" }
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
@@ -2018,10 +2030,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.openWorkspaceFileDiff(message.path);
         break;
       case "openPlanMarkdown":
-        await this.openPlanMarkdown(String(message.text || ""));
+        await this.openPlanMarkdown(String(message.text || ""), {
+          reveal: message.reveal === "preview" ? "preview" : "editor",
+        });
         break;
+      case "requestLivePlanForBuild": {
+        const live = await this.readLivePlanMarkdown();
+        const fallback = stripPlanImplementWrapper(
+          String(message.fallbackText || "")
+        );
+        const text = live || fallback;
+        this.view?.webview.postMessage({
+          type: "livePlanForBuild",
+          requestId: String(message.requestId || ""),
+          text,
+        });
+        break;
+      }
       case "commitAndPush":
         await this.handleCommitAndPush(
+          Array.isArray(message.paths) ? message.paths : []
+        );
+        break;
+      case "discardChanges":
+        await this.handleDiscardChanges(
           Array.isArray(message.paths) ? message.paths : []
         );
         break;
@@ -2349,22 +2381,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
-   * Open/update the latest Plan as a rendered Markdown preview.
-   * Writes a real file under globalStorage — built-in preview stays blank for
-   * custom schemes like harbor-plan:.
+   * Open/update the latest Plan as a live editable Markdown document
+   * (`План.md` / `Plan.md` under globalStorage). Same URI every turn so
+   * revisions overwrite the buffer; Build reads unsaved editor text via
+   * `readLivePlanMarkdown`.
    *
-   * Same URI every time (`План.md` / `Plan.md`): after the first open, VS Code
-   * keeps the TextDocument / markdown preview buffer. A bare fs.writeFile does
-   * not refresh that buffer — Просмотр then shows the previous plan. Sync the
-   * open document via WorkspaceEdit and refresh the preview.
+   * reveal "editor" (default) — text tab beside the panel (Cursor-like live plan).
+   * reveal "preview" — markdown preview (card «Open in tab» opt-in).
    */
-  private async openPlanMarkdown(markdown: string): Promise<void> {
+  private async openPlanMarkdown(
+    markdown: string,
+    options?: { reveal?: "editor" | "preview" }
+  ): Promise<void> {
     const content = stripPlanImplementWrapper(markdown);
     if (!content) {
       return;
     }
-    const fileName =
-      resolveUiLanguage(getConfig().language) === "ru" ? "План.md" : "Plan.md";
+    const reveal = options?.reveal === "preview" ? "preview" : "editor";
+    const fileName = planMarkdownFileName(
+      resolveUiLanguage(getConfig().language)
+    );
     try {
       const dir = vscode.Uri.joinPath(
         this.context.globalStorageUri,
@@ -2392,8 +2428,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (doc.languageId !== "markdown") {
         await vscode.languages.setTextDocumentLanguage(doc, "markdown");
       }
-      // If openTextDocument returned a stale buffer (no prior WorkspaceEdit
-      // path), force-replace once more before showing preview.
       if (doc.getText() !== content) {
         const edit = new vscode.WorkspaceEdit();
         const fullRange = new vscode.Range(
@@ -2403,26 +2437,73 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         edit.replace(uri, fullRange, content);
         await vscode.workspace.applyEdit(edit);
       }
-      try {
-        await vscode.commands.executeCommand("markdown.showPreviewToSide", uri);
+
+      if (reveal === "preview") {
         try {
-          await vscode.commands.executeCommand("markdown.preview.refresh");
+          await vscode.commands.executeCommand("markdown.showPreviewToSide", uri);
+          try {
+            await vscode.commands.executeCommand("markdown.preview.refresh");
+          } catch {
+            // older builds
+          }
         } catch {
-          // Command missing on older / minimal builds — edit sync is enough.
+          await vscode.window.showTextDocument(doc, {
+            preview: false,
+            preserveFocus: true,
+            viewColumn: vscode.ViewColumn.Beside,
+          });
         }
-      } catch {
-        // Older / minimal VS Code builds without the Markdown extension.
-        await vscode.window.showTextDocument(doc, {
-          preview: false,
-          preserveFocus: true,
-          viewColumn: vscode.ViewColumn.Beside,
-        });
+        return;
       }
+
+      await vscode.window.showTextDocument(doc, {
+        preview: false,
+        preserveFocus: true,
+        viewColumn: vscode.ViewColumn.Beside,
+      });
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(
         `Failed to open plan markdown: ${text}`
       );
+    }
+  }
+
+  /**
+   * Current live plan body: prefer unsaved editor buffer, else disk file.
+   */
+  private async readLivePlanMarkdown(): Promise<string> {
+    const uri = this.planPreviewUri;
+    if (!uri) {
+      const fileName = planMarkdownFileName(
+        resolveUiLanguage(getConfig().language)
+      );
+      const fallbackUri = vscode.Uri.joinPath(
+        this.context.globalStorageUri,
+        "plan-preview",
+        fileName
+      );
+      try {
+        const bytes = await vscode.workspace.fs.readFile(fallbackUri);
+        this.planPreviewUri = fallbackUri;
+        return stripPlanImplementWrapper(
+          Buffer.from(bytes).toString("utf8")
+        );
+      } catch {
+        return "";
+      }
+    }
+    const openDoc = vscode.workspace.textDocuments.find(
+      (doc) => doc.uri.toString() === uri.toString()
+    );
+    if (openDoc) {
+      return stripPlanImplementWrapper(openDoc.getText());
+    }
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      return stripPlanImplementWrapper(Buffer.from(bytes).toString("utf8"));
+    } catch {
+      return "";
     }
   }
 
@@ -3305,6 +3386,161 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         lang === "ru"
           ? `Не удалось закоммитить и запушить: ${text}`
           : `Failed to commit and push: ${text}`;
+      runUiMessages.push({ role: "error", text: answer });
+      syncRunChat();
+      this.setRunStateForChat(runChatId, "error");
+      postToRunChat({ type: "append", role: "error", text: answer });
+      this.postRunFinished(runChatId, "error");
+    } finally {
+      if (this.isChatRunCurrent(runChatId, runRef)) {
+        this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+        this.finishChatRun(runChatId, runRef);
+      }
+    }
+  }
+
+  private async handleDiscardChanges(paths: string[]): Promise<void> {
+    const runChatId = this.store.activeChatId;
+    const lang = resolveUiLanguage(getConfig().language);
+    if (!runChatId || !this.store.chats[runChatId]) {
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      return;
+    }
+    if (this.isChatRunning(runChatId)) {
+      void vscode.window.showWarningMessage(
+        lang === "ru"
+          ? "Дождитесь завершения текущего ответа."
+          : "Wait for the current response to finish."
+      );
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      return;
+    }
+
+    const confirmLabel = lang === "ru" ? "Отменить изменения" : "Discard changes";
+    const cancelLabel = lang === "ru" ? "Не сейчас" : "Keep changes";
+    const confirm = await vscode.window.showWarningMessage(
+      lang === "ru"
+        ? "Отменить незакоммиченные изменения по файлам из этой правки? Действие необратимо."
+        : "Discard uncommitted changes for the files from this edit? This cannot be undone.",
+      { modal: true },
+      confirmLabel,
+      cancelLabel
+    );
+    if (confirm !== confirmLabel) {
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      return;
+    }
+
+    const runRef = this.beginChatRun(runChatId);
+    let runUiMessages = this.isViewingChat(runChatId)
+      ? this.uiMessages
+      : [...(this.store.chats[runChatId]?.uiMessages || [])];
+    const syncRunChat = (): void => {
+      if (!this.isChatRunCurrent(runChatId, runRef)) {
+        return;
+      }
+      touchChat(this.store, runChatId, {
+        uiMessages: runUiMessages.slice(-200),
+      });
+      if (this.isViewingChat(runChatId)) {
+        this.uiMessages = runUiMessages;
+      }
+      void this.writeStoreOnly();
+    };
+    const postToRunChat = (message: Record<string, unknown>): void => {
+      if (
+        this.isChatRunCurrent(runChatId, runRef) &&
+        this.isViewingChat(runChatId)
+      ) {
+        this.view?.webview.postMessage(message);
+      }
+    };
+
+    this.setRunStateForChat(runChatId, "running");
+    this.setStatusForChat(
+      runChatId,
+      lang === "ru" ? "Отменяю изменения…" : "Discarding changes…",
+      false,
+      "running"
+    );
+
+    try {
+      const remaining = await resolveRemainingReviewFiles(paths);
+      const targets = remaining.length
+        ? remaining.map((f) => f.path)
+        : paths;
+      const result = await discardPaths(targets, {
+        signal: runRef.controller.signal,
+        onPhase: (detail) => {
+          if (!this.isChatRunCurrent(runChatId, runRef)) {
+            return;
+          }
+          this.setStatusForChat(runChatId, detail, false, "running");
+        },
+        onStep: (step) => {
+          if (!this.isChatRunCurrent(runChatId, runRef)) {
+            return;
+          }
+          const toolText = `⚙ run_command(${JSON.stringify({
+            command: step.command,
+          })})`;
+          runUiMessages.push({ role: "tool", text: toolText });
+          syncRunChat();
+          postToRunChat({ type: "append", role: "tool", text: toolText });
+          const output = [step.stdout, step.stderr]
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+          if (output) {
+            const resultText = step.ok ? output : `Error: ${output}`;
+            runUiMessages.push({ role: "tool", text: resultText });
+            syncRunChat();
+            postToRunChat({ type: "append", role: "tool", text: resultText });
+          }
+        },
+      });
+
+      if (!this.isChatRunCurrent(runChatId, runRef)) {
+        return;
+      }
+
+      if (result.ok) {
+        touchChat(this.store, runChatId, {
+          lastAgentEditedPaths: [],
+        });
+        void this.writeStoreOnly();
+      }
+
+      this.setStatusForChat(runChatId, "", true);
+      runUiMessages.push({ role: "assistant", text: result.answer });
+      syncRunChat();
+      this.setRunStateForChat(runChatId, result.ok ? "success" : "error");
+      postToRunChat({
+        type: "assistantDone",
+        text: result.answer,
+      });
+      if (this.isViewingChat(runChatId)) {
+        this.postRegenerateState();
+      }
+      this.scheduleScmRefresh();
+      if (this.isChatRunCurrent(runChatId, runRef)) {
+        this.postRunFinished(runChatId, result.ok ? "success" : "error");
+      }
+    } catch (error) {
+      if (!this.isChatRunCurrent(runChatId, runRef)) {
+        return;
+      }
+      this.setStatusForChat(runChatId, "", true);
+      if (runRef.controller.signal.aborted) {
+        this.setRunStateForChat(runChatId);
+        postToRunChat({ type: "idle", chatId: runChatId });
+        return;
+      }
+      const text = error instanceof Error ? error.message : String(error);
+      const answer =
+        lang === "ru"
+          ? `Не удалось отменить изменения: ${text}`
+          : `Failed to discard changes: ${text}`;
       runUiMessages.push({ role: "error", text: answer });
       syncRunChat();
       this.setRunStateForChat(runChatId, "error");

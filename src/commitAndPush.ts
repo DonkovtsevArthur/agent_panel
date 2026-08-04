@@ -9,6 +9,7 @@ import {
 import { getConfig } from "./config";
 import { formatGitRemoteOutput } from "./gitCommandPolicy";
 import { resolveUiLanguage } from "./i18n";
+import { toRepoRelativePaths } from "./repoPaths";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,22 +26,6 @@ export type CommitAndPushResult = {
   commitMessage?: string;
   steps: CommitAndPushStep[];
 };
-
-function normalizeRelPaths(paths: string[]): string[] {
-  return [
-    ...new Set(
-      paths
-        .map((p) =>
-          String(p || "")
-            .trim()
-            .replace(/^\.\//, "")
-            .replace(/^\/+/, "")
-            .replace(/\\/g, "/")
-        )
-        .filter(Boolean)
-    ),
-  ];
-}
 
 async function runGit(
   cwd: string,
@@ -103,7 +88,6 @@ export async function commitAndPushPaths(
   const lang = resolveUiLanguage(getConfig().language);
   const steps: CommitAndPushStep[] = [];
   const folder = vscode.workspace.workspaceFolders?.[0];
-  const scoped = normalizeRelPaths(paths);
 
   const finish = (ok: boolean, answer: string, commitMessage?: string) => ({
     ok,
@@ -118,14 +102,14 @@ export async function commitAndPushPaths(
       lang === "ru" ? "Нет открытой папки workspace." : "No workspace folder open."
     );
   }
+  const cwd = folder.uri.fsPath;
+  const scoped = toRepoRelativePaths(paths, cwd);
   if (!scoped.length) {
     return finish(
       false,
       lang === "ru" ? "Нет путей для коммита." : "No paths to commit."
     );
   }
-
-  const cwd = folder.uri.fsPath;
   const signal = options?.signal;
   const record = (step: CommitAndPushStep) => {
     steps.push(step);

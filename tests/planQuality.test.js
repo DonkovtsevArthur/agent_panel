@@ -32,10 +32,16 @@ const {
   historyHasProposedPlan,
   proposedPlanHasWorkspacePath,
   proposedPlanHasGroundedPath,
+  looksLikeMissingAnaloguePathRead,
+  looksLikeImplementationApiMismatch,
+  extractImplementationEvidenceTokens,
+  diagnosisHasCriticalPlanGap,
   PLAN_QUALITY_NUDGE,
   PLAN_REVISION_HINT,
+  PLAN_MECHANICAL_HINT,
   FIGMA_FIRST_FORCE_HINT,
   FIGMA_FIRST_EXPLORE_BLOCKED_JSON,
+  proposedPlanHasMechanicalPath,
 } = require("../out/planQuality.js");
 
 const FIGMA_TOOL_MESSAGES = [
@@ -668,6 +674,46 @@ test("historyHasProposedPlan and PLAN_REVISION_HINT", () => {
   assert.match(PLAN_REVISION_HINT, /Do NOT restart Phase 1/i);
 });
 
+test("mechanical plan: package.json path + Steps pass; UI gates skipped", () => {
+  assert.match(PLAN_MECHANICAL_HINT, /Mechanical plan/i);
+  assert.match(PLAN_MECHANICAL_HINT, /Skip Phase 1/i);
+  assert.match(PLAN_MECHANICAL_HINT, /request_user_input/i);
+  assert.equal(proposedPlanHasMechanicalPath("Affected: package.json"), true);
+  assert.equal(proposedPlanHasGroundedPath("Affected: package.json"), false);
+
+  const user = "Версия 0.0.21 — составь план изменения до 0.0.22";
+  const plan = [
+    "<proposed_plan>",
+    "**Цель**: Поднять версию до 0.0.22",
+    "**Шаги**:",
+    "1. Обновить `version` в `package.json` с 0.0.21 на 0.0.22",
+    "2. Синхронизировать `package-lock.json` при необходимости",
+    "**Затрагиваемые файлы**: `package.json`, `package-lock.json`",
+    "**Acceptance**: version = 0.0.22",
+    "</proposed_plan>",
+  ].join("\n");
+  assert.equal(
+    diagnosePlanQualityFailure(plan, { userText: user, planMechanical: true }),
+    null
+  );
+  assert.equal(
+    diagnosePlanQualityFailure(plan, { userText: user }),
+    null
+  );
+  // Without Steps — still fails.
+  const noSteps = [
+    "<proposed_plan>",
+    "**Цель**: bump",
+    "**Затрагиваемые файлы**: `package.json`",
+    "</proposed_plan>",
+  ].join("\n");
+  const bad = diagnosePlanQualityFailure(noSteps, {
+    userText: user,
+    planMechanical: true,
+  });
+  assert.equal(bad?.reason, "missing_steps");
+});
+
 test("planRevision diagnose skips re-fetch gates", () => {
   const user =
     "бекенд не предусмотрен https://www.figma.com/design/abc/x?node-id=1-2";
@@ -802,6 +848,88 @@ test("multi-reason diagnose when Figma URL + page→tab + no Implementation", ()
   assert.match(d.nudge, /fix ALL of the following/i);
 });
 
+test("missing_path_read when analogue path was never read_file'd", () => {
+  const body =
+    "**Цель**: x\n**Шаги**:\n" +
+    "1. Таблица — новый по паттерну `src/pages/foo/page.tsx` — observed: `DataTable`\n" +
+    "**Затрагиваемые файлы**: src/pages/bar/page.tsx\n";
+  const otherRead = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/pages/other/page.tsx",
+        content: "export const Other = () => null;",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnaloguePathRead(body, otherRead), true);
+  const matchedRead = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/pages/foo/page.tsx",
+        content: "export const DataTable = () => null;",
+      }),
+    },
+  ];
+  assert.equal(looksLikeMissingAnaloguePathRead(body, matchedRead), false);
+  assert.equal(looksLikeMissingAnaloguePathRead(body, []), false);
+});
+
+test("implementation_api_mismatch when props not in component source", () => {
+  const body =
+    "**Цель**: x\n**Шаги**:\n1. reuse `src/pages/a.tsx` — observed: `Table`\n" +
+    "**Implementation**:\n- import { Table } from `shared/ui/Table`\n- columns={inventedVirtualScroll}\n";
+  const reads = [
+    {
+      role: "tool",
+      name: "read_file",
+      content: JSON.stringify({
+        path: "src/shared/ui/Table.tsx",
+        content: "export function Table(props: { columns: Column[] }) { return null; }",
+      }),
+    },
+  ];
+  assert.ok(extractImplementationEvidenceTokens(body).length >= 1);
+  // inventedVirtualScroll / backticks that aren't in file → mismatch
+  const invented =
+    "**Implementation**:\n- `inventedVirtualScroll` on Table\n- props fooBarBazQuux=\n";
+  assert.equal(
+    looksLikeImplementationApiMismatch(
+      "**Цель**: x\n**Шаги**:\n1. x\n" + invented,
+      reads
+    ),
+    true
+  );
+  const matched =
+    "**Implementation**:\n- import type — `columns` from Table\n- path `src/shared/ui/Table.tsx`\n";
+  assert.equal(
+    looksLikeImplementationApiMismatch(
+      "**Цель**: x\n**Шаги**:\n1. x\n" + matched,
+      reads
+    ),
+    false
+  );
+  assert.equal(
+    diagnosisHasCriticalPlanGap({
+      reason: "missing_path_read",
+      reasons: ["missing_path_read"],
+      nudge: "x",
+    }),
+    true
+  );
+  assert.equal(
+    diagnosisHasCriticalPlanGap({
+      reason: "page_to_tab",
+      reasons: ["page_to_tab"],
+      nudge: "x",
+    }),
+    false
+  );
+});
+
 test("figma_block_inventory requires vision-helper labels in the plan", () => {
   const richVision = [
     {
@@ -841,6 +969,23 @@ test("figma_block_inventory requires vision-helper labels in the plan", () => {
     "**Затрагиваемые файлы**: src/pages/cert/table.tsx\n" +
     UI_IMPLEMENTATION;
   assert.equal(looksLikeMissingFigmaBlockInventory(coveredBody, richVision), false);
+
+  // Near 1:1: covering only 2 of 5 labels fails (half used to pass).
+  const halfBody =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Колонки Вид работ, Статус — src/pages/cert/table.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/table.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeMissingFigmaBlockInventory(halfBody, richVision), true);
+
+  // Allow dropping at most one label (4 of 5).
+  const almostBody =
+    "**Цель**: страница Удостоверение\n**Шаги**:\n" +
+    "1. Колонки Вид работ, Статус, Организация — src/pages/cert/table.tsx\n" +
+    "2. Actions — Создать — src/pages/cert/actions.tsx\n" +
+    "**Затрагиваемые файлы**: src/pages/cert/table.tsx\n" +
+    UI_IMPLEMENTATION;
+  assert.equal(looksLikeMissingFigmaBlockInventory(almostBody, richVision), false);
 
   // Single Column label is below the inventory threshold (need ≥2 labels).
   assert.equal(

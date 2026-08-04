@@ -3,7 +3,10 @@ const assert = require("node:assert/strict");
 
 const {
   PLAN_IMPLEMENT_MARKER,
+  PLAN_IMPLEMENT_PREFIX_RU,
   stripPlanImplementWrapper,
+  buildPlanImplementUserText,
+  planMarkdownFileName,
   looksLikePlanImplementRequest,
   looksLikeEditCorrectionRequest,
   buildPlanImplementSystemHint,
@@ -19,6 +22,19 @@ const {
   EXPLORE_SOFT_NUDGE_ROUNDS,
   KIMI_EXPLORE_SOFT_NUDGE_ROUNDS,
 } = require("../out/toolRoundPolicy.js");
+
+test("planMarkdownFileName and buildPlanImplementUserText", () => {
+  assert.equal(planMarkdownFileName("ru"), "План.md");
+  assert.equal(planMarkdownFileName("en"), "Plan.md");
+  const payload = buildPlanImplementUserText(
+    "**Цель**: x\n**Шаги**:\n1. a",
+    PLAN_IMPLEMENT_PREFIX_RU
+  );
+  assert.match(payload, /\[\[harbor:implement_plan\]\]/);
+  assert.match(payload, /Реализуй следующий план/);
+  assert.match(payload, /\*\*Цель\*\*: x/);
+  assert.equal(buildPlanImplementUserText("   "), "");
+});
 
 test("stripPlanImplementWrapper removes marker and RU/EN implement prefixes", () => {
   assert.equal(

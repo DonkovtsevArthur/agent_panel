@@ -5,6 +5,7 @@
 
 import { messageHasFigmaUrl } from "./mcp/figma";
 import { HARBOR_VISION_HELPER_MARKER } from "./figmaVisionFormat";
+import { looksLikeMechanicalPlanRequest } from "./toolRoundPolicy";
 
 export const PLAN_QUALITY_NUDGE =
   "False: your plan deliverable is not decision-complete. " +
@@ -40,11 +41,43 @@ export type PlanQualityReason =
   | "page_to_similar"
   | "already_exists_no_inventory"
   | "missing_analogue_quote"
+  | "missing_path_read"
   | "missing_implementation"
   | "missing_component_api_read"
+  | "implementation_api_mismatch"
   | "checklist_coverage"
   | "goal_frame_title"
   | "figma_block_inventory";
+
+/**
+ * Gaps that must not ship a Build card after quality nudges are exhausted.
+ * Soft drift (page→tab / inventory soft) can still show an imperfect card.
+ */
+export const CRITICAL_PLAN_QUALITY_REASONS: ReadonlySet<PlanQualityReason> =
+  new Set([
+    "plan_file_write",
+    "prose_already_exists",
+    "unfixed_fields",
+    "missing_grounded_path",
+    "missing_steps",
+    "missing_figma_tools",
+    "missing_analogue_quote",
+    "missing_path_read",
+    "missing_implementation",
+    "missing_component_api_read",
+    "implementation_api_mismatch",
+  ]);
+
+export function diagnosisHasCriticalPlanGap(
+  diagnosis: PlanQualityDiagnosis | null | undefined
+): boolean {
+  if (!diagnosis?.reasons?.length) {
+    return false;
+  }
+  return diagnosis.reasons.some((reason) =>
+    CRITICAL_PLAN_QUALITY_REASONS.has(reason)
+  );
+}
 
 export type PlanQualityDiagnosis = {
   /** Primary (first) failing reason — stable for logs / single-reason tests. */
@@ -78,10 +111,14 @@ const PLAN_QUALITY_NUDGES: Record<PlanQualityReason, string> = {
     "False: «already implemented / fully matches» requires a per-block inventory (each mockup block → reuse path or explicit gap). List every block, then rewrite the FULL <proposed_plan>.",
   missing_analogue_quote:
     "False: every Step with reuse / by-pattern / «как в» <path> — and every Step citing a path you already read_file'd — needs a backtick observed quote copied from that file's content (≥6 chars, not the path). Rewrite the FULL <proposed_plan> with those quotes.",
+  missing_path_read:
+    "False: every reuse / by-pattern / «как в» path in Steps must be a file you read_file'd THIS turn — do not cite paths from memory. read_file those analogues, keep observed quotes, rewrite the FULL <proposed_plan>.",
   missing_implementation:
     "False: for this UI/page/Figma plan add an **Implementation** section with exact props/imports of target shared components (from read_file of the component source) and key types/signatures — the Build contract. Rewrite the FULL <proposed_plan>.",
   missing_component_api_read:
     "False: the plan names a shared primitive (Table, Layout, Modal, …) but you did not read_file that component's source (shared/ui or components path). search_text → read_file the component itself (not only a call site), put exact props/imports in **Implementation**, rewrite the FULL <proposed_plan>.",
+  implementation_api_mismatch:
+    "False: **Implementation** props/imports must match the shared-component source you read_file'd (at least one exact token from the file — prop name, import, type). Do not invent API. Re-read the component, rewrite Implementation, then the FULL <proposed_plan>.",
   checklist_coverage:
     "False: the user gave a numbered/bulleted checklist — Steps must cover every item 1:1 (count AND meaning: each item's key words must appear in Steps). Do not collapse or rename items away. Rewrite the FULL <proposed_plan>.",
   goal_frame_title:
@@ -136,9 +173,12 @@ export function diagnosisFromReasons(
   };
 }
 
+/** User-visible dead-end when no plan card exists. Do NOT include the literal
+ *  tag "proposed_plan" in angle brackets — panel.js would render a fake plan card. */
 export const PLAN_QUALITY_USER_VISIBLE =
-  "План не decision-complete: нет нормального <proposed_plan> с путями, цель подменена (таб/«уже есть»), " +
-  "или макет не сверен по блокам. Повторите запрос — нужен план WHAT=Figma/страница с grounded Steps.";
+  "План не decision-complete: нет карточки плана с путями и шагами, " +
+  "цель подменена (таб/«уже есть»), или макет не сверен по блокам. " +
+  "Повторите запрос — нужен полный план (WHAT = страница/Figma) с grounded Steps.";
 
 const PROPOSED_PLAN_RE =
   /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*?)\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/i;
@@ -296,6 +336,15 @@ export function proposedPlanHasWorkspacePath(body: string): boolean {
  *  (`types.ts`, `paths.ts`) do not qualify — they ground nothing. */
 export function proposedPlanHasGroundedPath(body: string): boolean {
   return GROUNDED_PATH_RE.test(String(body || ""));
+}
+
+/** Root files allowed as grounded paths for mechanical plans (no directory slash). */
+const MECHANICAL_ROOT_FILE_RE =
+  /(?:^|[\s`"'(=[])(?:\.\/)?(?:package(?:-lock)?\.json|tsconfig\.json|README\.md|CHANGELOG\.md)\b/i;
+
+export function proposedPlanHasMechanicalPath(body: string): boolean {
+  const text = String(body || "");
+  return proposedPlanHasGroundedPath(text) || MECHANICAL_ROOT_FILE_RE.test(text);
 }
 
 /** User asked to plan/implement a page or screen (not a tab). */
@@ -701,6 +750,11 @@ export type PlanQualityOptions = {
    * so a scope edit can ship a full replacement card without re-explore.
    */
   planRevision?: boolean;
+  /**
+   * Mechanical plan (version bump / one-field config): only require Steps + a
+   * concrete path (incl. root files like package.json). Skip UI/Figma gates.
+   */
+  planMechanical?: boolean;
 };
 
 /** True when an earlier assistant turn already shipped a `<proposed_plan>`. */
@@ -718,12 +772,23 @@ export const PLAN_REVISION_HINT =
   "Plan revision: a <proposed_plan> already exists earlier in this chat. " +
   "Start from that last plan. Apply ONLY the user's latest delta (scope, constraints, wording). " +
   "Emit a FULL replacement <proposed_plan>…</proposed_plan> card " +
-  "(complete Goal / Steps / Affected / Acceptance / Implementation as needed). " +
-  "Do NOT restart Phase 1: do not re-call Figma MCP and do not re-explore the repo with " +
-  "list_files / search_text / read_file / delegate_task unless the user changes WHAT " +
-  "(new screen, new checklist items, new Figma node) or a previously cited path is no longer valid. " +
-  "When removing scope (e.g. no backend/API), delete matching Steps and trim Affected / " +
-  "Implementation / Acceptance — keep grounded UI steps and their observed quotes intact.";
+  "with updated Goal/Steps/Affected/Acceptance (and Implementation only if still a UI/page/Figma plan). " +
+  "Do NOT restart Phase 1. Do NOT re-call Figma MCP or broad search_text/list_files unless the user changed WHAT (new screen/checklist/node) or a cited path is invalid. " +
+  "Do not answer in prose — the revised plan card is the deliverable.";
+
+/**
+ * System hint for mechanical Plan turns (version / one-field): keep the LLM
+ * on a short card — no Phase-1 inventory, changelog, or patch/minor QuickPick.
+ */
+export const PLAN_MECHANICAL_HINT =
+  "Mechanical plan: the user asked to plan a small non-UI change " +
+  "(version bump, one config field, rename, focused fix — not a page/Figma/checklist). " +
+  "Skip Phase 1–2. At most read_file the target file(s) (+ optional search_text). " +
+  "Do not search CHANGELOG, git tags, or release conventions unless the user asked. " +
+  "Do not call request_user_input when the target is already clear. " +
+  "Emit a short <proposed_plan> now: Goal, 2–4 Steps, Affected files, Acceptance. " +
+  "Skip **Implementation** and UI-analogue observed quotes. " +
+  "Do not answer in prose — the plan card is the deliverable.";
 
 /** Shared UI primitives that require reading component source, not only a call site. */
 const SHARED_PRIMITIVE_NAMES = [
@@ -1100,8 +1165,8 @@ function labelCoveredInPlan(label: string, planLower: string): boolean {
 }
 
 /**
- * True when vision-helper listed ≥2 UI labels and the plan covers fewer
- * than half of them (mockup blocks dropped).
+ * True when vision-helper listed ≥2 UI labels and the plan covers too few
+ * (near 1:1 — allow dropping at most one label for OCR noise).
  */
 export function looksLikeMissingFigmaBlockInventory(
   planBody: string,
@@ -1121,8 +1186,117 @@ export function looksLikeMissingFigmaBlockInventory(
       covered += 1;
     }
   }
-  const need = Math.ceil(labels.length / 2);
+  // Near 1:1: require all but at most one label (min 2 when only 2 labels).
+  const need = Math.max(labels.length - 1, labels.length >= 2 ? 2 : labels.length);
   return covered < need;
+}
+
+/**
+ * reuse / by-pattern / «как в» paths in Steps must have been read_file'd
+ * this turn (create-only paths without an analogue marker are skipped).
+ */
+export function looksLikeMissingAnaloguePathRead(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  if (!messages?.length) {
+    return false;
+  }
+  const reads = collectReadFileContents(messages);
+  if (!reads.size) {
+    return false;
+  }
+  const steps = extractNumberedPlanSteps(planBody);
+  if (!steps.length) {
+    return false;
+  }
+  for (const step of steps) {
+    const analoguePaths = extractAnaloguePathsFromStep(step);
+    for (const path of analoguePaths) {
+      if (findReadContentForPath(reads, path) === undefined) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Evidence tokens from **Implementation** (backticks + prop assignments). */
+export function extractImplementationEvidenceTokens(section: string): string[] {
+  const tokens: string[] = [];
+  const tickRe = /`([^`]+)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = tickRe.exec(String(section || ""))) !== null) {
+    const raw = String(match[1] || "").trim();
+    if (raw.length < 4) {
+      continue;
+    }
+    if (GROUNDED_PATH_RE.test(` ${raw}`) && /\/.+\./.test(raw)) {
+      continue;
+    }
+    tokens.push(raw);
+  }
+  const propRe = /\b([a-z][a-zA-Z0-9]{2,})\s*=/g;
+  while ((match = propRe.exec(String(section || ""))) !== null) {
+    tokens.push(String(match[1] || ""));
+  }
+  // import { Foo } / type Bar
+  const identRe =
+    /(?:import\s*\{[^}]*\b([A-Z][A-Za-z0-9]{2,})\b|\btype\s+([A-Z][A-Za-z0-9]{2,})\b)/g;
+  while ((match = identRe.exec(String(section || ""))) !== null) {
+    const name = String(match[1] || match[2] || "").trim();
+    if (name) {
+      tokens.push(name);
+    }
+  }
+  return [...new Set(tokens.filter(Boolean))].slice(0, 40);
+}
+
+function collectComponentSourceContents(
+  messages?: PlanQualityMessage[]
+): string[] {
+  const reads = collectReadFileContents(messages);
+  if (!reads.size) {
+    return [];
+  }
+  const contents: string[] = [];
+  for (const [path, content] of reads) {
+    const isShared =
+      /(?:^|\/)shared\/ui\//i.test(path) ||
+      /(?:^|\/)components\//i.test(path) ||
+      /(?:^|\/)shared\/components\//i.test(path);
+    const isPrimitive = SHARED_PRIMITIVE_NAMES.some((name) =>
+      pathLooksLikeComponentSource(path, name)
+    );
+    if (isShared || isPrimitive) {
+      contents.push(content);
+    }
+  }
+  return contents;
+}
+
+/**
+ * **Implementation** claims props/imports that do not appear in any
+ * shared-component source read this turn.
+ */
+export function looksLikeImplementationApiMismatch(
+  planBody: string,
+  messages?: PlanQualityMessage[]
+): boolean {
+  const section = extractImplementationSection(planBody);
+  if (!section) {
+    return false;
+  }
+  const tokens = extractImplementationEvidenceTokens(section);
+  if (!tokens.length) {
+    return false;
+  }
+  const componentContents = collectComponentSourceContents(messages);
+  if (!componentContents.length) {
+    return false;
+  }
+  const hay = componentContents.join("\n");
+  return !tokens.some((token) => contentContainsQuote(hay, token));
 }
 
 function diagnoseIncompleteProposedPlan(
@@ -1138,9 +1312,15 @@ function diagnoseIncompleteProposedPlan(
   if (UNFIXED_FIELDS_RE.test(body)) {
     reasons.push("unfixed_fields");
   }
-  if (ABSTRACT_FILES_RE.test(body) && !proposedPlanHasGroundedPath(body)) {
+  const mechanical =
+    options?.planMechanical === true ||
+    looksLikeMechanicalPlanRequest(String(options?.userText || ""));
+  const hasPath = mechanical
+    ? proposedPlanHasMechanicalPath(body)
+    : proposedPlanHasGroundedPath(body);
+  if (ABSTRACT_FILES_RE.test(body) && !hasPath) {
     reasons.push("missing_grounded_path");
-  } else if (!proposedPlanHasGroundedPath(body)) {
+  } else if (!hasPath) {
     reasons.push("missing_grounded_path");
   }
   const hasStepsHeader =
@@ -1150,6 +1330,12 @@ function diagnoseIncompleteProposedPlan(
   if (!hasStepsHeader || !hasNumberedStep) {
     reasons.push("missing_steps");
   }
+
+  // Mechanical: Steps + path only — skip UI/Figma/analogue quality gates.
+  if (mechanical) {
+    return diagnosisFromReasons(reasons);
+  }
+
   const revision = options?.planRevision === true;
   if (
     !revision &&
@@ -1177,15 +1363,27 @@ function diagnoseIncompleteProposedPlan(
   if (looksLikeMissingAnalogueQuote(body, options?.messages)) {
     reasons.push("missing_analogue_quote");
   }
+  // Revision turns reuse prior component/Figma grounding — do not force re-read.
+  if (
+    !revision &&
+    looksLikeMissingAnaloguePathRead(body, options?.messages)
+  ) {
+    reasons.push("missing_path_read");
+  }
   if (looksLikeMissingImplementationSection(body, options?.userText)) {
     reasons.push("missing_implementation");
   }
-  // Revision turns reuse prior component/Figma grounding — do not force re-read.
   if (
     !revision &&
     looksLikeMissingComponentApiRead(body, options?.messages)
   ) {
     reasons.push("missing_component_api_read");
+  }
+  if (
+    !revision &&
+    looksLikeImplementationApiMismatch(body, options?.messages)
+  ) {
+    reasons.push("implementation_api_mismatch");
   }
   if (looksLikeChecklistCoverageGap(body, options?.userText)) {
     reasons.push("checklist_coverage");

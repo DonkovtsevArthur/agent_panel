@@ -67,6 +67,15 @@ export const PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS =
  */
 export const PLAN_REVISION_SOFT_NUDGE_ROUNDS = 2;
 
+/**
+ * Plan mechanical soft-strip: small non-UI plans (version, config, focused
+ * fix) — early strip so the LLM emits a compact <proposed_plan>.
+ */
+export const PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS = 2;
+
+/** Soft cap: longer briefs without trivial/file anchors stay on full Plan path. */
+export const MECHANICAL_PLAN_MAX_CHARS = 280;
+
 /** Сколько раз можно продлить бюджет раундов. */
 export const MAX_ROUND_EXTENSIONS = 1;
 
@@ -115,14 +124,155 @@ export function looksLikeColdPageExploreRequest(userText: string): boolean {
   );
 }
 
-export type ExploreBudgetSignal = "implement" | "focused" | "cold_page" | "default";
+/** Count workspace-like file mentions (dir/file.ext or common root files). */
+export function countPlanFileMentions(userText: string): number {
+  const value = String(userText || "");
+  if (!value.trim()) {
+    return 0;
+  }
+  const found = new Set<string>();
+  const grounded =
+    /(?:^|[\s`"'(=[])((?:\.\/)?(?:[\w@.-]+\/)+[\w@.-]+\.[\w]{1,12})\b/gi;
+  const root =
+    /(?:^|[\s`"'(=[])((?:\.\/)?(?:package(?:-lock)?\.json|tsconfig\.json|README\.md|CHANGELOG\.md|\.env(?:\.[\w-]+)?))\b/gi;
+  for (const re of [grounded, root]) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(value)) !== null) {
+      found.add(String(match[1] || "").replace(/^\.\//, "").toLowerCase());
+    }
+  }
+  return found.size;
+}
+
+/**
+ * Plan needs full Phase-1 grounding (UI / Figma / multi-item / architecture).
+ * Inverted pair of {@link looksLikeMechanicalPlanRequest}.
+ */
+export function looksLikeComplexPlanRequest(userText: string): boolean {
+  const value = String(userText || "").trim();
+  if (!value) {
+    return false;
+  }
+  if (/figma\.com/i.test(value)) {
+    return true;
+  }
+  if (looksLikeColdPageExploreRequest(value)) {
+    return true;
+  }
+  if (/(?:макет|mockup|design\s+system)/i.test(value)) {
+    return true;
+  }
+  // Page/screen/component surface — unless the ask is clearly about version.
+  const aboutVersionOnly =
+    /(?:верси\w*|version|package\.json|semver|\bbump\b)/i.test(value) &&
+    !/(?:страниц|экран|page|screen|компонент|component|макет)/i.test(value);
+  if (
+    !aboutVersionOnly &&
+    /(?:страниц\w*|экран\w*|\bpages?\b|\bscreens?\b|роуте?\b|\broutes?\b)/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  if (
+    !aboutVersionOnly &&
+    /(?:компонент\w*|\bcomponents?\b|shared\/ui|layout\w*)/i.test(value)
+  ) {
+    return true;
+  }
+  if (
+    /(?:реализ|implement|спланир|план).{0,48}(?:страниц|экран|page|screen|компонент|component)/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  const numbered = value.match(/(?:^|\n)\s*\d+[.)]\s+\S/g);
+  if (numbered && numbered.length >= 3) {
+    return true;
+  }
+  if (
+    /(?:архитектур|спроектируй|миграци|\bschema\b|несколько\s+модул|multiple\s+modules|end[\s-]?to[\s-]?end|весь\s+модул|whole\s+module|большой\s+рефактор|large\s+refactor)/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Plan: small non-UI change — universal via inversion.
+ * mechanical = (plan/change intent) AND NOT complex AND (trivial | ≤2 files | short).
+ */
+export function looksLikeMechanicalPlanRequest(userText: string): boolean {
+  const value = String(userText || "").trim();
+  if (!value) {
+    return false;
+  }
+  const lower = value.toLowerCase().replace(/ё/g, "е");
+  // Q&A — answer as Ask, do not force a short plan card.
+  // Avoid `\b` after Cyrillic: JS word-chars are ASCII-only.
+  if (
+    /^(?:какая|какой|какое|какие|сколько)(?:\s|$|[?!.:,])/i.test(lower) ||
+    /^(?:что\s+делает|где\s+)/i.test(lower) ||
+    /^(?:why|what|which|how\s+does)\b/i.test(lower)
+  ) {
+    return false;
+  }
+  if (looksLikeComplexPlanRequest(value)) {
+    return false;
+  }
+
+  const planIntent =
+    /(?:план\w*|спланир\w*|\bplan\b|proposed_plan|распиши\s+шаг|что\s+нужно\s+сделать)/i.test(
+      value
+    );
+  const changeIntent =
+    /(?:поменя|смени|обнов|подним|постав|добав|убери|удал|исправ|переимен|rename|bump|change|update|set\b|fix\b|remove)/i.test(
+      lower
+    );
+  const trivialKeywords =
+    /(?:верси\w*|version|package\.json|package-lock|semver|\bbump\b|одно\s+поле|одно\s+значени|одну\s+строк|one\s+field|one\s+line|tsconfig|readme|changelog)/i.test(
+      value
+    );
+
+  if (!planIntent && !changeIntent && !trivialKeywords) {
+    return false;
+  }
+
+  const fileCount = countPlanFileMentions(value);
+  if (trivialKeywords) {
+    return true;
+  }
+  if (fileCount > 0 && fileCount <= 2) {
+    return true;
+  }
+  if (value.length <= MECHANICAL_PLAN_MAX_CHARS && (planIntent || changeIntent)) {
+    return true;
+  }
+  return false;
+}
+
+export type ExploreBudgetSignal =
+  | "implement"
+  | "focused"
+  | "cold_page"
+  | "mechanical"
+  | "default";
 
 export function classifyExploreBudgetSignal(options: {
   implementPlan?: boolean;
   userText?: string;
+  /** Plan-only: mechanical small plan. */
+  planMechanical?: boolean;
 }): ExploreBudgetSignal {
   if (options.implementPlan) {
     return "implement";
+  }
+  if (options.planMechanical) {
+    return "mechanical";
   }
   const userText = String(options.userText || "");
   if (userMessageHasFocusedPath(userText)) {
@@ -148,6 +298,11 @@ export function exploreRoundLimits(options: {
    * model revises the card instead of restarting Phase 1.
    */
   planRevision?: boolean;
+  /**
+   * Plan mechanical (version / one-field): early soft-strip, skip Phase-1 spam.
+   * Ignored when planRevision is set (revision already soft=2).
+   */
+  planMechanical?: boolean;
   /** User message — adaptive Agent explore (focused path / cold page). */
   userText?: string;
 }): ExploreRoundLimits {
@@ -165,6 +320,18 @@ export function exploreRoundLimits(options: {
     return {
       softNudgeRounds: PLAN_REVISION_SOFT_NUDGE_ROUNDS,
       // Soft-strip only — no hard-cut; quality gate still applies.
+      hardCutRounds: Number.MAX_SAFE_INTEGER,
+      stripExploreOnSoftNudge: true,
+      hardCutExplore: false,
+    };
+  }
+  const planMechanical =
+    options.planMechanical === true ||
+    (options.planQuality === true &&
+      looksLikeMechanicalPlanRequest(String(options.userText || "")));
+  if (options.planQuality && planMechanical) {
+    return {
+      softNudgeRounds: PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS,
       hardCutRounds: Number.MAX_SAFE_INTEGER,
       stripExploreOnSoftNudge: true,
       hardCutExplore: false,
@@ -310,6 +477,8 @@ export function buildExploreSoftNudge(options: {
   implementPlan?: boolean;
   /** Plan follow-up: stop re-explore, emit revised full card. */
   planRevision?: boolean;
+  /** Plan mechanical: stop explore, emit short card. */
+  planMechanical?: boolean;
 }): string {
   if (options.readonly) {
     if (options.plan && options.planRevision) {
@@ -319,6 +488,15 @@ export function buildExploreSoftNudge(options: {
         "A prior <proposed_plan> already exists — apply ONLY the user's latest delta and emit a FULL replacement <proposed_plan>…</proposed_plan> now.",
         "Keep grounded UI steps and observed quotes; remove/adjust Steps, Affected, Implementation, and Acceptance for the delta (e.g. drop backend/API scope).",
         "Do not restart Phase 1 or re-call Figma. Do not answer in prose — the revised plan card is the deliverable.",
+      ].join(" ");
+    }
+    if (options.plan && options.planMechanical) {
+      return [
+        "Stop exploring the repository.",
+        "list_files, read_file, search_text, and delegate_task are no longer available this turn.",
+        "This is a mechanical plan (small non-UI change) — emit a short FULL <proposed_plan>…</proposed_plan> now:",
+        "Goal, 2–4 Steps, Affected files, Acceptance. Skip Implementation, Phase 1 inventory, CHANGELOG/tags research unless asked.",
+        "Do not call request_user_input unless a real preference is blocking. Do not answer in prose — the plan card is the deliverable.",
       ].join(" ");
     }
     if (options.plan) {

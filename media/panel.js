@@ -311,6 +311,7 @@
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
       commitAndPush: "Commit and push",
+      discardChanges: "Discard",
       changesTag: "Changes",
       taskForMode: (label) => `Task (${label})... (@ for file)`,
       modePlaceholder: (label) => `${label}... (@ for file)`,
@@ -625,6 +626,7 @@
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
       commitAndPush: "Закоммитить и запушить",
+      discardChanges: "Отменить",
       changesTag: "Изменения",
       taskForMode: (label) => `Задача (${label})… (@ — файл)`,
       modePlaceholder: (label) => `${label}… (@ — файл)`,
@@ -2099,6 +2101,7 @@
     promptEl.value = next;
     promptEl.focus();
     promptEl.setSelectionRange(caret, caret);
+    autoResizePrompt();
     closeSlashMenu();
   }
 
@@ -2552,6 +2555,26 @@
     persistUiState();
   }
 
+  /** Grow #prompt with content up to CSS max-height (~15 lines). */
+  function autoResizePrompt() {
+    if (!(promptEl instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    promptEl.style.height = "auto";
+    const styles = window.getComputedStyle(promptEl);
+    const minHeight = parseFloat(styles.minHeight);
+    const maxHeight = parseFloat(styles.maxHeight);
+    const contentHeight = promptEl.scrollHeight;
+    let next = contentHeight;
+    if (Number.isFinite(minHeight)) {
+      next = Math.max(next, minHeight);
+    }
+    if (Number.isFinite(maxHeight)) {
+      next = Math.min(next, maxHeight);
+    }
+    promptEl.style.height = `${Math.ceil(next)}px`;
+  }
+
   function restoreDraftPrompt() {
     if (!promptEl || UI_SURFACE !== "panel") {
       return;
@@ -2560,6 +2583,7 @@
     if (draft && !promptEl.value) {
       promptEl.value = draft;
     }
+    autoResizePrompt();
   }
 
   function clearDraftPrompt() {
@@ -8303,7 +8327,9 @@
     return stripPlanImplementWrapper(last);
   }
 
-  function sendImplementPlan(planText) {
+  let livePlanBuildRequestId = 0;
+
+  function sendImplementPlanWithText(planText) {
     const text = stripPlanImplementWrapper(planText);
     if (!text || busy) {
       return;
@@ -8324,6 +8350,21 @@
       model: getSelectedModel(),
       agentMode: "agent",
       attachments: [],
+    });
+  }
+
+  /** Build: prefer live editable Plan.md (incl. unsaved edits), else card text. */
+  function sendImplementPlan(planText) {
+    if (busy) {
+      return;
+    }
+    const fallback = stripPlanImplementWrapper(planText || pendingPlanText);
+    livePlanBuildRequestId += 1;
+    const requestId = `plan-build-${livePlanBuildRequestId}`;
+    vscode.postMessage({
+      type: "requestLivePlanForBuild",
+      requestId,
+      fallbackText: fallback,
     });
   }
 
@@ -8366,13 +8407,13 @@
   }
 
   /**
-   * When a complete proposed_plan is available: show composer Build tag.
-   * Opening the markdown tab is opt-in (card «Open in tab» button).
-   * Skip if Build was already started for this plan (implement handoff in history).
+   * When a complete proposed_plan is available: show composer Build tag and
+   * sync the live editable Plan.md tab (reveal "editor"). Card «Open in tab»
+   * can still open markdown preview. Skip if Build already ran for this plan.
    */
   function presentProposedPlan(
     raw,
-    { openEditor = false, forceOpen = false } = {}
+    { openEditor = false, forceOpen = false, reveal = "editor" } = {}
   ) {
     const plan = extractLatestProposedPlan(raw);
     if (!plan) {
@@ -8396,7 +8437,11 @@
       const key = plan.replace(/\s+/g, " ").trim();
       if (forceOpen || key !== lastOpenedPlanKey) {
         lastOpenedPlanKey = key;
-        vscode.postMessage({ type: "openPlanMarkdown", text: plan });
+        vscode.postMessage({
+          type: "openPlanMarkdown",
+          text: plan,
+          reveal: reveal === "preview" ? "preview" : "editor",
+        });
       }
     }
     return true;
@@ -8481,6 +8526,26 @@
       });
     });
     composerScmActionsEl.appendChild(commitPushBtn);
+
+    const discardBtn = document.createElement("button");
+    discardBtn.type = "button";
+    discardBtn.className = "review-discard-changes";
+    discardBtn.title = t("discardChanges");
+    discardBtn.disabled = busy;
+    discardBtn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">undo</span>` +
+      `<span>${escapeHtml(t("discardChanges"))}</span>`;
+    discardBtn.addEventListener("click", () => {
+      if (busy) {
+        return;
+      }
+      setBusy(true);
+      vscode.postMessage({
+        type: "discardChanges",
+        paths,
+      });
+    });
+    composerScmActionsEl.appendChild(discardBtn);
 
     const scmBtn = document.createElement("button");
     scmBtn.type = "button";
@@ -9078,7 +9143,12 @@
     }
     const key = raw.replace(/\s+/g, " ").trim();
     lastOpenedPlanKey = key;
-    vscode.postMessage({ type: "openPlanMarkdown", text: raw });
+    // Explicit card action: markdown preview beside the editor.
+    vscode.postMessage({
+      type: "openPlanMarkdown",
+      text: raw,
+      reveal: "preview",
+    });
   }
 
   function getMarkedApi() {
@@ -10236,6 +10306,12 @@
       if (commitBtn) {
         commitBtn.disabled = busy;
       }
+      const discardBtn = composerScmActionsEl.querySelector(
+        ".review-discard-changes"
+      );
+      if (discardBtn) {
+        discardBtn.disabled = busy;
+      }
     }
     if (composerPlanActionsEl) {
       const planBtn = composerPlanActionsEl.querySelector(".composer-plan-build");
@@ -10497,6 +10573,7 @@
       modeForSend = normalizeAgentModeUi(command.mode);
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
+        autoResizePrompt();
         clearDraftPrompt();
         closeMentionMenu();
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
@@ -10524,6 +10601,7 @@
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     promptEl.value = "";
+    autoResizePrompt();
     clearDraftPrompt();
     clearPendingAttachments();
     clearPendingSelections();
@@ -12011,6 +12089,7 @@
   });
 
   promptEl.addEventListener("input", () => {
+    autoResizePrompt();
     persistDraftPrompt();
     if (!onSlashInput(promptEl)) {
       onMentionInput(promptEl);
@@ -12248,6 +12327,10 @@
         insertComposerText(msg.text || "");
         setBusy(false);
         break;
+      case "insertComposerMentions":
+        insertComposerMentions(msg.paths);
+        setBusy(false);
+        break;
       case "insertComposerSelection":
         addPendingSelection(msg.selection);
         setBusy(false);
@@ -12340,11 +12423,24 @@
           msg.step
         );
         if (msg.role === "assistant") {
-          if (!presentProposedPlan(msg.text || "", { openEditor: false })) {
+          if (
+            !presentProposedPlan(msg.text || "", {
+              openEditor: true,
+              reveal: "editor",
+            })
+          ) {
             syncComposerPlanFromCache({ openEditor: false });
           }
         }
         break;
+      case "livePlanForBuild": {
+        const text = stripPlanImplementWrapper(msg.text || "");
+        if (!text) {
+          break;
+        }
+        sendImplementPlanWithText(text);
+        break;
+      }
       case "step":
         upsertAgentStep(msg);
         break;
@@ -12446,7 +12542,10 @@
         // a fresh unanswered plan (do not resurrect after implement).
         if (
           assistantDoneText &&
-          !presentProposedPlan(assistantDoneText, { openEditor: false })
+          !presentProposedPlan(assistantDoneText, {
+            openEditor: true,
+            reveal: "editor",
+          })
         ) {
           syncComposerPlanFromCache({ openEditor: false });
         } else if (!assistantDoneText) {

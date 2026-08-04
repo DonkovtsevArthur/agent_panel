@@ -222,6 +222,8 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
     PLAN_QUALITY_SOFT_NUDGE_ROUNDS,
     PLAN_QUALITY_KIMI_SOFT_NUDGE_ROUNDS,
     PLAN_REVISION_SOFT_NUDGE_ROUNDS,
+    PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS,
+    looksLikeMechanicalPlanRequest,
   } = require("../out/toolRoundPolicy.js");
   const plan = exploreRoundLimits({ kimi: false, planQuality: true });
   assert.equal(plan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
@@ -256,6 +258,89 @@ test("planQuality explore: soft reminders only, no hard-cut", () => {
   });
   assert.match(revNudge, /FULL replacement/i);
   assert.match(revNudge, /no longer available/i);
+  // Mechanical: early soft-strip; UI plans unchanged.
+  const {
+    looksLikeComplexPlanRequest,
+    countPlanFileMentions,
+  } = require("../out/toolRoundPolicy.js");
+  assert.equal(
+    looksLikeMechanicalPlanRequest(
+      "Версия проекта 0.0.21 — составь план изменения версии до 0.0.22"
+    ),
+    true
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest("план: поправь опечатку в README.md"),
+    true
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest("исправь баг в src/versionBump.ts"),
+    true
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest("создай новую страницу по фигме"),
+    false
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest(
+      "https://www.figma.com/design/abc/File?node-id=1-2 план страницы"
+    ),
+    false
+  );
+  assert.equal(
+    looksLikeComplexPlanRequest("спланируй архитектуру модуля платежей"),
+    true
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest("спланируй архитектуру модуля платежей"),
+    false
+  );
+  assert.equal(
+    looksLikeMechanicalPlanRequest("какая сейчас версия?"),
+    false
+  );
+  assert.equal(countPlanFileMentions("edit src/a.ts and package.json"), 2);
+  const mechanical = exploreRoundLimits({
+    kimi: false,
+    planQuality: true,
+    planMechanical: true,
+  });
+  assert.equal(mechanical.softNudgeRounds, PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS);
+  assert.equal(mechanical.softNudgeRounds, 2);
+  assert.equal(mechanical.stripExploreOnSoftNudge, true);
+  assert.equal(mechanical.hardCutExplore, false);
+  const mechFromText = exploreRoundLimits({
+    kimi: true,
+    planQuality: true,
+    userText: "составь план: поднять версию в package.json",
+  });
+  assert.equal(mechFromText.softNudgeRounds, PLAN_MECHANICAL_SOFT_NUDGE_ROUNDS);
+  assert.equal(mechFromText.stripExploreOnSoftNudge, true);
+  // Full Plan path when complex (page) even if "план" is present.
+  const uiPlan = exploreRoundLimits({
+    kimi: false,
+    planQuality: true,
+    userText: "план реализации новой страницы настроек",
+  });
+  assert.equal(uiPlan.softNudgeRounds, PLAN_QUALITY_SOFT_NUDGE_ROUNDS);
+  assert.equal(uiPlan.stripExploreOnSoftNudge, false);
+  // Revision wins over mechanical when both set.
+  const revOverMech = exploreRoundLimits({
+    kimi: false,
+    planQuality: true,
+    planRevision: true,
+    planMechanical: true,
+  });
+  assert.equal(revOverMech.softNudgeRounds, PLAN_REVISION_SOFT_NUDGE_ROUNDS);
+  const mechNudge = buildExploreSoftNudge({
+    agentsMd: false,
+    readonly: true,
+    plan: true,
+    planMechanical: true,
+  });
+  assert.match(mechNudge, /mechanical plan/i);
+  assert.match(mechNudge, /no longer available/i);
+  assert.doesNotMatch(mechNudge, /remain available/i);
   // implementPlan still wins over planQuality if both were set
   const implement = exploreRoundLimits({
     kimi: true,
