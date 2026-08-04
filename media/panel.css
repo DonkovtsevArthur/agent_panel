@@ -4123,13 +4123,10 @@ html[data-surface="settings"] .settings-layout {
   background: transparent;
 }
 
-.agent-block.is-active > .agent-row-wrap {
-  background: color-mix(
-    in srgb,
-    var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder, #007fd4))
-      28%,
-    transparent
-  );
+.agent-block.is-active > .agent-row-wrap,
+.agent-block.is-active > .agent-row-wrap:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  box-shadow: inset 2px 0 0 0 var(--vscode-focusBorder, #007fd4);
 }
 
 .agent-block.is-active > .agent-row-wrap > .agent-row {
@@ -4137,7 +4134,7 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .agent-block.is-active .agent-name {
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .agent-block.is-active:not(:hover) > .agent-row-wrap .row-action {
@@ -4605,8 +4602,9 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .chat-row.is-active {
-  background: transparent;
-  font-weight: 600;
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  box-shadow: inset 2px 0 0 0 var(--vscode-focusBorder, #007fd4);
+  font-weight: 700;
 }
 
 .chat-row-main {
