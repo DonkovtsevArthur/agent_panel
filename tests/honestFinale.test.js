@@ -408,7 +408,6 @@ test("readonly mode: proposed_plan with future-tense steps is not hedge (forced-
 });
 
 test("readonly mode: incomplete proposed_plan without paths nudges plan quality", () => {
-  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
   const plan =
     "<proposed_plan>\n**Цель**: страница.\n**Шаги**:\n1. Сделать таблицу.\n**Затрагиваемые файлы**: несколько файлов\n**Риски**: нет.\n</proposed_plan>";
   const nudged = decideHonestFinale({
@@ -420,9 +419,10 @@ test("readonly mode: incomplete proposed_plan without paths nudges plan quality"
   });
   assert.equal(nudged.kind, "nudge_plan_quality");
   assert.match(nudged.nudge || "", /concrete workspace path|Steps|Шаги|proposed_plan/i);
+  assert.ok(Array.isArray(nudged.reasons));
+  assert.ok(nudged.reasons.length >= 1);
 
-  // z.ai-style: nudges exhausted but a <proposed_plan> card exists → show it
-  // (with the Build button), do NOT replace with the blocking error.
+  // After nudges: imperfect card still ships with Build (no dead-end).
   const shown = decideHonestFinale({
     text: plan,
     canEdit: false,
@@ -434,34 +434,53 @@ test("readonly mode: incomplete proposed_plan without paths nudges plan quality"
   assert.equal(shown.text, plan);
 });
 
+test("PLAN_QUALITY_USER_VISIBLE must not contain proposed_plan tags (fake card)", () => {
+  const { PLAN_QUALITY_USER_VISIBLE } = require("../out/honestFinale.js");
+  assert.doesNotMatch(PLAN_QUALITY_USER_VISIBLE, /<proposed_plan>|<\/proposed_plan>/i);
+  assert.match(PLAN_QUALITY_USER_VISIBLE, /карточки плана|decision-complete/i);
+});
+
 test("readonly mode: page→tab drift after nudges still shows the Build card", () => {
   const user =
     "составь план реализации страницы https://www.figma.com/design/abc/x?node-id=1-2";
+  // Soft-only gap (page→tab). Grounded paths + Implementation + Figma tools
+  // present so critical gates do not also fire.
   const plan =
     "<proposed_plan>\n**Цель**: Реализовать вкладку «Удостоверение» на существующей странице InitialBriefingKnowledgeCheckPage\n**Шаги**:\n" +
-    "1. Добавить таб — src/features/ibkc/tabs.tsx\n" +
-    "**Затрагиваемые файлы**:\n- src/features/ibkc/tabs.tsx\n**Риски**: нет\n</proposed_plan>";
+    "1. Добавить таб — reuse `src/features/ibkc/tabs.tsx` — observed: `TabsList`\n" +
+    "**Затрагиваемые файлы**:\n- src/features/ibkc/tabs.tsx\n" +
+    "**Acceptance**: вкладка видна\n**Риски**: нет\n" +
+    "**Implementation**:\n- page `src/features/ibkc/tabs.tsx`: import `TabsList`, type `TabDto`\n" +
+    "</proposed_plan>";
+  const figmaMessages = [
+    {
+      role: "tool",
+      name: "mcp__figma__get_design_context",
+      content: JSON.stringify({ ok: true }),
+    },
+    {
+      role: "tool",
+      name: "mcp__figma__get_screenshot",
+      content: "ok",
+    },
+  ];
   const nudged = decideHonestFinale({
     text: plan,
     canEdit: false,
-    messages: [],
+    messages: figmaMessages,
     userText: user,
     allowNudgePlanQuality: true,
     kimi: true,
   });
   assert.equal(nudged.kind, "nudge_plan_quality");
-  assert.match(
-    nudged.nudge || "",
-    /get_design_context|tab|вкладк|Figma|proposed_plan/i
-  );
+  assert.match(nudged.nudge || "", /tab|вкладк|proposed_plan/i);
 
-  // After nudges: show the imperfect card (Kimi included) — never a dead-end
-  // error when a <proposed_plan> exists.
+  // Soft gap only → after nudges still show the imperfect card with Build.
   for (const kimi of [true, false]) {
     const shown = decideHonestFinale({
       text: plan,
       canEdit: false,
-      messages: [],
+      messages: figmaMessages,
       userText: user,
       allowNudgePlanQuality: false,
       kimi,

@@ -6,17 +6,20 @@
   /* Mode accent colors (Plan / Ask) */
   --mode-plan: #a67c00;
   --mode-ask: #2d6a4f;
+  /* Chat: white workspace, grey bubbles (former panel bg) */
+  --harbor-chat-bg: var(--vscode-editor-background, #ffffff);
+  --harbor-bubble-bg: var(--vscode-sideBar-background);
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Тонкий скроллбар в цвет фона панели */
+/* Тонкий скроллбар в цвет фона чата */
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent)
-    var(--vscode-sideBar-background);
+    var(--harbor-chat-bg);
 }
 
 *::-webkit-scrollbar {
@@ -25,19 +28,19 @@
 }
 
 *::-webkit-scrollbar-track {
-  background: var(--vscode-sideBar-background);
+  background: var(--harbor-chat-bg);
 }
 
 *::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
   border-radius: 999px;
-  border: 1px solid var(--vscode-sideBar-background);
+  border: 1px solid var(--harbor-chat-bg);
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
-  border: 1px solid var(--vscode-sideBar-background);
+  border: 1px solid var(--harbor-chat-bg);
   background-clip: padding-box;
 }
 
@@ -63,7 +66,7 @@
 }
 
 *::-webkit-scrollbar-corner {
-  background: var(--vscode-sideBar-background);
+  background: var(--harbor-chat-bg);
 }
 
 html,
@@ -74,7 +77,7 @@ body {
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
   color: var(--vscode-foreground);
-  background: var(--vscode-sideBar-background);
+  background: var(--harbor-chat-bg);
 }
 
 body {
@@ -140,17 +143,11 @@ body {
   position: sticky;
   top: 0;
   z-index: 6;
-  background: var(
-    --vscode-sideBar-background,
-    var(--vscode-editor-background, #1e1e1e)
-  );
+  background: var(--harbor-chat-bg);
   padding-top: 8px;
   padding-bottom: 4px;
   /* перекрывает субпиксельный просвет при sticky */
-  box-shadow: 0 -2px 0 1px var(
-    --vscode-sideBar-background,
-    var(--vscode-editor-background, #1e1e1e)
-  );
+  box-shadow: 0 -2px 0 1px var(--harbor-chat-bg);
 }
 
 .chat-turn:first-child .msg-wrap.msg-wrap-user {
@@ -174,7 +171,7 @@ body {
 }
 
 .msg.user {
-  background: var(--vscode-input-background);
+  background: var(--harbor-bubble-bg);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.25));
   align-self: stretch;
   max-width: 100%;
@@ -259,7 +256,7 @@ body {
   width: 100%;
   padding: 12px 12px 10px;
   border-radius: var(--radius-composer);
-  background: var(--vscode-input-background);
+  background: var(--harbor-bubble-bg);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
 }
 
@@ -977,7 +974,7 @@ body.vscode-dark .md-pre .syntax-property {
   background: linear-gradient(
     to bottom,
     transparent,
-    var(--vscode-editor-background, #1e1e1e)
+    var(--harbor-chat-bg)
   );
   pointer-events: none;
 }
@@ -1235,7 +1232,7 @@ body.vscode-dark .md-pre .syntax-property {
   padding: 10px;
   border-radius: 10px;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-  background: var(--vscode-input-background);
+  background: var(--harbor-bubble-bg);
 }
 
 .review-title {
@@ -1298,7 +1295,7 @@ body.vscode-dark .md-pre .syntax-property {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-  background: var(--vscode-input-background);
+  background: var(--harbor-bubble-bg);
 }
 
 .proposed-plan-head {
@@ -1742,6 +1739,35 @@ body.vscode-dark .md-pre .syntax-property {
   font-size: 14px;
 }
 
+.review-discard-changes {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  color: var(--vscode-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.review-discard-changes:hover {
+  border-color: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.review-discard-changes:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.review-discard-changes .material-symbols-outlined {
+  font-size: 14px;
+}
+
 .review-scm-stats {
   min-height: 24px;
   padding: 3px 8px;
@@ -1788,7 +1814,7 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 8px;
   padding: 12px 12px 10px;
   border-radius: var(--radius-composer);
-  background: var(--vscode-input-background);
+  background: var(--harbor-bubble-bg);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
   overflow: visible;
   position: relative;
@@ -2256,9 +2282,11 @@ body.vscode-dark .md-pre .syntax-property {
 
 #prompt {
   width: 100%;
-  min-height: 56px;
-  max-height: 180px;
-  resize: none;
+  /* ~3 lines min, up to ~15 lines — grow with content / drag handle */
+  min-height: calc(1.45em * 3);
+  max-height: calc(1.45em * 15);
+  overflow-y: auto;
+  resize: vertical;
   background: transparent;
   color: var(--vscode-input-foreground);
   border: none;
@@ -2267,6 +2295,7 @@ body.vscode-dark .md-pre .syntax-property {
   font-family: inherit;
   font-size: inherit;
   line-height: 1.45;
+  box-sizing: border-box;
 }
 
 #prompt::placeholder {
@@ -4716,7 +4745,7 @@ html[data-surface="settings"] .settings-layout {
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.25));
-  background: var(--vscode-sideBar-background, transparent);
+  background: var(--harbor-chat-bg, transparent);
 }
 
 .chat-search-panel[hidden] {

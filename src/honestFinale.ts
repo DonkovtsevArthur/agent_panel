@@ -16,6 +16,7 @@ import {
   PLAN_QUALITY_USER_VISIBLE,
   diagnosePlanQualityFailure,
   extractLastProposedPlanFromMessages,
+  type PlanQualityReason,
 } from "./planQuality";
 
 export { PLAN_QUALITY_NUDGE, PLAN_QUALITY_USER_VISIBLE };
@@ -68,7 +69,12 @@ export type HonestFinaleDecision =
   | { kind: "nudge_denied_write" }
   | { kind: "nudge_impact" }
   | { kind: "nudge_ask_user" }
-  | { kind: "nudge_plan_quality"; nudge: string }
+  | {
+      kind: "nudge_plan_quality";
+      nudge: string;
+      /** Failing reason codes — used to persist learned-error lessons. */
+      reasons?: PlanQualityReason[];
+    }
   | { kind: "replace"; text: string };
 
 /**
@@ -425,6 +431,8 @@ export function decideHonestFinale(input: {
   allowNudgePlanQuality?: boolean;
   /** Plan follow-up after a prior plan card — softens re-fetch quality gates. */
   planRevision?: boolean;
+  /** Plan mechanical (version / one-field) — skip UI/Figma quality gates. */
+  planMechanical?: boolean;
 }): HonestFinaleDecision {
   const text = String(input.text || "").trim();
   const allowNudgeWrite = input.allowNudgeWrite !== false;
@@ -447,19 +455,20 @@ export function decideHonestFinale(input: {
       userText: input.userText,
       messages: input.messages,
       planRevision: input.planRevision === true,
+      planMechanical: input.planMechanical === true,
     });
     if (planQualityDiagnosis) {
       if (allowNudgePlanQuality) {
         return {
           kind: "nudge_plan_quality",
           nudge: planQualityDiagnosis.nudge || PLAN_QUALITY_NUDGE,
+          reasons: planQualityDiagnosis.reasons,
         };
       }
-      // Nudges exhausted. z.ai-style: always prefer a Build card over a dead-end
-      // error — even an imperfect plan (missing quotes / page→tab drift / soft
-      // inventory gaps). Recover a card from earlier assistant turns when the
-      // finale dropped it after nudges. Hard error only when no plan exists
-      // anywhere in the turn (pure prose «already exists» / PLAN.md claim).
+      // Nudges exhausted. Prefer a Build card over a dead-end — even an imperfect
+      // plan (missing quotes / Implementation / path-read / page→tab). Recover a
+      // card from earlier assistant turns when the finale dropped it. Hard error
+      // only when no plan card exists anywhere in the turn.
       if (/<proposed_plan>|&lt;proposed_plan&gt;/i.test(text)) {
         return { kind: "ok", text };
       }

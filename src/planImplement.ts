@@ -9,6 +9,24 @@ export const PLAN_IMPLEMENT_MARKER = "[[harbor:implement_plan]]";
 export const PLAN_IMPLEMENT_PREFIX_EN = "Implement the following plan:";
 export const PLAN_IMPLEMENT_PREFIX_RU = "Реализуй следующий план:";
 
+/** Editable live-plan filename under extension storage (not workspace PLAN.md). */
+export function planMarkdownFileName(lang?: "en" | "ru"): string {
+  return lang === "ru" ? "План.md" : "Plan.md";
+}
+
+/** Build → Agent user payload from plan markdown body. */
+export function buildPlanImplementUserText(
+  planBody: string,
+  prefix: string = PLAN_IMPLEMENT_PREFIX_EN
+): string {
+  const text = stripPlanImplementWrapper(planBody);
+  if (!text) {
+    return "";
+  }
+  const cleanPrefix = String(prefix || PLAN_IMPLEMENT_PREFIX_EN).trim();
+  return `${PLAN_IMPLEMENT_MARKER}\n${cleanPrefix}\n\n${text}`;
+}
+
 /**
  * Strip the Build handoff wrapper (marker + localized implement prefix) so
  * plan cards / Plan.md / chat display show only the plan markdown.

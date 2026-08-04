@@ -1,12 +1,9 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import * as vscode from "vscode";
+import { toRepoRelativePaths } from "./repoPaths";
 
 const execFileAsync = promisify(execFile);
-
-function normalizeRel(path: string): string {
-  return path.trim().replace(/^\.\//, "").replace(/^\/+/, "");
-}
 
 /** Есть ли незакоммиченные изменения по указанным путям (или в целом по workspace). */
 export async function hasUncommittedChanges(
@@ -17,9 +14,8 @@ export async function hasUncommittedChanges(
     return false;
   }
 
-  const paths = [
-    ...new Set(relativePaths.map(normalizeRel).filter(Boolean)),
-  ];
+  const cwd = folder.uri.fsPath;
+  const paths = toRepoRelativePaths(relativePaths, cwd);
 
   try {
     const args = [
@@ -29,7 +25,7 @@ export async function hasUncommittedChanges(
       ...(paths.length ? (["--", ...paths] as string[]) : []),
     ];
     const { stdout } = await execFileAsync("git", args, {
-      cwd: folder.uri.fsPath,
+      cwd,
       maxBuffer: 2 * 1024 * 1024,
       timeout: 8000,
     });
