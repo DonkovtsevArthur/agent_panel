@@ -18,13 +18,13 @@ function actionTitles(): { current: string; fresh: string } {
   const shortcuts = shortcutLabels();
   if (resolveUiLanguage(getConfig().language) === "ru") {
     return {
-      current: `Добавить в чат · ${shortcuts.current}`,
-      fresh: `Добавить в новый чат · ${shortcuts.fresh}`,
+      current: `Добавить в чат Harbor · ${shortcuts.current}`,
+      fresh: `Добавить в новый чат Harbor · ${shortcuts.fresh}`,
     };
   }
   return {
-    current: `Add to Chat · ${shortcuts.current}`,
-    fresh: `Add to New Chat · ${shortcuts.fresh}`,
+    current: `Add to Chat Harbor · ${shortcuts.current}`,
+    fresh: `Add to New Chat Harbor · ${shortcuts.fresh}`,
   };
 }
 

@@ -29,7 +29,10 @@ import {
   selectFallbackModel,
 } from "./modelRouting";
 import type { FileEditStat } from "./diffStats";
-import { getEditorSelectionPayload } from "./editorContext";
+import {
+  getEditorSelectionPayload,
+  resolveFilesForHarbor,
+} from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
 import { commitAndPushPaths } from "./commitAndPush";
 import { hasUncommittedChanges } from "./gitStatus";
@@ -271,6 +274,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private persistedStoreRevision = 0;
   private storeWriteQueue: Promise<void> = Promise.resolve();
   private pendingComposerInsert = "";
+  private pendingComposerMentions: string[] = [];
   private pendingComposerSelection:
     | {
         path: string;
@@ -408,16 +412,75 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await this.queueSelectionForComposer(selection);
   }
 
+  /**
+   * Добавить любой файл(ы) в composer как вложение (редактор или explorer).
+   * Untitled без диска — как @path. `uri` / `uris` из контекстного меню проводника.
+   */
+  async addFileToChat(
+    uri?: vscode.Uri,
+    uris?: readonly vscode.Uri[]
+  ): Promise<void> {
+    await this.addResolvedFilesToChat(resolveFilesForHarbor(uri, uris));
+  }
+
+  /** Новый агент + любой файл(ы) в его composer. */
+  async addFileToNewChat(
+    uri?: vscode.Uri,
+    uris?: readonly vscode.Uri[]
+  ): Promise<void> {
+    const resolved = resolveFilesForHarbor(uri, uris);
+    if (!resolved.fileUris.length && !resolved.mentionPaths.length) {
+      void vscode.window.showInformationMessage(
+        "Open a file in the editor or pick one in the explorer."
+      );
+      return;
+    }
+    this.newChat();
+    await this.addResolvedFilesToChat(resolved);
+  }
+
+  private async addResolvedFilesToChat(resolved: {
+    fileUris: vscode.Uri[];
+    mentionPaths: string[];
+  }): Promise<void> {
+    if (!resolved.fileUris.length && !resolved.mentionPaths.length) {
+      void vscode.window.showInformationMessage(
+        "Open a file in the editor or pick one in the explorer."
+      );
+      return;
+    }
+    if (resolved.fileUris.length) {
+      await this.attachUrisFromDrop(resolved.fileUris);
+    }
+    if (resolved.mentionPaths.length) {
+      await this.queueFileMentionsForComposer(resolved.mentionPaths);
+    }
+  }
+
   private async queueSelectionForComposer(
     selection: NonNullable<ReturnType<typeof getEditorSelectionPayload>>
   ): Promise<void> {
     this.pendingComposerSelection = selection;
     this.pendingComposerInsert = "";
+    this.pendingComposerMentions = [];
     this.setScreen("chat");
     this.saveStore();
     const wasVisible = Boolean(this.view?.visible);
     await vscode.commands.executeCommand("agentPanel.chat.focus");
     // Если панель уже была открыта — HTML не перезагрузится, вставляем сразу.
+    if (wasVisible) {
+      this.flushPendingComposerInsert();
+    }
+  }
+
+  private async queueFileMentionsForComposer(paths: string[]): Promise<void> {
+    this.pendingComposerMentions = paths.slice();
+    this.pendingComposerSelection = undefined;
+    this.pendingComposerInsert = "";
+    this.setScreen("chat");
+    this.saveStore();
+    const wasVisible = Boolean(this.view?.visible);
+    await vscode.commands.executeCommand("agentPanel.chat.focus");
     if (wasVisible) {
       this.flushPendingComposerInsert();
     }
@@ -431,9 +494,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const selection = this.pendingComposerSelection;
       this.pendingComposerSelection = undefined;
       this.pendingComposerInsert = "";
+      this.pendingComposerMentions = [];
       this.view.webview.postMessage({
         type: "insertComposerSelection",
         selection,
+      });
+      return;
+    }
+    if (this.pendingComposerMentions.length) {
+      const paths = this.pendingComposerMentions.slice();
+      this.pendingComposerMentions = [];
+      this.pendingComposerInsert = "";
+      this.view.webview.postMessage({
+        type: "insertComposerMentions",
+        paths,
       });
       return;
     }
@@ -4064,7 +4138,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       await this.postChatScreen();
     }
     // После reload webview (focus панели) — доставить отложенную вставку.
-    if (this.pendingComposerInsert || this.pendingComposerSelection) {
+    if (
+      this.pendingComposerInsert ||
+      this.pendingComposerSelection ||
+      this.pendingComposerMentions.length
+    ) {
       setTimeout(() => this.flushPendingComposerInsert(), 80);
     }
   }
