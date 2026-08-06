@@ -1,6 +1,4 @@
 import * as vscode from "vscode";
-import type { ChatTool } from "./openaiClient";
-import { agentTools, READONLY_TOOL_NAMES } from "./tools";
 import { resolveUiLanguage } from "./i18n";
 
 export type ModeToolsPolicy = "agent" | "readonly";
@@ -460,21 +458,6 @@ export function resolveMode(
 
 export function isReadonlyPolicy(tools: ModeToolsPolicy): boolean {
   return tools === "readonly";
-}
-
-export function toolsForPolicy(
-  tools: ModeToolsPolicy,
-  extraTools: ChatTool[] = []
-): ChatTool[] {
-  const base = !isReadonlyPolicy(tools)
-    ? agentTools
-    : agentTools.filter((tool) =>
-        READONLY_TOOL_NAMES.has(tool.function.name)
-      );
-  if (!extraTools.length) {
-    return base;
-  }
-  return [...base, ...extraTools];
 }
 
 export function modeThinkingLabel(mode: AgentModeDef): string {
