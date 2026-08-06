@@ -27,7 +27,7 @@ alwaysApply: true
 
 ## Картинки (vision)
 
-Если выбранная модель без vision — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5. См. `visionTurnRoute.ts`.
+Если выбранная модель без vision и есть картинка — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5. Пиксели уходят в Cline как `image` parts.
 
 ## Git — нельзя через shell
 

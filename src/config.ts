@@ -548,6 +548,22 @@ export function getEnabledModels(): AgentModel[] {
     }));
 }
 
+/**
+ * Pool for whole-turn vision routing when the picker model cannot see images.
+ * Includes catalog models that are unchecked in the picker (`enabled: false`) —
+ * preferred / built-in vision helpers still run under the hood for that message.
+ * `enabled` is forced true so {@link routeModel} accepts them.
+ */
+export function getVisionRoutingModels(): AgentModel[] {
+  return getConfig()
+    .models.slice()
+    .map((m) => ({
+      ...m,
+      enabled: true,
+      supportsVision: resolveModelSupportsVision(m),
+    }));
+}
+
 /** Endpoint для модели через её провайдера (или primary). */
 export function resolveModelEndpoint(modelId: string): ModelEndpoint {
   const config = getConfig();

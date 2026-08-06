@@ -15,6 +15,7 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  getVisionRoutingModels,
   resolveModelEndpoint,
   resolveModelSupportsVision,
   resolveProviderProbeUrl,
@@ -29,8 +30,6 @@ import {
   routeModel,
   selectFallbackModel,
 } from "./modelRouting";
-import { shouldWholeTurnRouteForImageAttachment } from "./visionTurnRoute";
-import { looksLikeQuestionRequest } from "./claimedEdits";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -2663,19 +2662,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask:
     // иначе Figma MCP / write_file пропадают на вопросах вроде «посмотри макет».
     const modeForRun = selectedMode;
-    // Vision routing (whole-turn switch) только для вложений-картинок в Agent/Ask.
-    // Plan + screenshot (без Figma URL): host OCR preflight — выбранная модель
-    // (Kimi и т.п.) остаётся planner'ом, как при Figma MCP. См. also
-    // shouldDeliverRawScreenshotToPlanner / deliverVisionMedia.
-    const needsVision = shouldWholeTurnRouteForImageAttachment({
-      planMode: modeForRun.id === "plan",
-      hasImageAttachment,
-      userText: trimmed,
-    });
+    // Any image attachment → whole-turn vision model if the picker model cannot see images.
+    // Prefer enabled models; if none have vision, still allow catalog helpers that
+    // are unchecked in the picker (Settings → Preferred vision models / built-in list).
+    const needsVision = hasImageAttachment;
     const visionPreferenceIds = needsVision
       ? config.visionRouting.preferredModelIds
       : undefined;
-    const routed = routeModel(enabledModels, {
+    const visionRoutePool = needsVision
+      ? getVisionRoutingModels()
+      : enabledModels;
+    const routed = routeModel(visionRoutePool, {
       userSelectedModelId: requestedModel,
       hints: needsVision
         ? {
@@ -2700,7 +2697,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     });
     if (chosen !== requestedModel) {
       const label =
-        enabledModels.find((item) => item.id === chosen)?.label || chosen;
+        visionRoutePool.find((item) => item.id === chosen)?.label ||
+        enabledModels.find((item) => item.id === chosen)?.label ||
+        chosen;
       const requestedLabel =
         enabledModels.find((item) => item.id === requestedModel)?.label ||
         requestedModel;
@@ -2756,30 +2755,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.saveSession();
     this.ensureProviderProbe(chosen);
 
-    // Plan + screenshot (mockup request, not a question): keep image
-    // attachments for host OCR preflight even when the planner (Kimi) has no
-    // vision — do not strip, do not scare with a toast. For an image+QUESTION
-    // turn needsVision is already true (vision swap), so this stays false and
-    // the normal strip-or-keep logic applies to the routed vision model.
-    const screenshotPlanPreflight =
-      modeForRun.id === "plan" &&
-      hasImageAttachment &&
-      !needsVision &&
-      !looksLikeQuestionRequest(trimmed);
-    if (!resolveModelSupportsVision(chosen) && !screenshotPlanPreflight) {
-      const withoutImages = attachments.filter((a) => a.kind !== "image");
-      if (withoutImages.length < attachments.length) {
-        this.pushUiToChat(
-          runChatId,
-          "error",
-          "This model does not support images, so image attachments were removed from the message."
-        );
-        attachments = withoutImages;
-        if (!trimmed && !attachments.length) {
-          this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
-          return;
-        }
-      }
+    // If nothing in the catalog can see images, stop — do not silently strip.
+    if (needsVision && !resolveModelSupportsVision(chosen)) {
+      const lang = resolveUiLanguage(getConfig().language);
+      this.pushUiToChat(
+        runChatId,
+        "error",
+        lang === "ru"
+          ? "Нет vision-модели для картинки. Включите Gemini / gpt-4.1 / Claude в Settings → Models или задайте Preferred vision models."
+          : "No vision-capable model is available for this image. Enable Gemini / gpt-4.1 / Claude in Settings → Models, or set Preferred vision models."
+      );
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      return;
     }
 
     const endpoint = resolveModelEndpoint(chosen);
@@ -3089,7 +3076,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             fallbackError.kind === "context"
               ? failedContextWindow + 1
               : failedContextWindow;
-          const fallback = selectFallbackModel(enabledModels, {
+          const fallback = selectFallbackModel(
+            needsVision ? visionRoutePool : enabledModels,
+            {
             failedModelId: failedModel,
             visionRequired: needsVision,
             visionPreferenceIds: needsVision

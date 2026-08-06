@@ -284,7 +284,8 @@ export async function persistIncomingAttachments(
         mime,
         storageKey,
         size: buf.byteLength,
-        // Keep inline preview so Plan OCR preflight works even if storage
+        // Keep inline preview so the chat UI can show the image without
+        // re-reading storage before the turn starts.
         // read fails later (and so UI thumbnails do not re-read disk).
         ...(kind === "image"
           ? {
