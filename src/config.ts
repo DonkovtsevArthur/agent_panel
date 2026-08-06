@@ -131,11 +131,12 @@ export interface AgentPanelConfig {
   maxTokens: number;
   maxResponseChars: number;
   /**
-   * Under-the-hood model for image messages when the selected chat model
-   * lacks vision. Empty preferredModelIds → built-in VISION_MODEL_PREFERENCE.
+   * Deprecated: Harbor no longer swaps chat models for image attachments.
+   * Images go to Cline as `image` parts; vision is left to the selected model.
+   * Kept for config backward compatibility.
    */
   visionRouting: {
-    /** Ordered preferred vision model ids; empty = auto. */
+    /** Ordered preferred vision model ids; unused by chat turns. */
     preferredModelIds: string[];
   };
   soundNotifications: {
@@ -574,10 +575,8 @@ export function getEnabledModels(): AgentModel[] {
 }
 
 /**
- * Pool for whole-turn vision routing when the picker model cannot see images.
- * Includes catalog models that are unchecked in the picker (`enabled: false`) —
- * preferred / built-in vision helpers still run under the hood for that message.
- * `enabled` is forced true so {@link routeModel} accepts them.
+ * @deprecated Chat turns no longer swap models for images (Cline handles vision).
+ * Kept for callers / tests that still exercise vision preference pools.
  */
 export function getVisionRoutingModels(): AgentModel[] {
   return getConfig()

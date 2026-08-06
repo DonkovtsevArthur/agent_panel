@@ -9,20 +9,26 @@
 - **Только ваш API** — OpenAI, Azure, корпоративные gateway, локальные модели: любой OpenAI-compatible endpoint
 - **Приватность по умолчанию** — никаких Harbor-серверов, аналитики или телеметрии
 - **Панель в sidebar** — несколько агентов (чатов), архив, поиск, ветки диалога
-- **Работа с проектом** — tools, `@file`-упоминания, выделение из редактора, вложения
-- **MCP** — подключайте Figma и свои MCP-серверы (stdio / HTTP) прямо в панели
+- **Агент по проекту** — поиск по коду, правки файлов, команды в терминале, `@file`, выделение из редактора, вложения
+- **MCP** — Figma и свои MCP-серверы (stdio / HTTP), в том числе быстрые пресеты
+- **Браузер** — headless-проверка страниц и опциональный Browser agent в реальном Chrome/Edge
 
 ## Возможности
 
-- **Режимы:** Agent · Plan · Ask (плюс кастомные режимы)
-- **Инструменты:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (страница по ссылке: title/текст/цвета), `open_external` (`Plan`/`Ask` работают только на чтение)
-- **MCP tools** — tools с подключённых MCP-серверов доступны агенту в том же loop (`mcp__<id>__…`)
+- **Режимы:**
+  - **Agent** — полный цикл: исследовать, править файлы, запускать команды
+  - **Plan** — исследовать и составить план без правок; дальше можно перейти к реализации (Build)
+  - **Ask** — вопросы по коду без правок
+  - плюс кастомные режимы в Settings
+- **Инструменты агента:** поиск по кодовой базе, чтение и правка файлов, терминал, работа с браузером (navigate / snapshot / click / type), делегирование подзадач
+- **MCP tools** — tools с подключённых серверов доступны агенту в том же ходе
 - Остановка хода, edit & resend, regenerate
-- **@file**, вложения и картинки (vision, если модель поддерживает)
-- **Контекст редактора** и индикатор использования context window
+- **@file**, вложения и **картинки** — изображение уходит модели как multimodal-вложение (vision, если модель поддерживает)
+- **Контекст редактора**, CodeLens «Добавить в чат» над выделением, индикатор context window
 - **Карточка diff review** с переходом в Source Control
 - **Генерация commit message** в Source Control (по вашему API); промпт и язык — для всех workspace или для текущего
-- **Figma MCP** — Personal Access Token в Settings → MCP Servers; агент читает дизайн по ссылке figma.com
+- **Figma** — Connect (OAuth) или Personal Access Token в Settings → MCP Servers; агент читает дизайн по ссылке figma.com
+- **Browser agent** — многошаговые задачи в вашем Chrome/Edge (Settings → Browser agent)
 - **Ветки ответов** без потери основной нити диалога
 - **Поиск** по сообщениям чата
 - Сессии хранятся **локально для каждого workspace**
@@ -31,7 +37,8 @@
 
 В панели: **Settings → MCP Servers**.
 
-- **Figma** — встроенное подключение через **Connect Figma** (browser OAuth к `mcp.figma.com`). Personal Access Token — запасной вариант в Settings → MCP Servers. После подключения можно вставлять ссылки `figma.com/design/…` в чат.
+- **Figma** — **Connect Figma** (browser OAuth к `mcp.figma.com`). Personal Access Token — запасной вариант. После подключения можно вставлять ссылки `figma.com/design/…` в чат.
+- **Пресеты** — быстрое добавление Playwright Browser (`npx @playwright/mcp --headless`) и GitHub (remote MCP + Bearer PAT)
 - **Свои серверы** — кнопка **+**:
   - **stdio** — `command` + args (например `npx` / `-y some-mcp --stdio`) и env `KEY=value`
   - **HTTP** — URL MCP endpoint и опциональный Bearer token
@@ -41,7 +48,7 @@
 
 ## Требования
 
-- Visual Studio Code `1.85+`
+- Visual Studio Code `1.101+`
 - OpenAI-compatible API (`baseUrl` + `apiKey`) и хотя бы один `model id`
 
 ## Быстрый старт
@@ -64,6 +71,8 @@
 - `agentPanel.commitMessage.language` — язык сообщения коммита (`auto` / `en` / `ru`); область сохранения выбирается в настройках панели: все workspace или текущий
 - `agentPanel.figma.enabled` — включить Figma MCP; подключение — Settings → MCP Servers
 - `agentPanel.mcp.servers` — свои MCP-серверы (stdio / HTTP); UI: Settings → MCP Servers → +
+- `agentPanel.selectionHints.enabled` — CodeLens «Добавить в чат» над выделением в редакторе
+- `agentPanel.autoglm.*` — Browser agent (вкл., браузер, auto-approve, путь к бинарнику)
 
 Старые `agentPanel.baseUrl` / `agentPanel.apiKey` тоже работают, но предпочтительнее `providers`.
 
@@ -115,20 +124,26 @@ Marketplace and UI name: **Harbor Agents**.
 - **Your API only** — OpenAI, Azure, corporate gateways, local models — any OpenAI-compatible endpoint
 - **Private by design** — no Harbor servers, no analytics, no telemetry
 - **Sidebar agent panel** — multiple agents (chats), archive, search, conversation branches
-- **Works with your project** — tools, `@file` mentions, editor selection, attachments
-- **MCP** — connect Figma and your own MCP servers (stdio / HTTP) from the panel
+- **Project agent** — codebase search, file edits, terminal commands, `@file`, editor selection, attachments
+- **MCP** — Figma and your own MCP servers (stdio / HTTP), including quick presets
+- **Browser** — headless page checks and an optional Browser agent in real Chrome/Edge
 
 ### Features
 
-- **Modes:** Agent · Plan · Ask (plus custom modes)
-- **Tools:** `list_files`, `read_file`, `write_file`, `run_command`, `fetch_url` (page by URL: title/text/colors), `open_external` (Plan/Ask are read-only)
-- **MCP tools** — tools from connected MCP servers are available in the same agent loop (`mcp__<id>__…`)
+- **Modes:**
+  - **Agent** — full loop: explore, edit files, run commands
+  - **Plan** — explore and draft a plan without edits; then switch to implement (Build)
+  - **Ask** — questions about the code without edits
+  - plus custom modes in Settings
+- **Agent tools:** codebase search, read/edit files, terminal, browser (navigate / snapshot / click / type), subtask delegation
+- **MCP tools** — tools from connected servers are available in the same turn
 - Stop a run; edit & resend; regenerate
-- **@file** mentions, attachments and images (vision when the model supports it)
-- **Editor context** and context-window usage indicator
+- **@file** mentions, attachments and **images** — sent to the model as multimodal content (vision when the model supports it)
+- **Editor context**, floating Add to Chat above selections, context-window usage indicator
 - **Diff review** card with jump to Source Control
 - **Generate commit messages** in Source Control via your API; prompt and language can be saved for all workspaces or the current one
-- **Figma MCP** — Personal Access Token in Settings → MCP Servers; the agent reads designs from figma.com links
+- **Figma** — Connect (OAuth) or Personal Access Token in Settings → MCP Servers; the agent reads designs from figma.com links
+- **Browser agent** — multi-step tasks in your Chrome/Edge (Settings → Browser agent)
 - **Branches** without losing the main thread
 - **Search** within the chat
 - Sessions stored **locally per workspace**
@@ -137,7 +152,8 @@ Marketplace and UI name: **Harbor Agents**.
 
 In the panel: **Settings → MCP Servers**.
 
-- **Figma** — built-in connection via **Connect Figma** (browser OAuth to `mcp.figma.com`). Personal Access Token is an optional fallback in Settings → MCP Servers. After connecting, paste `figma.com/design/…` links in chat.
+- **Figma** — **Connect Figma** (browser OAuth to `mcp.figma.com`). Personal Access Token is an optional fallback. After connecting, paste `figma.com/design/…` links in chat.
+- **Presets** — quick add Playwright Browser (`npx @playwright/mcp --headless`) and GitHub (remote MCP + Bearer PAT)
 - **Custom servers** — **+** button:
   - **stdio** — `command` + args (e.g. `npx` / `-y some-mcp --stdio`) and `KEY=value` env lines
   - **HTTP** — MCP endpoint URL and optional Bearer token
@@ -147,7 +163,7 @@ Custom servers config: `agentPanel.mcp.servers`. Figma: `agentPanel.figma.enable
 
 ### Requirements
 
-- Visual Studio Code `1.85+`
+- Visual Studio Code `1.101+`
 - An OpenAI-compatible API (`baseUrl` + `apiKey`) and at least one model id
 
 ### Quick start
@@ -170,6 +186,8 @@ Tip: select code → **Harbor Agents: Add Selection to Chat** (`Cmd+Shift+L` / `
 - `agentPanel.commitMessage.language` — commit message language (`auto` / `en` / `ru`); save scope is chosen in the panel settings: all workspaces or the current one
 - `agentPanel.figma.enabled` — enable Figma MCP; connect via Settings → MCP Servers
 - `agentPanel.mcp.servers` — custom MCP servers (stdio / HTTP); UI: Settings → MCP Servers → +
+- `agentPanel.selectionHints.enabled` — floating Add to Chat above editor selections
+- `agentPanel.autoglm.*` — Browser agent (enable, browser, auto-approve, binary path)
 
 Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`.
 
