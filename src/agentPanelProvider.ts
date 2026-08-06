@@ -4778,10 +4778,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
           </label>
           <label class="settings-field">
-            <span class="settings-label" id="settingsMaxToolRoundsLabel">Max tool rounds</span>
-            <input id="settingsMaxToolRounds" class="settings-input" type="number" min="1" max="50" />
-          </label>
-          <label class="settings-field">
             <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
             <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
           </label>

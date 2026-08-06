@@ -58,7 +58,7 @@ export interface AgentRunCallbacks {
 }
 
 /**
- * Все модели: Cline Agent runtime (vendor/cline fork / @cline/sdk).
+ * Все модели: ClineCore local session host (vendor/cline fork / @cline/sdk).
  * Harbor UI callbacks unchanged.
  */
 export async function runAgentTurn(options: {

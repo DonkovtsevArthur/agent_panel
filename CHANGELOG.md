@@ -2,11 +2,24 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.1.3] — 2026-08-06
+
+- **Runtime:** лимит раундов tools больше не режет ход Harbor `maxToolRounds` — iteration budget у Cline (unset = без жёсткого потолка); настройка deprecated
+
+## [1.1.2] — 2026-08-06
+
+- **Runtime:** Phase 2 — ClineCore local session host вместо тонкого Agent; mode/tools/plan-guard через DefaultRuntimeBuilder; MCP как extraTools
+
+## [1.1.1] — 2026-08-06
+
+- **Plan/Ask:** plan-mode command-guard на тонком Cline Agent — блокирует mutating shell; roadmap полного runtime — `docs/cline-full-runtime-migration.md`
+
 ## [1.1.0] — 2026-08-06
 
 Крупный релиз runtime и панели:
 
 - **Agent runtime:** единый цикл для всех моделей — поиск по коду, чтение/правка файлов, терминал, браузер; Plan/Ask без правок, Agent — полный цикл
+- **Plan/Ask:** plan-mode command-guard блокирует mutating shell (`sed`/`rm`/…); roadmap полного Cline session runtime — `docs/cline-full-runtime-migration.md`
 - **MCP:** tools подключённых серверов в том же ходе; пресеты Playwright Browser и GitHub; Figma Connect / PAT
 - **Browser agent:** многошаговые задачи в реальном Chrome/Edge (Settings → Browser agent); headless browser tools без изменений
 - **Картинки:** вложение уходит выбранной модели как multimodal; Harbor больше не подменяет модель на vision
