@@ -46,6 +46,7 @@
   "config.visionRouting.preferredModelId.description": "Устарело. Используйте visionRouting.preferredModelIds.",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.soundNotifications.enabled.description": "Проигрывать звук при успешном завершении или ошибке агента.",
+  "config.selectionHints.enabled.description": "Показывать всплывающие действия «Добавить в чат» над выделенным кодом в редакторе.",
   "config.rejectUnauthorized.description": "Проверять TLS-сертификат. Для корпоративных CA можно использовать false или true вместе с caBundlePath.",
   "config.caBundlePath.description": "Путь к CA bundle (аналогично Continue requestOptions.caBundlePath)",
   "config.commitMessage.prompt.description": "Своё правило/промпт для генерации сообщений коммита в SCM. Пусто = правила проекта, затем встроенный дефолт.",
@@ -54,5 +55,9 @@
   "config.commitMessage.language.enum.en": "Английский",
   "config.commitMessage.language.enum.ru": "Русский",
   "config.figma.enabled.description": "Включить Figma MCP в Harbor Agents (подключение в Settings панели → MCP Servers)",
+  "config.autoglm.enabled.description": "Включить browser_task (AutoGLM) для многошаговых задач в Chrome/Edge пользователя. Нужны CLI AutoGLM и расширение браузера.",
+  "config.autoglm.binaryPath.description": "Опциональный путь к бинарнику autoglm. Пусто = PATH, затем ~/.agents/skills/autoglm-browser-agent/dist/autoglm-browser-service.",
+  "config.autoglm.browser.description": "Браузер для задач AutoGLM (chrome или edge)",
+  "config.autoglm.autoApprove.description": "Автоподтверждение чувствительных действий AutoGLM (логин/капча всё равно вручную)",
   "config.mcp.servers.description": "Свои MCP-серверы (stdio или HTTP). Управление в Harbor Agents → Settings → MCP Servers."
 }

@@ -2,6 +2,41 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.0.181] — 2026-08-05
+
+- **Settings:** переключатель «Подсказки при выделении кода» (`agentPanel.selectionHints.enabled`) — вкл/выкл CodeLens «Добавить в чат» над выделением в редакторе
+
+## [1.0.177] — 2026-08-04
+
+- **Plan:** после «уже совпадает / no new work» не достраивать Build-план — skip Implementation / component-API / quote dumps; флаг `invent_new_despite_match` если снова invent new page
+- **Settings:** категория Browser agent снова открывается (была не в whitelist `showSettingsCategory`)
+
+## [1.0.176] — 2026-08-04
+
+- **Browser agent (AutoGLM):** tool `browser_task` для многошаговых задач в реальном Chrome/Edge; Settings → Browser agent (enable / browser / auto-approve / binary path); headless `browser_*` без изменений
+- **Plan:** gate на `request_user_input` — отказ, если вопрос «тот же компонент / отдельный экран / reuse похожей фичи» (discoverable HOW); Figma title = WHAT, сначала search/read домена макета + аналога
+- **Plan/Figma hints:** anti-drift — похожая «ежегодная проверка» ≠ clarify; не писать «мне нужно уточнить» вместо tools
+
+## [1.0.175] — 2026-08-04
+
+- **Agent tools:** builtin `browser_navigate` / `browser_snapshot` / `browser_click` / `browser_type` / `browser_close` (persistent headless session поверх Playwright из `screenshot_url`)
+- **Settings → MCP:** Quick add пресеты Playwright Browser (`npx @playwright/mcp --headless`) и GitHub (remote MCP + Bearer PAT)
+- **Agent orchestration:** soft hint `AGENT_ORCHESTRATION_HINT` — когда звать `delegate_task` / `request_user_input` / browser verify
+- **Plan:** tool `find_references` (symbols + usages через language service) в Plan/Ask/Agent
+- **Plan + скрин/URL:** если на диске уже есть незакомментированная страница с Title/лейблами OCR — host поднимает исход в `full_match` (не invent greenfield), даже когда explore-пробы ошиблись
+
+## [1.0.174] — 2026-08-04
+
+- **Plan + скрин/URL:** host-ветвление после probes — `full_match` (reuse / no wander), `needs_clarify` (QuickPick на хосте), `build` (soft=1 + strip explore); запрет invent new page при full_match
+
+## [1.0.173] — 2026-08-04
+
+- **Plan + URL страницы:** тот же zcode-depth preflight, что у скрина — headless screenshot → OCR → 4 explore-пробы → clarifications / полный план (Figma URL по-прежнему Figma-first)
+
+## [1.0.172] — 2026-08-04
+
+- **Plan + скриншот (zcode depth):** 4 глубоких explore-пробы (вкл. Effector); soft-nudge → полный план / clarifications; `SCREENSHOT_CLARIFY_HINT` при stub; inventory/Title critical на скрин-ходах
+
 ## [1.0.171] — 2026-08-04
 
 - **Figma Connect:** если браузер не открылся — toast «Открыть ссылку» + URL в буфере; CA bundle из Settings применяется и к Figma MCP (NODE_EXTRA_CA_CERTS)

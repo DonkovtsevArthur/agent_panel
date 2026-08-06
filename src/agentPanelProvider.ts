@@ -115,12 +115,17 @@ type SettingsPayload = {
   maxTokens: number;
   maxResponseChars: number;
   soundNotificationsEnabled?: boolean;
+  selectionHintsEnabled?: boolean;
   visionRoutingPreferredModelIds?: string[];
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
   commitMessageScope?: "global" | "workspace";
   figmaEnabled?: boolean;
+  autoglmEnabled?: boolean;
+  autoglmBinaryPath?: string;
+  autoglmBrowser?: string;
+  autoglmAutoApprove?: boolean;
 };
 
 type WebviewToHost =
@@ -2659,8 +2664,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       (attachment) => attachment.kind === "image"
     );
     const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
-    // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask:
-    // иначе Figma MCP / write_file пропадают на вопросах вроде «посмотри макет».
+    // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask.
     const modeForRun = selectedMode;
     // Any image attachment → whole-turn vision model if the picker model cannot see images.
     // Prefer enabled models; if none have vision, still allow catalog helpers that
@@ -2689,8 +2693,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       });
     }
     // Vision whole-turn switch is turn-local only: run with `chosen`, but keep the
-    // chat picker on the user's selection (e.g. Kimi) so the next text-only turn
-    // does not stick on Gemini/Flash.
+    // chat picker on the user's selection so the next text-only turn stays there.
     const selectedModelAfterRun = persistedModelAfterVisionTurn({
       requestedModelId: requestedModel,
       runModelId: chosen,
@@ -3889,6 +3892,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxTokens: config.maxTokens,
         maxResponseChars: config.maxResponseChars,
         soundNotificationsEnabled: config.soundNotifications.enabled,
+        selectionHintsEnabled: config.selectionHints.enabled,
         visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -3900,6 +3904,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           "",
         figmaEnabled: config.figma.enabled,
         figma: this.getFigmaStatusPayload(),
+        autoglmEnabled: config.autoglm.enabled,
+        autoglmBinaryPath: config.autoglm.binaryPath,
+        autoglmBrowser: config.autoglm.browser,
+        autoglmAutoApprove: config.autoglm.autoApprove,
         providerConnStatuses: this.getProviderConnStatusesPayload(),
       },
     };
@@ -4286,6 +4294,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
     await cfg.update(
+      "selectionHints.enabled",
+      raw.selectionHintsEnabled !== false,
+      target
+    );
+    await cfg.update(
       "visionRouting.preferredModelIds",
       Array.isArray(raw.visionRoutingPreferredModelIds)
         ? raw.visionRoutingPreferredModelIds
@@ -4304,6 +4317,33 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const mcp = getMcpManager();
     if (mcp) {
       await mcp.setEnabled(figmaEnabled);
+    }
+
+    const autoglmEnabled = raw.autoglmEnabled === true;
+    const autoglmBrowser =
+      String(raw.autoglmBrowser || "").trim().toLowerCase() === "edge"
+        ? "edge"
+        : "chrome";
+    const autoglmAutoApprove = raw.autoglmAutoApprove === true;
+    const autoglmBinaryPath = String(raw.autoglmBinaryPath || "").trim();
+    await cfg.update("autoglm.enabled", autoglmEnabled, target);
+    await cfg.update("autoglm.binaryPath", autoglmBinaryPath, target);
+    await cfg.update("autoglm.browser", autoglmBrowser, target);
+    await cfg.update("autoglm.autoApprove", autoglmAutoApprove, target);
+    if (autoglmEnabled) {
+      try {
+        const { mergeOpenclawAutoglmConfig } = await import("./autoglmBrowser");
+        await mergeOpenclawAutoglmConfig({
+          browser: autoglmBrowser,
+          auto_approve: autoglmAutoApprove,
+          extension_confirmed: true,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        void vscode.window.showWarningMessage(
+          `Could not write AutoGLM config (~/.openclaw-autoclaw/config.json): ${message}`
+        );
+      }
     }
 
     await this.writeModes(raw.modes);
@@ -4677,6 +4717,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <span class="material-symbols-outlined" aria-hidden="true">electrical_services</span>
           <span class="settings-nav-label" data-i18n-nav="mcpServers">MCP Servers</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="browser">
+          <span class="material-symbols-outlined" aria-hidden="true">web</span>
+          <span class="settings-nav-label" data-i18n-nav="browserAgent">Browser agent</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="agent">
           <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
           <span class="settings-nav-label" data-i18n-nav="agentBehavior">Agent behavior</span>
@@ -4755,6 +4799,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <span class="material-symbols-outlined" aria-hidden="true">add</span>
               </button>
             </div>
+            <div class="mcp-presets" id="mcpPresets">
+              <span class="mcp-presets-label" id="mcpPresetsLabel">Quick add</span>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="playwright" id="mcpPresetPlaywright">
+                <span class="material-symbols-outlined" aria-hidden="true">web</span>
+                <span class="mcp-preset-btn-label">Playwright</span>
+              </button>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="github" id="mcpPresetGithub">
+                <span class="material-symbols-outlined" aria-hidden="true">hub</span>
+                <span class="mcp-preset-btn-label">GitHub</span>
+              </button>
+            </div>
+            <p class="mcp-presets-note" id="mcpPresetsNote" hidden></p>
             <div class="mcp-section-head">
               <h3 class="mcp-section-title" id="mcpConfiguredTitle">Configured MCP servers</h3>
               <span class="mcp-section-count" id="mcpConfiguredCount">0</span>
@@ -4762,6 +4818,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <div id="mcpServersList" class="mcp-servers-list"></div>
             <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
           </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="browser" hidden>
+          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent (AutoGLM)</h3>
+          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your real Chrome or Edge via AutoGLM (<code>browser_task</code>). Headless <code>browser_*</code> tools stay available for localhost checks. Requires the AutoGLM CLI and browser extension.</p>
+          <label class="settings-field settings-check">
+            <input id="settingsAutoglmEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsAutoglmEnabledLabel">Enable browser_task</span>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsAutoglmBrowserLabel">Browser</span>
+            <select id="settingsAutoglmBrowser" class="settings-input">
+              <option value="chrome">Chrome</option>
+              <option value="edge">Edge</option>
+            </select>
+          </label>
+          <label class="settings-field settings-check">
+            <input id="settingsAutoglmAutoApprove" type="checkbox" />
+            <span class="settings-label" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">Binary path (optional)</span>
+            <input id="settingsAutoglmBinaryPath" class="settings-input" type="text" autocomplete="off" placeholder="autoglm on PATH, or full path" />
+          </label>
+          <p class="settings-hint" id="settingsAutoglmExtensionHint">Install the AutoGLM extension for Chrome or Edge, then enable it. Saving these settings writes ~/.openclaw-autoclaw/config.json when enabled.</p>
         </section>
 
         <section class="settings-panel" data-settings-panel="agent" hidden>
@@ -4785,6 +4866,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field settings-check">
             <input id="settingsSoundNotificationsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
+          </label>
+          <label class="settings-field settings-check">
+            <input id="settingsSelectionHintsEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
           </label>
           <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
           <p class="settings-section-note" id="settingsVisionRoutingNote">When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.</p>

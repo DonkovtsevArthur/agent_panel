@@ -6,6 +6,7 @@
 export {
   Agent,
   createBuiltinTools,
+  createTool,
   ToolPresets,
   createToolPoliciesWithPreset,
   getClineDefaultSystemPrompt,

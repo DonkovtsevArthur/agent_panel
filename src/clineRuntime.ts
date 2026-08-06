@@ -17,6 +17,11 @@ import type {
   AgentRunCallbacks,
 } from "./agentLoop";
 import type { AgentStepEvent } from "./agentSteps";
+import {
+  loadHarborMcpToolsForCline,
+  shouldNotifyFigmaNeedsConnect,
+  type ClineCreateTool,
+} from "./clineMcpTools";
 
 type ClineMode = "act" | "plan";
 
@@ -38,6 +43,7 @@ type ClineBundle = {
     restore: (messages: readonly ClineMessage[]) => void;
   };
   createBuiltinTools: (options: Record<string, unknown>) => unknown[];
+  createTool: ClineCreateTool;
   ToolPresets: {
     act: Record<string, unknown>;
     plan: Record<string, unknown>;
@@ -301,7 +307,7 @@ export async function runClineAgentTurn(options: {
     options.planMode ? "plan" : options.agentMode
   );
   const preset = clineMode === "plan" ? "plan" : "act";
-  const tools = bundle.createBuiltinTools({
+  const builtinTools = bundle.createBuiltinTools({
     cwd,
     ...bundle.ToolPresets[preset],
     // Harbor UX: no per-tool approve prompts for now.
@@ -309,7 +315,17 @@ export async function runClineAgentTurn(options: {
     enableAgentTeams: false,
   });
 
-  const systemPrompt = bundle.getClineDefaultSystemPrompt({
+  if (shouldNotifyFigmaNeedsConnect(options.userText)) {
+    callbacks.onFigmaNeedsConnect?.();
+  }
+
+  const mcp = await loadHarborMcpToolsForCline({
+    createTool: bundle.createTool,
+    readonlyOnly: clineMode === "plan",
+  });
+  const tools = [...builtinTools, ...mcp.tools];
+
+  const baseSystemPrompt = bundle.getClineDefaultSystemPrompt({
     overridePrompt: config.systemPrompt || undefined,
     ide: "VS Code",
     mode: clineMode,
@@ -319,6 +335,9 @@ export async function runClineAgentTurn(options: {
     platform: process.platform,
     planModeSwitchTool: false,
   });
+  const systemPrompt = [baseSystemPrompt, mcp.systemHint]
+    .filter((part) => String(part || "").trim())
+    .join("\n\n");
 
   const toolPolicies = bundle.createToolPoliciesWithPreset("yolo");
 

@@ -13,6 +13,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Agent turn entry | `src/agentLoop.ts` → `runClineAgentTurn` (`src/clineRuntime.ts`) |
 | Cline fork (runtime source) | `vendor/cline/` — see `vendor/README.md` |
 | Cline CJS bundle | `scripts/bundle-cline.js` → `out/clineBundle.js` |
+| Harbor MCP → Cline tools | `src/clineMcpTools.ts` — Figma/custom MCP via `listOpenAiTools` + `createTool` |
 | Step events (UI cards) | `src/agentSteps.ts` |
 | Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
 | Vision whole-turn route | Any image attachment → swap to a vision model via `routeModel` / Settings preferred vision list; pixels go to Cline as `image` message parts (`clineRuntime.ts`) |

@@ -61,6 +61,27 @@ test("selection CodeLens exposes current and new chat actions", () => {
   assert.match(source, /agentPanel\.addSelectionToChat/);
   assert.match(source, /agentPanel\.addSelectionToNewChat/);
   assert.match(source, /onDidChangeTextEditorSelection/);
+  assert.match(source, /selectionHints\.enabled/);
+  assert.match(source, /agentPanel\.selectionHints\.enabled/);
+});
+
+test("selection hints setting is contributed and wired through settings UI", () => {
+  const manifest = JSON.parse(read("package.json"));
+  const setting = manifest.contributes.configuration.properties[
+    "agentPanel.selectionHints.enabled"
+  ];
+  assert.ok(setting);
+  assert.equal(setting.type, "boolean");
+  assert.equal(setting.default, true);
+
+  const provider = read("src/agentPanelProvider.ts");
+  assert.match(provider, /selectionHintsEnabled/);
+  assert.match(provider, /settingsSelectionHintsEnabled/);
+  assert.match(provider, /"selectionHints\.enabled"/);
+
+  const panel = read("media/panel.js");
+  assert.match(panel, /settingsSelectionHintsEnabled/);
+  assert.match(panel, /selectionHintsEnabled/);
 });
 
 test("new chat action captures selection before creating the agent", () => {

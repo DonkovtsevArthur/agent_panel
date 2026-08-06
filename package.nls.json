@@ -46,6 +46,7 @@
   "config.visionRouting.preferredModelId.description": "Deprecated. Use visionRouting.preferredModelIds.",
   "config.maxResponseChars.description": "Maximum chat response length; longer output is truncated. Repetitive loops are also trimmed.",
   "config.soundNotifications.enabled.description": "Play a sound when an agent run succeeds or fails.",
+  "config.selectionHints.enabled.description": "Show floating Add to Chat actions above the selected code in the editor.",
   "config.rejectUnauthorized.description": "Validate the TLS certificate. For corporate CAs, use false or true with caBundlePath.",
   "config.caBundlePath.description": "Path to the CA bundle (similar to Continue requestOptions.caBundlePath)",
   "config.commitMessage.prompt.description": "Custom rule/prompt for SCM commit message generation. Empty = use project rules, then the built-in default.",
@@ -54,5 +55,9 @@
   "config.commitMessage.language.enum.en": "English",
   "config.commitMessage.language.enum.ru": "Russian",
   "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
+  "config.autoglm.enabled.description": "Enable browser_task (AutoGLM) for multi-step work in the user's Chrome/Edge. Requires AutoGLM CLI and browser extension.",
+  "config.autoglm.binaryPath.description": "Optional path to the autoglm binary. Empty = PATH, then ~/.agents/skills/autoglm-browser-agent/dist/autoglm-browser-service.",
+  "config.autoglm.browser.description": "Browser for AutoGLM tasks (chrome or edge)",
+  "config.autoglm.autoApprove.description": "Auto-approve sensitive AutoGLM actions (login/captcha still require the user)",
   "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers."
 }

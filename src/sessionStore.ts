@@ -89,6 +89,7 @@ export function collapseOldToolUiMessages(
     const name = String(msg.step?.name || "");
     return (
       name === "vision_attached_screenshot" ||
+      name === "vision_page_url" ||
       name === "screenshot_plan_explore"
     );
   };

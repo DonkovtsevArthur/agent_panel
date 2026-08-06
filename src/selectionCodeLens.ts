@@ -47,6 +47,10 @@ class SelectionCodeLensProvider
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+    if (!getConfig().selectionHints.enabled) {
+      return [];
+    }
+
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.toString() !== document.uri.toString()) {
       return [];
@@ -101,7 +105,10 @@ export function registerSelectionCodeLens(
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("agentPanel.language")) {
+      if (
+        event.affectsConfiguration("agentPanel.language") ||
+        event.affectsConfiguration("agentPanel.selectionHints.enabled")
+      ) {
         provider.scheduleRefresh();
       }
     })
