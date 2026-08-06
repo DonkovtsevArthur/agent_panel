@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .cursor/**
+.zcode/**
 src/**
 scripts/**
 .gitignore
