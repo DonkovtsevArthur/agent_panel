@@ -22,6 +22,10 @@ import {
   shouldNotifyFigmaNeedsConnect,
   type ClineCreateTool,
 } from "./clineMcpTools";
+import {
+  createHarborNoopTelemetry,
+  HARBOR_CLINE_DISTINCT_ID,
+} from "./clineNoopTelemetry";
 
 type ClineMode = "act" | "plan";
 
@@ -129,6 +133,9 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
     corePromise = bundle.ClineCore.create({
       clientName: "harbor-agents",
       backendMode: "local",
+      // Never wire PostHog / OTEL / live sinks; keep vendor telemetry trees intact for re-forks.
+      telemetry: createHarborNoopTelemetry(),
+      distinctId: HARBOR_CLINE_DISTINCT_ID,
       toolPolicies: bundle.createToolPoliciesWithPreset("yolo"),
       capabilities: {
         requestToolApproval: async () => ({ approved: true }),

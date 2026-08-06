@@ -51,6 +51,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - UI events: `CoreSessionEvent.agent_event` → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
 - Auto-approve tools (`yolo` policies) for Harbor UX (no per-tool QuickPick yet).
 - Iteration budget: Harbor does **not** pass `maxIterations`; Cline treats unset as unlimited. Setting `agentPanel.maxToolRounds` is deprecated/unused for chat.
+- Telemetry: Harbor passes a NoOp `telemetry` + fixed `distinctId` (`clineNoopTelemetry.ts`); Langfuse/OTLP sinks are stubbed in `scripts/bundle-cline.js`. Do **not** delete telemetry trees inside `vendor/cline` on re-fork — see `vendor/README.md`.
 - The old Harbor main-like brain (`agentLoopMainLike`, plan-quality, honestFinale, screenshot-first, explore budgets, …) has been **removed**.
 
 ### Modes — what is allowed (UI)
