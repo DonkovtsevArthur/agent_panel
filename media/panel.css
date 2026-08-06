@@ -3268,7 +3268,41 @@ html[data-surface="settings"] .settings-layout {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.mcp-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mcp-presets-label {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-right: 2px;
+}
+
+.mcp-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.mcp-preset-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.mcp-presets-note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground, #888);
 }
 
 .mcp-search {

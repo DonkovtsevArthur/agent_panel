@@ -65,6 +65,16 @@
       validateTls: "Validate TLS certificate",
       caBundlePath: "CA bundle path",
       agentBehavior: "Agent behavior",
+      browserAgent: "Browser agent",
+      browserAgentTitle: "Browser agent (AutoGLM)",
+      browserAgentNote:
+        "Multi-step tasks in your real Chrome or Edge via AutoGLM (browser_task). Headless browser_* tools stay available for localhost checks. Requires the AutoGLM CLI and browser extension.",
+      autoglmEnabled: "Enable browser_task",
+      autoglmBrowser: "Browser",
+      autoglmAutoApprove: "Auto-approve sensitive actions",
+      autoglmBinaryPath: "Binary path (optional)",
+      autoglmExtensionHint:
+        "Install the AutoGLM extension for Chrome or Edge, then enable it. Saving these settings writes ~/.openclaw-autoclaw/config.json when enabled.",
       advancedSettings: "Advanced",
       commitMessages: "Commit messages",
       commitMessagesNote:
@@ -106,6 +116,14 @@
       mcpNameRequired: "Enter a server name.",
       mcpCommandRequired: "Enter a command for stdio.",
       mcpUrlRequired: "Enter a URL for HTTP.",
+      mcpPresetsLabel: "Quick add",
+      mcpPresetPlaywright: "Playwright",
+      mcpPresetGithub: "GitHub",
+      mcpPresetPlaywrightNote:
+        "Interactive browser via Playwright MCP. Needs Node.js / npx. Harbor also has builtin browser_* tools.",
+      mcpPresetGithubNote:
+        "GitHub remote MCP. Paste a Personal Access Token into Bearer token, then Save & Connect.",
+      mcpPresetAlready: (name) => `«${name}» is already in the list — open settings on the card to edit.`,
       mcpEnable: "Enable",
       mcpReconnect: "Reconnect",
       figmaEnable: "Enable Figma MCP",
@@ -140,6 +158,7 @@
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
       soundNotifications: "Sound notifications",
+      selectionHints: "Selection hints",
       visionRoutingTitle: "Images (vision)",
       visionRoutingNote:
         "When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.",
@@ -286,8 +305,17 @@
       toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
+      toolHumanScreenshot: (url) =>
+        url ? `Screenshot ${url}` : "Screenshot URL",
+      toolHumanBrowserNav: (url) =>
+        url ? `Browser · ${url}` : "Browser navigate",
+      toolHumanBrowserSnap: "Browser snapshot",
+      toolHumanBrowserClick: "Browser click",
+      toolHumanBrowserType: "Browser type",
+      toolHumanBrowserClose: "Browser close",
       toolHumanDiagnostics: "Diagnostics",
       toolHumanVisionAttached: "Vision · attached screenshot",
+      toolHumanVisionPageUrl: "Vision · page URL",
       toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
@@ -385,6 +413,16 @@
       validateTls: "Проверять TLS-сертификат",
       caBundlePath: "Путь к CA bundle",
       agentBehavior: "Поведение агента",
+      browserAgent: "Браузерный агент",
+      browserAgentTitle: "Браузерный агент (AutoGLM)",
+      browserAgentNote:
+        "Многошаговые задачи в вашем Chrome или Edge через AutoGLM (browser_task). Headless browser_* остаются для localhost. Нужны CLI AutoGLM и расширение браузера.",
+      autoglmEnabled: "Включить browser_task",
+      autoglmBrowser: "Браузер",
+      autoglmAutoApprove: "Автоподтверждение чувствительных действий",
+      autoglmBinaryPath: "Путь к бинарнику (опционально)",
+      autoglmExtensionHint:
+        "Установите расширение AutoGLM для Chrome или Edge и включите его. При сохранении с включённым агентом пишется ~/.openclaw-autoclaw/config.json.",
       advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
       commitMessagesNote:
@@ -428,6 +466,15 @@
       mcpNameRequired: "Укажите имя сервера.",
       mcpCommandRequired: "Укажите команду для stdio.",
       mcpUrlRequired: "Укажите URL для HTTP.",
+      mcpPresetsLabel: "Быстро добавить",
+      mcpPresetPlaywright: "Playwright",
+      mcpPresetGithub: "GitHub",
+      mcpPresetPlaywrightNote:
+        "Интерактивный браузер через Playwright MCP. Нужен Node.js / npx. В Harbor также есть builtin browser_* tools.",
+      mcpPresetGithubNote:
+        "Удалённый GitHub MCP. Вставьте Personal Access Token в Bearer token, затем Save & Connect.",
+      mcpPresetAlready: (name) =>
+        `«${name}» уже в списке — откройте настройки на карточке, чтобы править.`,
       mcpEnable: "Включить",
       mcpReconnect: "Переподключить",
       figmaEnable: "Включить Figma MCP",
@@ -462,6 +509,7 @@
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
       soundNotifications: "Звуковые уведомления",
+      selectionHints: "Подсказки при выделении кода",
       visionRoutingTitle: "Картинки (vision)",
       visionRoutingNote:
         "Если выбранная модель не видит изображения, Harbor под капотом переключает на vision-модель. Пустой список — автопредпочтение.",
@@ -608,8 +656,17 @@
       toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
+      toolHumanScreenshot: (url) =>
+        url ? `Screenshot ${url}` : "Screenshot URL",
+      toolHumanBrowserNav: (url) =>
+        url ? `Browser · ${url}` : "Browser navigate",
+      toolHumanBrowserSnap: "Browser snapshot",
+      toolHumanBrowserClick: "Browser click",
+      toolHumanBrowserType: "Browser type",
+      toolHumanBrowserClose: "Browser close",
       toolHumanDiagnostics: "Diagnostics",
       toolHumanVisionAttached: "Vision · attached screenshot",
+      toolHumanVisionPageUrl: "Vision · page URL",
       toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
@@ -831,6 +888,21 @@
   const settingsSoundNotificationsEnabled = document.getElementById(
     "settingsSoundNotificationsEnabled"
   );
+  const settingsSelectionHintsEnabled = document.getElementById(
+    "settingsSelectionHintsEnabled"
+  );
+  const settingsAutoglmEnabled = document.getElementById(
+    "settingsAutoglmEnabled"
+  );
+  const settingsAutoglmBrowser = document.getElementById(
+    "settingsAutoglmBrowser"
+  );
+  const settingsAutoglmAutoApprove = document.getElementById(
+    "settingsAutoglmAutoApprove"
+  );
+  const settingsAutoglmBinaryPath = document.getElementById(
+    "settingsAutoglmBinaryPath"
+  );
   const settingsVisionRoutingModels = document.getElementById(
     "settingsVisionRoutingModels"
   );
@@ -867,6 +939,10 @@
   const mcpSubtitle = document.getElementById("mcpSubtitle");
   const mcpSearchInput = document.getElementById("mcpSearchInput");
   const mcpAddBtn = document.getElementById("mcpAddBtn");
+  const mcpPresetsLabel = document.getElementById("mcpPresetsLabel");
+  const mcpPresetsNote = document.getElementById("mcpPresetsNote");
+  const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
+  const mcpPresetGithub = document.getElementById("mcpPresetGithub");
   const mcpConfiguredTitle = document.getElementById("mcpConfiguredTitle");
   const mcpConfiguredCount = document.getElementById("mcpConfiguredCount");
   const mcpServersList = document.getElementById("mcpServersList");
@@ -1174,6 +1250,7 @@
     setText("settingsLanguageTitle", "languageSection");
     setText("settingsCommitTitle", "commitMessages");
     setText("settingsMcpTitle", "mcpServers");
+    setText("settingsBrowserTitle", "browserAgentTitle");
     setText("settingsAgentTitle", "agentBehavior");
     setText("settingsAdvancedTitle", "advancedSettings");
     document.querySelectorAll("[data-i18n-nav]").forEach((el) => {
@@ -1314,6 +1391,12 @@
     if (settingsSoundNotificationsLabel) {
       settingsSoundNotificationsLabel.textContent = t("soundNotifications");
     }
+    const settingsSelectionHintsLabel = document.getElementById(
+      "settingsSelectionHintsLabel"
+    );
+    if (settingsSelectionHintsLabel) {
+      settingsSelectionHintsLabel.textContent = t("selectionHints");
+    }
     const settingsVisionRoutingTitle = document.getElementById(
       "settingsVisionRoutingTitle"
     );
@@ -1339,12 +1422,55 @@
       settingsVisionRoutingModelsHint.textContent = t("visionRoutingModelsHint");
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
+    const settingsBrowserNote = document.getElementById("settingsBrowserNote");
+    if (settingsBrowserNote) {
+      settingsBrowserNote.textContent = t("browserAgentNote");
+    }
+    const settingsAutoglmEnabledLabel = document.getElementById(
+      "settingsAutoglmEnabledLabel"
+    );
+    if (settingsAutoglmEnabledLabel) {
+      settingsAutoglmEnabledLabel.textContent = t("autoglmEnabled");
+    }
+    const settingsAutoglmBrowserLabel = document.getElementById(
+      "settingsAutoglmBrowserLabel"
+    );
+    if (settingsAutoglmBrowserLabel) {
+      settingsAutoglmBrowserLabel.textContent = t("autoglmBrowser");
+    }
+    const settingsAutoglmAutoApproveLabel = document.getElementById(
+      "settingsAutoglmAutoApproveLabel"
+    );
+    if (settingsAutoglmAutoApproveLabel) {
+      settingsAutoglmAutoApproveLabel.textContent = t("autoglmAutoApprove");
+    }
+    const settingsAutoglmBinaryPathLabel = document.getElementById(
+      "settingsAutoglmBinaryPathLabel"
+    );
+    if (settingsAutoglmBinaryPathLabel) {
+      settingsAutoglmBinaryPathLabel.textContent = t("autoglmBinaryPath");
+    }
+    const settingsAutoglmExtensionHint = document.getElementById(
+      "settingsAutoglmExtensionHint"
+    );
+    if (settingsAutoglmExtensionHint) {
+      settingsAutoglmExtensionHint.textContent = t("autoglmExtensionHint");
+    }
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
     if (mcpSearchInput) {
       mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
     }
     if (mcpAddBtn) {
       mcpAddBtn.title = mcpAddBtn.setAttribute("aria-label", t("add")) || t("add");
+    }
+    if (mcpPresetsLabel) mcpPresetsLabel.textContent = t("mcpPresetsLabel");
+    if (mcpPresetPlaywright) {
+      const label = mcpPresetPlaywright.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetPlaywright");
+    }
+    if (mcpPresetGithub) {
+      const label = mcpPresetGithub.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetGithub");
     }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {
@@ -3484,12 +3610,26 @@
         return t("toolHumanRun", String(args.command || "").trim());
       case "fetch_url":
         return t("toolHumanFetch", String(args.url || "").trim());
+      case "screenshot_url":
+        return t("toolHumanScreenshot", String(args.url || "").trim());
       case "open_external":
         return t("toolHumanOpen", String(args.url || "").trim());
+      case "browser_navigate":
+        return t("toolHumanBrowserNav", String(args.url || "").trim());
+      case "browser_snapshot":
+        return t("toolHumanBrowserSnap");
+      case "browser_click":
+        return t("toolHumanBrowserClick");
+      case "browser_type":
+        return t("toolHumanBrowserType");
+      case "browser_close":
+        return t("toolHumanBrowserClose");
       case "get_diagnostics":
         return t("toolHumanDiagnostics");
       case "vision_attached_screenshot":
         return t("toolHumanVisionAttached");
+      case "vision_page_url":
+        return t("toolHumanVisionPageUrl");
       case "screenshot_plan_explore":
         return t("toolHumanScreenshotExplore");
       default: {
@@ -3601,6 +3741,7 @@
     }
     if (
       n === "vision_attached_screenshot" ||
+      n === "vision_page_url" ||
       n === "vision_figma_screenshot" ||
       n === "vision_page_screenshot"
     ) {
@@ -4435,7 +4576,14 @@
         return "search";
       case "fetch_url":
       case "open_external":
+      case "screenshot_url":
         return "link";
+      case "browser_navigate":
+      case "browser_snapshot":
+      case "browser_click":
+      case "browser_type":
+      case "browser_close":
+        return "web";
       case "get_diagnostics":
         return "bug_report";
       default:
@@ -4718,6 +4866,7 @@
       "language",
       "commit",
       "mcp",
+      "browser",
       "agent",
       "advanced",
     ];
@@ -7094,7 +7243,7 @@
     }
   }
 
-  function openMcpCustomEditModal(serverId) {
+  function openMcpCustomEditModal(serverId, presetPrefill) {
     if (!mcpCustomEditModal) {
       return;
     }
@@ -7108,31 +7257,40 @@
       mcpCustomEditId.value = existing ? existing.id : "";
     }
     if (mcpCustomName) {
-      mcpCustomName.value = existing ? existing.name || "" : "";
+      mcpCustomName.value = existing
+        ? existing.name || ""
+        : presetPrefill?.name || "";
     }
     if (mcpCustomTransport) {
       mcpCustomTransport.value =
-        existing && existing.transport === "http" ? "http" : "stdio";
+        existing && existing.transport === "http"
+          ? "http"
+          : presetPrefill?.transport === "http"
+            ? "http"
+            : "stdio";
     }
     if (mcpCustomCommand) {
-      mcpCustomCommand.value = existing?.command || "";
+      mcpCustomCommand.value =
+        existing?.command || presetPrefill?.command || "";
     }
     if (mcpCustomArgs) {
       mcpCustomArgs.value = Array.isArray(existing?.args)
         ? existing.args.join(" ")
-        : "";
+        : presetPrefill?.argsText || "";
     }
     if (mcpCustomEnv) {
       const env = existing?.env || {};
-      mcpCustomEnv.value = Object.entries(env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join("\n");
+      mcpCustomEnv.value = existing
+        ? Object.entries(env)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("\n")
+        : presetPrefill?.envText || "";
     }
     if (mcpCustomCwd) {
       mcpCustomCwd.value = existing?.cwd || "";
     }
     if (mcpCustomUrl) {
-      mcpCustomUrl.value = existing?.url || "";
+      mcpCustomUrl.value = existing?.url || presetPrefill?.url || "";
     }
     if (mcpCustomToken) {
       mcpCustomToken.value = "";
@@ -7142,7 +7300,7 @@
         mcpCustomTransport.value =
           existing.transport === "http" ? "http" : "stdio";
       }
-    } else if (mcpCustomTransport) {
+    } else if (mcpCustomTransport && !presetPrefill) {
       mcpCustomTransport.value = "stdio";
     }
     // Prefill from detail string when config fields are missing
@@ -7179,16 +7337,87 @@
     if (mcpCustomEditCancelBtn) {
       mcpCustomEditCancelBtn.textContent = t("cancel");
     }
+    if (mcpPresetsNote) {
+      if (presetPrefill?.note) {
+        mcpPresetsNote.hidden = false;
+        mcpPresetsNote.textContent = presetPrefill.note;
+      } else {
+        mcpPresetsNote.hidden = true;
+        mcpPresetsNote.textContent = "";
+      }
+    }
     syncMcpCustomTransportFields();
     mcpCustomEditModal.hidden = false;
-    if (mcpCustomName) {
+    if (presetPrefill?.needsBearerToken && mcpCustomToken) {
+      mcpCustomToken.focus();
+    } else if (mcpCustomName) {
       mcpCustomName.focus();
     }
+  }
+
+  const MCP_PRESET_DEFS = {
+    playwright: {
+      name: "Playwright Browser",
+      transport: "stdio",
+      command: "npx",
+      argsText: "-y @playwright/mcp@latest --headless",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetPlaywrightNote",
+      matchIds: ["playwright", "playwright-browser"],
+    },
+    github: {
+      name: "GitHub",
+      transport: "http",
+      command: "",
+      argsText: "",
+      envText: "",
+      url: "https://api.githubcopilot.com/mcp/",
+      needsBearerToken: true,
+      noteKey: "mcpPresetGithubNote",
+      matchIds: ["github"],
+    },
+  };
+
+  function openMcpPreset(presetId) {
+    const def = MCP_PRESET_DEFS[presetId];
+    if (!def) {
+      return;
+    }
+    const existing = (mcpServersCache || []).find((s) => {
+      const id = String(s.id || "").toLowerCase();
+      const name = String(s.name || "").toLowerCase();
+      return (
+        def.matchIds.includes(id) ||
+        name === def.name.toLowerCase() ||
+        name === String(presetId).toLowerCase()
+      );
+    });
+    if (existing) {
+      showCopyToast(t("mcpPresetAlready", existing.name || existing.id));
+      openMcpCustomEditModal(existing.id);
+      return;
+    }
+    openMcpCustomEditModal("", {
+      name: def.name,
+      transport: def.transport,
+      command: def.command,
+      argsText: def.argsText,
+      envText: def.envText,
+      url: def.url,
+      needsBearerToken: def.needsBearerToken,
+      note: t(def.noteKey),
+    });
   }
 
   function closeMcpCustomEditModal() {
     if (mcpCustomEditModal) {
       mcpCustomEditModal.hidden = true;
+    }
+    if (mcpPresetsNote) {
+      mcpPresetsNote.hidden = true;
+      mcpPresetsNote.textContent = "";
     }
   }
 
@@ -7385,6 +7614,23 @@
     if (settingsSoundNotificationsEnabled) {
       settingsSoundNotificationsEnabled.checked =
         settings.soundNotificationsEnabled !== false;
+    }
+    if (settingsSelectionHintsEnabled) {
+      settingsSelectionHintsEnabled.checked =
+        settings.selectionHintsEnabled !== false;
+    }
+    if (settingsAutoglmEnabled) {
+      settingsAutoglmEnabled.checked = settings.autoglmEnabled === true;
+    }
+    if (settingsAutoglmBrowser) {
+      settingsAutoglmBrowser.value =
+        settings.autoglmBrowser === "edge" ? "edge" : "chrome";
+    }
+    if (settingsAutoglmAutoApprove) {
+      settingsAutoglmAutoApprove.checked = settings.autoglmAutoApprove === true;
+    }
+    if (settingsAutoglmBinaryPath) {
+      settingsAutoglmBinaryPath.value = settings.autoglmBinaryPath || "";
     }
     populateVisionRoutingModelsList(
       Array.isArray(settings.visionRoutingPreferredModelIds)
@@ -7622,6 +7868,23 @@
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
         : true,
+      selectionHintsEnabled: settingsSelectionHintsEnabled
+        ? settingsSelectionHintsEnabled.checked
+        : true,
+      autoglmEnabled: settingsAutoglmEnabled
+        ? settingsAutoglmEnabled.checked
+        : false,
+      autoglmBrowser: settingsAutoglmBrowser
+        ? settingsAutoglmBrowser.value === "edge"
+          ? "edge"
+          : "chrome"
+        : "chrome",
+      autoglmAutoApprove: settingsAutoglmAutoApprove
+        ? settingsAutoglmAutoApprove.checked
+        : false,
+      autoglmBinaryPath: settingsAutoglmBinaryPath
+        ? settingsAutoglmBinaryPath.value.trim()
+        : "",
       visionRoutingPreferredModelIds: readVisionRoutingPreferredModelIdsFromDom(),
       modes: collectCustomModesForSave(),
     };
@@ -11002,7 +11265,7 @@
       }
       if (
         target.closest(
-          "#settingsCaBundle, #settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars"
+          "#settingsCaBundle, #settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsAutoglmBinaryPath"
         )
       ) {
         schedulePersistSettings();
@@ -11015,7 +11278,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsVisionRoutingModels"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsVisionRoutingModels, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         if (
@@ -11081,6 +11344,16 @@
   if (mcpAddBtn) {
     mcpAddBtn.addEventListener("click", () => {
       openMcpCustomEditModal("");
+    });
+  }
+  if (mcpPresetPlaywright) {
+    mcpPresetPlaywright.addEventListener("click", () => {
+      openMcpPreset("playwright");
+    });
+  }
+  if (mcpPresetGithub) {
+    mcpPresetGithub.addEventListener("click", () => {
+      openMcpPreset("github");
     });
   }
   if (mcpServersList) {

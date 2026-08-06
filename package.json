@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.187",
+  "version": "1.0.188",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -445,6 +445,11 @@
           "default": true,
           "description": "%config.soundNotifications.enabled.description%"
         },
+        "agentPanel.selectionHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.selectionHints.enabled.description%"
+        },
         "agentPanel.rejectUnauthorized": {
           "type": "boolean",
           "default": false,
@@ -479,6 +484,30 @@
           "type": "boolean",
           "default": false,
           "description": "%config.figma.enabled.description%"
+        },
+        "agentPanel.autoglm.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.autoglm.enabled.description%"
+        },
+        "agentPanel.autoglm.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "%config.autoglm.binaryPath.description%"
+        },
+        "agentPanel.autoglm.browser": {
+          "type": "string",
+          "enum": [
+            "chrome",
+            "edge"
+          ],
+          "default": "chrome",
+          "description": "%config.autoglm.browser.description%"
+        },
+        "agentPanel.autoglm.autoApprove": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.autoglm.autoApprove.description%"
         },
         "agentPanel.mcp.servers": {
           "type": "array",
