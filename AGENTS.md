@@ -12,29 +12,19 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Webview host / UI messages | `src/agentPanelProvider.ts` |
 | Agent turn entry | `src/agentLoop.ts` → `runClineAgentTurn` (`src/clineRuntime.ts`) |
 | Cline fork (runtime source) | `vendor/cline/` — see `vendor/README.md` |
-| Main-like loop (legacy, unused) | `src/agentLoopMainLike.ts` — replaced by Cline; keep until cleanup |
-| Step events / ToolResults intent | `src/agentSteps.ts` |
-| Mid-turn context prep | `src/prepareRoundMessages.ts` |
-| Tool waves (parallel + lifecycle) | `src/runToolWaves.ts`, `src/toolParallel.ts` |
-| Main-like tools (+ URL) | `src/mainLikeTools.ts` |
-| Tool round policy (nudge/cut/extend) | `src/toolRoundPolicy.ts` |
-| Broader tool impl (fetch_url etc.) | `src/tools.ts` |
-| Modes (Agent / Plan / Ask) | `src/modes.ts` |
+| Cline CJS bundle | `scripts/bundle-cline.js` → `out/clineBundle.js` |
+| Step events (UI cards) | `src/agentSteps.ts` |
+| Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
+| Vision whole-turn route | `src/visionTurnRoute.ts` + `src/claimedEdits.ts` |
+| Plan → Agent (Build) UI | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`, Plan.md helpers, strip wrapper for cards |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |
-| OpenAI-compatible client | `src/openaiClient.ts` (stream-first SSE, JSON fallback; `toApiMessages` — `content: null` rules) |
-| Model capabilities registry | `src/modelCapabilities.ts` (per-model: vision, reasoning, Kimi quirks, `omitContentForToolCalls`) |
-| Model routing / utility models | `src/modelRouting.ts` |
-| Vision routing (image attachments) | `agentPanel.visionRouting.preferredModelIds` → `VISION_MODEL_PREFERENCE`. **Agent/Ask** with images: whole-turn switch to a vision model for that message only (picker stays on the user’s model). **Plan + attached screenshot (no Figma URL):** no whole-turn switch — host OCR preflight (`describeMcpImagesForMainModel`) + explore probes; selected planner (e.g. Kimi) stays, same idea as Figma MCP |
-| Figma / page screenshot vision | `src/figmaVisionHelper.ts` + `src/screenshotUrl.ts` + `src/visionDelivery.ts` — MCP `get_screenshot` / `screenshot_url` deliver PNG; if Settings preferred vision is set and the chat planner is not in that list, preferred always OCR’s under the hood (planner stays Kimi/etc.); raw pixels only when planner ∈ preferred (or preferred empty + planner has vision). Harbor forces `enableBase64Response` on Figma screenshots; `get_figma_data` is hidden only when `get_design_context`/`get_screenshot` exist (PAT keeps legacy). **Plan + attached screenshot (no Figma URL):** host OCR + parallel explore probes (`screenshotPlanExplore.ts`) before the planner’s first API call; Figma URL + MCP still wins (Figma-first). After plan-quality nudges: always prefer a Build card (recover last `<proposed_plan>` from the turn if the finale dropped it); hard error only when no plan card exists at all |
-| Plan → Agent (Build) | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`; plan = WHAT, repo `read_file` = HOW; plan's optional `**Implementation**` section (props/types/signatures) is the HOW contract the implementer builds against; correction / focused-fix lane: legacy `looksLikeEditCorrectionRequest` (wrong table/component) **or structural** `looksLikeDirectiveFixRequest` (short message ≤500 chars + open/`@file`/last-edited path — no phrase dictionary) → explore soft **1** / hard **3** + `buildEditCorrectionSystemHint`; `stripPlanImplementWrapper` keeps marker/prefix out of plan cards / Plan.md / user-bubble display; soft checklist via `remainingPlanTargetPaths` before finale (up to 3 nudges) + honest partial finale if paths remain. **Live plan:** after `<proposed_plan>`, host opens editable `План.md`/`Plan.md` under globalStorage (`openPlanMarkdown` reveal editor); Build reads unsaved editor buffer via `requestLivePlanForBuild` (fallback = card text); card «Open in tab» still opens markdown preview |
-| Plan quality | `diagnosePlanQualityFailure` → targeted nudges, **multi-reason** (up to 4 packed into one nudge): Figma-tools-called (`get_design_context`+`get_screenshot` or `get_figma_data`), vision-helper **block inventory** near 1:1 (allow drop ≤1 label; works for Figma MCP **and** host OCR of attached screenshots via system inject), **Implementation** required for UI/page/Figma/screenshot + props/imports must match component `read_file` (`implementation_api_mismatch`), Component-API `read_file` of named shared primitives, reuse/by-pattern path must be `read_file`'d this turn (`missing_path_read`), checklist 1:1 count **and** semantic token cover, Goal↔vision-helper Title, plus analogue observed quote / page→tab / similar-page / «already exists» / PLAN.md (`planQuality.ts`); after nudges: prefer Build card even if imperfect (recover last `<proposed_plan>`); hard error (`PLAN_QUALITY_USER_VISIBLE`, no angle-bracket plan tags — avoids fake card) only when no plan exists; up to **3** quality nudges; **Figma-first force** in Plan when URL + MCP connected; **Screenshot-first** (`shouldRunScreenshotPlanPreflight` + `SCREENSHOT_FIRST_HINT`) when Plan + image + no Figma URL — OCR + parallel explore probes (`screenshotPlanExplore.ts`, anti-drift: similar page ≠ done), explore not stripped; soft after **3** post-preflight (else soft after **8**); **mechanical plan** via inversion (`looksLikeComplexPlanRequest` false + plan/change intent + trivial|≤2 files|short; **disabled when image attached**) — `PLAN_MECHANICAL_HINT`, soft-strip explore after **2**, quality gate = Steps + path only (root `package.json` ok); **plan revision** when history has `<proposed_plan>` — `PLAN_REVISION_HINT`, soft-strip explore after **2**, skip re-fetch gates; plan card collapsed + Preview; **Plan/Ask:** no soft-budget / mid-turn summary / compaction spam; hard ceiling pins grounding; Kimi 128k floor |
-| Destructive write guard | `src/writeFileGuard.ts` — refuse empty/truncated `write_file` over substantial existing files |
-| Discard scope | `src/discardChanges.ts` — «отмени изменения» = last agent paths; «все» = whole dirty; bare «отмени» → ask; successful restore/clean/rm skips write_file honestFinale; after discard STOP — do not re-implement prior plan from history |
+| OpenAI-compatible client | `src/openaiClient.ts` (utility paths e.g. commit message; chat turns use Cline gateway) |
+| Model capabilities / routing | `src/modelCapabilities.ts`, `src/modelRouting.ts` |
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
-| Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) |
-| Learned errors memory | `src/learnedErrors.ts` — `.harbor/learned-errors.md` in the workspace; plan-quality nudge reasons + post-edit verification failures + captured «Правило для будущего» / user corrections (`lessonsFromFutureRuleProse` / `lessonsFromUserCorrection`) are appended (dedup/cap ~3k); injected as a system hint on later turns |
+| Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) — used by commit utility path |
+| MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
 | Webview UI | `media/panel.js`, `media/panel.css` |
 | Unit tests | `tests/*.test.js` (Node test runner against `out/`) |
 
@@ -56,102 +46,18 @@ All chat models use the **Cline Agent** path (`src/clineRuntime.ts` → `@cline/
 - Tools: Cline builtins (`read_files`, `search_codebase`, `run_commands`, `editor`, …) via `createBuiltinTools` + `ToolPresets`.
 - Providers: Harbor Settings `providers[].baseUrl/apiKey` → Cline `openai-compatible`.
 - UI events: Cline runtime events → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
-- Legacy Harbor loop (`agentLoopMainLike.ts` and plan-quality / honestFinale gates) is **not** called anymore.
+- Auto-approve tools (`yolo` policies) for Harbor UX (no per-tool QuickPick yet).
+- The old Harbor main-like brain (`agentLoopMainLike`, plan-quality, honestFinale, screenshot-first, explore budgets, …) has been **removed**.
 
-Previous main-like notes below are historical until cleanup:
+### Modes — what is allowed (UI)
 
-All chat models previously used the **main-like** path:
-
-- Short context: system + editor + **workspace rules** (`AGENTS.md` + `.cursor/rules`, via `loadWorkspaceRules`, cap ~12k) + optional **learned errors** (`.harbor/learned-errors.md`, via `loadLearnedErrors`, cap ~3k) + mode prompt + history + user (no prefetch / explore handoff in the loop). Skip rules/learned-errors injection when the turn is rewriting `AGENTS.md`.
-- HTTP: **stream-first** `chat/completions` (SSE); on empty/broken stream → **JSON fallback** (no `stream` field). Retryable 429/5xx use transport backoff; UI gets `onStep` retry cards.
-- Turn sequence (Zed-like): structured `onStep` events (thinking / text / tool lifecycle / compaction / retry); after tools, sticky **ToolResults** intent hint; mid-turn `applyContextBudget` (+ optional summary marker). **Plan/Ask (all models):** no soft-target budget, no mid-turn extractive summary, and no compaction-card spam on hard-trim; hard ceiling pins grounding reads; Kimi/fragile gateway shrink also keeps Figma + grounding. **Agent** keeps soft budget + mid-turn summary, but **pins** Figma/vision + implement grounding (`shared/ui` / routes / pages index) and `read_file` of paths edited this turn (`createAgentImplementPreserve` in `contextBudget.ts` / `prepareRoundMessages.ts`). Kimi context window floored at 128k.
-- **Tool evidence fallback**: when the model fails after tool rounds, `formatToolEvidenceFallbackAnswer` summarizes gathered read/search results instead of showing a bare red error.
-- **Thinking collapse**: long Thinking blocks (> 240 chars) auto-collapse when the turn advances to tools/text; user can expand via «Show thinking» toggle.
-- **No eager Thinking placeholder**: `requestAssistant` in `agentLoopMainLike.ts` does **not** emit a «Thinking…» placeholder for any model. The Thinking card is created on demand when real `reasoning_content` or inline think-tags (`</welcome>` / `<thought>`) arrive during streaming (`onDelta` / `think-tag filter`). This avoids showing an empty «Thinking…» card for models that never produce reasoning (DeepSeek-V4-Flash, Qwen3-Coder-Next, …). Placeholder-only Thinking cards left over in sealed groups are cleaned up by `dropPlaceholderThinkingSteps` (at seal) and `cleanSealedThinkingPlaceholders` (after assistant text is in the DOM, since `appendMessage` seals groups before appending text).
-- **`reasoning_effort` (Claude 3.5+/4 via gateway)**: models matching `claude.*(?:3[-.][5-9]|[4-9])` get OpenAI-style `reasoning_effort` (default `"high"`, overridable per-model via `agentPanel.models[].reasoningEffort`). The gateway enables extended thinking and streams `reasoning_content`, which the model-agnostic `onDelta` handler already renders into the Thinking card. Claude 3.0 (no thinking) and non-Claude models do not send the field.
-- **`reasoning_effort` gating on tool rounds (`effectiveReasoningEffort`)**: Anthropic's native API requires echoed `thinking` blocks (with a cryptographic `signature`) on the assistant tool-call turn when extended thinking is on. Our OpenAI-style `reasoning_content` carries no signature, so the corporate gateway returns 500 on re-entry after a tool result — both with and without `stripReasoningOnEcho`. To stay stable, `reasoning_effort` is dropped for any request whose message history already contains a `tool` result or an assistant `tool_calls` turn (`src/reasoningEffort.ts`). Net effect: thinking streams on the first turn (before any tool call); tool rounds and post-tool finales run without extended thinking.
-- **`content: null` on assistant tool-call turns (`toApiMessages` / `omitContentForToolCalls`)**: strict gateways (DeepSeek/DaVinci, Anthropic-compat) return 500 when an assistant tool-call turn omits the `content` field entirely. `toApiMessages` (`src/openaiClient.ts`) now emits explicit `content: null` by default for assistant tool-call turns with empty content. **Kimi** is the exception — its gateway 400s on `content: null`, so the `omitContentForToolCalls` capability (set for `/kimi|moonshot/` in `src/modelCapabilities.ts`) makes `toApiMessages` omit the field for Kimi only. Do **not** change this without testing both Kimi (400 on null) and DeepSeek (500 on omitted).
-- **Per-chat model isolation (`syncRunChat` / `modelChanged`)**: `this.selectedModel` is a class-level field shared across chats. `syncRunChat` (`agentPanelProvider.ts`) saves the model to `runChatId` when a turn finishes — it must use `this.selectedModel` **only** when `this.store.activeChatId === runChatId`; otherwise use `selectedModelAfterRun` (the model chosen at run start). Without this guard, switching chats mid-run leaks the new chat's model into the old chat. `modelChanged` / `modeChanged` messages from the webview carry `chatId`; the host ignores them if the active chat no longer matches — prevents stale messages from overwriting a newly-switched chat's model.
-- Built-in tools from `mainLikeTools.ts`:
-  - always: `list_files`, `read_file`, `write_file`, `search_replace`, `run_command`
-  - URL: `fetch_url`, `screenshot_url` (headless Chrome/Edge PNG + visible text), `open_external` (when the user message has http(s) / Figma URL)
-  - plus connected **MCP** tools (e.g. Figma) when enabled in Settings
-  - **Focused edits (Zed-style):** `search_replace` (old_string → new_string, uniqueness required by default; `replace_all` for multi) is the surgical patch tool — it changes only the target fragment and leaves the rest of the file (dependencies, imports, neighboring code) untouched. The `FOCUSED_EDIT_HINT` system message nudges models to prefer `search_replace` for changes to EXISTING files and reserve `write_file` (full rewrite) for creating new files or rewriting entirely. `isMainLikeWriteTool` (`write_file` ∪ `search_replace`) gates productive rounds, edit tracking (`bumpEdit`), the hard-cut allow-list, and the post-edit verification gate — so `search_replace` edits are counted, tracked, and verified exactly like `write_file`.
-
-Do **not** tell the user that external URLs / Figma are unavailable when `fetch_url` / `open_external` / Figma MCP tools are in the tool list.
-
-### Modes — what is allowed
-
-| Mode | May edit files? | Tools |
-|------|-----------------|--------|
-| **Agent** | Yes (`search_replace` / `write_file`) | Full main-like set + MCP (Figma) |
-| **Plan** | No | `list_files`, `read_file`, `search_text`, `fetch_url`, `open_external` + **all connected MCP** (incl. Figma) |
-| **Ask** | No | Same as Plan (MCP/Figma included; no `write_file` / `search_replace` / `run_command`) |
+| Mode | Harbor UI | Cline runtime |
+|------|-----------|---------------|
+| **Agent** | Full chrome | `act` — edits + shell |
+| **Plan** | Plan chrome / Build | `plan` — explore, no editor |
+| **Ask** | Ask chrome | `plan` — same read-focused tools |
 
 **Never silently switch Agent → Ask** in the UI (`agentPanelProvider.ts` keeps `modeForRun = selectedMode`).
-
-**Agent question turn (soft-readonly):** when the user asks a question without an explicit edit request (`looksLikeQuestionRequest` in `claimedEdits.ts` — and not Build / correction / discard / mechanical / **edit-verification**), the turn stays in Agent mode but strips `write_file` / `search_replace` / `run_command`, injects `AGENT_QUESTION_HINT`, and skips focused-edit / analogue-UI / post-edit verification — so the model answers (e.g. «откуда попадаем на страницу») instead of dumping a prior Build checklist. Short challenges like «а в роутах поменял?» (`looksLikeEditVerificationRequest`) stay editable. Edit-correction lane keeps `search_text` after soft/hard explore strip for paired path/route/navigate call sites; claiming «✅ Исправлено» without a successful write is replaced even in soft-readonly / Ask.
-
-Builtin Agent has an execution-focused mode prompt (`agentModeSystemPrompt` in `modes.ts`, en/ru via `mergeModes`) — focused edits, analogues before new UI, honest finale, shared-UI consumers, Build contract, plus «question without edit → answer». Plan/Ask keep their longer mode prompts.
-
-### Tool-round policy
-
-- **Plan mode:** soft grounding reminders only (repeatable); **no hard-cut explore** — finish per-item grounding; ceiling is `maxToolRounds` + incomplete-plan gate. **Mechanical** (inverted: not complex UI/Figma/checklist; plan/change intent + trivial|≤2 files|short via `looksLikeMechanicalPlanRequest`): soft-strip after **2**, `PLAN_MECHANICAL_HINT`, skip UI quality gates — LLM still plans, without Phase-1 spam.
-- If the turn is productive (`write_file` / `search_replace` / `run_command`) and the round budget ends: auto-extend once (+8 rounds).
-- Soft verify hint (`VERIFY_REPO_FACTS_HINT`): rules are guidance; verify repo facts with tools; prefer multiple `read_file` / `list_files` in one turn (they run in parallel).
-- **Agent explore (all models):** default soft **4** / hard-cut **6**; `@file` / workspace path → **3 / 5**; cold-start «new page/screen» without paths → **5 / 7**; **mechanical fast lane** (version / ≤2 named files via `looksLikeAgentMechanicalRequest`) → soft **1** / hard **3**, `AGENT_MECHANICAL_HINT`, skip analogue-UI hint, diagnostics-only verification (no project lint/typecheck). Soft nudge **strips** `list_files` / `read_file` / `search_text` and asks to write by the analogous files already read (mechanical: edit the target now). After hard-cut + productive edit, **`search_text` returns** for consumer checks (list/read stay blocked). Soft system hint before new UI/pages: read 1–2 analogous existing files in the same tool round (`buildKimiWorkspaceFollowHint`) — skipped for mechanical. Build→Agent (`implementPlan`) keeps a tighter **2 / 4** explore budget; unfinished explicit plan paths get up to **3** soft checklist nudges before finale (`remainingPlanTargetPaths`); if paths still remain, finale prepends an honest partial notice (`buildPlanChecklistPartialFinale`).
-- **Kimi transport:** before each API call: shrink older tool payloads (`prepareKimiGatewayMessages`) **and** drop `reasoning_content` from older assistant rounds (`dropOlderReasoningBlocks`, keep recent 2) — Zed-like `drop_reasoning_blocks`: API still gets the required placeholder for tool-call rounds via `toApiMessages`, but stale thinking no longer eats context. Context window floored at **128k** (Settings values below that are ignored). Gateway shrink in Plan/Ask keeps Figma and grounding reads with softer `keepRecent`/`maxOldChars`; **Agent** uses the same Figma + implement-read pins when `prepareRoundMessages` passes `createAgentImplementPreserve`. Main-like transport: no `temperature`, min `max_tokens`, echo `reasoning_content`.
-- **Fragile light models** (DeepSeek / Haiku / flash / mini / gemma): before each API call, `prepareFragileGatewayMessages` caps even the latest `read_file` (gateway often 500s on a full `package.json`); in Plan/Ask the same Figma/grounding pins apply as for Kimi; in Agent the implement-read pins apply the same way.
-
-### Post-edit verification (Agent mode, all models)
-
-After successful edits, before the finale, Agent runs a bounded quality gate (`verificationLoop.ts` via `agentLoopMainLike.ts`):
-
-1. `get_diagnostics` on edited paths (auto if missing)
-2. nudge to fix diagnostic errors / import warnings **on those edited paths** (capped retries) — prefer **`search_replace`**, then `write_file`
-3. one project command from `package.json` scripts, preference **typecheck → lint → build** (not full `test`) — **skipped** for metadata-only edits (`package.json`, nls, changelog, readme, license)
-4. if the project command fails but reports only paths **outside** this turn's edits → allow finale (do not fix whole-repo lint debt)
-
-`get_diagnostics` is exposed in main-like tools only when this gate is on (Agent; not Plan/Ask). Empty-finale / verification copy also prefers `search_replace` for existing files (`emptyFinale.ts`).
-
-### Shared-UI impact gate (honest finale)
-
-`decideHonestFinale` (`honestFinale.ts`) nudges when the turn changed (or claimed to change) **shared UI** without a usage search (`search_text` / `rg` / `grep`):
-
-- Path trigger is **UI-only** (`looksLikeSharedUiEditPath`): `shared/ui`, `components`, `widgets`, toast/modal/… — **not** `shared/api` / `shared/lib` / config.
-- After impact nudges (up to 3): soft-keep the model's draft under a warning (`IMPACT_USER_SOFT_VISIBLE`); hard «Повторите запрос» only for empty finales.
-
-### Deterministic version bump (no LLM)
-
-When the user asks to change the version in `package.json` («поменяй версию» / follow-up «да» / explicit semver), `runMainLikeAgentTurn` runs a **pre-LLM shortcut** (`resolveVersionBumpForPackageJson` in `src/versionBump.ts`) before any model call:
-
-- Reads `package.json` from the workspace root, applies a targeted regex (no `g` flag) that replaces **only the first** `"version"` occurrence, and writes the file back.
-- Dependencies, scripts, and other fields are never touched, bumped, or deleted — the regex physically cannot reach them.
-- Reports the edit via `onFileEdit` + `onReview` (so the **Commit and push** tag appears), answers `«version: prev → new»`, and finishes the turn **without calling the LLM**.
-- If the version already matches → answers «уже X — менять нечего» (matches `looksLikeRefusedRequestedEdit`).
-- Only in **Agent** mode (not Plan/Ask) and only when a workspace root exists; otherwise falls through to the normal LLM path.
-- Question requests («какая версия») and unrelated edits («добавь зависимость») return `null` and go to the LLM as usual.
-- Bare patch number in the request («поменяй на 22» / «подними до 23» / «поставь на 22») is caught by `looksLikeVersionChangeRequest` and resolved via the new `barePatch` source: `resolveVersionBumpForPackageJson` takes `major.minor` from `package.json` on disk and substitutes the user's number as the patch → `0.0.22`. The model never gets a chance to write a literal `"22"` into the version field.
-
-### package.json version guard (tool-level, no LLM)
-
-Even when the shortcut above is bypassed (unusual phrasing, model-initiated edit), `runMainLikeTool` in `src/mainLikeTools.ts` intercepts `write_file` / `search_replace` whose target is a `package.json`:
-
-- For `write_file`: the new content is validated before the write.
-- For `search_replace`: the patch is applied locally (dry-run via `applySearchReplace`), the resulting content is validated, and the write is blocked if the guard fires.
-- `validatePackageJsonVersionValue` (in `src/versionBump.ts`, vscode-free, unit-tested) extracts the `"version"` value and rejects non-semver (e.g. bare `"22"`). The tool returns a JSON error telling the model to either set a proper semver or ask the user in plain text — not guess.
-- Valid semver and files without a `version` field pass through unchanged.
-
-### Commit message generation (SCM / Commit and push)
-
-Not the chat-selected model. Uses `selectUtilityModel` preference order:
-
-1. `DeepSeek-V4-Flash`
-2. `Qwen3-Coder-Next`
-3. `Gemini 2.5 Flash`
-4. `Gemma-4-31b`
-
-else any enabled “light” model, else `defaultModel`.
 
 ## Product constraints (always)
 
@@ -165,33 +71,37 @@ else any enabled “light” model, else `defaultModel`.
 - `package.json` `version` when packaging a VSIX for the user.
 - `AGENTS.md` and `.cursor/rules/*.mdc` when documenting real product/runtime rules.
 - `package.nls*.json` / UI copy when the task is about wording (still no Cursor branding).
+- `vendor/cline/` when patching the Cline fork (then rebuild SDK / `out/clineBundle.js`).
 
 ## What agents MUST NOT do
 
 ### Git / SCM
 
-- Do **not** run `git commit` or `git push` via `run_command` (blocked). After edits, tell the user to use the panel **Commit and push** tag (`commitAndPush.ts`).
+- Do **not** run `git commit` or `git push` via shell tools unless the user explicitly asks (panel **Commit and push** tag is the product path: `commitAndPush.ts`).
 - Do **not** use `git add --all` / `git add -A` / `git add .` / `git commit -a` unless the user explicitly asks to include every local change.
-- Broad discard (`git restore .`, `git clean -fd`, `git reset --hard`) only when the user clearly asks to discard **all** local changes.
-- Explicit chat «запушь» / «выполни push» is handled outside the LLM (`gitCommandPolicy.ts`).
+- Broad discard only when the user clearly asks to discard **all** local changes.
 
 ### Product / branding
 
 - Invent Cursor comparisons in product text.
-- Install the built VSIX with a `code` binary that points at Cursor (`/usr/local/bin/code` is often wrong).
+- Install the built VSIX with a `code` binary that points to Cursor (`/usr/local/bin/code` is often wrong).
 - Write agent sessions into `globalState` as the primary store.
 
 ### Editing honesty
 
-- Do not claim files were edited unless `write_file` actually ran successfully in this turn (real +/− lines).
-- Main-like loop enforces this via `decideHonestFinale` in `agentLoopMainLike.ts` (nudge → retry tools, else replace with honest user-visible message).
-- Plan-quality gate is softened (z.ai-style): when `diagnosePlanQualityFailure` flags the finale, the loop nudges up to 2× with a **targeted** reason string — or a **multi-reason** pack (up to 4: missing Figma tools / block inventory / Implementation / component-API read / semantic checklist / Goal title / paths / drift / analogue quotes / …); if a `<proposed_plan>` still exists (in the finale or earlier in the turn), the card is shown with Build — NOT replaced with the blocking error. The error message is only used when no plan card exists anywhere in the turn (prose «already exists» / PLAN.md file-write claim with no recoverable card).
-- Empty model finales never surface bare «(пустой ответ)»: nudge to `write_file` / forced text reply, else `finalizeAssistantText` (edits summary → tool activity → clear error) in `emptyFinale.ts`.
-- Do not claim Figma/URL access is impossible when the corresponding tools are available; if Figma MCP is disconnected, say to connect in Settings → MCP Servers (PAT).
+- Do not claim files were edited unless tools actually wrote them this turn.
+- Do not claim Figma/URL access is impossible when MCP / Cline tools can reach them; if Figma MCP is disconnected, say to connect in Settings → MCP Servers (PAT).
 
 ## Coding norms for this repo
 
 - Prefer focused diffs; match existing TypeScript / webview style.
 - Pure logic that tests can import should avoid top-level `vscode` requires (lazy-require or keep helpers free of the API).
 - Commit messages for this repo: Russian, when the user asks to commit.
-- Changed-files review should include shell-side edits when possible (`turnFileChanges.ts` / `mergeNewlyDirtyEdits` in main-like), not only `write_file`.
+
+## Model: `builtin:zai-coding-plan/GLM-5.2` operating constraints
+
+This rule applies specifically when the active model is **`builtin:zai-coding-plan/GLM-5.2`** (the current agent).
+
+- **Do NOT write unit tests** (`tests/*.test.js` or any other test code). Tests are written/maintained by other contributors / the user. If existing tests break as a side effect of a code change, *report* the failures (file:line + assertion) to the user — do **not** edit the test files to make them green. Do not add new test cases on your own initiative.
+- **Do NOT run the build / package step** (`npm run compile`, `npx vsce package`, VSIX install, `npm test`) unless the user **explicitly** asks for it. Finishing a task is not a trigger for build/test/package — stop after the code edits and a brief summary. When the user asks to «собери» / «build» / «run tests» / «package», do it then, not before.
+- Code edits should still be correct and type-safe (the agent is responsible for the quality of its own `src/` / `media/` changes); the constraint is only about the *build/test/package* actions being opt-in, not automatic.

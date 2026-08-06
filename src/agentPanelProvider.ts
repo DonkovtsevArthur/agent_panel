@@ -29,7 +29,8 @@ import {
   routeModel,
   selectFallbackModel,
 } from "./modelRouting";
-import { shouldWholeTurnRouteForImageAttachment } from "./planQuality";
+import { shouldWholeTurnRouteForImageAttachment } from "./visionTurnRoute";
+import { looksLikeQuestionRequest } from "./claimedEdits";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -2755,12 +2756,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.saveSession();
     this.ensureProviderProbe(chosen);
 
-    // Plan + screenshot: keep image attachments for host OCR preflight even when
-    // the planner (Kimi) has no vision — do not strip, do not scare with a toast.
+    // Plan + screenshot (mockup request, not a question): keep image
+    // attachments for host OCR preflight even when the planner (Kimi) has no
+    // vision — do not strip, do not scare with a toast. For an image+QUESTION
+    // turn needsVision is already true (vision swap), so this stays false and
+    // the normal strip-or-keep logic applies to the routed vision model.
     const screenshotPlanPreflight =
       modeForRun.id === "plan" &&
       hasImageAttachment &&
-      !needsVision;
+      !needsVision &&
+      !looksLikeQuestionRequest(trimmed);
     if (!resolveModelSupportsVision(chosen) && !screenshotPlanPreflight) {
       const withoutImages = attachments.filter((a) => a.kind !== "image");
       if (withoutImages.length < attachments.length) {

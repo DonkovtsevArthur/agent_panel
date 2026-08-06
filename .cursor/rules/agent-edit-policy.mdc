@@ -9,47 +9,35 @@ alwaysApply: true
 
 ## Режим из UI — закон
 
-- **Agent** — можно `search_replace` / `write_file`, полный набор tools + MCP (Figma). Builtin `agentModeSystemPrompt` (en/ru).
-- **Plan / Ask** — нельзя `write_file` / `search_replace` / `run_command`. MCP (включая **все** Figma tools) доступны. Также `list_files`, `read_file`, `search_text`, `fetch_url`, `open_external`.
-- **Нельзя** подменять Agent → Ask по тексту вопроса (это уже убрано из `agentPanelProvider.ts`).
-- **Можно** на вопрос без явной правки в Agent: soft-readonly tools + `AGENT_QUESTION_HINT` (`agentQuestionTurn` в `agentLoopMainLike.ts`) — отвечать, не писать «Реализация завершена».
+- **Agent** → Cline `act` (правки файлов + shell).
+- **Plan / Ask** → Cline `plan` (explore без editor; пользователь сам переключает в Agent для Build).
+- **Нельзя** подменять Agent → Ask по тексту вопроса (`agentPanelProvider.ts` держит `modeForRun = selectedMode`).
 - **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.
-- **Нельзя** писать «готово / исправил / вернул», если в этом ходе не было успешного `write_file` / `search_replace` (реальные +/−). Main-like цикл дожимает через `decideHonestFinale`.
-
-## Agent — follow workspace rules (UI, все модели)
-
-- Перед новой страницей/UI: `list_files` + `read_file` 1–2 соседних файлов; писать по их паттерну, не invent → remake. EXISTING → `search_replace`.
-- Explore: default soft 4 / hard 6; `@file`/path → 3/5; cold «новая страница» → 5/7; Build→Agent → 2/4. Soft снимает explore; после hard-cut + правки снова доступен `search_text` (consumers). Кап rules ~12k.
-- Agent soft-budget pin'ит Figma + grounding/`read_file` отредактированных путей.
-- Post-edit verification (diagnostics + typecheck/lint) в Agent; nudges предпочитают `search_replace`.
-- Impact-gate только для UI-shared (не `shared/api`); после nudge — предупреждение + черновик, не голый тупик.
-- Kimi transport: ужим старых tool-результатов; без temperature + reasoning echo.
+- **Нельзя** писать «готово / исправил», если в этом ходе не было реальных правок через tools.
 
 ## Tools runtime (все модели)
 
-Путь: `agentLoop.ts` → `agentLoopMainLike.ts` + `mainLikeTools.ts`.
+Путь: `agentLoop.ts` → `clineRuntime.ts` → `@cline/sdk` / форк `vendor/cline`.
 
-Разрешено вызывать из схемы:
+Чат использует builtins Cline (`read_files`, `search_codebase`, `run_commands`, `editor`, …) + MCP при подключении. Harbor Settings `providers` → Cline `openai-compatible`.
 
-- `list_files`, `read_file`, `search_text`, `search_replace` / `write_file` (Agent), `run_command`
-- `fetch_url`, `open_external` при URL в сообщении
-- MCP (Figma и др.), если подключены
+Нельзя утверждать «нет доступа к сайтам / Figma», если MCP/tools доступны. Если Figma MCP не подключён — направить в Settings → MCP Servers (PAT).
 
-Нельзя утверждать «нет доступа к сайтам / Figma», если эти tools доступны. Если Figma MCP не подключён — направить в Settings → MCP Servers (PAT).
+Старый Harbor main-like мозг (`agentLoopMainLike`, plan-quality, honestFinale, …) **удалён**.
 
 ## Картинки (vision)
 
-Если выбранная модель без vision — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5.
+Если выбранная модель без vision — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5. См. `visionTurnRoute.ts`.
 
 ## Git — нельзя через shell
 
-- Запрещены через `run_command`: `git commit`, `git push`.
-- После правок — тег панели **Commit and push**, не commit из tools.
+- Запрещены через tools: `git commit`, `git push` (продуктовый путь — тег панели **Commit and push**).
 - Широкий `git add .` / discard всего — только по явной просьбе «все изменения».
 
 ## В этом репозитории — можно править
 
 - Код задачи в `src/`, `media/`, `tests/`
+- `vendor/cline/` при патче форка (потом пересобрать SDK / `out/clineBundle.js`)
 - `version` в `package.json` перед vsce
 - `AGENTS.md` / `.cursor/rules` при фиксации реальных правил
 - nls / UI copy без бренда Cursor
@@ -59,7 +47,7 @@ alwaysApply: true
 - Сравнения с Cursor в README / Marketplace / toasts / nls
 - Писать агентов в `globalState` как основное хранилище
 - Ставить VSIX через `/usr/local/bin/code` (часто Cursor)
-- Врать про сделанные правки без реального `write_file` / `search_replace`
+- Врать про сделанные правки без реальных tool-записей
 
 ## Сборка после UI/логики
 

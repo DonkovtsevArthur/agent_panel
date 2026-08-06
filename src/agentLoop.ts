@@ -1,7 +1,6 @@
 import {
   MessageAttachment,
 } from "./attachments";
-import { compactHistoryWithSummary } from "./historySummary";
 import { FileEditStat } from "./diffStats";
 import {
   ChatMessage,
@@ -56,10 +55,6 @@ export interface AgentRunCallbacks {
   onFigmaNeedsConnect?: () => void;
   /** Active completion model changed (e.g. helper 5xx → selected). */
   onActiveModel?: (modelId: string) => void;
-}
-
-export function compactHistory(messages: ChatMessage[]): ChatMessage[] {
-  return compactHistoryWithSummary(messages);
 }
 
 /**
