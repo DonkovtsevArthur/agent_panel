@@ -15,7 +15,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Cline CJS bundle | `scripts/bundle-cline.js` → `out/clineBundle.js` |
 | Step events (UI cards) | `src/agentSteps.ts` |
 | Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
-| Vision whole-turn route | `src/visionTurnRoute.ts` + `src/claimedEdits.ts` |
+| Vision whole-turn route | Any image attachment → swap to a vision model via `routeModel` / Settings preferred vision list; pixels go to Cline as `image` message parts (`clineRuntime.ts`) |
 | Plan → Agent (Build) UI | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`, Plan.md helpers, strip wrapper for cards |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |

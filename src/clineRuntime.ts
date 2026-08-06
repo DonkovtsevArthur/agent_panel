@@ -11,6 +11,7 @@ import {
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiClient";
 import type { MessageAttachment } from "./attachments";
+import { attachmentPreviewDataUrl } from "./attachments";
 import type {
   AgentPhase,
   AgentRunCallbacks,
@@ -21,7 +22,7 @@ type ClineMode = "act" | "plan";
 
 type ClineBundle = {
   Agent: new (config: Record<string, unknown>) => {
-    run: (input: string) => Promise<{
+    run: (input: string | ClineMessage) => Promise<{
       status: string;
       outputText: string;
       messages: readonly ClineMessage[];
@@ -60,6 +61,7 @@ type ClineBundle = {
 type ClineMessagePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "image"; image: string; mediaType?: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
   | {
       type: "tool-result";
@@ -67,8 +69,7 @@ type ClineMessagePart =
       toolName: string;
       output: unknown;
       isError?: boolean;
-    }
-  | { type: string; [key: string]: unknown };
+    };
 
 type ClineMessage = {
   id: string;
@@ -472,15 +473,46 @@ export async function runClineAgentTurn(options: {
   }
 
   let userPrompt = String(options.userText || "").trim();
-  if (options.attachments?.length) {
-    const names = options.attachments
-      .map((a) => a.name || a.path || "file")
-      .join(", ");
-    userPrompt = `${userPrompt}\n\n[attachments: ${names}]`.trim();
+  const fileNames = (options.attachments || [])
+    .filter((a) => a.kind !== "image")
+    .map((a) => a.name || a.path || "file");
+  if (fileNames.length) {
+    userPrompt = `${userPrompt}\n\n[attachments: ${fileNames.join(", ")}]`.trim();
+  }
+  if (!userPrompt) {
+    userPrompt = "Look at the attached image(s) and answer.";
   }
 
+  const contentParts: ClineMessagePart[] = [
+    { type: "text", text: userPrompt },
+  ];
+  for (const att of options.attachments || []) {
+    if (att.kind !== "image") {
+      continue;
+    }
+    const dataUrl = await attachmentPreviewDataUrl(att, options.storageUri);
+    if (!dataUrl) {
+      continue;
+    }
+    contentParts.push({
+      type: "image",
+      image: dataUrl,
+      mediaType: att.mime || "image/png",
+    });
+  }
+
+  const runInput: string | ClineMessage =
+    contentParts.length > 1
+      ? {
+          id: `harbor-user-${Date.now()}`,
+          role: "user",
+          content: contentParts,
+          createdAt: Date.now(),
+        }
+      : userPrompt;
+
   try {
-    const result = await agent.run(userPrompt);
+    const result = await agent.run(runInput);
     unsubscribe();
     options.signal?.removeEventListener("abort", onAbort);
 
