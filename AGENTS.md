@@ -10,8 +10,9 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 |------|--------|
 | Extension entry | `src/extension.ts` |
 | Webview host / UI messages | `src/agentPanelProvider.ts` |
-| Agent turn entry | `src/agentLoop.ts` → always `runMainLikeAgentTurn` |
-| Main-like loop (all models) | `src/agentLoopMainLike.ts` |
+| Agent turn entry | `src/agentLoop.ts` → `runClineAgentTurn` (`src/clineRuntime.ts`) |
+| Cline fork (runtime source) | `vendor/cline/` — see `vendor/README.md` |
+| Main-like loop (legacy, unused) | `src/agentLoopMainLike.ts` — replaced by Cline; keep until cleanup |
 | Step events / ToolResults intent | `src/agentSteps.ts` |
 | Mid-turn context prep | `src/prepareRoundMessages.ts` |
 | Tool waves (parallel + lifecycle) | `src/runToolWaves.ts`, `src/toolParallel.ts` |
@@ -40,7 +41,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 ## Commands agents should know
 
 ```bash
-npm run compile          # tsc + MCP bundle → out/
+npm run compile          # tsc + MCP bundle + Cline CJS bundle → out/
 npm test                 # compile + node --test tests/*.test.js
 npm run lint             # tsc --noEmit
 ```
@@ -49,7 +50,17 @@ After panel UI/logic changes: bump `version` in `package.json`, package with vsc
 
 ## Runtime (what every chat model gets)
 
-All chat models use the **main-like** path:
+All chat models use the **Cline Agent** path (`src/clineRuntime.ts` → `@cline/sdk` / fork in `vendor/cline`):
+
+- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan` (read-focused tools + plan system prompt; user toggles back to Agent to implement).
+- Tools: Cline builtins (`read_files`, `search_codebase`, `run_commands`, `editor`, …) via `createBuiltinTools` + `ToolPresets`.
+- Providers: Harbor Settings `providers[].baseUrl/apiKey` → Cline `openai-compatible`.
+- UI events: Cline runtime events → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
+- Legacy Harbor loop (`agentLoopMainLike.ts` and plan-quality / honestFinale gates) is **not** called anymore.
+
+Previous main-like notes below are historical until cleanup:
+
+All chat models previously used the **main-like** path:
 
 - Short context: system + editor + **workspace rules** (`AGENTS.md` + `.cursor/rules`, via `loadWorkspaceRules`, cap ~12k) + optional **learned errors** (`.harbor/learned-errors.md`, via `loadLearnedErrors`, cap ~3k) + mode prompt + history + user (no prefetch / explore handoff in the loop). Skip rules/learned-errors injection when the turn is rewriting `AGENTS.md`.
 - HTTP: **stream-first** `chat/completions` (SSE); on empty/broken stream → **JSON fallback** (no `stream` field). Retryable 429/5xx use transport backoff; UI gets `onStep` retry cards.

@@ -6,7 +6,7 @@ import { FileEditStat } from "./diffStats";
 import {
   ChatMessage,
 } from "./openaiClient";
-import { runMainLikeAgentTurn } from "./agentLoopMainLike";
+import { runClineAgentTurn } from "./clineRuntime";
 import type * as vscode from "vscode";
 import type { AgentStepEvent } from "./agentSteps";
 
@@ -63,8 +63,8 @@ export function compactHistory(messages: ChatMessage[]): ChatMessage[] {
 }
 
 /**
- * Все модели: main-like turn (короткий контекст + tools).
- * Transport: stream-first with JSON fallback.
+ * Все модели: Cline Agent runtime (vendor/cline fork / @cline/sdk).
+ * Harbor UI callbacks unchanged.
  */
 export async function runAgentTurn(options: {
   model: string;
@@ -80,5 +80,5 @@ export async function runAgentTurn(options: {
   /** Paths from the previous agent edit turn — discard «свои». */
   lastAgentEditedPaths?: string[];
 }): Promise<ChatMessage[]> {
-  return runMainLikeAgentTurn(options);
+  return runClineAgentTurn(options);
 }
