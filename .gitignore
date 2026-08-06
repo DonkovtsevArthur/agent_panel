@@ -3,3 +3,9 @@ out/
 *.vsix
 .DS_Store
 *.log
+
+# Nested Cline lockfiles / build artifacts inside the fork
+vendor/cline/**/node_modules/
+vendor/cline/**/dist/
+vendor/cline/**/.turbo/
+vendor/cline/bun.lock
