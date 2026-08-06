@@ -27,7 +27,7 @@ alwaysApply: true
 
 ## Картинки (vision)
 
-Если выбранная модель без vision и есть картинка — ход уходит на модель из `agentPanel.visionRouting.preferredModelIds` (Settings → Preferred vision models). Пусто = авто: Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5. Пиксели уходят в Cline как `image` parts.
+Вложения-картинки уходят в Cline как `image` parts (`clineRuntime.ts`). Harbor **не** подменяет модель на vision. Если модель без image input — Cline подставляет placeholder; иначе пиксели идут провайдеру.
 
 ## Git — нельзя через shell
 

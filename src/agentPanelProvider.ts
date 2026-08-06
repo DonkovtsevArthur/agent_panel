@@ -15,7 +15,6 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
-  getVisionRoutingModels,
   resolveModelEndpoint,
   resolveModelSupportsVision,
   resolveProviderProbeUrl,
@@ -26,8 +25,6 @@ import type { AgentPhase } from "./agentLoop";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
-  persistedModelAfterVisionTurn,
-  routeModel,
   selectFallbackModel,
 } from "./modelRouting";
 import type { FileEditStat } from "./diffStats";
@@ -116,7 +113,6 @@ type SettingsPayload = {
   maxResponseChars: number;
   soundNotificationsEnabled?: boolean;
   selectionHintsEnabled?: boolean;
-  visionRoutingPreferredModelIds?: string[];
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
@@ -2660,55 +2656,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? config.defaultModel
         : "") ||
       enabledModels[0].id;
-    const hasImageAttachment = attachments.some(
-      (attachment) => attachment.kind === "image"
-    );
     const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
     // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask.
     const modeForRun = selectedMode;
-    // Any image attachment → whole-turn vision model if the picker model cannot see images.
-    // Prefer enabled models; if none have vision, still allow catalog helpers that
-    // are unchecked in the picker (Settings → Preferred vision models / built-in list).
-    const needsVision = hasImageAttachment;
-    const visionPreferenceIds = needsVision
-      ? config.visionRouting.preferredModelIds
-      : undefined;
-    const visionRoutePool = needsVision
-      ? getVisionRoutingModels()
-      : enabledModels;
-    const routed = routeModel(visionRoutePool, {
-      userSelectedModelId: requestedModel,
-      hints: needsVision
-        ? {
-            vision_required: true,
-            vision_preference: visionPreferenceIds ?? [],
-          }
-        : undefined,
-    });
-    let chosen = routed?.modelId || requestedModel;
+    // Картинки: пиксели уходят в Cline как image parts; vision/placeholder —
+    // на стороне Cline по capabilities модели. Harbor модель не подменяет.
+    const chosen = requestedModel;
     this.selectedMode = modeForRun.id;
     if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
       touchChat(this.store, this.store.activeChatId, {
         selectedMode: this.selectedMode,
       });
-    }
-    // Vision whole-turn switch is turn-local only: run with `chosen`, but keep the
-    // chat picker on the user's selection so the next text-only turn stays there.
-    const selectedModelAfterRun = persistedModelAfterVisionTurn({
-      requestedModelId: requestedModel,
-      runModelId: chosen,
-    });
-    if (chosen !== requestedModel) {
-      const label =
-        visionRoutePool.find((item) => item.id === chosen)?.label ||
-        enabledModels.find((item) => item.id === chosen)?.label ||
-        chosen;
-      const requestedLabel =
-        enabledModels.find((item) => item.id === requestedModel)?.label ||
-        requestedModel;
-      void vscode.window.showInformationMessage(
-        `Using ${label} for this message because it contains an image. Selected model stays ${requestedLabel}.`
-      );
     }
     if (!runChatId || !this.store.chats[runChatId]) {
       this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
@@ -2728,8 +2686,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       // belongs to the other chat — don't let it leak into runChatId.
       const modelForChat =
         this.store.activeChatId === runChatId
-          ? this.selectedModel || selectedModelAfterRun
-          : selectedModelAfterRun;
+          ? this.selectedModel || chosen
+          : chosen;
       touchChat(this.store, runChatId, {
         selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
@@ -2754,23 +2712,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage(message);
       }
     };
-    this.selectedModel = selectedModelAfterRun;
+    this.selectedModel = chosen;
     void this.saveSession();
     this.ensureProviderProbe(chosen);
-
-    // If nothing in the catalog can see images, stop — do not silently strip.
-    if (needsVision && !resolveModelSupportsVision(chosen)) {
-      const lang = resolveUiLanguage(getConfig().language);
-      this.pushUiToChat(
-        runChatId,
-        "error",
-        lang === "ru"
-          ? "Нет vision-модели для картинки. Включите Gemini / gpt-4.1 / Claude в Settings → Models или задайте Preferred vision models."
-          : "No vision-capable model is available for this image. Enable Gemini / gpt-4.1 / Claude in Settings → Models, or set Preferred vision models."
-      );
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
-      return;
-    }
 
     const endpoint = resolveModelEndpoint(chosen);
     if (!endpoint.baseUrl) {
@@ -3079,14 +3023,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             fallbackError.kind === "context"
               ? failedContextWindow + 1
               : failedContextWindow;
-          const fallback = selectFallbackModel(
-            needsVision ? visionRoutePool : enabledModels,
-            {
+          const fallback = selectFallbackModel(enabledModels, {
             failedModelId: failedModel,
-            visionRequired: needsVision,
-            visionPreferenceIds: needsVision
-              ? config.visionRouting.preferredModelIds
-              : undefined,
             minContextWindow: minimumContextWindow,
           });
           if (!fallback) {
@@ -3162,7 +3100,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.persistRunChatSnapshot(runChatId, {
           history: runHistory,
           uiMessages: runUiMessages,
-          selectedModel: selectedModelAfterRun,
+          selectedModel: chosen,
           lastTurnModel: runLastTurnModel,
           contextTokens: runContextTokens,
         });
@@ -3206,7 +3144,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.persistRunChatSnapshot(runChatId, {
         history: runHistory,
         uiMessages: runUiMessages,
-        selectedModel: selectedModelAfterRun,
+        selectedModel: chosen,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
       });
@@ -3893,7 +3831,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxResponseChars: config.maxResponseChars,
         soundNotificationsEnabled: config.soundNotifications.enabled,
         selectionHintsEnabled: config.selectionHints.enabled,
-        visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
         commitMessageLanguage: config.commitMessage.language,
@@ -4298,17 +4235,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       raw.selectionHintsEnabled !== false,
       target
     );
-    await cfg.update(
-      "visionRouting.preferredModelIds",
-      Array.isArray(raw.visionRoutingPreferredModelIds)
-        ? raw.visionRoutingPreferredModelIds
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-            .filter((id, index, all) => all.indexOf(id) === index)
-        : [],
-      target
-    );
-    await cfg.update("visionRouting.preferredModelId", "", target);
 
     await this.saveCommitMessageSettings(raw);
 
@@ -4871,13 +4797,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
           </label>
-          <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
-          <p class="settings-section-note" id="settingsVisionRoutingNote">When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.</p>
-          <div class="settings-field">
-            <span class="settings-label" id="settingsVisionRoutingModelsLabel">Preferred vision models</span>
-            <p class="settings-hint" id="settingsVisionRoutingModelsHint">Checked models are preferred in list order for image messages. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).</p>
-            <div id="settingsVisionRoutingModels" class="settings-speed-models" role="group" aria-labelledby="settingsVisionRoutingModelsLabel"></div>
-          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="advanced" hidden>

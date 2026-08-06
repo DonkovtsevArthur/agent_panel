@@ -2,6 +2,16 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.1.0] — 2026-08-06
+
+Крупный релиз runtime и панели:
+
+- **Agent runtime:** единый цикл для всех моделей — поиск по коду, чтение/правка файлов, терминал, браузер; Plan/Ask без правок, Agent — полный цикл
+- **MCP:** tools подключённых серверов в том же ходе; пресеты Playwright Browser и GitHub; Figma Connect / PAT
+- **Browser agent:** многошаговые задачи в реальном Chrome/Edge (Settings → Browser agent); headless browser tools без изменений
+- **Картинки:** вложение уходит выбранной модели как multimodal; Harbor больше не подменяет модель на vision
+- **UI:** CodeLens «Добавить в чат» над выделением (переключатель в Settings); обновлён README под актуальные возможности
+
 ## [1.0.181] — 2026-08-05
 
 - **Settings:** переключатель «Подсказки при выделении кода» (`agentPanel.selectionHints.enabled`) — вкл/выкл CodeLens «Добавить в чат» над выделением в редакторе

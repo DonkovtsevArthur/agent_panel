@@ -159,13 +159,6 @@
       maxResponseLength: "Max response length (chars)",
       soundNotifications: "Sound notifications",
       selectionHints: "Selection hints",
-      visionRoutingTitle: "Images (vision)",
-      visionRoutingNote:
-        "When the selected chat model cannot see images, Harbor switches to a vision model under the hood. Leave empty for auto preference.",
-      visionRoutingModels: "Preferred vision models",
-      visionRoutingModelsHint:
-        "Checked models are preferred in list order for image messages. Empty = auto (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
-      visionRoutingModelsEmpty: "No vision-capable models in settings",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -510,13 +503,6 @@
       maxResponseLength: "Макс. длина ответа (символы)",
       soundNotifications: "Звуковые уведомления",
       selectionHints: "Подсказки при выделении кода",
-      visionRoutingTitle: "Картинки (vision)",
-      visionRoutingNote:
-        "Если выбранная модель не видит изображения, Harbor под капотом переключает на vision-модель. Пустой список — автопредпочтение.",
-      visionRoutingModels: "Предпочтительные vision-модели",
-      visionRoutingModelsHint:
-        "Отмеченные модели предпочтительны по порядку для сообщений с картинками. Пусто = авто (Gemini 2.5 Flash → gpt-4.1 → claude-sonnet-4-5).",
-      visionRoutingModelsEmpty: "Нет vision-моделей в настройках",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
@@ -903,11 +889,6 @@
   const settingsAutoglmBinaryPath = document.getElementById(
     "settingsAutoglmBinaryPath"
   );
-  const settingsVisionRoutingModels = document.getElementById(
-    "settingsVisionRoutingModels"
-  );
-  /** Ordered preferred vision model ids for image messages. */
-  let visionRoutingPreferredModelIds = [];
   const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsCommitScope = document.getElementById("settingsCommitScope");
@@ -1396,30 +1377,6 @@
     );
     if (settingsSelectionHintsLabel) {
       settingsSelectionHintsLabel.textContent = t("selectionHints");
-    }
-    const settingsVisionRoutingTitle = document.getElementById(
-      "settingsVisionRoutingTitle"
-    );
-    if (settingsVisionRoutingTitle) {
-      settingsVisionRoutingTitle.textContent = t("visionRoutingTitle");
-    }
-    const settingsVisionRoutingNote = document.getElementById(
-      "settingsVisionRoutingNote"
-    );
-    if (settingsVisionRoutingNote) {
-      settingsVisionRoutingNote.textContent = t("visionRoutingNote");
-    }
-    const settingsVisionRoutingModelsLabel = document.getElementById(
-      "settingsVisionRoutingModelsLabel"
-    );
-    if (settingsVisionRoutingModelsLabel) {
-      settingsVisionRoutingModelsLabel.textContent = t("visionRoutingModels");
-    }
-    const settingsVisionRoutingModelsHint = document.getElementById(
-      "settingsVisionRoutingModelsHint"
-    );
-    if (settingsVisionRoutingModelsHint) {
-      settingsVisionRoutingModelsHint.textContent = t("visionRoutingModelsHint");
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     const settingsBrowserNote = document.getElementById("settingsBrowserNote");
@@ -5859,7 +5816,6 @@
     }
 
     syncDefaultModelSelect();
-    renderVisionRoutingModelsList();
   }
 
   function renderSettingsModels() {
@@ -7632,11 +7588,6 @@
     if (settingsAutoglmBinaryPath) {
       settingsAutoglmBinaryPath.value = settings.autoglmBinaryPath || "";
     }
-    populateVisionRoutingModelsList(
-      Array.isArray(settings.visionRoutingPreferredModelIds)
-        ? settings.visionRoutingPreferredModelIds
-        : []
-    );
     closeModelEditModal();
     closeProviderEditModal();
     ingestProviderConnStatuses(settings.providerConnStatuses);
@@ -7645,144 +7596,6 @@
     } finally {
       settingsHydrating = false;
     }
-  }
-
-  function normalizeModelIdList(ids) {
-    const list = Array.isArray(ids) ? ids : [];
-    return list
-      .map((id) => String(id || "").trim())
-      .filter(Boolean)
-      .filter((id, index, all) => all.indexOf(id) === index);
-  }
-
-  function setModelEnabledById(modelId, enabled) {
-    const id = String(modelId || "").trim();
-    if (!id) {
-      return false;
-    }
-    const index = settingsModels.findIndex((m) => m && m.id === id);
-    if (index < 0) {
-      return false;
-    }
-    settingsModels[index].enabled = enabled !== false;
-    return true;
-  }
-
-  function normalizeVisionRoutingPreferredModelIds(ids) {
-    return normalizeModelIdList(ids);
-  }
-
-  function populateVisionRoutingModelsList(selectedIds) {
-    visionRoutingPreferredModelIds =
-      normalizeVisionRoutingPreferredModelIds(selectedIds);
-    renderVisionRoutingModelsList();
-  }
-
-  function renderVisionRoutingModelsList() {
-    if (!settingsVisionRoutingModels) {
-      return;
-    }
-    const models = (settingsModels || []).filter(
-      (m) =>
-        m &&
-        m.id &&
-        (typeof m.supportsVision === "boolean"
-          ? m.supportsVision
-          : guessModelSupportsVision(m.id))
-    );
-    const preferredSet = new Set(visionRoutingPreferredModelIds);
-    const modelOn = [];
-    const modelOff = [];
-    for (const model of models) {
-      if (model.enabled !== false) {
-        modelOn.push(model);
-      } else {
-        modelOff.push(model);
-      }
-    }
-    const sortPreferredFirst = (list) => {
-      const on = [];
-      const off = [];
-      for (const id of visionRoutingPreferredModelIds) {
-        const hit = list.find((m) => m.id === id);
-        if (hit) {
-          on.push(hit);
-        }
-      }
-      for (const model of list) {
-        if (!preferredSet.has(model.id)) {
-          off.push(model);
-        }
-      }
-      return [...on, ...off];
-    };
-    const ordered = [
-      ...sortPreferredFirst(modelOn),
-      ...sortPreferredFirst(modelOff),
-    ];
-    if (!ordered.length) {
-      settingsVisionRoutingModels.innerHTML =
-        `<div class="settings-speed-models-empty">${escapeHtml(
-          t("visionRoutingModelsEmpty")
-        )}</div>`;
-      return;
-    }
-    settingsVisionRoutingModels.innerHTML = ordered
-      .map((model) => {
-        const preferredOn = preferredSet.has(model.id);
-        const modelEnabled = model.enabled !== false;
-        const label = model.label || model.id;
-        const classes = [
-          "settings-speed-model-row",
-          modelEnabled ? "" : "is-model-off",
-          preferredOn ? "" : "is-fast-off",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return (
-          `<div class="${classes}">` +
-          `<input type="checkbox" class="settings-vision-pref-check" data-vision-pref-id="${escapeHtml(
-            model.id
-          )}" ${preferredOn ? "checked" : ""} title="${escapeHtml(
-            t("visionRoutingModels")
-          )}" />` +
-          `<span class="settings-speed-model-name" title="${escapeHtml(
-            label
-          )}">${escapeHtml(label)}</span>` +
-          `<label class="settings-model-switch" title="${escapeHtml(
-            modelEnabled ? t("disable") : t("enable")
-          )}">` +
-          `<input type="checkbox" class="settings-model-toggle" data-vision-model-id="${escapeHtml(
-            model.id
-          )}" ${modelEnabled ? "checked" : ""} />` +
-          `<span class="settings-model-switch-ui" aria-hidden="true"></span>` +
-          `</label>` +
-          `</div>`
-        );
-      })
-      .join("");
-  }
-
-  function readVisionRoutingPreferredModelIdsFromDom() {
-    if (!settingsVisionRoutingModels) {
-      return [...visionRoutingPreferredModelIds];
-    }
-    const checked = [];
-    settingsVisionRoutingModels
-      .querySelectorAll(
-        "input.settings-vision-pref-check[data-vision-pref-id]"
-      )
-      .forEach((input) => {
-        if (input instanceof HTMLInputElement && input.checked) {
-          const id = String(
-            input.getAttribute("data-vision-pref-id") || ""
-          ).trim();
-          if (id) {
-            checked.push(id);
-          }
-        }
-      });
-    return normalizeVisionRoutingPreferredModelIds(checked);
   }
 
   function collectSettings() {
@@ -7885,7 +7698,6 @@
       autoglmBinaryPath: settingsAutoglmBinaryPath
         ? settingsAutoglmBinaryPath.value.trim()
         : "",
-      visionRoutingPreferredModelIds: readVisionRoutingPreferredModelIdsFromDom(),
       modes: collectCustomModesForSave(),
     };
   }
@@ -11278,33 +11090,9 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsVisionRoutingModels, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
-        if (
-          target instanceof HTMLInputElement &&
-          target.matches(
-            "#settingsVisionRoutingModels input.settings-vision-pref-check[data-vision-pref-id]"
-          )
-        ) {
-          visionRoutingPreferredModelIds =
-            readVisionRoutingPreferredModelIdsFromDom();
-          renderVisionRoutingModelsList();
-        }
-        if (
-          target instanceof HTMLInputElement &&
-          target.matches(
-            "#settingsVisionRoutingModels input.settings-model-toggle[data-vision-model-id]"
-          )
-        ) {
-          const modelId = String(
-            target.getAttribute("data-vision-model-id") || ""
-          ).trim();
-          if (setModelEnabledById(modelId, target.checked)) {
-            renderSettingsModels();
-            renderVisionRoutingModelsList();
-          }
-        }
         persistSettingsNow();
       }
     });
