@@ -16,3 +16,23 @@ Harbor UI живёт в корне репозитория; **runtime-агент*
 После правок в форке: собрать SDK (`bun run build:sdk` в `vendor/cline`), затем переключить зависимости Harbor на `file:./vendor/cline/sdk/packages/...` и пересобрать `out/clineBundle.js`.
 
 Версия форка должна совпадать с `@cline/sdk` в корневом `package.json`.
+
+## Телеметрия (не режем в форке)
+
+Апстрим Cline содержит PostHog / OpenTelemetry / Langfuse. **Не удаляйте** эти деревья из `vendor/cline` при sync — иначе каждый re-fork даёт конфликты.
+
+Harbor глушит телеметрию **вне** vendor:
+
+| Слой | Что делает |
+|------|------------|
+| `src/clineRuntime.ts` + `src/clineNoopTelemetry.ts` | `ClineCore.create({ telemetry: NoOp, distinctId: "harbor-agents" })` — нет live adapters, нет записи machine-id в `~/.cline` |
+| `scripts/bundle-cline.js` + `scripts/stubs/*` | esbuild alias / onResolve: Langfuse и OTLP exporters → noop stubs |
+
+### Re-fork апстрима
+
+1. Заменить дерево `vendor/cline` нужной версией Cline (wholesale).
+2. Выровнять `@cline/sdk` (и связанные `@cline/*`) в корневом `package.json`.
+3. При необходимости `bun run build:sdk` в vendor и/или `file:` deps.
+4. Пересобрать `out/clineBundle.js` (`npm run compile` / `scripts/bundle-cline.js`).
+
+Harbor-патчи телеметрии живут только в `src/` и `scripts/` — их не нужно заново вносить в vendor после sync.
