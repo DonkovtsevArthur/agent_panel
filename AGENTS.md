@@ -13,10 +13,11 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Agent turn entry | `src/agentLoop.ts` → `runClineAgentTurn` (`src/clineRuntime.ts`) |
 | Cline fork (runtime source) | `vendor/cline/` — see `vendor/README.md` |
 | Cline CJS bundle | `scripts/bundle-cline.js` → `out/clineBundle.js` |
+| Harbor UI + ClineCore session host | `docs/cline-full-runtime-migration.md` |
 | Harbor MCP → Cline tools | `src/clineMcpTools.ts` — Figma/custom MCP via `listOpenAiTools` + `createTool` |
 | Step events (UI cards) | `src/agentSteps.ts` |
 | Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
-| Vision (images) | Attachments → Cline as `image` message parts (`clineRuntime.ts`). No Harbor model swap — Cline keeps/omits pixels by model capabilities. |
+| Vision (images) | Attachments → Cline `userImages` on session start (`clineRuntime.ts`). No Harbor model swap — Cline keeps/omits pixels by model capabilities. |
 | Plan → Agent (Build) UI | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`, Plan.md helpers, strip wrapper for cards |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |
@@ -41,13 +42,15 @@ After panel UI/logic changes: bump `version` in `package.json`, package with vsc
 
 ## Runtime (what every chat model gets)
 
-All chat models use the **Cline Agent** path (`src/clineRuntime.ts` → `@cline/sdk` / fork in `vendor/cline`):
+All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` → `@cline/sdk` / fork in `vendor/cline`):
 
-- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan` (read-focused tools + plan system prompt; user toggles back to Agent to implement).
-- Tools: Cline builtins (`read_files`, `search_codebase`, `run_commands`, `editor`, …) via `createBuiltinTools` + `ToolPresets`.
+- Host: `ClineCore.create({ backendMode: "local" })`; one Harbor chat turn = one Cline session (`interactive: false`).
+- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard.
+- Tools: Cline builtins via runtime-builder; Harbor MCP as `extraTools` (`disableMcpSettingsTools`). See `docs/cline-full-runtime-migration.md`.
 - Providers: Harbor Settings `providers[].baseUrl/apiKey` → Cline `openai-compatible`.
-- UI events: Cline runtime events → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
+- UI events: `CoreSessionEvent.agent_event` → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
 - Auto-approve tools (`yolo` policies) for Harbor UX (no per-tool QuickPick yet).
+- Iteration budget: Harbor does **not** pass `maxIterations`; Cline treats unset as unlimited. Setting `agentPanel.maxToolRounds` is deprecated/unused for chat.
 - The old Harbor main-like brain (`agentLoopMainLike`, plan-quality, honestFinale, screenshot-first, explore budgets, …) has been **removed**.
 
 ### Modes — what is allowed (UI)

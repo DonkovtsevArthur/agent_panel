@@ -17,9 +17,9 @@ alwaysApply: true
 
 ## Tools runtime (все модели)
 
-Путь: `agentLoop.ts` → `clineRuntime.ts` → `@cline/sdk` / форк `vendor/cline`.
+Путь: `agentLoop.ts` → `clineRuntime.ts` → **ClineCore** local host (`@cline/sdk` / форк `vendor/cline`).
 
-Чат использует builtins Cline (`read_files`, `search_codebase`, `run_commands`, `editor`, …) + MCP при подключении. Harbor Settings `providers` → Cline `openai-compatible`.
+Чат: builtins через `DefaultRuntimeBuilder` + Harbor MCP как `extraTools`. Harbor Settings `providers` → Cline `openai-compatible`. Один ход UI = одна Cline-сессия.
 
 Нельзя утверждать «нет доступа к сайтам / Figma», если MCP/tools доступны. Если Figma MCP не подключён — направить в Settings → MCP Servers (PAT).
 
@@ -27,7 +27,11 @@ alwaysApply: true
 
 ## Картинки (vision)
 
-Вложения-картинки уходят в Cline как `image` parts (`clineRuntime.ts`). Harbor **не** подменяет модель на vision. Если модель без image input — Cline подставляет placeholder; иначе пиксели идут провайдеру.
+Вложения-картинки уходят в Cline как `userImages` на `start` (`clineRuntime.ts`). Harbor **не** подменяет модель на vision. Если модель без image input — Cline подставляет placeholder; иначе пиксели идут провайдеру.
+
+## Plan/Ask shell
+
+Harbor Ask/Plan → Cline `plan`. Editor выключен; `run_commands` остаётся для read-only, но **plan command-guard** из runtime-builder блокирует mutating shell (`sed`/`rm`/редиректы и т.п.). См. `docs/cline-full-runtime-migration.md`.
 
 ## Git — нельзя через shell
 
