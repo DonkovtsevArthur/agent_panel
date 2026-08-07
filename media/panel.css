@@ -1832,6 +1832,95 @@ body.vscode-dark .md-pre .syntax-property {
   overflow: visible;
 }
 
+.message-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.message-queue[hidden] {
+  display: none;
+}
+
+.message-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.28));
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background) 88%,
+    var(--vscode-foreground) 12%
+  );
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+}
+
+.message-queue-item:hover {
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background) 78%,
+    var(--vscode-foreground) 22%
+  );
+}
+
+.message-queue-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.message-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.9;
+}
+
+.message-queue-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.message-queue-remove {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.55;
+}
+
+.message-queue-remove:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.message-queue-remove .material-symbols-outlined {
+  font-size: 14px;
+}
+
 .composer {
   display: flex;
   flex-direction: column;
@@ -2820,7 +2909,7 @@ button.secondary {
   display: none;
 }
 
-/* Send button: filled circle + thin arrow; becomes stop while busy */
+/* Send button: arrow; queue (schedule) while busy+content; stop while busy+empty */
 button.primary {
   width: 28px;
   height: 28px;
@@ -2838,20 +2927,32 @@ button.primary {
 }
 
 button.primary .icon-send,
+button.primary .icon-queue,
 button.primary .icon-stop {
   display: inline-block;
   font-size: 16px;
 }
 
+button.primary .icon-queue,
 button.primary .icon-stop {
   display: none;
 }
 
-button.primary.is-stop .icon-send {
+button.primary.is-stop .icon-send,
+button.primary.is-queue .icon-send {
+  display: none;
+}
+
+button.primary.is-stop .icon-queue,
+button.primary.is-queue .icon-stop {
   display: none;
 }
 
 button.primary.is-stop .icon-stop {
+  display: inline-block;
+}
+
+button.primary.is-queue .icon-queue {
   display: inline-block;
 }
 
