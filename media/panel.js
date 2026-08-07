@@ -5,6 +5,7 @@
     draftPrompt: "",
     modelByChat: {},
     modeByChat: {},
+    reasonByChat: {},
     agentsRailOpen: false,
   };
   if (typeof state.draftPrompt !== "string") {
@@ -15,6 +16,9 @@
   }
   if (!state.modeByChat || typeof state.modeByChat !== "object") {
     state.modeByChat = {};
+  }
+  if (!state.reasonByChat || typeof state.reasonByChat !== "object") {
+    state.reasonByChat = {};
   }
   if (typeof state.agentsRailOpen !== "boolean") {
     state.agentsRailOpen = false;
@@ -158,10 +162,24 @@
       maxToolRounds: "Max tool rounds",
       maxResponseLength: "Max response length (chars)",
       soundNotifications: "Sound notifications",
+      parallelAgents: "Parallel agents",
+      parallelAgentsNote:
+        "Agent, Plan, and Ask. Children follow the current mode (Plan/Ask stay read-only).",
+      parallelToolCalls: "Parallel tool calls",
+      parallelToolCallsNote:
+        "Run independent tools from one model response at the same time.",
+      autoCompact: "Auto compact",
+      autoCompactNote:
+        "Compress conversation context when it approaches the model input limit.",
       selectionHints: "Selection hints",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
+      intelligence: "Intelligence",
+      reasonLow: "Low",
+      reasonMedium: "Medium",
+      reasonHigh: "High",
+      reasonExtraHigh: "Extra high",
       close: "Close",
       cancel: "Cancel",
       done: "Done",
@@ -310,6 +328,8 @@
       toolHumanVisionAttached: "Vision · attached screenshot",
       toolHumanVisionPageUrl: "Vision · page URL",
       toolHumanScreenshotExplore: "Explore · screenshot probes",
+      toolHumanSpawn: (task) =>
+        task ? `Sub-agent · ${task}` : "Sub-agent",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolWorking: "Working…",
@@ -502,10 +522,24 @@
       maxToolRounds: "Макс. раундов tools",
       maxResponseLength: "Макс. длина ответа (символы)",
       soundNotifications: "Звуковые уведомления",
+      parallelAgents: "Параллельные агенты",
+      parallelAgentsNote:
+        "Agent, Plan и Ask. Дети наследуют режим (в Plan/Ask только чтение).",
+      parallelToolCalls: "Параллельные tool calls",
+      parallelToolCallsNote:
+        "Выполнять независимые tools из одного ответа модели одновременно.",
+      autoCompact: "Автосжатие контекста",
+      autoCompactNote:
+        "Сжимать контекст разговора, когда он приближается к лимиту входа модели.",
       selectionHints: "Подсказки при выделении кода",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
+      intelligence: "Интеллект",
+      reasonLow: "Низкий",
+      reasonMedium: "Средний",
+      reasonHigh: "Высокий",
+      reasonExtraHigh: "Очень высокий",
       close: "Закрыть",
       cancel: "Отмена",
       done: "Готово",
@@ -654,6 +688,8 @@
       toolHumanVisionAttached: "Vision · attached screenshot",
       toolHumanVisionPageUrl: "Vision · page URL",
       toolHumanScreenshotExplore: "Explore · screenshot probes",
+      toolHumanSpawn: (task) =>
+        task ? `Субагент · ${task}` : "Субагент",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolWorking: "Работаю…",
@@ -728,6 +764,10 @@
   const modeTrigger = document.getElementById("modeTrigger");
   const modeLabel = document.getElementById("modeLabel");
   const modeMenu = document.getElementById("modeMenu");
+  const reasonPicker = document.getElementById("reasonPicker");
+  const reasonTrigger = document.getElementById("reasonTrigger");
+  const reasonLabel = document.getElementById("reasonLabel");
+  const reasonMenu = document.getElementById("reasonMenu");
   const attachPreviewEl = document.getElementById("attachPreview");
   const selectionPreviewEl = document.getElementById("selectionPreview");
   const mentionMenuEl = document.getElementById("mentionMenu");
@@ -873,6 +913,15 @@
   );
   const settingsSoundNotificationsEnabled = document.getElementById(
     "settingsSoundNotificationsEnabled"
+  );
+  const settingsSubagentsEnabled = document.getElementById(
+    "settingsSubagentsEnabled"
+  );
+  const settingsParallelToolCallsEnabled = document.getElementById(
+    "settingsParallelToolCallsEnabled"
+  );
+  const settingsAutoCompactEnabled = document.getElementById(
+    "settingsAutoCompactEnabled"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1204,12 +1253,23 @@
     if (settingsSaveStatus) {
       settingsSaveStatus.textContent = t("saved");
     }
-    openChatSearchBtn.title = openChatSearchBtn.setAttribute("aria-label", t("searchChat")) || t("searchChat");
-    closeChatSearchBtn.title = closeChatSearchBtn.setAttribute("aria-label", t("close")) || t("close");
+    if (openChatSearchBtn) {
+      openChatSearchBtn.title =
+        openChatSearchBtn.setAttribute("aria-label", t("searchChat")) ||
+        t("searchChat");
+    }
+    if (closeChatSearchBtn) {
+      closeChatSearchBtn.title =
+        closeChatSearchBtn.setAttribute("aria-label", t("close")) || t("close");
+    }
     chatBranchesEl.setAttribute("aria-label", UI_LANG === "ru" ? "Ветки диалога" : "Conversation branches");
-    chatSearchInput.placeholder = t("search");
-    chatSearchInput.setAttribute("aria-label", t("searchChat"));
-    chatSearchResults.setAttribute("aria-label", t("searchResults"));
+    if (chatSearchInput) {
+      chatSearchInput.placeholder = t("search");
+      chatSearchInput.setAttribute("aria-label", t("searchChat"));
+    }
+    if (chatSearchResults) {
+      chatSearchResults.setAttribute("aria-label", t("searchResults"));
+    }
     promptEl.placeholder = t("taskPlaceholder");
     composerPlusBtn.title = composerPlusBtn.setAttribute("aria-label", t("add")) || t("add");
     composerPlusMenu.querySelector("span:last-child").textContent = t("image");
@@ -1217,6 +1277,12 @@
     modelTrigger.title = t("model");
     modeLabel.textContent = t("agent");
     modelLabel.textContent = t("model");
+    if (reasonTrigger) {
+      reasonTrigger.title = t("intelligence");
+    }
+    if (reasonLabel) {
+      reasonLabel.textContent = t("reasonMedium");
+    }
     sendBtn.title = sendBtn.setAttribute("aria-label", t("send")) || t("send");
     composerDropHintEl.querySelector(".composer-drop-hint-text").textContent =
       UI_LANG === "ru" ? "Отпустите файл, чтобы прикрепить" : "Drop file to attach";
@@ -1371,6 +1437,42 @@
     );
     if (settingsSoundNotificationsLabel) {
       settingsSoundNotificationsLabel.textContent = t("soundNotifications");
+    }
+    const settingsSubagentsLabel = document.getElementById(
+      "settingsSubagentsLabel"
+    );
+    if (settingsSubagentsLabel) {
+      settingsSubagentsLabel.textContent = t("parallelAgents");
+    }
+    const settingsSubagentsNote = document.getElementById(
+      "settingsSubagentsNote"
+    );
+    if (settingsSubagentsNote) {
+      settingsSubagentsNote.textContent = t("parallelAgentsNote");
+    }
+    const settingsParallelToolCallsLabel = document.getElementById(
+      "settingsParallelToolCallsLabel"
+    );
+    if (settingsParallelToolCallsLabel) {
+      settingsParallelToolCallsLabel.textContent = t("parallelToolCalls");
+    }
+    const settingsParallelToolCallsNote = document.getElementById(
+      "settingsParallelToolCallsNote"
+    );
+    if (settingsParallelToolCallsNote) {
+      settingsParallelToolCallsNote.textContent = t("parallelToolCallsNote");
+    }
+    const settingsAutoCompactLabel = document.getElementById(
+      "settingsAutoCompactLabel"
+    );
+    if (settingsAutoCompactLabel) {
+      settingsAutoCompactLabel.textContent = t("autoCompact");
+    }
+    const settingsAutoCompactNote = document.getElementById(
+      "settingsAutoCompactNote"
+    );
+    if (settingsAutoCompactNote) {
+      settingsAutoCompactNote.textContent = t("autoCompactNote");
     }
     const settingsSelectionHintsLabel = document.getElementById(
       "settingsSelectionHintsLabel"
@@ -1641,7 +1743,9 @@
   let menuOpen = false;
   let plusMenuOpen = false;
   let modeMenuOpen = false;
+  let reasonMenuOpen = false;
   let agentMode = "agent";
+  let selectedReasoningEffort = "medium";
   let modeEditIndex = null;
   let modeEditSource = "settings";
   let chatModes = [];
@@ -2769,7 +2873,8 @@
   }
 
   function setAgentStatus(text, hidden, phase, modelLabel) {
-    // Tool progress lives in the timeline — don't also pulse «Читаю…» status.
+    // Tool progress lives in the timeline — don't also pulse Harbor tool phases.
+    // Raw Cline statuses (phase === "cline") always stay visible.
     const timelineBusy = Boolean(
       currentChatTurnEl?.querySelector?.(
         ".tool-group.agent-timeline:not([data-sealed]) .agent-step"
@@ -2777,6 +2882,7 @@
     );
     const suppressPhase =
       timelineBusy &&
+      phase !== "cline" &&
       (phase === "reading" ||
         phase === "listing" ||
         phase === "editing" ||
@@ -2923,6 +3029,7 @@
       text: nextText,
       model,
       agentMode: mode,
+      reasoningEffort: selectedReasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
@@ -3545,6 +3652,10 @@
         if (queryMatch) {
           args.query = queryMatch[1].replace(/\\"/g, '"');
         }
+        const taskMatch = rawArgs.match(/"task"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (taskMatch) {
+          args.task = taskMatch[1].replace(/\\"/g, '"');
+        }
         const urlMatch = rawArgs.match(/"url"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (urlMatch) {
           args.url = urlMatch[1].replace(/\\"/g, '"');
@@ -3583,6 +3694,12 @@
         return t("toolHumanBrowserClose");
       case "get_diagnostics":
         return t("toolHumanDiagnostics");
+      case "spawn_agent": {
+        const task = String(args.task || "").trim();
+        const short =
+          task.length > 80 ? `${task.slice(0, 77)}…` : task;
+        return t("toolHumanSpawn", short);
+      }
       case "vision_attached_screenshot":
         return t("toolHumanVisionAttached");
       case "vision_page_url":
@@ -4444,37 +4561,14 @@
     return null;
   }
 
-  /** While a run is active, keep the timeline open so tool progress is visible. */
-  function expandLiveToolGroup(group) {
-    if (!group || !busy || group.dataset.sealed === "1") {
-      return;
-    }
-    if (!group.classList.contains("is-collapsed")) {
-      return;
-    }
-    group.classList.remove("is-collapsed");
-    const toggle = group.querySelector(".tool-group-toggle");
-    if (toggle) {
-      toggle.setAttribute("aria-expanded", "true");
-      toggle.title = t("hideSteps");
-    }
-  }
-
   function ensureActiveToolGroup() {
     const existing = getActiveToolGroup();
     if (existing) {
-      expandLiveToolGroup(existing);
       return existing;
     }
+    // Always start collapsed; user can expand via the toggle. Summary still
+    // updates with the current step while the run is live.
     const group = createToolGroup();
-    // Start expanded during a live run; sealToolGroups collapses when done.
-    if (busy) {
-      group.classList.remove("is-collapsed");
-      const toggle = group.querySelector(".tool-group-toggle");
-      if (toggle) {
-        toggle.setAttribute("aria-expanded", "true");
-      }
-    }
     ensureChatTurn().appendChild(group);
     keepStatusAtEnd();
     return group;
@@ -4655,7 +4749,6 @@
       }
     }
 
-    expandLiveToolGroup(group);
     updateToolGroupSummary(group);
     keepStatusAtEnd();
     scrollToBottom();
@@ -7571,6 +7664,17 @@
       settingsSoundNotificationsEnabled.checked =
         settings.soundNotificationsEnabled !== false;
     }
+    if (settingsSubagentsEnabled) {
+      settingsSubagentsEnabled.checked = settings.subagentsEnabled !== false;
+    }
+    if (settingsParallelToolCallsEnabled) {
+      settingsParallelToolCallsEnabled.checked =
+        settings.parallelToolCallsEnabled !== false;
+    }
+    if (settingsAutoCompactEnabled) {
+      settingsAutoCompactEnabled.checked =
+        settings.autoCompactEnabled !== false;
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -7680,6 +7784,15 @@
       maxResponseChars: Number(settingsMaxResponseChars?.value || 64000),
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
+        : true,
+      subagentsEnabled: settingsSubagentsEnabled
+        ? settingsSubagentsEnabled.checked
+        : true,
+      parallelToolCallsEnabled: settingsParallelToolCallsEnabled
+        ? settingsParallelToolCallsEnabled.checked
+        : true,
+      autoCompactEnabled: settingsAutoCompactEnabled
+        ? settingsAutoCompactEnabled.checked
         : true,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
@@ -8470,6 +8583,7 @@
       text: payload,
       model: getSelectedModel(),
       agentMode: "agent",
+      reasoningEffort: selectedReasoningEffort || undefined,
       attachments: [],
     });
   }
@@ -9969,6 +10083,11 @@
 
   function renderMessages(list, scrollMode = "bottom", restoredScrollTop) {
     restoringChatScroll = true;
+    // Full remount destroys DOM nodes — drop the streaming ref so later
+    // assistantDelta/Done do not paint into a detached element (invisible
+    // until the next chat remount from store).
+    streamingEl = null;
+    streamingRenderScheduled = false;
     messagesEl.innerHTML = "";
     resetChatTurns();
     uiMessagesCache = Array.isArray(list) ? list : [];
@@ -10065,6 +10184,10 @@
     vscode.setState(state);
     updateTriggerLabel();
     updateVisionUi();
+    applySelectedReasoningEffort(
+      activeChatId ? state.reasonByChat[activeChatId] : selectedReasoningEffort,
+      { notify: false }
+    );
     if (notify && selectedModelId) {
       localModelChangeAt = Date.now();
       vscode.postMessage({
@@ -10176,6 +10299,7 @@
   function openMenu() {
     closePlusMenu();
     closeModeMenu();
+    closeReasonMenu();
     menuOpen = true;
     renderMenu();
     modelPicker.classList.add("is-open");
@@ -10208,6 +10332,7 @@
   function openPlusMenu() {
     closeMenu();
     closeModeMenu();
+    closeReasonMenu();
     closeEditModelMenu();
     closeEditModeMenu();
     plusMenuOpen = true;
@@ -10311,6 +10436,7 @@
   function openModeMenu() {
     closeMenu();
     closePlusMenu();
+    closeReasonMenu();
     closeEditModelMenu();
     closeEditModeMenu();
     renderModeMenu();
@@ -10411,6 +10537,195 @@
     });
   }
 
+  const REASON_LEVELS = [
+    { id: "low", labelKey: "reasonLow" },
+    { id: "medium", labelKey: "reasonMedium" },
+    { id: "high", labelKey: "reasonHigh" },
+    { id: "xhigh", labelKey: "reasonExtraHigh" },
+  ];
+
+  function normalizeReasonLevel(value) {
+    const id = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (id === "extra" || id === "extra-high" || id === "extrahigh" || id === "extra_high" || id === "max") {
+      return "xhigh";
+    }
+    return REASON_LEVELS.some((item) => item.id === id) ? id : "";
+  }
+
+  function reasonLevelLabel(id) {
+    const level = REASON_LEVELS.find((item) => item.id === id);
+    return level ? t(level.labelKey) : t("reasonMedium");
+  }
+
+  function modelSupportsReasoning(modelId) {
+    const id = String(modelId || selectedModelId || "").trim();
+    const model = models.find((m) => m.id === id);
+    return model?.supportsReasoningEffort === true;
+  }
+
+  function defaultReasonForModel(modelId) {
+    const id = String(modelId || selectedModelId || "").trim();
+    const model = models.find((m) => m.id === id);
+    return (
+      normalizeReasonLevel(model?.reasoningEffortDefault) ||
+      normalizeReasonLevel(model?.reasoningEffort) ||
+      "medium"
+    );
+  }
+
+  function resolvePreferredReasonLevel(preferredId, modelId) {
+    if (!modelSupportsReasoning(modelId || selectedModelId)) {
+      return "";
+    }
+    const fromHost = normalizeReasonLevel(preferredId);
+    if (fromHost) {
+      return fromHost;
+    }
+    if (activeChatId && state.reasonByChat[activeChatId]) {
+      const fromChat = normalizeReasonLevel(state.reasonByChat[activeChatId]);
+      if (fromChat) {
+        return fromChat;
+      }
+    }
+    const current = normalizeReasonLevel(selectedReasoningEffort);
+    if (current) {
+      return current;
+    }
+    return defaultReasonForModel(modelId || selectedModelId);
+  }
+
+  function updateReasonPickerVisibility() {
+    if (!reasonPicker) {
+      return;
+    }
+    const supported = modelSupportsReasoning(selectedModelId);
+    reasonPicker.hidden = !supported;
+    if (!supported) {
+      closeReasonMenu();
+    }
+  }
+
+  function renderReasonMenu() {
+    if (!reasonMenu) {
+      return;
+    }
+    reasonMenu.innerHTML = "";
+    for (const level of REASON_LEVELS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" +
+        (level.id === selectedReasoningEffort ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.dataset.reason = level.id;
+      const label = document.createElement("span");
+      label.className = "model-option-label";
+      label.textContent = t(level.labelKey);
+      btn.appendChild(label);
+      if (level.id === selectedReasoningEffort) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      reasonMenu.appendChild(btn);
+    }
+  }
+
+  function closeReasonMenu() {
+    reasonMenuOpen = false;
+    if (reasonPicker) {
+      reasonPicker.classList.remove("is-open");
+    }
+    if (reasonTrigger) {
+      reasonTrigger.setAttribute("aria-expanded", "false");
+    }
+    if (reasonMenu) {
+      reasonMenu.hidden = true;
+      resetModelMenuPlacement(reasonPicker, reasonMenu);
+    }
+  }
+
+  function openReasonMenu() {
+    if (!reasonPicker || reasonPicker.hidden) {
+      return;
+    }
+    closePlusMenu();
+    closeMenu();
+    closeModeMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
+    renderReasonMenu();
+    reasonMenuOpen = true;
+    reasonPicker.classList.add("is-open");
+    if (reasonTrigger) {
+      reasonTrigger.setAttribute("aria-expanded", "true");
+    }
+    if (reasonMenu) {
+      reasonMenu.hidden = false;
+      placeModelMenu(reasonPicker, reasonMenu, chatScreen);
+    }
+  }
+
+  function toggleReasonMenu() {
+    if (reasonMenuOpen) {
+      closeReasonMenu();
+    } else {
+      openReasonMenu();
+    }
+  }
+
+  function setReasoningEffort(
+    next,
+    { close = true, notify = true, modelId } = {}
+  ) {
+    if (!modelSupportsReasoning(modelId || selectedModelId)) {
+      selectedReasoningEffort = "";
+      updateReasonPickerVisibility();
+      if (close) {
+        closeReasonMenu();
+      }
+      return;
+    }
+    const level =
+      normalizeReasonLevel(next) ||
+      defaultReasonForModel(modelId || selectedModelId);
+    selectedReasoningEffort = level;
+    if (activeChatId) {
+      state.reasonByChat[activeChatId] = level;
+      vscode.setState(state);
+    }
+    if (reasonLabel) {
+      reasonLabel.textContent = reasonLevelLabel(level);
+    }
+    if (reasonTrigger) {
+      reasonTrigger.title = `${t("intelligence")}: ${reasonLevelLabel(level)}`;
+    }
+    if (reasonMenu && !reasonMenu.hidden) {
+      renderReasonMenu();
+    }
+    updateReasonPickerVisibility();
+    if (close) {
+      closeReasonMenu();
+    }
+    if (notify && level) {
+      vscode.postMessage({
+        type: "reasoningEffortChanged",
+        reasoningEffort: level,
+        chatId: activeChatId || "",
+      });
+    }
+  }
+
+  function applySelectedReasoningEffort(preferredId, { notify = false } = {}) {
+    setReasoningEffort(resolvePreferredReasonLevel(preferredId), {
+      close: false,
+      notify,
+    });
+  }
+
   function setBusy(nextBusy) {
     busy = nextBusy;
     promptEl.disabled = busy;
@@ -10421,6 +10736,9 @@
     }
     if (modeTrigger) {
       modeTrigger.disabled = busy;
+    }
+    if (reasonTrigger) {
+      reasonTrigger.disabled = busy;
     }
     if (composerScmActionsEl) {
       const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
@@ -10604,6 +10922,13 @@
       closeModeMenu();
     }
     if (
+      reasonMenuOpen &&
+      reasonPicker &&
+      !reasonPicker.contains(event.target)
+    ) {
+      closeReasonMenu();
+    }
+    if (
       mentionOpen &&
       mentionMenuEl &&
       !mentionMenuEl.contains(event.target) &&
@@ -10675,6 +11000,9 @@
     if (event.key === "Escape" && modeMenuOpen) {
       closeModeMenu();
     }
+    if (event.key === "Escape" && reasonMenuOpen) {
+      closeReasonMenu();
+    }
     if (event.key === "Escape" && editModelMenuOpen) {
       closeEditModelMenu();
     }
@@ -10734,6 +11062,7 @@
       text,
       model: getSelectedModel(),
       agentMode: modeForSend,
+      reasoningEffort: selectedReasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
     });
   }
@@ -10796,8 +11125,40 @@
     });
   }
 
+  if (reasonTrigger) {
+    reasonTrigger.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    reasonTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (busy || (reasonPicker && reasonPicker.hidden)) {
+        return;
+      }
+      toggleReasonMenu();
+    });
+  }
+
+  if (reasonMenu) {
+    reasonMenu.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    reasonMenu.addEventListener("click", (event) => {
+      const option = event.target.closest(".model-option");
+      if (!option || busy) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setReasoningEffort(option.dataset.reason, { focus: false });
+    });
+  }
+
   setAgentMode(agentMode, { close: false, notify: false });
   renderModeMenu();
+  applySelectedReasoningEffort(selectedReasoningEffort, { notify: false });
 
   if (composerPlusMenu) {
     composerPlusMenu.addEventListener("click", (event) => {
@@ -11090,7 +11451,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
@@ -12090,7 +12451,11 @@
       }
       pinChatToBottom();
       setBusy(true);
-      vscode.postMessage({ type: "regenerate", agentMode });
+      vscode.postMessage({
+        type: "regenerate",
+        agentMode,
+        reasoningEffort: selectedReasoningEffort || undefined,
+      });
       return;
     }
     const branchBtn = event.target.closest(".msg-branch");
@@ -12271,6 +12636,9 @@
           applyModes(msg.modes);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedReasoningEffort(msg.selectedReasoningEffort, {
+          notify: false,
+        });
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -12351,6 +12719,9 @@
         showSettingsCategory(msg.openMcp ? "mcp" : "models");
         setBusy(Boolean(msg.busy));
         break;
+      case "openChatSearch":
+        openChatSearch({ fromAgents: false });
+        break;
       case "settings":
         fillSettings(msg.settings);
         if (UI_SURFACE === "settings" && settingsScreen && settingsScreen.hidden) {
@@ -12381,6 +12752,9 @@
           fillModels(msg.models, msg.selectedModel, true);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedReasoningEffort(msg.selectedReasoningEffort, {
+          notify: false,
+        });
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -12468,6 +12842,13 @@
         break;
       case "modelsUpdated":
         fillModels(msg.models, msg.selectedModel);
+        if (msg.selectedReasoningEffort !== undefined) {
+          applySelectedReasoningEffort(msg.selectedReasoningEffort, {
+            notify: false,
+          });
+        } else {
+          updateReasonPickerVisibility();
+        }
         break;
       case "modesUpdated":
         applyModes(msg.modes);
@@ -12577,6 +12958,13 @@
         applyScmButtons(msg.reviews || []);
         break;
       case "assistantDelta":
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        // Remount can leave streamingEl pointing at a detached node.
+        if (streamingEl && !streamingEl.isConnected) {
+          streamingEl = null;
+        }
         if (!streamingEl) {
           streamingEl = appendMessage("assistant", "");
           streamingEl.dataset.raw = "";
@@ -12586,7 +12974,7 @@
           streamingRenderScheduled = true;
           requestAnimationFrame(() => {
             streamingRenderScheduled = false;
-            if (streamingEl) {
+            if (streamingEl && streamingEl.isConnected) {
               setMessageContent(
                 streamingEl,
                 "assistant",
@@ -12598,6 +12986,9 @@
         }
         break;
       case "assistantStreamClear":
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
         if (streamingEl) {
           const wrap = streamingEl.closest(".msg-wrap-assistant");
           (wrap || streamingEl).remove();
@@ -12606,12 +12997,41 @@
         streamingRenderScheduled = false;
         break;
       case "assistantDone": {
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        if (streamingEl && !streamingEl.isConnected) {
+          streamingEl = null;
+        }
+        const incomingText = String(msg.text || "");
+        // Host may re-send the finale after idle (catch-up). Skip duplicates.
+        const alreadyCached = uiMessagesCache.some(
+          (m, i) =>
+            i >= Math.max(0, uiMessagesCache.length - 6) &&
+            m?.role === "assistant" &&
+            String(m.text || "") === incomingText &&
+            Boolean(incomingText)
+        );
         let assistantDoneText = "";
-        if (!streamingEl && msg.text) {
-          assistantDoneText = msg.text;
+        if (alreadyCached) {
+          assistantDoneText = incomingText;
+          if (streamingEl) {
+            if (streamingEl.isConnected) {
+              setMessageContent(
+                streamingEl,
+                "assistant",
+                incomingText || streamingEl.dataset.raw || ""
+              );
+            }
+            streamingEl = null;
+          }
+          sealToolGroups();
+          cleanSealedThinkingPlaceholders();
+        } else if (!streamingEl && incomingText) {
+          assistantDoneText = incomingText;
           uiMessagesCache.push({
             role: "assistant",
-            text: msg.text,
+            text: incomingText,
             ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
           });
           // Reasoning already rendered via live steps — do not upsert again
@@ -12620,7 +13040,7 @@
           // the .chat-turn and drop placeholder-only Thinking cards.
           appendMessage(
             "assistant",
-            msg.text,
+            incomingText,
             uiMessagesCache.length - 1,
             canRegenerate ? uiMessagesCache.length - 1 : -1,
             undefined,
@@ -12630,7 +13050,7 @@
           sealToolGroups();
           cleanSealedThinkingPlaceholders();
         } else if (streamingEl) {
-          const raw = msg.text || streamingEl.dataset.raw || "";
+          const raw = incomingText || streamingEl.dataset.raw || "";
           assistantDoneText = raw;
           setMessageContent(streamingEl, "assistant", raw);
           uiMessagesCache.push({
@@ -12683,6 +13103,18 @@
         }
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
+        }
+        // If assistantDone never arrived, commit whatever streamed so far
+        // instead of orphaning a visible bubble without a cache entry.
+        if (streamingEl && streamingEl.isConnected) {
+          const raw = String(streamingEl.dataset.raw || "").trim();
+          if (raw) {
+            const last = uiMessagesCache[uiMessagesCache.length - 1];
+            if (!(last?.role === "assistant" && String(last.text || "") === raw)) {
+              uiMessagesCache.push({ role: "assistant", text: raw });
+              streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+            }
+          }
         }
         streamingEl = null;
         streamingRenderScheduled = false;

@@ -2,6 +2,44 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.1.17] — 2026-08-07
+
+- **Runtime:** параллельные tool calls (`maxParallelToolCalls: 8`) — Settings → Parallel tool calls
+- **Runtime:** auto compact контекста Cline (`compaction` agentic) — Settings → Auto compact; карточка шага в чате
+
+## [1.1.15] — 2026-08-06
+
+- **Plan:** плашка «План» для Agent-ответов с кириллицей (эвристика больше не использует JS `\\b`, который не матчит русские слова)
+
+## [1.1.14] — 2026-08-06
+
+- **Plan/Ask:** параллельные субагенты (`spawn_agent`) при включённом Settings → Parallel agents; дети read-focused как родитель
+
+## [1.1.13] — 2026-08-06
+
+- **Plan:** финальный текст для плашки «План» берётся из `submit_and_exit.summary` (Cline часто не пишет отдельный assistant text)
+
+## [1.1.11] — 2026-08-06
+
+- **Agent:** параллельные субагенты (`spawn_agent`) — Settings → Parallel agents; только режим Agent, Plan/Ask без spawn
+
+## [1.1.10] — 2026-08-06
+
+- **Plan:** не сбрасывать stream-бабл перед финалом (чтобы не терять плашку «План»); запасной текст из messages
+
+## [1.1.6] — 2026-08-06
+
+- **Plan:** финальный план всегда в карточке «План» — hint `<proposed_plan>` + fallback-обёртка, если модель забыла теги
+
+## [1.1.5] — 2026-08-06
+
+- **Figma:** MCP tools через Cline `createMcpTools` — скриншоты доходят в tool-result; nudge по ссылке; OCR-fallback если модель без vision
+- **UI:** статус-строка показывает сырые статусы Cline (session / finishReason / notice / error)
+
+## [1.1.4] — 2026-08-06
+
+- **UI:** статус-строка показывает сырые статусы Cline (session / finishReason / notice / error)
+
 ## [1.1.3] — 2026-08-06
 
 - **Runtime:** лимит раундов tools больше не режет ход Harbor `maxToolRounds` — iteration budget у Cline (unset = без жёсткого потолка); настройка deprecated

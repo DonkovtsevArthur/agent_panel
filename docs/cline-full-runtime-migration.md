@@ -58,7 +58,11 @@ Cline владеет: что можно в Ask/Plan/Agent и как исполн
 
 ### Phase 4 — опционально
 
-Compaction, teams/spawn по Cline, checkpoints, approvals UI (или оставить yolo).
+- **Spawn / parallel agents (сделано):** `enableSpawnAgent` при `agentPanel.subagents.enabled` (default on) во всех режимах. Children наследуют mode-preset родителя (Plan/Ask = read-focused + command-guard; Agent = act). UI: Settings toggle + карточка `spawn_agent`. Harbor MCP детям не прокидывается. Teams (`enableAgentTeams`) — нет.
+- **Parallel tool calls (сделано):** `agentPanel.parallelToolCalls.enabled` (default on) → `maxParallelToolCalls: 8`; off → `1` (sequential).
+- **Auto compact (сделано):** `agentPanel.autoCompact.enabled` (default on) → `compaction: { enabled: true, strategy: "agentic" }`; notice → UI step `compaction`.
+- Checkpoints, approvals UI (или оставить yolo) — ещё открыто.
+- Teams / task board — позже (нужна долгоживущая Cline-сессия из Phase 3).
 
 ## Не делать
 

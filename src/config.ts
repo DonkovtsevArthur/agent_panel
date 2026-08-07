@@ -17,6 +17,7 @@ import {
   resolveModelCapabilities,
   resolveModelContextWindow,
 } from "./modelCapabilities";
+import { normalizeReasoningEffort } from "./reasoningEffort";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -54,9 +55,14 @@ export interface AgentModel {
   /**
    * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4 через
    * OpenAI-compatible гейтвей). Пусто = default по capability ("high").
-   * Допустимо: "minimal" | "low" | "medium" | "high" | "xhigh" | "max".
+   * Допустимо: "low" | "medium" | "high" | "xhigh".
+   * Если задано — модель считается поддерживающей reasoning в UI селекторе.
    */
   reasoningEffort?: string;
+  /** Вычисляется при getEnabledModels — не из Settings. */
+  supportsReasoningEffort?: boolean;
+  /** Вычисляется при getEnabledModels — default для селектора. */
+  reasoningEffortDefault?: string;
 }
 
 export interface ModelEndpoint {
@@ -140,6 +146,27 @@ export interface AgentPanelConfig {
     preferredModelIds: string[];
   };
   soundNotifications: {
+    enabled: boolean;
+  };
+  /**
+   * Parallel sub-agents (ClineCore spawn_agent).
+   * Children inherit the parent mode preset (Agent → act tools; Plan/Ask → read-focused).
+   */
+  subagents: {
+    enabled: boolean;
+  };
+  /**
+   * Run multiple tool calls from one model response concurrently
+   * (`maxParallelToolCalls` → Cline `toolExecution: "parallel"`).
+   */
+  parallelToolCalls: {
+    enabled: boolean;
+  };
+  /**
+   * Automatically compress Cline conversation context when the request
+   * approaches the model input budget (`compaction.enabled`).
+   */
+  autoCompact: {
     enabled: boolean;
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
@@ -456,6 +483,15 @@ export function getConfig(): AgentPanelConfig {
     soundNotifications: {
       enabled: cfg.get<boolean>("soundNotifications.enabled") !== false,
     },
+    subagents: {
+      enabled: cfg.get<boolean>("subagents.enabled") !== false,
+    },
+    parallelToolCalls: {
+      enabled: cfg.get<boolean>("parallelToolCalls.enabled") !== false,
+    },
+    autoCompact: {
+      enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
+    },
     selectionHints: {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },
@@ -556,10 +592,24 @@ export function resolveModelReasoningEffort(
     return undefined;
   }
   return (
-    capabilities.reasoningEffortDefault ||
-    fromConfig?.reasoningEffort ||
+    normalizeReasoningEffort(capabilities.reasoningEffortDefault) ||
+    normalizeReasoningEffort(fromConfig?.reasoningEffort) ||
     "high"
   );
+}
+
+/** Модель принимает reasoning_effort (Claude 3.5+/4 или явный override в Settings). */
+export function resolveModelSupportsReasoningEffort(
+  modelOrId: string | AgentModel
+): boolean {
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  const fromConfig =
+    typeof modelOrId === "string"
+      ? getConfig().models.find((m) => m.id === id)
+      : modelOrId;
+  return resolveModelCapabilities(id, {
+    reasoningEffort: fromConfig?.reasoningEffort,
+  }).supportsReasoningEffort;
 }
 
 /** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
@@ -571,6 +621,8 @@ export function getEnabledModels(): AgentModel[] {
     .map((m) => ({
       ...m,
       supportsVision: resolveModelSupportsVision(m),
+      supportsReasoningEffort: resolveModelSupportsReasoningEffort(m),
+      reasoningEffortDefault: resolveModelReasoningEffort(m.id),
     }));
 }
 

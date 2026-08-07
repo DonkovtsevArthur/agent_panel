@@ -47,6 +47,9 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - Host: `ClineCore.create({ backendMode: "local" })`; one Harbor chat turn = one Cline session (`interactive: false`).
 - Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard.
 - Tools: Cline builtins via runtime-builder; Harbor MCP as `extraTools` (`disableMcpSettingsTools`). See `docs/cline-full-runtime-migration.md`.
+- Sub-agents: setting `agentPanel.subagents.enabled` (default on) → Cline `enableSpawnAgent: true` (`spawn_agent`) in **Agent, Plan, and Ask**. Children inherit the parent mode preset (Plan/Ask = read-focused + command-guard; Agent = act). Harbor MCP is not passed to children. `enableAgentTeams` stays false.
+- Parallel tool calls: setting `agentPanel.parallelToolCalls.enabled` (default on) → Cline `maxParallelToolCalls: 8` (`toolExecution: "parallel"`). Off → `1` (sequential).
+- Auto compact: setting `agentPanel.autoCompact.enabled` (default on) → Cline `compaction: { enabled: true, strategy: "agentic" }`. UI shows compaction step cards from notice events.
 - Providers: Harbor Settings `providers[].baseUrl/apiKey` → Cline `openai-compatible`.
 - UI events: `CoreSessionEvent.agent_event` → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
 - Auto-approve tools (`yolo` policies) for Harbor UX (no per-tool QuickPick yet).
@@ -58,9 +61,9 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 
 | Mode | Harbor UI | Cline runtime |
 |------|-----------|---------------|
-| **Agent** | Full chrome | `act` — edits + shell |
-| **Plan** | Plan chrome / Build | `plan` — explore, no editor |
-| **Ask** | Ask chrome | `plan` — same read-focused tools |
+| **Agent** | Full chrome | `act` — edits + shell; optional `spawn_agent` when Settings parallel agents is on |
+| **Plan** | Plan chrome / Build | `plan` — explore, no editor; optional read-focused `spawn_agent` |
+| **Ask** | Ask chrome | `plan` — same read-focused tools; optional read-focused `spawn_agent` |
 
 **Never silently switch Agent → Ask** in the UI (`agentPanelProvider.ts` keeps `modeForRun = selectedMode`).
 

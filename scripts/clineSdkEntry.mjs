@@ -13,5 +13,6 @@ export {
   ClineCore,
   createTool,
   createToolPoliciesWithPreset,
+  createMcpTools,
   getClineDefaultSystemPrompt,
 } from "@cline/sdk";

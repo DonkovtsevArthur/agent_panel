@@ -17,6 +17,20 @@ Harbor UI живёт в корне репозитория; **runtime-агент*
 
 Версия форка должна совпадать с `@cline/sdk` в корневом `package.json`.
 
+## Harbor notes (edit soft-fail)
+
+Cline `editor` / `apply_patch` return `{ success: false, error }` without throwing.
+Do **not** promote that to `isError` in the agent runtime: Cline's mistake-tracker
+and loop-detection treat `isError` as consecutive failures and abort the turn.
+Harbor only reflects soft-fails in the panel UI (tool step status + skip fake
+review seeds) via `src/clineRuntime.ts`.
+
+## Harbor patches in this fork
+
+| Patch | Where | Why |
+|-------|--------|-----|
+| Forward `maxParallelToolCalls` | `sdk/packages/core/.../local-runtime-host.ts`, `.../types/config.ts` | Session config field was dropped when building `AgentConfig`, so Harbor/`maxParallelToolCalls` never reached `toolExecution: "parallel"`. |
+
 ## Телеметрия (не режем в форке)
 
 Апстрим Cline содержит PostHog / OpenTelemetry / Langfuse. **Не удаляйте** эти деревья из `vendor/cline` при sync — иначе каждый re-fork даёт конфликты.

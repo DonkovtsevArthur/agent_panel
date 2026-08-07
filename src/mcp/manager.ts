@@ -268,20 +268,42 @@ export class McpManager {
     qualifiedName: string,
     argsJson: string
   ): Promise<SplitMcpToolResult> {
+    const raw = await this.callToolRaw(qualifiedName, argsJson);
+    if (raw && typeof raw === "object" && "error" in (raw as object)) {
+      const err = String((raw as { error?: unknown }).error || "").trim();
+      if (err) {
+        return { text: JSON.stringify({ error: err }), imageDataUrls: [] };
+      }
+    }
+    const split = splitMcpToolResult(raw);
+    return {
+      text: truncateToolText(split.text),
+      imageDataUrls: split.imageDataUrls,
+    };
+  }
+
+  /**
+   * Raw MCP CallToolResult for Cline createMcpTools (preserves image content).
+   */
+  async callToolRaw(
+    qualifiedName: string,
+    argsJson: string
+  ): Promise<unknown> {
     const parsed = parseQualifiedToolName(qualifiedName);
     if (!parsed) {
-      return {
-        text: JSON.stringify({ error: `Unknown MCP tool: ${qualifiedName}` }),
-        imageDataUrls: [],
-      };
+      return { content: [{ type: "text", text: JSON.stringify({ error: `Unknown MCP tool: ${qualifiedName}` }) }] };
     }
     let args: Record<string, unknown> = {};
     try {
       args = argsJson ? (JSON.parse(argsJson) as Record<string, unknown>) : {};
     } catch {
       return {
-        text: JSON.stringify({ error: "Invalid tool arguments JSON" }),
-        imageDataUrls: [],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ error: "Invalid tool arguments JSON" }),
+          },
+        ],
       };
     }
 
@@ -289,8 +311,7 @@ export class McpManager {
       const figmaCatalog = this.figmaTools.map((t) => t.function.name);
       if (shouldHideLegacyFigmaDataTool(parsed.toolName, figmaCatalog)) {
         return {
-          text: LEGACY_FIGMA_DATA_BLOCKED_JSON,
-          imageDataUrls: [],
+          content: [{ type: "text", text: LEGACY_FIGMA_DATA_BLOCKED_JSON }],
         };
       }
       if (!this.figmaClient || this.figmaStatus.state !== "connected") {
@@ -298,14 +319,18 @@ export class McpManager {
       }
       if (!this.figmaClient) {
         return {
-          text: JSON.stringify({
-            error:
-              "Figma MCP is not connected. Open Settings → MCP Servers.",
-          }),
-          imageDataUrls: [],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error:
+                  "Figma MCP is not connected. Open Settings → MCP Servers.",
+              }),
+            },
+          ],
         };
       }
-      return this.invokeClientTool(
+      return this.invokeClientToolRaw(
         this.figmaClient,
         parsed.toolName,
         prepareFigmaToolArgs(parsed.toolName, args)
@@ -319,35 +344,35 @@ export class McpManager {
     const client = this.customRuntimes.get(parsed.serverId)?.client;
     if (!client) {
       return {
-        text: JSON.stringify({
-          error: `MCP server "${parsed.serverId}" is not connected.`,
-        }),
-        imageDataUrls: [],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: `MCP server "${parsed.serverId}" is not connected.`,
+            }),
+          },
+        ],
       };
     }
-    return this.invokeClientTool(client, parsed.toolName, args);
+    return this.invokeClientToolRaw(client, parsed.toolName, args);
   }
 
-  private async invokeClientTool(
+  private async invokeClientToolRaw(
     client: Client,
     toolName: string,
     args: Record<string, unknown>
-  ): Promise<SplitMcpToolResult> {
+  ): Promise<unknown> {
     try {
-      const result = await client.callTool({
+      return await client.callTool({
         name: toolName,
         arguments: args,
       });
-      const split = splitMcpToolResult(result);
-      return {
-        text: truncateToolText(split.text),
-        imageDataUrls: split.imageDataUrls,
-      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
-        text: JSON.stringify({ error: message }),
-        imageDataUrls: [],
+        content: [
+          { type: "text", text: JSON.stringify({ error: message }) },
+        ],
       };
     }
   }
