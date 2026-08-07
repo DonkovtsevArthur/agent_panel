@@ -17,7 +17,7 @@ export type AgentPhase =
   | "editing"
   | "verifying"
   | "done"
-  /** Raw Cline session/run/finish status shown as-is in the status bar. */
+  /** Non-lifecycle Cline notices (generic running/completed are omitted). */
   | "cline";
 
 export type {

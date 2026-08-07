@@ -2886,23 +2886,36 @@
     };
   }
 
-  function setAgentStatus(text, hidden, phase, modelLabel) {
-    // Tool progress lives in the timeline — don't also pulse Harbor tool phases.
-    // Raw Cline statuses (phase === "cline") always stay visible.
-    const timelineBusy = Boolean(
+  function isAgentTimelineBusy() {
+    return Boolean(
       currentChatTurnEl?.querySelector?.(
         ".tool-group.agent-timeline:not([data-sealed]) .agent-step"
       )
     );
+  }
+
+  /** Harbor + raw Cline lifecycle phases — timeline already shows progress. */
+  function shouldSuppressStatusPhase(phase) {
+    return (
+      phase === "cline" ||
+      phase === "reading" ||
+      phase === "listing" ||
+      phase === "editing" ||
+      phase === "running" ||
+      phase === "thinking"
+    );
+  }
+
+  function setAgentStatus(text, hidden, phase, modelLabel) {
+    // Tool progress lives in the timeline — don't also pulse status under it
+    // (incl. raw Cline "running (model)").
+    const timelineBusy = isAgentTimelineBusy();
     const suppressPhase =
-      timelineBusy &&
-      phase !== "cline" &&
-      (phase === "reading" ||
-        phase === "listing" ||
-        phase === "editing" ||
-        phase === "running" ||
-        phase === "thinking");
-    if (suppressPhase && !hidden) {
+      timelineBusy && !hidden && shouldSuppressStatusPhase(phase || "");
+    if (suppressPhase) {
+      // Keep latest status in state for restore after the timeline seals,
+      // but do not show a second busy line under «Читаю…» / tool steps.
+      applyAgentStatusState(text, false, phase, modelLabel);
       if (agentStatusEl) {
         agentStatusEl.hidden = true;
       }
@@ -2958,6 +2971,20 @@
 
   function keepStatusAtEnd() {
     if (agentStatusState.hidden) {
+      return;
+    }
+    // A tool step may have appeared after the last status message — hide the
+    // redundant Cline/Harbor busy line under the open timeline.
+    if (
+      isAgentTimelineBusy() &&
+      shouldSuppressStatusPhase(agentStatusState.phase || "")
+    ) {
+      if (agentStatusEl) {
+        agentStatusEl.hidden = true;
+      }
+      return;
+    }
+    if (agentStatusEl && agentStatusEl.hidden) {
       return;
     }
     messagesEl.appendChild(ensureAgentStatusEl());

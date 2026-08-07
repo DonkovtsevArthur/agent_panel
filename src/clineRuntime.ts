@@ -947,16 +947,26 @@ export async function runClineAgentTurn(options: {
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
 
-  /** Show Cline session/run/finish status as-is (Harbor phase = "cline"). */
+  /**
+   * Surface non-lifecycle Cline notices as Harbor phase "cline".
+   * Skip generic session lifecycle strings (running / completed / …) — the
+   * webview timeline already shows busy progress; those labels only duplicated
+   * «running (model)» under «Читаю…».
+   */
   const setClineStatus = (status: string) => {
     const text = String(status || "").trim();
     if (!text) {
       return;
     }
+    if (
+      /^(running|completed|cancelled|canceled|aborted|failed|error|idle|success)$/i.test(
+        text
+      )
+    ) {
+      return;
+    }
     callbacks.onPhase("cline", text);
   };
-
-  setClineStatus("running");
 
   const handleAgentEvent = (event: ClineAgentEvent) => {
     switch (event.type) {
