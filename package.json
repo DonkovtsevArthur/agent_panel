@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.3",
+  "version": "1.1.17",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -31,6 +31,7 @@
     "onCommand:agentPanel.open",
     "onCommand:agentPanel.openSettings",
     "onCommand:agentPanel.newChat",
+    "onCommand:agentPanel.searchChat",
     "onCommand:agentPanel.clearChat",
     "onCommand:agentPanel.addSelectionToChat",
     "onCommand:agentPanel.addSelectionToNewChat",
@@ -68,12 +69,20 @@
       {
         "command": "agentPanel.openSettings",
         "title": "%command.openSettings.title%",
-        "category": "%command.category%"
+        "category": "%command.category%",
+        "icon": "$(gear)"
       },
       {
         "command": "agentPanel.newChat",
         "title": "%command.newAgent.title%",
-        "category": "%command.category%"
+        "category": "%command.category%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentPanel.searchChat",
+        "title": "%command.searchChat.title%",
+        "category": "%command.category%",
+        "icon": "$(search)"
       },
       {
         "command": "agentPanel.clearChat",
@@ -113,6 +122,23 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "agentPanel.newChat",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentPanel.searchChat",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentPanel.openSettings",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@3"
+        }
+      ],
       "commandPalette": [
         {
           "command": "agentPanel.open"
@@ -122,6 +148,9 @@
         },
         {
           "command": "agentPanel.newChat"
+        },
+        {
+          "command": "agentPanel.searchChat"
         },
         {
           "command": "agentPanel.addSelectionToChat",
@@ -344,6 +373,16 @@
               "supportsVision": {
                 "type": "boolean",
                 "description": "%config.models.supportsVision.description%"
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh"
+                ],
+                "description": "%config.models.reasoningEffort.description%"
               }
             }
           }
@@ -445,6 +484,21 @@
           "type": "boolean",
           "default": true,
           "description": "%config.soundNotifications.enabled.description%"
+        },
+        "agentPanel.subagents.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.subagents.enabled.description%"
+        },
+        "agentPanel.parallelToolCalls.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.parallelToolCalls.enabled.description%"
+        },
+        "agentPanel.autoCompact.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.autoCompact.enabled.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

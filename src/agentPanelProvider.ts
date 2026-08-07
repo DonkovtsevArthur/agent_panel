@@ -16,9 +16,15 @@ import {
   getModeById,
   getResolvedModes,
   resolveModelEndpoint,
+  resolveModelReasoningEffort,
+  resolveModelSupportsReasoningEffort,
   resolveModelSupportsVision,
   resolveProviderProbeUrl,
 } from "./config";
+import {
+  normalizeReasoningEffort,
+  type ReasoningEffortLevel,
+} from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
@@ -40,13 +46,17 @@ import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import {
-  isReadonlyPolicy,
   modeThinkingLabel,
   parseCustomModes,
   type AgentModeDef,
 } from "./modes";
 import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
-import { planMarkdownFileName, stripPlanImplementWrapper } from "./planImplement";
+import {
+  ensureProposedPlanWrapper,
+  looksLikeImplementationPlan,
+  planMarkdownFileName,
+  stripPlanImplementWrapper,
+} from "./planImplement";
 import { getMcpManager } from "./mcpBundle";
 import type { FigmaStatusPayload } from "./mcpBundle";
 import type { McpServerRuntimeStatus } from "./mcp/types";
@@ -99,6 +109,9 @@ type SettingsPayload = {
     enabled?: boolean;
     favorite?: boolean;
     supportsVision?: boolean;
+    supportsReasoningEffort?: boolean;
+    reasoningEffort?: string;
+    reasoningEffortDefault?: string;
   }>;
   language: string;
   defaultModel: string;
@@ -112,6 +125,9 @@ type SettingsPayload = {
   maxTokens: number;
   maxResponseChars: number;
   soundNotificationsEnabled?: boolean;
+  subagentsEnabled?: boolean;
+  parallelToolCallsEnabled?: boolean;
+  autoCompactEnabled?: boolean;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -131,17 +147,19 @@ type WebviewToHost =
       text: string;
       model: string;
       agentMode?: string;
+      reasoningEffort?: string;
       attachments?: IncomingAttachment[];
       /** Не показывать user-сообщение в чате (например, тег commit/push). */
       hideUser?: boolean;
     }
-  | { type: "regenerate"; agentMode?: string }
+  | { type: "regenerate"; agentMode?: string; reasoningEffort?: string }
   | {
       type: "editUserMessage";
       index: number;
       text: string;
       model: string;
       agentMode?: string;
+      reasoningEffort?: string;
       attachments?: IncomingAttachment[];
     }
   | { type: "stop" }
@@ -161,6 +179,11 @@ type WebviewToHost =
   | { type: "deleteAllArchived" }
   | { type: "modelChanged"; model: string; chatId?: string }
   | { type: "modeChanged"; mode: string; chatId?: string }
+  | {
+      type: "reasoningEffortChanged";
+      reasoningEffort: string;
+      chatId?: string;
+    }
   | { type: "openFile"; path: string }
   | { type: "openFileDiff"; path: string }
   | {
@@ -261,6 +284,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private uiMessages: UiMessage[] = [];
   private selectedModel = "";
   private selectedMode = "agent";
+  private selectedReasoningEffort: ReasoningEffortLevel | "" = "";
   private lastTurnModel = "";
   private contextTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
@@ -565,6 +589,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.postChatScreen();
   }
 
+  /** Открыть поиск по чату (кнопка в title bar view). */
+  async openChatSearch(): Promise<void> {
+    await vscode.commands.executeCommand("agentPanel.chat.focus");
+    this.view?.webview.postMessage({ type: "openChatSearch" });
+  }
+
   clearChat(): void {
     this.newChat();
   }
@@ -726,6 +756,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.uiMessages = [];
       this.selectedModel = getConfig().defaultModel || "";
       this.selectedMode = "agent";
+      this.selectedReasoningEffort = "";
       this.lastTurnModel = "";
       this.contextTokens = 0;
       return;
@@ -734,6 +765,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.uiMessages = chat.uiMessages || [];
     this.selectedModel = chat.selectedModel || "";
     this.selectedMode = getModeById(chat.selectedMode).id;
+    this.selectedReasoningEffort =
+      normalizeReasoningEffort(chat.selectedReasoningEffort) || "";
     this.lastTurnModel = chat.lastTurnModel || "";
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
@@ -755,11 +788,33 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     touchChat(this.store, chatId, {
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      ...(this.selectedReasoningEffort
+        ? { selectedReasoningEffort: this.selectedReasoningEffort }
+        : { selectedReasoningEffort: undefined }),
       lastTurnModel: this.lastTurnModel,
       history: this.history,
       uiMessages: this.uiMessages.slice(-200),
       contextTokens: this.contextTokens,
     });
+  }
+
+  /**
+   * Effective reasoning level for a turn: chat selection → model default.
+   * Empty when the model does not support reasoning_effort.
+   */
+  private resolveReasoningEffortForModel(
+    modelId: string,
+    preferred?: string
+  ): ReasoningEffortLevel | undefined {
+    if (!resolveModelSupportsReasoningEffort(modelId)) {
+      return undefined;
+    }
+    return (
+      normalizeReasoningEffort(preferred) ||
+      normalizeReasoningEffort(this.selectedReasoningEffort) ||
+      normalizeReasoningEffort(resolveModelReasoningEffort(modelId)) ||
+      "medium"
+    );
   }
 
   private storageUri(): vscode.Uri | undefined {
@@ -1736,6 +1791,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedReasoningEffort:
+        this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
@@ -1801,6 +1858,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           type: "modelsUpdated",
           models: getEnabledModels(),
           selectedModel: this.selectedModel,
+          selectedReasoningEffort:
+            this.resolveReasoningEffortForModel(this.selectedModel) || "",
         });
         this.ensureProviderProbe(this.selectedModel);
         break;
@@ -1818,6 +1877,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
           touchChat(this.store, this.store.activeChatId, {
             selectedMode: this.selectedMode,
+          });
+        }
+        this.saveSession();
+        break;
+      }
+      case "reasoningEffortChanged": {
+        const msgChatId = String(message.chatId || "");
+        if (
+          msgChatId &&
+          this.store.activeChatId &&
+          msgChatId !== this.store.activeChatId
+        ) {
+          break;
+        }
+        const next =
+          normalizeReasoningEffort(message.reasoningEffort) || "";
+        this.selectedReasoningEffort = next;
+        if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedReasoningEffort: next || undefined,
           });
         }
         this.saveSession();
@@ -1934,7 +2013,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         });
         break;
       case "regenerate":
-        await this.handleRegenerate(getModeById(message.agentMode).id);
+        await this.handleRegenerate(
+          getModeById(message.agentMode).id,
+          message.reasoningEffort
+        );
         break;
       case "editUserMessage":
         await this.handleEditUserMessage(
@@ -1942,7 +2024,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           String(message.text || ""),
           String(message.model || ""),
           message.attachments,
-          getModeById(message.agentMode).id
+          getModeById(message.agentMode).id,
+          message.reasoningEffort
         );
         break;
       case "pickAttachments":
@@ -2107,6 +2190,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.handleSend(message.text, message.model, {
           attachments: message.attachments,
           agentMode: getModeById(message.agentMode).id,
+          reasoningEffort: message.reasoningEffort,
         });
         break;
     }
@@ -2601,6 +2685,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       appendUser?: boolean;
       attachments?: IncomingAttachment[] | MessageAttachment[];
       agentMode?: string;
+      reasoningEffort?: string;
     }
   ): Promise<void> {
     const config = getConfig();
@@ -2662,10 +2747,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     // Картинки: пиксели уходят в Cline как image parts; vision/placeholder —
     // на стороне Cline по capabilities модели. Harbor модель не подменяет.
     const chosen = requestedModel;
+    const reasoningEffortForRun = this.resolveReasoningEffortForModel(
+      chosen,
+      options?.reasoningEffort
+    );
     this.selectedMode = modeForRun.id;
+    if (reasoningEffortForRun) {
+      this.selectedReasoningEffort = reasoningEffortForRun;
+    }
     if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
       touchChat(this.store, this.store.activeChatId, {
         selectedMode: this.selectedMode,
+        ...(reasoningEffortForRun
+          ? { selectedReasoningEffort: reasoningEffortForRun }
+          : {}),
       });
     }
     if (!runChatId || !this.store.chats[runChatId]) {
@@ -2704,12 +2799,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       });
       void this.writeStoreOnly();
     };
+    // Live run UI: activeChatId is enough. Gating on screen==="chat" dropped
+    // assistantDone/deltas when screen briefly drifted while the user still
+    // had this chat selected — finale stayed only in store until remount.
     const postToRunChat = (message: Record<string, unknown>): void => {
       if (
         this.isChatRunCurrent(runChatId, runRef) &&
-        this.isViewingChat(runChatId)
+        this.isActiveChat(runChatId)
       ) {
-        this.view?.webview.postMessage(message);
+        this.view?.webview.postMessage({ ...message, chatId: runChatId });
       }
     };
     this.selectedModel = chosen;
@@ -2774,11 +2872,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             storageUri: this.storageUri(),
             signal: currentRun.signal,
             agentMode,
+            reasoningEffort: reasoningEffortForRun,
             lastAgentEditedPaths:
               this.store.chats[runChatId]?.lastAgentEditedPaths || [],
             callbacks: {
           onPhase: (phase, detail) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
+            if (phase === "cline") {
+              this.setStatusForChat(
+                runChatId,
+                detail || "cline",
+                false,
+                "cline",
+                this.modelLabel(activeTurnModel)
+              );
               return;
             }
             const lang = resolveUiLanguage(getConfig().language);
@@ -2902,7 +3011,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             turnHadAssistantOutput = true;
             runLastTurnModel = activeTurnModel;
-            const uiMsg: UiMessage = { role: "assistant", text: assistantText };
+            // Plan card: wrap in Plan mode, or when the finale clearly is a
+            // plan (Agent often drafts Figma/impl plans without switching mode).
+            const displayText =
+              mode.id === "plan" ||
+              looksLikeImplementationPlan(assistantText)
+                ? ensureProposedPlanWrapper(assistantText)
+                : assistantText;
+            const uiMsg: UiMessage = { role: "assistant", text: displayText };
             if (meta?.reasoning) {
               uiMsg.reasoning = meta.reasoning;
             }
@@ -2911,7 +3027,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             this.setRunStateForChat(runChatId, "success");
             postToRunChat({
               type: "assistantDone",
-              text: assistantText,
+              text: displayText,
               ...(meta?.reasoning ? { reasoning: meta.reasoning } : {}),
             });
             if (this.isViewingChat(runChatId)) {
@@ -3162,11 +3278,56 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       // / missing finales must not leave the composer stuck on Stop.
       if (this.isActiveChat(runChatId) && !this.isChatRunning(runChatId)) {
         this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+        // Re-send last assistant finale from store. Covers races where the
+        // first assistantDone was dropped or painted onto a detached stream
+        // node; webview treats duplicate finales as no-ops.
+        this.postAssistantFinaleCatchUp(runChatId);
       }
     }
   }
 
-  private async handleRegenerate(agentMode = "agent"): Promise<void> {
+  /**
+   * After a turn ends, ensure the active webview has the last assistant
+   * message from store (idempotent on the webview side).
+   */
+  private postAssistantFinaleCatchUp(chatId: string): void {
+    if (!this.isActiveChat(chatId)) {
+      return;
+    }
+    const msgs = this.store.chats[chatId]?.uiMessages || [];
+    let lastAssistant: UiMessage | undefined;
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const row = msgs[i];
+      if (!row) {
+        continue;
+      }
+      if (row.role === "assistant") {
+        lastAssistant = row;
+        break;
+      }
+      // Stop at the prior user turn — don't resurrect an older finale.
+      if (row.role === "user") {
+        break;
+      }
+    }
+    const text = String(lastAssistant?.text || "").trim();
+    if (!text) {
+      return;
+    }
+    this.view?.webview.postMessage({
+      type: "assistantDone",
+      chatId,
+      text: lastAssistant!.text,
+      ...(lastAssistant?.reasoning
+        ? { reasoning: lastAssistant.reasoning }
+        : {}),
+    });
+  }
+
+  private async handleRegenerate(
+    agentMode = "agent",
+    reasoningEffort?: string
+  ): Promise<void> {
     const state = this.getRegenerateState();
     if (!state) {
       this.postRegenerateState();
@@ -3192,6 +3353,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       appendUser: false,
       attachments: state.attachments,
       agentMode,
+      reasoningEffort,
     });
   }
 
@@ -3200,7 +3362,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     text: string,
     model: string,
     incomingAttachments?: IncomingAttachment[],
-    agentMode = "agent"
+    agentMode = "agent",
+    reasoningEffort?: string
   ): Promise<void> {
     const nextText = text.trim();
     const target = this.uiMessages[index];
@@ -3280,6 +3443,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       appendUser: false,
       attachments,
       agentMode,
+      reasoningEffort,
     });
   }
 
@@ -3817,6 +3981,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           enabled: m.enabled !== false,
           favorite: m.favorite === true,
           supportsVision: resolveModelSupportsVision(m),
+          ...(m.reasoningEffort
+            ? { reasoningEffort: m.reasoningEffort }
+            : {}),
         })),
         defaultModel: config.defaultModel,
         language: config.language,
@@ -3830,6 +3997,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         maxTokens: config.maxTokens,
         maxResponseChars: config.maxResponseChars,
         soundNotificationsEnabled: config.soundNotifications.enabled,
+        subagentsEnabled: config.subagents.enabled,
+        parallelToolCallsEnabled: config.parallelToolCalls.enabled,
+        autoCompactEnabled: config.autoCompact.enabled,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4116,6 +4286,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           enabled?: boolean;
           favorite?: boolean;
           supportsVision?: boolean;
+          reasoningEffort?: string;
         } = {
           id,
           providerId,
@@ -4140,6 +4311,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         } else if (m?.supportsVision === false) {
           row.supportsVision = false;
         }
+        const reasoningEffort = normalizeReasoningEffort(m?.reasoningEffort);
+        if (reasoningEffort) {
+          row.reasoningEffort = reasoningEffort;
+        }
         return row;
       })
       .filter(
@@ -4154,6 +4329,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           enabled?: boolean;
           favorite?: boolean;
           supportsVision?: boolean;
+          reasoningEffort?: string;
         } => Boolean(m)
       );
 
@@ -4228,6 +4404,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "soundNotifications.enabled",
       raw.soundNotificationsEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "subagents.enabled",
+      raw.subagentsEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "parallelToolCalls.enabled",
+      raw.parallelToolCallsEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "autoCompact.enabled",
+      raw.autoCompactEnabled !== false,
       target
     );
     await cfg.update(
@@ -4403,6 +4594,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedReasoningEffort:
+        this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
@@ -4461,6 +4654,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         "MaterialSymbolsOutlined-24-400.ttf"
       )
     );
+    const jetbrainsMonoUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(
+        this.extensionUri,
+        "media",
+        "fonts",
+        "JetBrainsMono-Regular.ttf"
+      )
+    );
     const nonce = getNonce();
     const pageTitle =
       surface === "settings"
@@ -4486,6 +4687,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       font-weight: 400;
       font-display: block;
       src: url("${materialIconsUri}") format("truetype");
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("${jetbrainsMonoUri}") format("truetype");
     }
   </style>
   <title>${pageTitle}</title>
@@ -4516,15 +4724,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div id="chatTitle" class="chat-title" hidden></div>
         <div id="providerConnStatus" class="provider-conn-status" data-state="unknown" hidden>Status: Unknown</div>
       </div>
-      <button type="button" class="icon-btn" id="chatNewAgentBtn" title="New Agent" aria-label="New Agent">
-        <span class="material-symbols-outlined" aria-hidden="true">add</span>
-      </button>
-      <button type="button" class="icon-btn" id="openChatSearchBtn" title="Search chat" aria-label="Search chat">
-        <span class="material-symbols-outlined" aria-hidden="true">search</span>
-      </button>
-      <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
-        <span class="material-symbols-outlined" aria-hidden="true">settings</span>
-      </button>
     </div>
     <div id="chatBranches" class="chat-branches" hidden role="tablist" aria-label="Conversation branches"></div>
     <div id="chatSearchPanel" class="chat-search-panel" hidden>
@@ -4579,6 +4778,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
+            </div>
+            <div class="model-picker reason-picker" id="reasonPicker" hidden>
+              <button type="button" class="model-trigger" id="reasonTrigger" aria-haspopup="listbox" aria-expanded="false" title="Intelligence">
+                <span class="material-symbols-outlined reason-icon" aria-hidden="true">psychology</span>
+                <span class="model-label" id="reasonLabel">Medium</span>
+                <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+              </button>
+              <div class="model-menu" id="reasonMenu" role="listbox" hidden></div>
             </div>
           </div>
           <div class="composer-footer-right">
@@ -4789,6 +4996,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="settingsSoundNotificationsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
           </label>
+          <label class="settings-field settings-check">
+            <input id="settingsSubagentsEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsSubagentsLabel">Parallel agents</span>
+          </label>
+          <p class="settings-hint" id="settingsSubagentsNote">Agent, Plan, and Ask. Children follow the current mode (Plan/Ask stay read-only).</p>
+          <label class="settings-field settings-check">
+            <input id="settingsParallelToolCallsEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsParallelToolCallsLabel">Parallel tool calls</span>
+          </label>
+          <p class="settings-hint" id="settingsParallelToolCallsNote">Run independent tools from one model response at the same time.</p>
+          <label class="settings-field settings-check">
+            <input id="settingsAutoCompactEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
+          </label>
+          <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>

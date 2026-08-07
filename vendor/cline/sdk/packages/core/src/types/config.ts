@@ -273,6 +273,11 @@ export interface CoreSessionConfig
 	pluginPaths?: string[];
 	extensions?: AgentConfig["extensions"];
 	execution?: AgentConfig["execution"];
+	/**
+	 * Max concurrent tool calls per model turn. ≥2 → parallel execution;
+	 * 1 → sequential. When omitted, the agent runtime stays sequential.
+	 */
+	maxParallelToolCalls?: number;
 	compaction?: CoreCompactionConfig;
 	checkpoint?: CoreCheckpointConfig;
 	onTeamEvent?: (event: TeamEvent) => void;

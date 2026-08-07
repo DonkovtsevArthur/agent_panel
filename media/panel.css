@@ -9,6 +9,25 @@
   /* Chat: white workspace, grey bubbles (former panel bg) */
   --harbor-chat-bg: var(--vscode-editor-background, #ffffff);
   --harbor-bubble-bg: var(--vscode-sideBar-background);
+  /* UI: system sans like Cursor chat */
+  --harbor-font-family: var(
+    --vscode-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro",
+    "Segoe UI",
+    system-ui,
+    sans-serif
+  );
+  /* Code: bundled JetBrains Mono */
+  --harbor-font-mono: "JetBrains Mono", var(
+    --vscode-editor-font-family,
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace
+  );
 }
 
 * {
@@ -74,10 +93,11 @@ body {
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: var(--vscode-font-family);
+  font-family: var(--harbor-font-family);
   font-size: var(--vscode-font-size);
   color: var(--vscode-foreground);
   background: var(--harbor-chat-bg);
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
@@ -329,7 +349,7 @@ body {
 }
 
 .msg.assistant .md-code {
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
   border-radius: 4px;
@@ -427,7 +447,7 @@ body {
     var(--vscode-editor-background)
   );
   color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 0.9em;
   white-space: pre-wrap;
   word-break: break-word;
@@ -723,7 +743,7 @@ body.vscode-dark .md-pre .syntax-property {
 }
 
 .msg.assistant .md-file {
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1216,6 +1236,10 @@ body.vscode-dark .md-pre .syntax-property {
   opacity: 1;
 }
 
+.agent-status[data-phase="cline"]::before {
+  background: var(--vscode-charts-purple, #b180d7);
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -1523,7 +1547,7 @@ body.vscode-dark .md-pre .syntax-property {
 }
 
 .proposed-plan-body .md-file {
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1539,7 +1563,7 @@ body.vscode-dark .md-pre .syntax-property {
 }
 
 .proposed-plan-body .md-code {
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 2px 5px;
   border-radius: 4px;
@@ -1561,7 +1585,7 @@ body.vscode-dark .md-pre .syntax-property {
     color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 92%, #000)
   );
   color: var(--vscode-editor-foreground);
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 12px;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -2282,11 +2306,11 @@ body.vscode-dark .md-pre .syntax-property {
 
 #prompt {
   width: 100%;
-  /* ~3 lines min, up to ~15 lines — grow with content / drag handle */
+  /* ~3 lines min, up to ~15 lines — grow with content via autoResizePrompt */
   min-height: calc(1.45em * 3);
   max-height: calc(1.45em * 15);
   overflow-y: auto;
-  resize: vertical;
+  resize: none;
   background: transparent;
   color: var(--vscode-input-foreground);
   border: none;
@@ -2320,6 +2344,25 @@ body.vscode-dark .md-pre .syntax-property {
 .composer-footer-left > .mode-picker {
   flex: 0 1 auto;
   max-width: 38%;
+}
+
+.composer-footer-left > .reason-picker {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.reason-picker .model-trigger {
+  gap: 2px;
+}
+
+.reason-picker .reason-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.reason-picker .model-menu {
+  min-width: 160px;
 }
 
 .mode-picker[data-mode="plan"] .model-trigger,
@@ -2622,7 +2665,7 @@ body.vscode-dark .md-pre .syntax-property {
   border-radius: 8px;
   background: transparent;
   color: #9a9a9a;
-  font-family: var(--vscode-font-family);
+  font-family: var(--harbor-font-family);
   font-size: 12px;
   font-weight: 400;
   font-synthesis: none;
@@ -3044,7 +3087,7 @@ html[data-surface="settings"] .settings-layout {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 10px 12px;
+  padding: 8px 10px 10px;
   flex-shrink: 0;
 }
 
@@ -3532,7 +3575,7 @@ html[data-surface="settings"] .settings-layout {
   border-radius: 6px;
   background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-input-foreground, #ccc);
-  font-family: var(--vscode-font-family);
+  font-family: var(--harbor-font-family);
   font-size: 12px;
 }
 
@@ -3616,7 +3659,7 @@ html[data-surface="settings"] .settings-layout {
 
 .settings-json-textarea {
   min-height: 140px;
-  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 11px;
 }
 
@@ -4049,7 +4092,7 @@ html[data-surface="settings"] .settings-layout {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--vscode-editor-font-family, monospace);
+  font-family: var(--harbor-font-mono);
   font-size: 12px;
 }
 
@@ -4170,7 +4213,7 @@ html[data-surface="settings"] .settings-layout {
   border-radius: 6px;
   background: transparent;
   color: var(--vscode-textLink-foreground, #3794ff);
-  font-family: var(--vscode-font-family);
+  font-family: var(--harbor-font-family);
   font-size: 12px;
   cursor: pointer;
 }
@@ -4593,7 +4636,7 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .agent-preview .md-code {
-  font-family: var(--vscode-editor-font-family, ui-monospace, Menlo, monospace);
+  font-family: var(--harbor-font-mono);
 }
 
 .agent-time {

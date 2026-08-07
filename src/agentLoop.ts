@@ -16,7 +16,9 @@ export type AgentPhase =
   | "running"
   | "editing"
   | "verifying"
-  | "done";
+  | "done"
+  /** Raw Cline session/run/finish status shown as-is in the status bar. */
+  | "cline";
 
 export type {
   AgentStepEvent,
@@ -71,6 +73,8 @@ export async function runAgentTurn(options: {
   agentMode?: string;
   /** @deprecated используй agentMode */
   planMode?: boolean;
+  /** Harbor UI intelligence level → Cline reasoningEffort. */
+  reasoningEffort?: string;
   callbacks: AgentRunCallbacks;
   /** Paths from the previous agent edit turn — discard «свои». */
   lastAgentEditedPaths?: string[];

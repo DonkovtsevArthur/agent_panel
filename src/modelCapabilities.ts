@@ -169,7 +169,9 @@ export function resolveModelCapabilities(
     typeof overrides.reasoningEffort === "string" &&
     overrides.reasoningEffort.trim()
   ) {
+    // Explicit Settings override both sets the default and opts the model in.
     resolved.reasoningEffortDefault = overrides.reasoningEffort.trim();
+    resolved.supportsReasoningEffort = true;
   }
 
   return {

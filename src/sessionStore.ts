@@ -134,6 +134,11 @@ export interface ChatSession {
   selectedModel: string;
   /** Agent / Plan / Ask (или custom mode id) для этого чата. */
   selectedMode?: string;
+  /**
+   * Уровень reasoning/thinking для чата (low | medium | high | xhigh).
+   * Имеет смысл для моделей с supportsReasoningEffort.
+   */
+  selectedReasoningEffort?: string;
   lastTurnModel?: string;
   history: ChatMessage[];
   uiMessages: UiMessage[];
@@ -1003,6 +1008,9 @@ export function branchChatFromMessage(
     title: `${agentName} · ${branchIndex}`,
     selectedModel: source.selectedModel || "",
     selectedMode: normalizeSelectedMode(source.selectedMode),
+    ...(source.selectedReasoningEffort
+      ? { selectedReasoningEffort: source.selectedReasoningEffort }
+      : {}),
     history: prefix.history,
     uiMessages: prefix.uiMessages,
     updatedAt: now,
