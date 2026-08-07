@@ -4751,6 +4751,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div id="composerPlanActions" class="composer-plan-actions" hidden></div>
       <div id="composerScmActions" class="composer-scm-actions" hidden></div>
       <div id="mentionMenu" class="mention-menu" role="listbox" hidden></div>
+      <div id="messageQueue" class="message-queue" hidden role="list" aria-label="Queued messages"></div>
       <div class="composer" id="composer" data-mode="agent">
         <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
@@ -4794,6 +4795,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <div class="composer-footer-right">
             <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
               <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
+              <span class="material-symbols-outlined icon-queue" aria-hidden="true">schedule</span>
               <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
             </button>
           </div>

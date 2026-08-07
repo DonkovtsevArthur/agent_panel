@@ -191,6 +191,10 @@
       image: "Image",
       send: "Send",
       stop: "Stop",
+      queue: "Queue",
+      queueRemove: "Remove from queue",
+      queueFull: "Message queue is full (10).",
+      queuePending: "Queued messages",
       runFailedSummary: "Error",
       runFailedTransport:
         "Model server error: API 500. Send the request again.",
@@ -558,6 +562,10 @@
       image: "Изображение",
       send: "Отправить",
       stop: "Остановить",
+      queue: "В очередь",
+      queueRemove: "Убрать из очереди",
+      queueFull: "Очередь сообщений заполнена (10).",
+      queuePending: "Сообщения в очереди",
       runFailedSummary: "Ошибка",
       runFailedTransport:
         "Ошибка сервера модели: API 500. Отправьте запрос ещё раз.",
@@ -794,6 +802,7 @@
   /** Avoid re-opening the same plan markdown repeatedly. */
   let lastOpenedPlanKey = "";
   const composerDropHintEl = document.getElementById("composerDropHint");
+  const messageQueueEl = document.getElementById("messageQueue");
   const modelPicker = document.getElementById("modelPicker");
   const modelTrigger = document.getElementById("modelTrigger");
   const modelLabel = document.getElementById("modelLabel");
@@ -1298,6 +1307,9 @@
       reasonLabel.textContent = t("reasonMedium");
     }
     sendBtn.title = sendBtn.setAttribute("aria-label", t("send")) || t("send");
+    if (messageQueueEl) {
+      messageQueueEl.setAttribute("aria-label", t("queuePending"));
+    }
     composerDropHintEl.querySelector(".composer-drop-hint-text").textContent =
       UI_LANG === "ru" ? "Отпустите файл, чтобы прикрепить" : "Drop file to attach";
     contextRingEl.setAttribute("aria-label", t("contextUsage"));
@@ -1731,6 +1743,11 @@
   let uiMessagesCache = [];
   let pendingAttachments = [];
   let pendingSelections = [];
+  /** @type {Map<string, Array<{id: string, text: string, attachments: any[], mode: string, model: string, reasoningEffort?: string}>>} */
+  const messageQueues = new Map();
+  const MAX_MESSAGE_QUEUE = 10;
+  let drainingQueue = false;
+  let drainScheduled = false;
   let mentionOpen = false;
   let mentionItems = [];
   let mentionActiveIndex = 0;
@@ -1918,6 +1935,261 @@
     renderAttachPreview();
   }
 
+  function composerHasContent() {
+    return Boolean(
+      String(promptEl.value || "").trim() ||
+        pendingAttachments.length ||
+        pendingSelections.length
+    );
+  }
+
+  function queueChipId() {
+    return `q_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+  }
+
+  function getQueueForChat(chatId) {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return [];
+    }
+    if (!messageQueues.has(id)) {
+      messageQueues.set(id, []);
+    }
+    return messageQueues.get(id);
+  }
+
+  function getActiveQueue() {
+    return getQueueForChat(activeChatId);
+  }
+
+  function clearMessageQueue(chatId) {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return;
+    }
+    messageQueues.delete(id);
+    if (id === activeChatId) {
+      renderMessageQueue();
+    }
+  }
+
+  function queuePreviewText(text) {
+    const plain = String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!plain) {
+      return UI_LANG === "ru" ? "(вложение)" : "(attachment)";
+    }
+    return plain.length > 80 ? `${plain.slice(0, 80)}…` : plain;
+  }
+
+  function renderMessageQueue() {
+    if (!messageQueueEl) {
+      return;
+    }
+    const queue = getActiveQueue();
+    if (!queue.length) {
+      messageQueueEl.hidden = true;
+      messageQueueEl.replaceChildren();
+      return;
+    }
+    messageQueueEl.hidden = false;
+    messageQueueEl.setAttribute("aria-label", t("queuePending"));
+    messageQueueEl.replaceChildren();
+    for (const item of queue) {
+      const row = document.createElement("div");
+      row.className = "message-queue-item";
+      row.setAttribute("role", "listitem");
+      row.dataset.queueId = item.id;
+      row.title = t("queue");
+      row.tabIndex = 0;
+
+      const icon = document.createElement("span");
+      icon.className = "material-symbols-outlined message-queue-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "schedule";
+
+      const textEl = document.createElement("span");
+      textEl.className = "message-queue-text";
+      textEl.textContent = queuePreviewText(item.text);
+
+      row.appendChild(icon);
+      row.appendChild(textEl);
+
+      const attCount = Array.isArray(item.attachments)
+        ? item.attachments.length
+        : 0;
+      if (attCount > 0) {
+        const meta = document.createElement("span");
+        meta.className = "message-queue-meta";
+        meta.textContent = `×${attCount}`;
+        row.appendChild(meta);
+      }
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "message-queue-remove";
+      removeBtn.title = t("queueRemove");
+      removeBtn.setAttribute("aria-label", t("queueRemove"));
+      removeBtn.dataset.queueId = item.id;
+      const removeIcon = document.createElement("span");
+      removeIcon.className = "material-symbols-outlined";
+      removeIcon.setAttribute("aria-hidden", "true");
+      removeIcon.textContent = "close";
+      removeBtn.appendChild(removeIcon);
+      row.appendChild(removeBtn);
+
+      messageQueueEl.appendChild(row);
+    }
+  }
+
+  function removeQueuedMessage(queueId) {
+    const queue = getActiveQueue();
+    const next = queue.filter((item) => item.id !== queueId);
+    if (next.length === queue.length) {
+      return;
+    }
+    if (activeChatId) {
+      messageQueues.set(activeChatId, next);
+    }
+    renderMessageQueue();
+  }
+
+  function restoreQueuedMessage(queueId) {
+    const queue = getActiveQueue();
+    const index = queue.findIndex((item) => item.id === queueId);
+    if (index < 0) {
+      return;
+    }
+    const [item] = queue.splice(index, 1);
+    if (activeChatId) {
+      messageQueues.set(activeChatId, queue);
+    }
+    renderMessageQueue();
+    promptEl.value = String(item.text || "");
+    autoResizePrompt();
+    persistDraftPrompt();
+    clearPendingAttachments();
+    if (Array.isArray(item.attachments) && item.attachments.length) {
+      mergePendingAttachments(item.attachments);
+    }
+    if (item.mode) {
+      setAgentMode(item.mode, { close: true, notify: false });
+    }
+    updateSendButton();
+    focusPrompt();
+  }
+
+  function enqueueComposerMessage({
+    text,
+    attachments,
+    mode,
+    model,
+    reasoningEffort,
+  }) {
+    if (!activeChatId) {
+      return false;
+    }
+    const queue = getActiveQueue();
+    if (queue.length >= MAX_MESSAGE_QUEUE) {
+      showCopyToast(t("queueFull"));
+      return false;
+    }
+    queue.push({
+      id: queueChipId(),
+      text,
+      attachments: (attachments || []).map((att) => ({ ...att })),
+      mode,
+      model: model || getSelectedModel(),
+      reasoningEffort: reasoningEffort || undefined,
+    });
+    messageQueues.set(activeChatId, queue);
+    renderMessageQueue();
+    return true;
+  }
+
+  function dispatchQueuedSend(item) {
+    const text = String(item.text || "").trim();
+    const attachments = Array.isArray(item.attachments)
+      ? item.attachments.slice()
+      : [];
+    if (!text && !attachments.length) {
+      return;
+    }
+    const modeForSend = normalizeAgentModeUi(item.mode || agentMode);
+    editingUserIndex = null;
+    editingUserText = "";
+    editingModelId = "";
+    editingModeId = "";
+    editingAttachments = [];
+    stickToBottom = true;
+    uiMessagesCache.push({
+      role: "user",
+      text,
+      attachments,
+      mode: modeForSend,
+    });
+    appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
+    setBusy(true);
+    vscode.postMessage({
+      type: "send",
+      text,
+      model: item.model || getSelectedModel(),
+      agentMode: modeForSend,
+      reasoningEffort: item.reasoningEffort || undefined,
+      attachments: attachments.map(attachmentPayload),
+    });
+  }
+
+  function tryDrainQueue() {
+    if (busy || drainingQueue) {
+      return;
+    }
+    const queue = getActiveQueue();
+    if (!queue.length) {
+      return;
+    }
+    drainingQueue = true;
+    try {
+      const item = queue.shift();
+      if (activeChatId) {
+        messageQueues.set(activeChatId, queue);
+      }
+      renderMessageQueue();
+      if (item) {
+        dispatchQueuedSend(item);
+      }
+    } finally {
+      drainingQueue = false;
+    }
+  }
+
+  function updateSendButton() {
+    if (!sendBtn) {
+      return;
+    }
+    sendBtn.classList.remove("is-stop", "is-queue");
+    if (!busy) {
+      sendBtn.dataset.mode = "send";
+      sendBtn.title = t("send");
+      sendBtn.setAttribute("aria-label", t("send"));
+      return;
+    }
+    if (composerHasContent()) {
+      sendBtn.dataset.mode = "queue";
+      sendBtn.classList.add("is-queue");
+      sendBtn.title = t("queue");
+      sendBtn.setAttribute("aria-label", t("queue"));
+      return;
+    }
+    sendBtn.dataset.mode = "stop";
+    sendBtn.classList.add("is-stop");
+    sendBtn.title = t("stop");
+    sendBtn.setAttribute("aria-label", t("stop"));
+  }
+
   function selectionChipId() {
     return `sel_${Date.now().toString(36)}_${Math.random()
       .toString(36)
@@ -2032,6 +2304,7 @@
     if (!pendingSelections.length) {
       selectionPreviewEl.hidden = true;
       selectionPreviewEl.innerHTML = "";
+      updateSendButton();
       return;
     }
     selectionPreviewEl.hidden = false;
@@ -2058,6 +2331,7 @@
         );
       })
       .join("");
+    updateSendButton();
   }
 
   function buildMessageWithSelections(userText) {
@@ -2079,6 +2353,7 @@
     if (!pendingAttachments.length) {
       attachPreviewEl.hidden = true;
       attachPreviewEl.innerHTML = "";
+      updateSendButton();
       return;
     }
     attachPreviewEl.hidden = false;
@@ -2111,6 +2386,7 @@
         );
       })
       .join("");
+    updateSendButton();
   }
 
   function closeMentionMenu() {
@@ -4149,7 +4425,7 @@
       }
     }
     setAgentStatus("", true);
-    setBusy(false);
+    setIdleAndDrain();
     scrollToBottom();
   }
 
@@ -10882,17 +11158,18 @@
 
   function setBusy(nextBusy) {
     busy = nextBusy;
-    promptEl.disabled = busy;
-    // Model can always be changed for the next turn — even while a run is active.
+    // Keep composer editable while a run is active so the user can queue
+    // the next message. Model/mode/plus stay available for that draft.
+    promptEl.disabled = false;
     modelTrigger.disabled = false;
     if (composerPlusBtn) {
-      composerPlusBtn.disabled = busy;
+      composerPlusBtn.disabled = false;
     }
     if (modeTrigger) {
-      modeTrigger.disabled = busy;
+      modeTrigger.disabled = false;
     }
     if (reasonTrigger) {
-      reasonTrigger.disabled = busy;
+      reasonTrigger.disabled = false;
     }
     if (composerScmActionsEl) {
       const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
@@ -10918,14 +11195,25 @@
       closeSlashMenu();
       closeMentionMenu();
     }
-    sendBtn.dataset.mode = busy ? "stop" : "send";
-    sendBtn.title = busy ? t("stop") : t("send");
-    sendBtn.setAttribute("aria-label", busy ? t("stop") : t("send"));
-    sendBtn.classList.toggle("is-stop", busy);
+    updateSendButton();
     if (!busy) {
       focusPrompt();
     }
   }
+
+  function setIdleAndDrain() {
+    setBusy(false);
+    if (drainScheduled) {
+      return;
+    }
+    drainScheduled = true;
+    queueMicrotask(() => {
+      drainScheduled = false;
+      tryDrainQueue();
+    });
+  }
+
+  updateSendButton();
 
   // сразу показать модель, не дожидаясь init
   fillModels(DEFAULT_MODELS, "");
@@ -11181,13 +11469,36 @@
         closeMentionMenu();
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
         focusPrompt();
+        updateSendButton();
         return;
       }
       typed = command.sendText;
     }
     const text = buildMessageWithSelections(typed);
     const attachments = pendingAttachments.slice();
-    if ((!text && !attachments.length) || busy) {
+    if (!text && !attachments.length) {
+      return;
+    }
+    if (busy) {
+      const queued = enqueueComposerMessage({
+        text,
+        attachments,
+        mode: modeForSend,
+        model: getSelectedModel(),
+        reasoningEffort: selectedReasoningEffort || undefined,
+      });
+      if (!queued) {
+        return;
+      }
+      promptEl.value = "";
+      autoResizePrompt();
+      clearDraftPrompt();
+      clearPendingAttachments();
+      clearPendingSelections();
+      closeSlashMenu();
+      closeMentionMenu();
+      updateSendButton();
+      focusPrompt();
       return;
     }
     editingUserIndex = null;
@@ -11223,19 +11534,58 @@
 
   sendBtn.addEventListener("click", () => {
     if (busy) {
+      if (composerHasContent()) {
+        sendPrompt();
+        return;
+      }
       vscode.postMessage({ type: "stop" });
       return;
     }
     sendPrompt();
   });
 
+  if (messageQueueEl) {
+    messageQueueEl.addEventListener("click", (event) => {
+      const removeBtn =
+        event.target instanceof Element
+          ? event.target.closest(".message-queue-remove")
+          : null;
+      if (removeBtn && messageQueueEl.contains(removeBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        removeQueuedMessage(removeBtn.dataset.queueId || "");
+        return;
+      }
+      const item =
+        event.target instanceof Element
+          ? event.target.closest(".message-queue-item")
+          : null;
+      if (!item || !messageQueueEl.contains(item)) {
+        return;
+      }
+      event.preventDefault();
+      restoreQueuedMessage(item.dataset.queueId || "");
+    });
+    messageQueueEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const item =
+        event.target instanceof Element
+          ? event.target.closest(".message-queue-item")
+          : null;
+      if (!item || !messageQueueEl.contains(item)) {
+        return;
+      }
+      event.preventDefault();
+      restoreQueuedMessage(item.dataset.queueId || "");
+    });
+  }
+
   if (composerPlusBtn) {
     composerPlusBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (busy) {
-        return;
-      }
       togglePlusMenu();
     });
   }
@@ -11248,9 +11598,6 @@
     modeTrigger.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (busy) {
-        return;
-      }
       toggleModeMenu();
     });
   }
@@ -11270,7 +11617,7 @@
         return;
       }
       const option = event.target.closest(".model-option");
-      if (!option || busy || option.dataset.action === "add-mode") {
+      if (!option || option.dataset.action === "add-mode") {
         return;
       }
       event.preventDefault();
@@ -11287,7 +11634,7 @@
     reasonTrigger.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (busy || (reasonPicker && reasonPicker.hidden)) {
+      if (reasonPicker && reasonPicker.hidden) {
         return;
       }
       toggleReasonMenu();
@@ -11301,7 +11648,7 @@
     });
     reasonMenu.addEventListener("click", (event) => {
       const option = event.target.closest(".model-option");
-      if (!option || busy) {
+      if (!option) {
         return;
       }
       event.preventDefault();
@@ -11317,7 +11664,7 @@
   if (composerPlusMenu) {
     composerPlusMenu.addEventListener("click", (event) => {
       const item = event.target.closest(".composer-plus-item");
-      if (!item || busy || item.disabled || item.classList.contains("is-disabled")) {
+      if (!item || item.disabled || item.classList.contains("is-disabled")) {
         return;
       }
       event.preventDefault();
@@ -11408,9 +11755,6 @@
       event.preventDefault();
       event.stopPropagation();
       clearComposerDropState();
-      if (busy) {
-        return;
-      }
       const uris = extractDropUris(event.dataTransfer);
       if (uris.length) {
         vscode.postMessage({ type: "attachUris", uris });
@@ -11490,7 +11834,7 @@
   }
 
   async function handleChatImagePaste(event) {
-    if (busy || !chatScreen || chatScreen.hidden) {
+    if (!chatScreen || chatScreen.hidden) {
       return;
     }
     let imageFiles = extractClipboardImages(event.clipboardData);
@@ -11524,7 +11868,7 @@
       (event.metaKey || event.ctrlKey) &&
       !event.altKey &&
       !event.shiftKey;
-    if (!isPaste || busy || !chatScreen || chatScreen.hidden) {
+    if (!isPaste || !chatScreen || chatScreen.hidden) {
       return;
     }
     // Если фокус не в поле ввода — всё равно даём шанс прочитать буфер
@@ -12223,6 +12567,7 @@
         if (!chatId) {
           return;
         }
+        clearMessageQueue(chatId);
         vscode.postMessage({ type: "deleteBranch", chatId });
         return;
       }
@@ -12722,6 +13067,7 @@
   promptEl.addEventListener("input", () => {
     autoResizePrompt();
     persistDraftPrompt();
+    updateSendButton();
     if (!onSlashInput(promptEl)) {
       onMentionInput(promptEl);
     }
@@ -12821,6 +13167,7 @@
         }
         showScreen(msg.screen || "agents");
         setBusy(Boolean(msg.busy));
+        renderMessageQueue();
         break;
       case "attachmentsAdded":
         mergePendingAttachments(msg.attachments || []);
@@ -12946,6 +13293,7 @@
         }
         showScreen("chat");
         setBusy(Boolean(msg.busy));
+        renderMessageQueue();
         {
           const highlight =
             typeof msg.highlightMessageIndex === "number"
@@ -13292,7 +13640,7 @@
           }
         }
         setAgentStatus("", true);
-        setBusy(false);
+        setIdleAndDrain();
         break;
       case "stopped":
         if (msg.chatId && !activeChatId) {
@@ -13304,7 +13652,7 @@
         clearStoppedRunArtifacts();
         sealToolGroups();
         setAgentStatus("", true);
-        setBusy(false);
+        setIdleAndDrain();
         break;
       case "cleared":
         messagesEl.innerHTML = "";
@@ -13318,6 +13666,7 @@
         lastOpenedPlanKey = "";
         setAgentStatus("", true);
         setContextUsage(0, contextMax);
+        clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
         break;
     }
