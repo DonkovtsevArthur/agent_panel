@@ -642,24 +642,27 @@ export async function runClineAgentTurn(options: {
     callbacks.onFigmaNeedsConnect?.();
   }
 
-  const baseSystemPrompt = [
-    bundle.getClineDefaultSystemPrompt({
-      overridePrompt: config.systemPrompt || undefined,
-      ide: "VS Code",
-      mode: clineMode,
-      workspaceRoot: cwd,
-      providerId: "openai-compatible",
-      workspaceName: path.basename(cwd),
-      platform: process.platform,
-      planModeSwitchTool: false,
-    }),
-    // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
-    String(options.agentMode || "").toLowerCase() === "plan"
-      ? HARBOR_PLAN_MODE_CARD_HINT
-      : "",
-  ]
-    .filter((part) => String(part || "").trim())
-    .join("\n\n");
+  const baseSystemPrompt = ensureHarborWorkspaceEnv(
+    [
+      bundle.getClineDefaultSystemPrompt({
+        overridePrompt: config.systemPrompt || undefined,
+        ide: "VS Code",
+        mode: clineMode,
+        workspaceRoot: cwd,
+        providerId: "openai-compatible",
+        workspaceName: path.basename(cwd),
+        platform: process.platform,
+        planModeSwitchTool: false,
+      }),
+      // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
+      String(options.agentMode || "").toLowerCase() === "plan"
+        ? HARBOR_PLAN_MODE_CARD_HINT
+        : "",
+    ]
+      .filter((part) => String(part || "").trim())
+      .join("\n\n"),
+    cwd
+  );
 
   const core = await getClineCore(bundle);
   const sessionId = newSessionId();
