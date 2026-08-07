@@ -1,5 +1,6 @@
 import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiClient";
+import type { ToolStepMetrics } from "./agentSteps";
 
 export type UiMessageRole =
   | "user"
@@ -23,6 +24,7 @@ export interface UiMessageStep {
   text?: string;
   attempt?: number;
   maxAttempts?: number;
+  metrics?: ToolStepMetrics;
 }
 
 export interface UiMessage {

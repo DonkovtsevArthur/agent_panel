@@ -1,5 +1,6 @@
 import type { AgentModel, getEnabledModels } from "./config";
 import { resolveModelCapabilities } from "./modelCapabilities";
+import { isVllmAutoToolChoiceError } from "./providerErrors";
 
 /** The concrete list shape returned by getEnabledModels, without reading config. */
 export type EnabledAgentModels = ReturnType<typeof getEnabledModels>;
@@ -222,6 +223,7 @@ export function classifyModelFallbackError(
   }
 
   if (
+    isVllmAutoToolChoiceError(message) ||
     /(?:vision|image|multimodal).{0,80}(?:not supported|does not support|unsupported|not capable|cannot|can't)|(?:not supported|does not support|unsupported|not capable|cannot|can't).{0,80}(?:vision|images?|multimodal)|(?:tools?|function calling).{0,80}(?:not supported|does not support|unsupported|not available)|model.{0,50}(?:not found|does not exist|not available|unsupported)/i.test(
       message
     )
