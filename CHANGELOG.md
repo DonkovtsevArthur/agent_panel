@@ -2,6 +2,10 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [1.1.18] — 2026-08-07
+
+- **Runtime:** в system prompt всегда прокидывается Working Directory (open folder) — custom/builtin override больше не даёт модели выдумывать `/home/cline/project`
+
 ## [1.1.17] — 2026-08-07
 
 - **Runtime:** параллельные tool calls (`maxParallelToolCalls: 8`) — Settings → Parallel tool calls
