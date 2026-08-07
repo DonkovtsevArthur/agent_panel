@@ -22,6 +22,31 @@ export interface AgentStepEvent {
   text?: string;
   attempt?: number;
   maxAttempts?: number;
+  /**
+   * Parsed per-tool metrics for richer one-line labels.
+   * Populated by the runtime from the Cline tool output on `content_end`.
+   */
+  metrics?: ToolStepMetrics;
+}
+
+/**
+ * Structured metrics extracted from a Cline tool result so the webview can
+ * render precise one-line labels (paths, match counts, exit codes, …) without
+ * re-parsing opaque `resultPreview` JSON.
+ */
+export interface ToolStepMetrics {
+  /** Resolved file paths for read_files / editor. */
+  files?: string[];
+  /** Total lines read across all files (read_files). */
+  lines?: number;
+  /** Number of search hits (search_codebase). */
+  matches?: number;
+  /** Process exit code (run_commands); present only when failure detected. */
+  exitCode?: number;
+  /** First lines of stderr / error tail (run_commands on failure). */
+  errorOut?: string;
+  /** editor: true when a file was created rather than modified. */
+  created?: boolean;
 }
 
 export type CompletionIntent = "user_prompt" | "tool_results";

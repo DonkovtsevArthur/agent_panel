@@ -33,6 +33,7 @@ import {
   modelFallbackEligibility,
   selectFallbackModel,
 } from "./modelRouting";
+import { explainKnownProviderError, humanizeProviderError } from "./providerErrors";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -2975,6 +2976,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   argsPreview: event.argsPreview,
                   status: event.status,
                   resultPreview: event.resultPreview,
+                  metrics: event.metrics,
                 },
               };
               if (existingIx >= 0) {
@@ -3156,8 +3158,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           const fallbackLabel =
             enabledModels.find((item) => item.id === activeTurnModel)?.label ||
             activeTurnModel;
-          const reason = fallbackError.message.replace(/\s+/g, " ").slice(0, 240);
           const lang = resolveUiLanguage(getConfig().language);
+          const reason = humanizeProviderError(fallbackError.message, lang, 180);
           const statusText =
             lang === "ru"
               ? `Модель ${failedModel} отказала (${reason}). Повторяю один раз через ${fallbackLabel}.`
@@ -3236,10 +3238,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         return;
       }
 
-      let messageText = rawMessage;
-      if (transportKind === "transport") {
-        const lang = resolveUiLanguage(getConfig().language);
-        const reason = rawMessage.replace(/\s+/g, " ").slice(0, 240);
+      const lang = resolveUiLanguage(getConfig().language);
+      let messageText = humanizeProviderError(error, lang);
+      // Transport wrap only when we have no specialized gateway explanation.
+      if (transportKind === "transport" && !explainKnownProviderError(error, lang)) {
+        const reason = humanizeProviderError(error, lang, 240);
         const isHttpServerError = /\bAPI\s*5\d\d\b/i.test(reason);
         if (lang === "ru") {
           messageText = isHttpServerError

@@ -6,10 +6,21 @@ import * as path from "path";
 import * as vscode from "vscode";
 import {
   getConfig,
+  getContextWindow,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
+  resolveModelSupportsVision,
 } from "./config";
+import {
+  resolveModelCapabilities,
+  resolveModelRequestMaxTokens,
+} from "./modelCapabilities";
+import {
+  harborDefaultRulesForLanguage,
+  isBuiltinSystemPrompt,
+  resolveUiLanguage,
+} from "./i18n";
 import { toClineReasoningOptions } from "./reasoningEffort";
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiClient";
@@ -18,7 +29,7 @@ import { attachmentPreviewDataUrl } from "./attachments";
 import type {
   AgentRunCallbacks,
 } from "./agentLoop";
-import type { AgentStepEvent } from "./agentSteps";
+import type { AgentStepEvent, ToolStepMetrics } from "./agentSteps";
 import {
   appendFigmaRuntimeNudge,
   loadHarborMcpToolsForCline,
@@ -104,6 +115,87 @@ type ClineCoreInstance = {
   subscribe: (listener: (event: CoreSessionEvent) => void) => () => void;
 };
 
+/**
+ * Subset of Cline's ModelInfo (vendor/.../shared/src/llms/model-info.ts) that
+ * Harbor can supply from Settings + the capability registry. Lets Cline budget
+ * auto-compact trigger/target tokens and cap output correctly per model.
+ *
+ * Must include `id`: Core only applies a catalog override when the entry is
+ * keyed under `knownModels` (or `providerConfig.modelInfo.id === modelId`).
+ * A top-level `modelInfo` on start config is not a CoreSessionConfig field and
+ * is silently dropped by local-runtime-bootstrap.
+ */
+type ClineKnownModelInfo = {
+  id: string;
+  maxTokens?: number;
+  contextWindow?: number;
+  maxInputTokens?: number;
+  capabilities?: string[];
+};
+
+/**
+ * Build knownModels + maxTokensPerTurn for Cline from Harbor's resolved model
+ * capabilities so auto-compact / output caps match the real model, and so the
+ * gateway does not invent Anthropic wire-format thinking for Claude-via-LiteLLM.
+ */
+function buildClineModelInfo(modelId: string): {
+  knownModels: Record<string, ClineKnownModelInfo>;
+  maxTokensPerTurn?: number;
+} {
+  const config = getConfig();
+  const stored = config.models.find((m) => m.id === modelId);
+  const contextWindow = getContextWindow(modelId);
+  const storedMax =
+    typeof stored?.maxOutputTokens === "number" && stored.maxOutputTokens > 0
+      ? stored.maxOutputTokens
+      : undefined;
+  // Claude extended thinking needs max_tokens above the thinking budget;
+  // capability registry sets minimumOutputTokens (16k). Honor Settings max too.
+  const maxOutputTokens = resolveModelRequestMaxTokens(modelId, storedMax);
+  const caps = resolveModelCapabilities(modelId, {
+    contextWindow: stored?.contextWindow,
+    supportsVision: stored?.supportsVision,
+  });
+  const capabilities: string[] = ["tools"];
+  if (resolveModelSupportsVision(modelId) || caps.supportsVision) {
+    capabilities.push("images");
+  }
+  // NOTE: не объявляем capability "reasoning"/"reasoning-effort" в catalog.
+  // Иначе Cline (vendor/cline) строит Anthropic-shaped reasoning на wire
+  // (thinking: {type:"enabled", budgetTokens} + reasoning: {enabled,max_tokens})
+  // через shouldEmitAnthropicReasoning → buildAnthropicCompatibleReasoningOptions.
+  // Корпоративный LiteLLM/OpenRouter терминирует Claude как openai-форматный
+  // upstream и 400-ит на этих полях (streaming_error / provider: "openai").
+  // Сам reasoning при этом сохраняется: core.start получает thinking:true +
+  // reasoningEffort из reasoningOptions (ниже в runClineAgentTurn), это течёт
+  // в request.reasoning → portable path отдаёт на wire чистый
+  // reasoning_effort: "high" (OpenAI-style), который LiteLLM понимает.
+  // Thinking-карточка в UI рендерится из reasoning_content дельт, а не из
+  // catalog-capability, поэтому визуально ничего не теряется.
+  //
+  // Without any knownModels entry, capabilities stay undefined and
+  // shouldEmitAnthropicReasoning treats that as "emit Anthropic thinking" —
+  // which is exactly the LiteLLM 400 path above. Passing capabilities:["tools"]
+  // (no "reasoning") forces the portable OpenAI-style path instead.
+  const modelEntry: ClineKnownModelInfo = {
+    id: modelId,
+    ...(Number.isFinite(contextWindow) && contextWindow > 0
+      ? {
+          contextWindow,
+          maxInputTokens: contextWindow,
+        }
+      : {}),
+    ...(maxOutputTokens ? { maxTokens: maxOutputTokens } : {}),
+    capabilities,
+  };
+  return {
+    knownModels: {
+      [modelId]: modelEntry,
+    },
+    ...(maxOutputTokens ? { maxTokensPerTurn: maxOutputTokens } : {}),
+  };
+}
+
 type ClineBundle = {
   ClineCore: {
     create: (options: Record<string, unknown>) => Promise<ClineCoreInstance>;
@@ -114,6 +206,9 @@ type ClineBundle = {
     preset: "default" | "yolo"
   ) => Record<string, unknown>;
   getClineDefaultSystemPrompt: (options: {
+    /** Host-specific rules injected into {{CLINE_RULES}} (keeps the base prompt). */
+    rules?: string;
+    /** Full override — replaces the entire base prompt. Avoid when possible. */
     overridePrompt?: string;
     ide?: string;
     mode?: ClineMode | "yolo" | "zen";
@@ -207,10 +302,11 @@ function workspaceCwd(): string {
 }
 
 /**
- * Harbor always passes a custom/builtin `overridePrompt`, which replaces
- * Cline's default template and drops the `<env>` Working Directory block.
- * Models then invent sandbox paths like `/home/cline/project`. Stamp cwd
- * explicitly so tools resolve under the open VS Code folder.
+ * Cline's base prompt already renders `{{CWD}}` into a `<env>` block, so this
+ * guard normally no-ops (it detects the existing Working Directory line).
+ * Kept as a safety net: if a custom user `rules` value somehow lacks cwd, we
+ * still stamp it so tools resolve under the open VS Code folder instead of
+ * invented sandbox paths like `/home/cline/project`.
  */
 function harborWorkspaceEnvBlock(cwd: string): string {
   const root = String(cwd || "").trim() || process.cwd();
@@ -595,6 +691,163 @@ function spawnAgentResultPreview(
   return previewJson(output, 240);
 }
 
+type ToolResultRow = {
+  query?: unknown;
+  result?: unknown;
+  error?: unknown;
+  success?: unknown;
+};
+
+/** Normalize a Cline tool output into a row array (read_files/run_commands/…). */
+function asToolResultRows(output: unknown): ToolResultRow[] {
+  if (Array.isArray(output)) {
+    return output.filter(
+      (r): r is ToolResultRow => !!r && typeof r === "object"
+    );
+  }
+  if (output && typeof output === "object") {
+    return [output as ToolResultRow];
+  }
+  return [];
+}
+
+/** Extract a short tail (first ~3 non-empty lines) from a string. */
+function firstLines(value: unknown, max = 3): string {
+  const text = typeof value === "string" ? value : "";
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.slice(0, max).join(" · ");
+}
+
+/**
+ * Extract structured per-tool metrics from a Cline tool result + input so the
+ * webview can render precise one-line labels (paths, match counts, exit codes)
+ * without re-parsing opaque resultPreview JSON.
+ *
+ * Handles current Cline tool names: read_files, search_codebase, run_commands,
+ * editor, apply_patch. Returns undefined for tools with no useful metrics.
+ */
+function parseToolMetrics(
+  toolName: string,
+  output: unknown,
+  input: unknown
+): ToolStepMetrics | undefined {
+  const name = String(toolName || "").trim();
+  const inputObj =
+    input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+
+  if (name === "read_files") {
+    const rows = asToolResultRows(output);
+    const files: string[] = [];
+    let lines = 0;
+    for (const r of rows) {
+      const q = String(r.query || "").trim();
+      // query is "<path>" or "<path>:<start>-<end>"; strip the range suffix.
+      const path = q.split(":")[0].trim();
+      if (path) {
+        files.push(path);
+      }
+      const resultText = typeof r.result === "string" ? r.result : "";
+      if (resultText) {
+        lines += resultText.split("\n").length;
+      }
+    }
+    // Fallback to input file list when output rows have no query paths.
+    if (!files.length) {
+      const fromInput = collectInputPaths(inputObj);
+      files.push(...fromInput);
+    }
+    return {
+      ...(files.length ? { files } : {}),
+      ...(lines > 0 ? { lines } : {}),
+    };
+  }
+
+  if (name === "search_codebase") {
+    const rows = asToolResultRows(output);
+    let matches = 0;
+    for (const r of rows) {
+      const text = typeof r.result === "string" ? r.result : "";
+      // Cline search formatter: "Found N results for pattern: <q>".
+      const m = text.match(/Found\s+(\d+)\s+results?/i);
+      if (m) {
+        matches += Number(m[1] || 0);
+      }
+    }
+    return matches > 0 ? { matches } : undefined;
+  }
+
+  if (name === "run_commands") {
+    const rows = asToolResultRows(output);
+    let exitCode: number | undefined;
+    let errorOut = "";
+    for (const r of rows) {
+      if (r.success === false) {
+        const errText = typeof r.error === "string" ? r.error : "";
+        const codeMatch = errText.match(/code\s+(\d+)/i);
+        if (codeMatch && exitCode === undefined) {
+          exitCode = Number(codeMatch[1]);
+        }
+        if (!errorOut) {
+          errorOut = firstLines(r.result, 2) || firstLines(errText, 2);
+        }
+      }
+    }
+    if (exitCode !== undefined || errorOut) {
+      return {
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(errorOut ? { errorOut } : {}),
+      };
+    }
+    return undefined;
+  }
+
+  if (name === "editor") {
+    const filePath = pathFromToolInput(inputObj);
+    // create vs replace: editor creates when there is no old_text and no insert_line.
+    const hasOldText =
+      typeof inputObj.old_text === "string" && inputObj.old_text.length > 0;
+    const hasInsertLine = inputObj.insert_line !== undefined && inputObj.insert_line !== null;
+    const created = !hasOldText && !hasInsertLine;
+    return {
+      ...(filePath ? { files: [filePath] } : {}),
+      created,
+    };
+  }
+
+  if (name === "apply_patch") {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+/** Collect file paths from common read_files input shapes. */
+function collectInputPaths(input: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const pushPath = (v: unknown) => {
+    if (typeof v === "string" && v.trim()) {
+      out.push(v.trim());
+    } else if (v && typeof v === "object") {
+      const p = (v as Record<string, unknown>).path;
+      if (typeof p === "string" && p.trim()) {
+        out.push(p.trim());
+      }
+    }
+  };
+  for (const key of ["files", "paths", "file_paths"]) {
+    const v = input[key];
+    if (Array.isArray(v)) {
+      v.forEach(pushPath);
+    } else if (v !== undefined) {
+      pushPath(v);
+    }
+  }
+  return out;
+}
+
 function emitStep(
   callbacks: AgentRunCallbacks,
   event: AgentStepEvent
@@ -642,25 +895,37 @@ export async function runClineAgentTurn(options: {
     callbacks.onFigmaNeedsConnect?.();
   }
 
+  // Harbor-specific guidance rides in the rules slot so Cline's base prompt
+  // (parallelism, plan/act tags, verify-after-edit, gather-context-first)
+  // stays intact instead of being replaced wholesale.
+  const uiLang = resolveUiLanguage(getConfig().language);
+  // built-in / legacy defaults are full prompts (with env block) that would
+  // duplicate Cline's base — swap them for the compact rules-only form.
+  const customRules = isBuiltinSystemPrompt(config.systemPrompt)
+    ? harborDefaultRulesForLanguage(uiLang)
+    : String(config.systemPrompt || "").trim();
+  const harborRules = [
+    customRules,
+    // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
+    String(options.agentMode || "").toLowerCase() === "plan"
+      ? HARBOR_PLAN_MODE_CARD_HINT
+      : "",
+  ]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+
   const baseSystemPrompt = ensureHarborWorkspaceEnv(
-    [
-      bundle.getClineDefaultSystemPrompt({
-        overridePrompt: config.systemPrompt || undefined,
-        ide: "VS Code",
-        mode: clineMode,
-        workspaceRoot: cwd,
-        providerId: "openai-compatible",
-        workspaceName: path.basename(cwd),
-        platform: process.platform,
-        planModeSwitchTool: false,
-      }),
-      // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
-      String(options.agentMode || "").toLowerCase() === "plan"
-        ? HARBOR_PLAN_MODE_CARD_HINT
-        : "",
-    ]
-      .filter((part) => String(part || "").trim())
-      .join("\n\n"),
+    bundle.getClineDefaultSystemPrompt({
+      rules: harborRules,
+      ide: "VS Code",
+      mode: clineMode,
+      workspaceRoot: cwd,
+      providerId: "openai-compatible",
+      workspaceName: path.basename(cwd),
+      platform: process.platform,
+      planModeSwitchTool: false,
+    }),
     cwd
   );
 
@@ -780,6 +1045,7 @@ export async function runClineAgentTurn(options: {
                   ? errorMessageFromToolOutput(event.output)
                   : "";
           const failed = Boolean(errMsg) || toolOutputIsSoftFail(event.output);
+          const metrics = parseToolMetrics(name, event.output, input);
           emitStep(callbacks, {
             stepId: toolCallId,
             kind: "tool",
@@ -788,6 +1054,7 @@ export async function runClineAgentTurn(options: {
             argsPreview: previewJson(input),
             status: failed ? "error" : "done",
             resultPreview: spawnAgentResultPreview(name, event.output, errMsg),
+            ...(metrics ? { metrics } : {}),
           });
           // Only seed review when the edit tool actually succeeded.
           if (!failed && looksLikeEditTool(name)) {
@@ -969,6 +1236,10 @@ export async function runClineAgentTurn(options: {
       )
     : {};
 
+  // Resolve real context window / max output so Cline budgets auto-compact and
+  // output caps against the model's actual limits instead of a blind default.
+  const modelInfoData = buildClineModelInfo(options.model);
+
   try {
     const startResult = await core.start({
       source: "vscode",
@@ -987,7 +1258,7 @@ export async function runClineAgentTurn(options: {
         mode: clineMode,
         enableTools: true,
         enableSpawnAgent,
-        enableAgentTeams: false,
+        enableAgentTeams: true,
         disableMcpSettingsTools: true,
         maxParallelToolCalls,
         ...(enableAutoCompact
@@ -1002,6 +1273,7 @@ export async function runClineAgentTurn(options: {
         // (Harbor maxToolRounds no longer caps the turn).
         systemPrompt: baseSystemPrompt,
         ...reasoningOptions,
+        ...modelInfoData,
       },
     });
 

@@ -332,6 +332,13 @@
         task ? `Sub-agent · ${task}` : "Sub-agent",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
+      toolHumanCreate: (path) => (path ? `Create ${path}` : "Create file"),
+      toolHumanAskQuestion: (q) => (q ? `Ask: ${q}` : "Ask question"),
+      toolHumanSubmitExit: "Submit final answer",
+      toolHumanSkill: (name) => (name ? `Skill · ${name}` : "Skill"),
+      toolHumanApplyPatch: "Apply patch",
+      toolMetricLines: "lines",
+      toolMetricExit: "exit",
       toolWorking: "Working…",
       toolReading: "Reading…",
       toolListing: "Listing…",
@@ -692,6 +699,13 @@
         task ? `Субагент · ${task}` : "Субагент",
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
+      toolHumanCreate: (path) => (path ? `Создать ${path}` : "Создать файл"),
+      toolHumanAskQuestion: (q) => (q ? `Спросить: ${q}` : "Задать вопрос"),
+      toolHumanSubmitExit: "Финальный ответ",
+      toolHumanSkill: (name) => (name ? `Скилл · ${name}` : "Скилл"),
+      toolHumanApplyPatch: "Применить патч",
+      toolMetricLines: "строк",
+      toolMetricExit: "exit",
       toolWorking: "Работаю…",
       toolReading: "Читаю…",
       toolListing: "Смотрю…",
@@ -3629,26 +3643,58 @@
     contextRingEl.hidden = false;
   }
 
-  function formatToolHumanLabel(name, argsPreview) {
-    const toolName = String(name || "").trim();
+  /**
+   * Map legacy tool names to current Cline names so labels stay correct even
+   * if a stale bundle is loaded. Keys are old Harbor names; values are the
+   * canonical Cline tool name.
+   */
+  const TOOL_NAME_ALIASES = {
+    read_file: "read_files",
+    write_file: "editor",
+    search_replace: "editor",
+    search_text: "search_codebase",
+    run_command: "run_commands",
+    list_files: "list_files",
+    fetch_url: "fetch_web_content",
+  };
+
+  function canonicalToolName(raw) {
+    const n = String(raw || "").trim();
+    return TOOL_NAME_ALIASES[n] || n;
+  }
+
+  /** Shorten a filesystem path for one-line display (keep basename + parent). */
+  function shortPath(p) {
+    const s = String(p || "").trim();
+    if (!s) return "";
+    const parts = s.split(/[\\/]/).filter(Boolean);
+    if (parts.length <= 2) return s;
+    return `…/${parts.slice(-2).join("/")}`;
+  }
+
+  function formatToolHumanLabel(name, argsPreview, metrics, status) {
+    const toolName = canonicalToolName(name);
     let args = {};
     const rawArgs = String(argsPreview || "").trim();
     if (rawArgs) {
       try {
         args = JSON.parse(rawArgs);
       } catch {
-        // Truncated JSON from step preview — try to pull relativePath/command.
+        // Truncated JSON from step preview — try to pull common fields by regex.
         const pathMatch = rawArgs.match(
-          /"relativePath"\s*:\s*"((?:\\.|[^"\\])*)"/
+          /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/
         );
         if (pathMatch) {
-          args.relativePath = pathMatch[1].replace(/\\"/g, '"');
+          args.path = pathMatch[1].replace(/\\"/g, '"');
+          args.relativePath = args.path;
         }
         const cmdMatch = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (cmdMatch) {
           args.command = cmdMatch[1].replace(/\\"/g, '"');
         }
-        const queryMatch = rawArgs.match(/"query"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        const queryMatch = rawArgs.match(
+          /"(?:query|queries)"\s*:\s*"((?:\\.|[^"\\])*)"/
+        );
         if (queryMatch) {
           args.query = queryMatch[1].replace(/\\"/g, '"');
         }
@@ -3662,22 +3708,71 @@
         }
       }
     }
-    const path = String(args.relativePath || "").trim();
+
+    // Helpers to read common Cline input shapes.
+    const firstString = (v) =>
+      typeof v === "string" ? v.trim() : Array.isArray(v) && v.length ? String(v[0] || "").trim() : "";
+    const filesFromArgs = () => {
+      const out = [];
+      const push = (v) => {
+        if (typeof v === "string" && v.trim()) out.push(v.trim());
+        else if (v && typeof v === "object") {
+          const p = v.path || v.relativePath || v.file_path;
+          if (typeof p === "string" && p.trim()) out.push(p.trim());
+        }
+      };
+      for (const key of ["files", "paths", "file_paths"]) {
+        const v = args[key];
+        if (Array.isArray(v)) v.forEach(push);
+        else if (v) push(v);
+      }
+      if (!out.length && (args.path || args.relativePath)) {
+        out.push(String(args.path || args.relativePath).trim());
+      }
+      return out;
+    };
+    const m = metrics || {};
+
     switch (toolName) {
-      case "read_file":
-        return t("toolHumanRead", path);
-      case "write_file":
-        return t("toolHumanWrite", path);
-      case "search_replace":
-        return t("toolHumanReplace", path);
+      case "read_files": {
+        const paths = (m.files && m.files.length ? m.files : filesFromArgs());
+        const first = paths[0] || "";
+        const extra = paths.length > 1 ? ` (+${paths.length - 1})` : "";
+        const linesSuffix =
+          status === "done" && typeof m.lines === "number" && m.lines > 0
+            ? ` · ${m.lines} ${t("toolMetricLines")}`
+            : "";
+        return t("toolHumanRead", shortPath(first)) + extra + linesSuffix;
+      }
+      case "editor": {
+        const filePath =
+          (m.files && m.files[0]) || args.path || args.relativePath || "";
+        const isCreate = m.created === true || (!args.old_text && !args.insert_line && !!args.new_text);
+        return isCreate
+          ? t("toolHumanCreate", shortPath(filePath))
+          : t("toolHumanReplace", shortPath(filePath));
+      }
       case "list_files":
-        return t("toolHumanList", path || ".");
-      case "search_text":
-        return t("toolHumanSearch", String(args.query || "").trim());
-      case "run_command":
-        return t("toolHumanRun", String(args.command || "").trim());
+        return t("toolHumanList", shortPath(args.path || args.relativePath) || ".");
+      case "search_codebase": {
+        const query = firstString(args.queries || args.query);
+        const countSuffix =
+          status === "done" && typeof m.matches === "number" && m.matches > 0
+            ? ` (${m.matches})`
+            : "";
+        return t("toolHumanSearch", query) + countSuffix;
+      }
+      case "run_commands": {
+        const cmd = firstString(args.commands || args.command);
+        const exitSuffix =
+          status === "error" && typeof m.exitCode === "number"
+            ? ` · ${t("toolMetricExit")} ${m.exitCode}`
+            : "";
+        return t("toolHumanRun", cmd) + exitSuffix;
+      }
+      case "fetch_web_content":
       case "fetch_url":
-        return t("toolHumanFetch", String(args.url || "").trim());
+        return t("toolHumanFetch", String(args.url || firstString(args.requests && args.requests[0] && args.requests[0].url) || "").trim());
       case "screenshot_url":
         return t("toolHumanScreenshot", String(args.url || "").trim());
       case "open_external":
@@ -3694,10 +3789,17 @@
         return t("toolHumanBrowserClose");
       case "get_diagnostics":
         return t("toolHumanDiagnostics");
+      case "ask_question":
+        return t("toolHumanAskQuestion", String(args.question || "").trim());
+      case "submit_and_exit":
+        return t("toolHumanSubmitExit");
+      case "skills":
+        return t("toolHumanSkill", String(args.skill || "").trim());
+      case "apply_patch":
+        return t("toolHumanApplyPatch");
       case "spawn_agent": {
-        const task = String(args.task || "").trim();
-        const short =
-          task.length > 80 ? `${task.slice(0, 77)}…` : task;
+        const task = String(args.task || args.prompt || "").trim();
+        const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
         return t("toolHumanSpawn", short);
       }
       case "vision_attached_screenshot":
@@ -3710,6 +3812,9 @@
         if (toolName.startsWith("mcp__")) {
           const short = toolName.replace(/^mcp__[^_]+__/, "") || toolName;
           return t("toolHumanMcp", short);
+        }
+        if (toolName.startsWith("subagent_")) {
+          return t("toolHumanSpawn", toolName.replace(/^subagent_/, ""));
         }
         return t("toolHumanTool", toolName);
       }
@@ -3788,26 +3893,23 @@
   }
 
   function toolKind(name) {
-    const n = String(name || "");
-    if (n === "read_file") {
+    const n = canonicalToolName(name);
+    if (n === "read_files") {
       return "read";
     }
-    if (n === "write_file") {
-      return "write";
-    }
-    if (n === "search_replace") {
+    if (n === "editor" || n === "apply_patch") {
       return "replace";
     }
     if (n === "list_files") {
       return "list";
     }
-    if (n === "search_text") {
+    if (n === "search_codebase") {
       return "search";
     }
-    if (n === "run_command") {
+    if (n === "run_commands") {
       return "run";
     }
-    if (n === "fetch_url") {
+    if (n === "fetch_web_content" || n === "fetch_url") {
       return "fetch";
     }
     if (n === "open_external") {
@@ -3823,6 +3925,12 @@
     }
     if (n === "screenshot_plan_explore" || n === "delegate_task") {
       return "explore";
+    }
+    if (n === "spawn_agent" || n.startsWith("subagent_")) {
+      return "explore";
+    }
+    if (n === "ask_question") {
+      return "open";
     }
     if (n.startsWith("mcp__")) {
       return "mcp";
@@ -4613,18 +4721,21 @@
     if (status === "running") {
       return "progress_activity";
     }
-    switch (String(name || "")) {
-      case "read_file":
+    // Canonicalize so legacy names (read_file → read_files) get the right icon too.
+    const toolName = canonicalToolName(name);
+    switch (toolName) {
+      case "read_files":
         return "draft";
       case "list_files":
         return "folder_open";
-      case "write_file":
-      case "search_replace":
+      case "editor":
+      case "apply_patch":
         return "edit";
-      case "run_command":
+      case "run_commands":
         return "terminal";
-      case "search_text":
+      case "search_codebase":
         return "search";
+      case "fetch_web_content":
       case "fetch_url":
       case "open_external":
       case "screenshot_url":
@@ -4637,9 +4748,20 @@
         return "web";
       case "get_diagnostics":
         return "bug_report";
+      case "ask_question":
+        return "help";
+      case "submit_and_exit":
+        return "check_circle";
+      case "skills":
+        return "bolt";
+      case "spawn_agent":
+        return "account_tree";
       default:
-        if (String(name || "").startsWith("mcp__")) {
+        if (toolName.startsWith("mcp__")) {
           return "extension";
+        }
+        if (toolName.startsWith("subagent_")) {
+          return "account_tree";
         }
         return status === "queued" ? "schedule" : "build";
     }
@@ -4721,7 +4843,12 @@
       collapseTurnThinkingDuplicates();
     } else if (step.kind === "tool") {
       el.classList.remove("agent-step-thinking");
-      const label = formatToolHumanLabel(step.name, step.argsPreview);
+      const label = formatToolHumanLabel(
+        step.name,
+        step.argsPreview,
+        step.metrics,
+        step.status
+      );
       const icon = toolStepIcon(step.name, step.status);
       el.innerHTML =
         `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${icon}</span>` +
