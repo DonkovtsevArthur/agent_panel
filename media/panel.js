@@ -174,7 +174,7 @@
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Enable Tab autocomplete",
       tabAutocompleteNote:
-        "Inline ghost-text via your Harbor provider. Prefer coder models. Disable standalone TabCoder if installed.",
+        "Prefetch while typing (no ghost until you ask). Ctrl+Enter / ⌘⏎ shows the suggestion; Tab accepts. Cycle Alt+[ / Alt+]. Orphan lines: Tab or Quick Fix.",
       tabAutocompleteModel: "Tab model",
       tabAutocompleteModelEmpty: "Select a model",
       tabAutocompleteModelHint:
@@ -183,8 +183,14 @@
       tabAutocompleteAggLow: "Low — fewer requests",
       tabAutocompleteAggMedium: "Medium — balanced",
       tabAutocompleteAggHigh: "High — faster, more calls",
+      tabAutocompleteAlts: "Alternatives",
+      tabAutocompleteAlts1: "1 — single suggestion",
+      tabAutocompleteAlts2: "2 — two alternatives",
+      tabAutocompleteAlts3: "3 — three alternatives",
+      tabAutocompleteAltsHint:
+        "Distinct ghost texts in one request. Cycle Alt+[ / Alt+]; Tab accepts the current one.",
       tabAutocompleteKeysHint:
-        "Accept: Tab (all), Ctrl+Right / Alt+Right (word), Ctrl+Down / Alt+Down (line).",
+        "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
       model: "Model",
@@ -561,7 +567,7 @@
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Включить Tab autocomplete",
       tabAutocompleteNote:
-        "Inline-подсказки через ваш провайдер Harbor. Лучше coder-модели. Отключите отдельный TabCoder, если оба установлены.",
+        "Пока печатаете — тихий prefetch (ghost не виден). Ctrl+Enter / ⌘⏎ показывает подсказку; Tab принимает. Цикл Alt+[ / Alt+]. Orphan-строки: Tab или Quick Fix.",
       tabAutocompleteModel: "Модель для Tab",
       tabAutocompleteModelEmpty: "Выберите модель",
       tabAutocompleteModelHint:
@@ -570,8 +576,14 @@
       tabAutocompleteAggLow: "Низкая — меньше запросов",
       tabAutocompleteAggMedium: "Средняя — баланс",
       tabAutocompleteAggHigh: "Высокая — быстрее, больше вызовов",
+      tabAutocompleteAlts: "Варианты",
+      tabAutocompleteAlts1: "1 — один вариант",
+      tabAutocompleteAlts2: "2 — два варианта",
+      tabAutocompleteAlts3: "3 — три варианта",
+      tabAutocompleteAltsHint:
+        "Разные ghost text за один запрос. Цикл Alt+[ / Alt+]; Tab принимает текущий.",
       tabAutocompleteKeysHint:
-        "Принять: Tab (всё), Ctrl+Right / Alt+Right (слово), Ctrl+Down / Alt+Down (строка).",
+        "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
       model: "Модель",
@@ -986,6 +998,9 @@
   );
   const settingsTabAutocompleteAggressiveness = document.getElementById(
     "settingsTabAutocompleteAggressiveness"
+  );
+  const settingsTabAutocompleteAlternatives = document.getElementById(
+    "settingsTabAutocompleteAlternatives"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1592,6 +1607,32 @@
       if (optLow) optLow.textContent = t("tabAutocompleteAggLow");
       if (optMed) optMed.textContent = t("tabAutocompleteAggMedium");
       if (optHigh) optHigh.textContent = t("tabAutocompleteAggHigh");
+    }
+    const settingsTabAutocompleteAltsLabel = document.getElementById(
+      "settingsTabAutocompleteAltsLabel"
+    );
+    if (settingsTabAutocompleteAltsLabel) {
+      settingsTabAutocompleteAltsLabel.textContent = t("tabAutocompleteAlts");
+    }
+    if (settingsTabAutocompleteAlternatives) {
+      const a1 = settingsTabAutocompleteAlternatives.querySelector(
+        'option[value="1"]'
+      );
+      const a2 = settingsTabAutocompleteAlternatives.querySelector(
+        'option[value="2"]'
+      );
+      const a3 = settingsTabAutocompleteAlternatives.querySelector(
+        'option[value="3"]'
+      );
+      if (a1) a1.textContent = t("tabAutocompleteAlts1");
+      if (a2) a2.textContent = t("tabAutocompleteAlts2");
+      if (a3) a3.textContent = t("tabAutocompleteAlts3");
+    }
+    const settingsTabAutocompleteAltsHint = document.getElementById(
+      "settingsTabAutocompleteAltsHint"
+    );
+    if (settingsTabAutocompleteAltsHint) {
+      settingsTabAutocompleteAltsHint.textContent = t("tabAutocompleteAltsHint");
     }
     const settingsTabAutocompleteKeysHint = document.getElementById(
       "settingsTabAutocompleteKeysHint"
@@ -8318,6 +8359,12 @@
       settingsTabAutocompleteAggressiveness.value =
         agg === "low" || agg === "high" ? agg : "medium";
     }
+    if (settingsTabAutocompleteAlternatives) {
+      const alts = Number(settings.tabAutocompleteAlternatives);
+      settingsTabAutocompleteAlternatives.value = String(
+        alts === 1 || alts === 3 ? alts : 2
+      );
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -8446,6 +8493,9 @@
       tabAutocompleteAggressiveness: settingsTabAutocompleteAggressiveness
         ? settingsTabAutocompleteAggressiveness.value
         : "medium",
+      tabAutocompleteAlternatives: settingsTabAutocompleteAlternatives
+        ? Number(settingsTabAutocompleteAlternatives.value) || 2
+        : 2,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
@@ -12171,7 +12221,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
