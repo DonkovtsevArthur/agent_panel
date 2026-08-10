@@ -179,6 +179,11 @@ export interface AgentPanelConfig {
     modelId: string;
     /** How eagerly to request suggestions while typing. */
     aggressiveness: "low" | "medium" | "high";
+    /**
+     * How many distinct ghost-text alternatives to request in one hole-fill
+     * call (cycle with Alt+[ / Alt+]).
+     */
+    alternatives: 1 | 2 | 3;
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
@@ -511,10 +516,14 @@ export function getConfig(): AgentPanelConfig {
         .toLowerCase();
       const aggressiveness =
         rawAgg === "low" || rawAgg === "high" ? rawAgg : "medium";
+      const rawAlts = Number(cfg.get<number | string>("tabAutocomplete.alternatives"));
+      const alternatives: 1 | 2 | 3 =
+        rawAlts === 1 || rawAlts === 3 ? rawAlts : 2;
       return {
         enabled: cfg.get<boolean>("tabAutocomplete.enabled") === true,
         modelId: String(cfg.get<string>("tabAutocomplete.modelId") || "").trim(),
         aggressiveness,
+        alternatives,
       };
     })(),
     selectionHints: {

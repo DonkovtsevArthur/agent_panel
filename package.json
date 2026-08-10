@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.40",
+  "version": "1.1.55",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -21,6 +21,9 @@
   "engines": {
     "vscode": "^1.101.0"
   },
+  "enabledApiProposals": [
+    "inlineCompletionsAdditions"
+  ],
   "categories": [
     "Machine Learning",
     "Other"
@@ -119,6 +122,11 @@
         "title": "%command.generateCommitMessage.title%",
         "category": "%command.category%",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.showSuggestion",
+        "title": "%command.tabAutocomplete.showSuggestion.title%",
+        "category": "%command.category%"
       }
     ],
     "menus": {
@@ -250,6 +258,24 @@
         "key": "ctrl+down",
         "mac": "alt+down",
         "when": "inlineSuggestionVisible && !editorReadonly"
+      },
+      {
+        "command": "editor.action.inlineSuggest.showNext",
+        "key": "alt+]",
+        "mac": "alt+]",
+        "when": "inlineSuggestionVisible && !editorReadonly"
+      },
+      {
+        "command": "editor.action.inlineSuggest.showPrevious",
+        "key": "alt+[",
+        "mac": "alt+[",
+        "when": "inlineSuggestionVisible && !editorReadonly"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.showSuggestion",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && !editorReadonly && config.agentPanel.tabAutocomplete.enabled"
       }
     ],
     "configuration": {
@@ -536,6 +562,17 @@
             "%config.tabAutocomplete.aggressiveness.enum.high%"
           ],
           "description": "%config.tabAutocomplete.aggressiveness.description%"
+        },
+        "agentPanel.tabAutocomplete.alternatives": {
+          "type": "number",
+          "default": 2,
+          "enum": [1, 2, 3],
+          "enumDescriptions": [
+            "%config.tabAutocomplete.alternatives.enum.1%",
+            "%config.tabAutocomplete.alternatives.enum.2%",
+            "%config.tabAutocomplete.alternatives.enum.3%"
+          ],
+          "description": "%config.tabAutocomplete.alternatives.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

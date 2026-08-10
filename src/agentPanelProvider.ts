@@ -132,6 +132,7 @@ type SettingsPayload = {
   tabAutocompleteEnabled?: boolean;
   tabAutocompleteModelId?: string;
   tabAutocompleteAggressiveness?: string;
+  tabAutocompleteAlternatives?: number;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -4029,6 +4030,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         tabAutocompleteEnabled: config.tabAutocomplete.enabled,
         tabAutocompleteModelId: config.tabAutocomplete.modelId,
         tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
+        tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4466,6 +4468,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const aggressiveness =
       aggRaw === "low" || aggRaw === "high" ? aggRaw : "medium";
     await cfg.update("tabAutocomplete.aggressiveness", aggressiveness, target);
+    const altsRaw = Number(raw.tabAutocompleteAlternatives);
+    const alternatives = altsRaw === 1 || altsRaw === 3 ? altsRaw : 2;
+    await cfg.update("tabAutocomplete.alternatives", alternatives, target);
     await cfg.update(
       "selectionHints.enabled",
       raw.selectionHintsEnabled !== false,
@@ -5063,7 +5068,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <input id="settingsTabAutocompleteEnabled" type="checkbox" />
             <span class="settings-label" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteNote">Inline ghost-text via your Harbor provider. Prefer coder models (Qwen-Coder, DeepSeek, grok-code). Tab = all; Ctrl/Alt+Right = word; Ctrl/Alt+Down = line.</p>
+          <p class="settings-hint" id="settingsTabAutocompleteNote">Prefetch while typing (ghost stays hidden). Ctrl+Enter / ⌘⏎ shows the suggestion; Tab accepts. Prefer coder models.</p>
           <label class="settings-field">
             <span class="settings-label" id="settingsTabAutocompleteModelLabel">Tab model</span>
             <select id="settingsTabAutocompleteModel" class="settings-input"></select>
@@ -5077,7 +5082,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               <option value="high">High</option>
             </select>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Accept: Tab (all), Ctrl+Right / Alt+Right (word), Ctrl+Down / Alt+Down (line).</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
+            <select id="settingsTabAutocompleteAlternatives" class="settings-input">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Up to N distinct ghost texts per request. Cycle Alt+[ / Alt+]; Tab accepts the current one.</p>
+          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>

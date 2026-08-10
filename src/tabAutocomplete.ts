@@ -16,29 +16,922 @@ import {
 import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   DefaultHoleFiller,
-  refineCompletionText,
+  buildTabFocusContext,
+  refineCompletionAlternatives,
   type AutoCompleteContext,
 } from "./tabAutocompleteHoleFiller";
 
 const COMPLETION_ACCEPTED_CMD = "agentPanel.tabAutocomplete.completionAccepted";
 const STATUS_CLICK_CMD = "agentPanel.tabAutocomplete.statusBarClicked";
-const MAX_COMPLETION_TOKENS = 128;
+const DELETE_ORPHAN_LINE_CMD = "agentPanel.tabAutocomplete.deleteOrphanLine";
+const SHOW_SUGGESTION_CMD = "agentPanel.tabAutocomplete.showSuggestion";
+const MAX_COMPLETION_TOKENS = 72;
 /** Keep prompts small for corporate gateways / latency. */
 const MAX_PREFIX_CHARS = 3_500;
 const MAX_SUFFIX_CHARS = 800;
 const CACHE_LIMIT = 40;
+const RECENT_DELETE_TTL_MS = 90_000;
+/** How long a newly typed binding stays “in focus” for Tab (store → event). */
+const RECENT_ADD_TTL_MS = 180_000;
+/** Pause Tab LLM calls after gateway quota / server failures. */
+const COOLDOWN_QUOTA_MS = 120_000;
+const COOLDOWN_SERVER_MS = 45_000;
+const COOLDOWN_OTHER_MS = 20_000;
+
+const JS_RESERVED = new Set([
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "let",
+  "new",
+  "null",
+  "return",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+  "async",
+  "await",
+  "from",
+  "of",
+  "as",
+  "type",
+  "interface",
+  "enum",
+  "implements",
+  "private",
+  "public",
+  "protected",
+  "readonly",
+  "static",
+]);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * `$` is a non-word char in JS regex, so `\b$store\b` never matches.
+ * Use explicit edges instead (Effector-style `$store` names).
+ */
+function identifierEdgePattern(id: string): string {
+  const escaped = escapeRegExp(id);
+  return `(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`;
+}
+
+/** Binding / import names from deleted code — not every token (createStore, …). */
+function extractDeletedBindingNames(text: string): string[] {
+  const out: string[] = [];
+  const push = (id: string | undefined) => {
+    if (!id || id.length < 2 || JS_RESERVED.has(id)) {
+      return;
+    }
+    out.push(id);
+  };
+
+  const decl =
+    /(?:^|[\n;{}])\s*(?:export\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = decl.exec(text))) {
+    push(m[1]);
+  }
+
+  const namedImport = /import\s*\{([^}]+)\}/g;
+  while ((m = namedImport.exec(text))) {
+    for (const part of m[1].split(",")) {
+      const name = part.trim().split(/\s+as\s+/i)[0].trim();
+      push(name);
+    }
+  }
+
+  const defImport = /import\s+([A-Za-z_$][\w$]*)\s+from\b/g;
+  while ((m = defImport.exec(text))) {
+    push(m[1]);
+  }
+
+  return out;
+}
+
+function isIncompleteDeclarationLine(lineText: string): boolean {
+  const t = lineText.trim();
+  if (!t) {
+    return false;
+  }
+  // Still typing: `const $x =` / `const $x` / `let x =`
+  return /^(export\s+)?(const|let|var)\s+[A-Za-z_$][\w$]*(\s*=\s*)?$/.test(t);
+}
+
+function countReferencesOutsideDefinition(
+  document: vscode.TextDocument,
+  id: string
+): number {
+  let n = 0;
+  for (let i = 0; i < document.lineCount; i++) {
+    const text = document.lineAt(i).text;
+    if (lineDefinesSymbol(text, id)) {
+      continue;
+    }
+    if (lineReferencesSymbol(text, id)) {
+      n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Cursor in a comma-separated list (prev item ends with `,`), often right
+ * before `]` / `)` / `}` — where the model otherwise suggests closing brackets.
+ */
+function isCommaListContinuationContext(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): boolean {
+  const line = document.lineAt(position.line).text;
+  if (line.slice(position.character).trim().length > 0) {
+    return false;
+  }
+  const before = line.slice(0, position.character);
+  if (/[^\sA-Za-z0-9_$]/.test(before)) {
+    return false;
+  }
+
+  let prev = position.line - 1;
+  while (prev >= 0 && isBlankOrCommentLine(document.lineAt(prev).text)) {
+    prev--;
+  }
+  if (prev < 0) {
+    return false;
+  }
+  const prevTrim = document.lineAt(prev).text.trimEnd();
+  if (!prevTrim.endsWith(",")) {
+    return false;
+  }
+
+  const endLine = Math.min(position.line + 8, document.lineCount - 1);
+  const suffixHead = document
+    .getText(
+      new vscode.Range(
+        position,
+        new vscode.Position(endLine, document.lineAt(endLine).text.length)
+      )
+    )
+    .trimStart();
+  if (/^[\]\)}]/.test(suffixHead)) {
+    return true;
+  }
+  // Identifier / $store list item on the previous line.
+  return /^(?:[A-Za-z_$][\w$]*|\$[A-Za-z_][\w$]*)\s*,\s*$/.test(
+    prevTrim.trim()
+  );
+}
+
+function identifierPrefixAt(
+  lineText: string,
+  character: number
+): { start: number; prefix: string } {
+  let start = character;
+  while (start > 0 && /[A-Za-z0-9_$]/.test(lineText.charAt(start - 1))) {
+    start--;
+  }
+  return { start, prefix: lineText.slice(start, character) };
+}
+
+/**
+ * If the user just declared a binding that is still unused, and the cursor is
+ * in a comma list, prefer inserting that name over closing `],` / `})`.
+ * Not limited to `$` stores — any const/let/var binding.
+ */
+function findUnusedBindingListFill(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): { text: string; range: vscode.Range } | undefined {
+  if (!isCommaListContinuationContext(document, position)) {
+    return undefined;
+  }
+
+  const line = document.lineAt(position.line).text;
+  const { start: prefixStart, prefix } = identifierPrefixAt(
+    line,
+    position.character
+  );
+
+  const scanFrom = Math.max(0, position.line - 120);
+  let best: { name: string; line: number } | undefined;
+
+  for (let i = position.line - 1; i >= scanFrom; i--) {
+    const text = document.lineAt(i).text;
+    const name = declaredBindingName(text);
+    if (!name || name.length < 2 || JS_RESERVED.has(name)) {
+      continue;
+    }
+    if (!text.includes("=")) {
+      continue;
+    }
+    if (/=\s*$/.test(text.trim())) {
+      const next =
+        i + 1 < document.lineCount ? document.lineAt(i + 1).text : "";
+      if (!next.trim() || declaredBindingName(next)) {
+        continue;
+      }
+    }
+    if (prefix && !name.startsWith(prefix)) {
+      continue;
+    }
+    if (countReferencesOutsideDefinition(document, name) > 0) {
+      continue;
+    }
+    best = { name, line: i };
+    break; // closest unused declaration above the cursor
+  }
+
+  if (!best) {
+    return undefined;
+  }
+
+  const insert = prefix ? best.name.slice(prefix.length) + "," : best.name + ",";
+  if (!insert || insert === ",") {
+    return undefined;
+  }
+
+  return {
+    text: insert,
+    range: new vscode.Range(
+      position.line,
+      prefix ? prefixStart : position.character,
+      position.line,
+      position.character
+    ),
+  };
+}
+
+function isChainContinuationLine(lineText: string): boolean {
+  return /^\s*\./.test(lineText);
+}
+
+function isBlankOrCommentLine(lineText: string): boolean {
+  const t = lineText.trim();
+  return !t || t.startsWith("//") || t.startsWith("*") || t.startsWith("/*");
+}
+
+function isLikelyRemovableDeclarationLine(lineText: string): boolean {
+  const trimmed = lineText.trim();
+  if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("*")) {
+    return false;
+  }
+  if (trimmed.startsWith("export *")) {
+    return false;
+  }
+  if (/^(export\s+)?(const|let|var)\s+\S+/.test(trimmed)) {
+    return (trimmed.match(/;/g) || []).length <= 1;
+  }
+  if (/^import\s/.test(trimmed)) {
+    return true;
+  }
+  if (isChainContinuationLine(lineText)) {
+    return true;
+  }
+  // e.g. `$store.on(deletedEvent, …)` left after removing the event.
+  if (/^[A-Za-z_$][\w$]*\s*\./.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+function importLineOnlyForSymbol(lineText: string, id: string): boolean {
+  const trimmed = lineText.trim();
+  const named = /import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/.exec(trimmed);
+  if (named) {
+    const names = named[1]
+      .split(",")
+      .map((p) => p.trim().split(/\s+as\s+/i)[0].trim())
+      .filter(Boolean);
+    return names.length === 1 && names[0] === id;
+  }
+  const def = /import\s+(\w+)\s+from\s*['"][^'"]+['"]/.exec(trimmed);
+  return Boolean(def && def[1] === id);
+}
+
+function lineReferencesSymbol(lineText: string, id: string): boolean {
+  return new RegExp(identifierEdgePattern(id)).test(lineText);
+}
+
+function lineDefinesSymbol(lineText: string, id: string): boolean {
+  return new RegExp(
+    String.raw`^\s*(export\s+)?(const|let|var|function|class)\s+${identifierEdgePattern(id)}`
+  ).test(lineText);
+}
+
+function declaredBindingName(lineText: string): string | undefined {
+  const m = /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(
+    lineText
+  );
+  return m?.[1];
+}
+
+function symbolHasDefinition(
+  document: vscode.TextDocument,
+  name: string
+): boolean {
+  const def = new RegExp(
+    String.raw`(?:^|[\n;{}])\s*(?:export\s+)?(?:const|let|var|function|class)\s+${identifierEdgePattern(name)}`,
+    "m"
+  );
+  return def.test(document.getText());
+}
+
+function parseMissingNameFromDiagnostic(message: string): string | undefined {
+  const m =
+    /cannot find name ['"]([^'"]+)['"]/i.exec(message) ||
+    /['"]([^'"]+)['"]\s+is not defined/i.exec(message) ||
+    /Cannot find name ['"]([^'"]+)['"]/i.exec(message) ||
+    /Не удается найти имя ['"]([^'"]+)['"]/i.exec(message) ||
+    /не удаётся найти имя ['"]([^'"]+)['"]/i.exec(message);
+  return m?.[1];
+}
+
+/**
+ * Orphan delete is only for leftovers after a recent delete — not for every
+ * "Cannot find name" while the user is still typing a new identifier.
+ * Prefer linter diagnostics ∩ recently-deleted bindings; fall back to leftover
+ * refs only when the line is a removable leftover (not an incomplete decl).
+ */
+function collectMissingSymbols(
+  document: vscode.TextDocument,
+  tracker: RecentDeletionTracker
+): Map<number, Set<string>> {
+  const byLine = new Map<number, Set<string>>();
+  const add = (line: number, id: string) => {
+    let set = byLine.get(line);
+    if (!set) {
+      set = new Set();
+      byLine.set(line, set);
+    }
+    set.add(id);
+  };
+
+  const recentlyDeleted = tracker
+    .recentlyDeletedIds()
+    .filter((id) => !symbolHasDefinition(document, id));
+  if (recentlyDeleted.length === 0) {
+    return byLine;
+  }
+  const recentlyDeletedSet = new Set(recentlyDeleted);
+
+  let diagnosticHits = 0;
+  for (const d of vscode.languages.getDiagnostics(document.uri)) {
+    if (d.severity !== vscode.DiagnosticSeverity.Error) {
+      continue;
+    }
+    const id = parseMissingNameFromDiagnostic(d.message || "");
+    if (!id || !recentlyDeletedSet.has(id)) {
+      continue;
+    }
+    diagnosticHits++;
+    add(d.range.start.line, id);
+  }
+
+  // Fallback when diagnostics lag: leftover refs to a recently deleted binding.
+  // Skip incomplete declarations the user is still typing.
+  if (diagnosticHits === 0) {
+    for (const id of recentlyDeleted) {
+      for (let i = 0; i < document.lineCount; i++) {
+        const text = document.lineAt(i).text;
+        if (isIncompleteDeclarationLine(text) || lineDefinesSymbol(text, id)) {
+          continue;
+        }
+        if (lineReferencesSymbol(text, id)) {
+          add(i, id);
+        }
+      }
+    }
+  }
+
+  return byLine;
+}
+
+function isOrphanCandidateLine(
+  document: vscode.TextDocument,
+  lineNo: number,
+  missingIds: Set<string>
+): boolean {
+  const text = document.lineAt(lineNo).text;
+  if (isBlankOrCommentLine(text)) {
+    return false;
+  }
+  // Never suggest deleting a declaration the user is still typing.
+  if (isIncompleteDeclarationLine(text)) {
+    return false;
+  }
+  if (!isLikelyRemovableDeclarationLine(text) && !isChainContinuationLine(text)) {
+    return false;
+  }
+  for (const id of missingIds) {
+    if (lineDefinesSymbol(text, id)) {
+      continue;
+    }
+    if (!lineReferencesSymbol(text, id)) {
+      continue;
+    }
+    if (/^import\s/.test(text.trim())) {
+      return importLineOnlyForSymbol(text, id);
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Expand a seed orphan line into a contiguous related block:
+ * statement chains (.on/.map), adjacent related declarations, blank gaps of 1 line.
+ */
+function expandOrphanBlock(
+  document: vscode.TextDocument,
+  seedLine: number,
+  missingIds: Set<string>
+): { start: number; end: number } {
+  let start = seedLine;
+  let end = seedLine;
+
+  const lineOk = (n: number) => {
+    if (n < 0 || n >= document.lineCount) {
+      return false;
+    }
+    const text = document.lineAt(n).text;
+    if (isBlankOrCommentLine(text)) {
+      return true;
+    }
+    if (isChainContinuationLine(text)) {
+      return (
+        [...missingIds].some((id) => lineReferencesSymbol(text, id)) ||
+        isOrphanCandidateLine(document, n, missingIds)
+      );
+    }
+    return isOrphanCandidateLine(document, n, missingIds);
+  };
+
+  while (start > 0) {
+    const prev = start - 1;
+    const prevText = document.lineAt(prev).text;
+    if (isBlankOrCommentLine(prevText)) {
+      if (prev === 0) {
+        break;
+      }
+      const above = prev - 1;
+      if (!lineOk(above) || isBlankOrCommentLine(document.lineAt(above).text)) {
+        break;
+      }
+      start = prev;
+      continue;
+    }
+    if (
+      isChainContinuationLine(document.lineAt(start).text) &&
+      /^(export\s+)?(const|let|var)\s+/.test(prevText.trim()) &&
+      !isIncompleteDeclarationLine(prevText)
+    ) {
+      start = prev;
+      continue;
+    }
+    // `$store.on(…)` → include preceding `const $store = …` when linked.
+    const receiver = /^\s*([A-Za-z_$][\w$]*)\s*\./.exec(
+      document.lineAt(start).text
+    );
+    if (receiver && !isIncompleteDeclarationLine(prevText)) {
+      const binding = declaredBindingName(prevText);
+      if (binding && binding === receiver[1]) {
+        start = prev;
+        continue;
+      }
+    }
+    if (!lineOk(prev)) {
+      break;
+    }
+    start = prev;
+  }
+
+  while (end + 1 < document.lineCount) {
+    const next = end + 1;
+    const nextText = document.lineAt(next).text;
+    if (isBlankOrCommentLine(nextText)) {
+      if (next + 1 >= document.lineCount) {
+        break;
+      }
+      if (
+        !lineOk(next + 1) ||
+        isBlankOrCommentLine(document.lineAt(next + 1).text)
+      ) {
+        break;
+      }
+      end = next;
+      continue;
+    }
+    if (isChainContinuationLine(nextText)) {
+      const cur = document.lineAt(end).text;
+      if (
+        isChainContinuationLine(cur) ||
+        isOrphanCandidateLine(document, end, missingIds) ||
+        Boolean(declaredBindingName(cur))
+      ) {
+        end = next;
+        continue;
+      }
+    }
+    if (lineOk(next)) {
+      end = next;
+      continue;
+    }
+    break;
+  }
+
+  while (start < end && isBlankOrCommentLine(document.lineAt(start).text)) {
+    start++;
+  }
+  while (end > start && isBlankOrCommentLine(document.lineAt(end).text)) {
+    end--;
+  }
+
+  return { start, end };
+}
+
+type OrphanBlock = {
+  startLine: number;
+  endLine: number;
+  lineRanges: vscode.Range[];
+  deleteRange: vscode.Range;
+  inlineRange: vscode.Range;
+  reason: string;
+};
+
+/**
+ * Track identifiers removed (orphan cleanup) and newly added (Tab focus:
+ * e.g. user created `$cartStore`, then jumped to the events block).
+ */
+class RecentDeletionTracker {
+  private readonly deleted = new Map<string, number>();
+  private readonly added = new Map<string, number>();
+  private readonly previousText = new Map<string, string>();
+
+  onDocument(document: vscode.TextDocument): void {
+    const key = document.uri.toString();
+    if (!this.previousText.has(key)) {
+      this.previousText.set(key, document.getText());
+    }
+  }
+
+  noteChange(event: vscode.TextDocumentChangeEvent): void {
+    const key = event.document.uri.toString();
+    const before = this.previousText.get(key);
+    const after = event.document.getText();
+    this.previousText.set(key, after);
+    if (before == null || before === after) {
+      return;
+    }
+    for (const change of event.contentChanges) {
+      if (change.rangeLength <= 0 || change.text.length >= change.rangeLength) {
+        continue;
+      }
+      try {
+        const startOffset = this.offsetInText(before, change.range.start);
+        const removed = before.slice(
+          startOffset,
+          startOffset + change.rangeLength
+        );
+        if (removed) {
+          this.noteDeletedText(removed);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    const beforeBindings = new Set(extractDeletedBindingNames(before));
+    const afterBindings = new Set(extractDeletedBindingNames(after));
+    const now = Date.now();
+    // Binding names that disappeared entirely from the file.
+    for (const id of beforeBindings) {
+      if (!afterBindings.has(id)) {
+        this.deleted.set(id, now);
+        this.added.delete(id);
+      }
+    }
+    // Newly introduced bindings → Tab focus for related fills.
+    for (const id of afterBindings) {
+      if (!beforeBindings.has(id)) {
+        this.added.set(id, now);
+        this.deleted.delete(id);
+      }
+    }
+    // If a tracked id is defined again, stop treating it as a delete orphan source.
+    for (const id of [...this.deleted.keys()]) {
+      if (afterBindings.has(id) || symbolHasDefinition(event.document, id)) {
+        this.deleted.delete(id);
+      }
+    }
+    this.prune();
+  }
+
+  private offsetInText(text: string, position: vscode.Position): number {
+    const lines = text.split("\n");
+    let offset = 0;
+    for (let i = 0; i < position.line && i < lines.length; i++) {
+      offset += lines[i].length + 1;
+    }
+    return offset + position.character;
+  }
+
+  noteDeletedText(text: string): void {
+    const now = Date.now();
+    for (const id of extractDeletedBindingNames(text)) {
+      this.deleted.set(id, now);
+      this.added.delete(id);
+    }
+    this.prune();
+  }
+
+  recentlyDeleted(id: string): boolean {
+    const at = this.deleted.get(id);
+    return Boolean(at && Date.now() - at < RECENT_DELETE_TTL_MS);
+  }
+
+  recentlyDeletedIds(): string[] {
+    this.prune();
+    return [...this.deleted.keys()];
+  }
+
+  /** Newest-first list of bindings the user just introduced in this file. */
+  recentlyAddedIds(): string[] {
+    this.prune();
+    return [...this.added.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([id]) => id);
+  }
+
+  private prune(): void {
+    const now = Date.now();
+    for (const [id, at] of this.deleted) {
+      if (now - at > RECENT_DELETE_TTL_MS) {
+        this.deleted.delete(id);
+      }
+    }
+    for (const [id, at] of this.added) {
+      if (now - at > RECENT_ADD_TTL_MS) {
+        this.added.delete(id);
+      }
+    }
+  }
+}
+
+function bindingReferencedOutside(
+  document: vscode.TextDocument,
+  binding: string,
+  blockStart: number,
+  blockEnd: number
+): boolean {
+  const re = new RegExp(identifierEdgePattern(binding));
+  for (let j = 0; j < document.lineCount; j++) {
+    if (j >= blockStart && j <= blockEnd) {
+      continue;
+    }
+    if (re.test(document.lineAt(j).text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+type OrphanLineMark = "delete" | "keep" | "blank";
+
+function markOrphanLines(
+  document: vscode.TextDocument,
+  start: number,
+  end: number,
+  missingIds: Set<string>
+): OrphanLineMark[] {
+  const marks: OrphanLineMark[] = [];
+  for (let i = start; i <= end; i++) {
+    const text = document.lineAt(i).text;
+    if (isBlankOrCommentLine(text)) {
+      marks.push("blank");
+      continue;
+    }
+    if (isIncompleteDeclarationLine(text)) {
+      marks.push("keep");
+      continue;
+    }
+    const binding = declaredBindingName(text);
+    if (
+      binding &&
+      bindingReferencedOutside(document, binding, start, end)
+    ) {
+      marks.push("keep");
+      continue;
+    }
+    if (
+      isOrphanCandidateLine(document, i, missingIds) ||
+      isChainContinuationLine(text)
+    ) {
+      marks.push("delete");
+      continue;
+    }
+    // Chain head (`const $x = …`) pulled in by expand — delete only if unused outside.
+    if (binding && /^(export\s+)?(const|let|var)\s+/.test(text.trim())) {
+      marks.push("delete");
+      continue;
+    }
+    marks.push("keep");
+  }
+  return marks;
+}
+
+/**
+ * Find a contiguous orphan block around the cursor (leftover after deleting a symbol).
+ */
+function findOrphanBlock(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  tracker: RecentDeletionTracker
+): OrphanBlock | undefined {
+  const missingByLine = collectMissingSymbols(document, tracker);
+  if (missingByLine.size === 0) {
+    return undefined;
+  }
+
+  let seed = -1;
+  if (missingByLine.has(position.line)) {
+    seed = position.line;
+  } else {
+    for (let dist = 1; dist <= 8; dist++) {
+      if (missingByLine.has(position.line - dist)) {
+        seed = position.line - dist;
+        break;
+      }
+      if (missingByLine.has(position.line + dist)) {
+        seed = position.line + dist;
+        break;
+      }
+    }
+  }
+  if (seed < 0) {
+    return undefined;
+  }
+
+  const missingIds = new Set<string>(missingByLine.get(seed) || []);
+  for (const [line, ids] of missingByLine) {
+    if (Math.abs(line - seed) <= 12) {
+      for (const id of ids) {
+        missingIds.add(id);
+      }
+    }
+  }
+
+  const seedText = document.lineAt(seed).text;
+  if (isIncompleteDeclarationLine(seedText)) {
+    return undefined;
+  }
+  if (
+    !isOrphanCandidateLine(document, seed, missingIds) &&
+    !isChainContinuationLine(seedText) &&
+    ![...missingIds].some((id) => lineReferencesSymbol(seedText, id))
+  ) {
+    return undefined;
+  }
+
+  const expanded = expandOrphanBlock(document, seed, missingIds);
+  if (expanded.end - expanded.start > 20) {
+    return undefined;
+  }
+
+  const marks = markOrphanLines(
+    document,
+    expanded.start,
+    expanded.end,
+    missingIds
+  );
+  const seedIdx = seed - expanded.start;
+  if (seedIdx < 0 || seedIdx >= marks.length || marks[seedIdx] === "keep") {
+    // Seed may be a protected declaration; try nearest delete mark in the block.
+    let nearest = -1;
+    let best = 999;
+    for (let i = 0; i < marks.length; i++) {
+      if (marks[i] !== "delete") {
+        continue;
+      }
+      const dist = Math.abs(i - seedIdx);
+      if (dist < best) {
+        best = dist;
+        nearest = i;
+      }
+    }
+    if (nearest < 0) {
+      return undefined;
+    }
+    seed = expanded.start + nearest;
+  }
+
+  let start = seed;
+  let end = seed;
+  while (start > expanded.start) {
+    const mark = marks[start - 1 - expanded.start];
+    if (mark === "keep") {
+      break;
+    }
+    start--;
+  }
+  while (end < expanded.end) {
+    const mark = marks[end + 1 - expanded.start];
+    if (mark === "keep") {
+      break;
+    }
+    end++;
+  }
+
+  while (start < end && isBlankOrCommentLine(document.lineAt(start).text)) {
+    start++;
+  }
+  while (end > start && isBlankOrCommentLine(document.lineAt(end).text)) {
+    end--;
+  }
+
+  let removable = 0;
+  for (let i = start; i <= end; i++) {
+    const mark = marks[i - expanded.start];
+    if (mark === "delete") {
+      removable++;
+    }
+  }
+  if (removable === 0) {
+    return undefined;
+  }
+
+  const lineRanges: vscode.Range[] = [];
+  for (let i = start; i <= end; i++) {
+    lineRanges.push(document.lineAt(i).range);
+  }
+
+  const deleteStart = document.lineAt(start).range.start;
+  const deleteEnd =
+    end + 1 < document.lineCount
+      ? document.lineAt(end + 1).range.start
+      : document.lineAt(end).range.end;
+
+  const inlineLine = Math.min(Math.max(position.line, start), end);
+  const reasonIds = [...missingIds].slice(0, 3).join(", ");
+  const n = end - start + 1;
+
+  return {
+    startLine: start,
+    endLine: end,
+    lineRanges,
+    deleteRange: new vscode.Range(deleteStart, deleteEnd),
+    inlineRange: document.lineAt(inlineLine).range,
+    reason:
+      n > 1
+        ? `orphan block (${n} lines) for '${reasonIds}'`
+        : `orphan line for '${reasonIds}'`,
+  };
+}
 
 function debounceMsForAggressiveness(
   level: "low" | "medium" | "high",
   fastTrigger: boolean
 ): number {
+  // Eager per-character prefetch; aggressiveness only scales the pause slightly.
   if (level === "low") {
-    return fastTrigger ? 280 : 550;
+    return fastTrigger ? 90 : 160;
   }
   if (level === "high") {
-    return fastTrigger ? 60 : 140;
+    return fastTrigger ? 20 : 45;
   }
-  return fastTrigger ? 120 : 280;
+  return fastTrigger ? 35 : 70;
+}
+
+function showSuggestionShortcutLabel(): string {
+  return process.platform === "darwin" ? "⌘⏎" : "Ctrl+Enter";
 }
 
 const SKIP_PATH_RE =
@@ -84,6 +977,11 @@ function delay(ms: number, token: vscode.CancellationToken): Promise<boolean> {
   });
 }
 
+/** Uncancellable pause for background Tab prefetch. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function truncatePrefix(text: string, max: number): string {
   if (text.length <= max) {
     return text;
@@ -120,10 +1018,77 @@ type CachedSuggestion = {
   uri: string;
   prefixTail: string;
   suffixHead: string;
-  text: string;
+  texts: string[];
   modelId: string;
+  alternatives: number;
   at: number;
 };
+
+function httpStatusFromError(error: unknown): number | undefined {
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { name?: string }).name === "HttpStatusError" &&
+    typeof (error as { status?: unknown }).status === "number"
+  ) {
+    return (error as { status: number }).status;
+  }
+  if (error instanceof Error) {
+    const m = /^API (\d+):/i.exec(error.message);
+    if (m) {
+      return Number(m[1]);
+    }
+  }
+  return undefined;
+}
+
+function isQuotaLikeMessage(message: string): boolean {
+  return /квот|quota|rate.?limit|resource_error|too many requests|429/i.test(
+    message
+  );
+}
+
+function classifyTabProviderFailure(error: unknown): {
+  cooldownMs: number;
+  short: string;
+} | undefined {
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || /abort/i.test(error.message))
+  ) {
+    return undefined;
+  }
+  const status = httpStatusFromError(error);
+  const message = error instanceof Error ? error.message : String(error);
+  if (status === 429 || isQuotaLikeMessage(message)) {
+    return {
+      cooldownMs: COOLDOWN_QUOTA_MS,
+      short: "quota / rate limit",
+    };
+  }
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    /connection error|internalservererror|econnreset|etimedout/i.test(message)
+  ) {
+    return {
+      cooldownMs: COOLDOWN_SERVER_MS,
+      short: `provider ${status || "error"}`,
+    };
+  }
+  if (typeof status === "number" && status >= 400) {
+    return {
+      cooldownMs: COOLDOWN_OTHER_MS,
+      short: `API ${status}`,
+    };
+  }
+  return {
+    cooldownMs: COOLDOWN_OTHER_MS,
+    short: "provider error",
+  };
+}
 
 class SuggestionCache {
   private readonly items: CachedSuggestion[] = [];
@@ -132,8 +1097,9 @@ class SuggestionCache {
     uri: string,
     prefix: string,
     suffix: string,
-    modelId: string
-  ): string | undefined {
+    modelId: string,
+    alternatives: number
+  ): string[] | undefined {
     const prefixTail = prefix.slice(-240);
     const suffixHead = suffix.slice(0, 120);
 
@@ -141,20 +1107,30 @@ class SuggestionCache {
       if (item.uri !== uri || item.modelId !== modelId) {
         continue;
       }
+      if (item.alternatives !== alternatives) {
+        continue;
+      }
       if (item.suffixHead !== suffixHead) {
         continue;
       }
       if (item.prefixTail === prefixTail) {
-        return item.text;
+        return item.texts.slice();
       }
-      // User typed further into a previous suggestion — return remainder.
+      // User typed further into a previous suggestion — return remainders.
       if (
         prefixTail.length > item.prefixTail.length &&
         prefixTail.startsWith(item.prefixTail)
       ) {
         const typed = prefixTail.slice(item.prefixTail.length);
-        if (typed && item.text.startsWith(typed)) {
-          return item.text.slice(typed.length);
+        if (!typed) {
+          continue;
+        }
+        const remainders = item.texts
+          .filter((t) => t.startsWith(typed))
+          .map((t) => t.slice(typed.length))
+          .filter((t) => t.length > 0);
+        if (remainders.length > 0) {
+          return remainders;
         }
       }
     }
@@ -166,14 +1142,16 @@ class SuggestionCache {
     prefix: string,
     suffix: string,
     modelId: string,
-    text: string
+    alternatives: number,
+    texts: string[]
   ): void {
     const entry: CachedSuggestion = {
       uri,
       prefixTail: prefix.slice(-240),
       suffixHead: suffix.slice(0, 120),
-      text,
+      texts: texts.slice(),
       modelId,
+      alternatives,
       at: Date.now(),
     };
     this.items.unshift(entry);
@@ -188,6 +1166,11 @@ class TabAutocompleteStatusBar {
   private readonly activeRequests = new Set<number>();
   private lastError: string | undefined;
   private lastLatencyMs: number | undefined;
+  private cooldownUntil = 0;
+  private cooldownReason: string | undefined;
+  private cooldownTimer: ReturnType<typeof setTimeout> | undefined;
+  private suggestionReady = false;
+  private onReadyClick: (() => void) | undefined;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(
@@ -200,7 +1183,23 @@ class TabAutocompleteStatusBar {
   }
 
   dispose(): void {
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = undefined;
+    }
     this.item.dispose();
+  }
+
+  setReadyClickHandler(handler: (() => void) | undefined): void {
+    this.onReadyClick = handler;
+  }
+
+  handleStatusClick(): void {
+    if (this.suggestionReady && this.onReadyClick) {
+      this.onReadyClick();
+      return;
+    }
+    void vscode.commands.executeCommand("agentPanel.openSettings");
   }
 
   onStart(requestId: number): void {
@@ -213,13 +1212,54 @@ class TabAutocompleteStatusBar {
     this.activeRequests.delete(requestId);
     if (typeof latencyMs === "number") {
       this.lastLatencyMs = latencyMs;
+      this.clearCooldown();
     }
     this.refresh();
   }
 
   setError(message: string): void {
     this.lastError = message;
+    this.suggestionReady = false;
     this.refresh();
+  }
+
+  setSuggestionReady(ready: boolean): void {
+    if (this.suggestionReady === ready) {
+      if (ready) {
+        this.refresh();
+      }
+      return;
+    }
+    this.suggestionReady = ready;
+    this.refresh();
+  }
+
+  setCooldown(untilMs: number, reason: string): void {
+    this.cooldownUntil = untilMs;
+    this.cooldownReason = reason;
+    this.lastError = reason;
+    this.suggestionReady = false;
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+    }
+    const wait = Math.max(0, untilMs - Date.now()) + 50;
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = undefined;
+      if (Date.now() >= this.cooldownUntil) {
+        this.clearCooldown();
+        this.refresh();
+      }
+    }, wait);
+    this.refresh();
+  }
+
+  clearCooldown(): void {
+    this.cooldownUntil = 0;
+    this.cooldownReason = undefined;
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = undefined;
+    }
   }
 
   refresh(): void {
@@ -228,10 +1268,11 @@ class TabAutocompleteStatusBar {
     const modelId = config.tabAutocomplete.modelId.trim();
     const model = getEnabledModels().find((m) => m.id === modelId);
     const label = model?.label || modelId || "—";
+    const shortcut = showSuggestionShortcutLabel();
 
     if (this.activeRequests.size > 0) {
       this.item.text = `$(sync~spin) Tab: ${label}`;
-      this.item.tooltip = `Harbor Tab autocomplete generating (${this.activeRequests.size})`;
+      this.item.tooltip = `Harbor Tab prefetching (${this.activeRequests.size})\nGhost text stays hidden until ${shortcut}.`;
       return;
     }
 
@@ -249,9 +1290,23 @@ class TabAutocompleteStatusBar {
       return;
     }
 
+    const coolLeft = this.cooldownUntil - Date.now();
+    if (coolLeft > 0) {
+      const sec = Math.ceil(coolLeft / 1000);
+      this.item.text = `$(debug-pause) Tab: pause ${sec}s`;
+      this.item.tooltip = `Harbor Tab paused after provider error (${sec}s left).\n${this.cooldownReason || this.lastError || ""}\nOpen Output → Harbor Tab Autocomplete for details.`;
+      return;
+    }
+
     if (this.lastError) {
       this.item.text = `$(warning) Tab: ${label}`;
       this.item.tooltip = `Tab error: ${this.lastError}\nOpen Output → Harbor Tab Autocomplete for details.`;
+      return;
+    }
+
+    if (this.suggestionReady) {
+      this.item.text = "$(sparkle) Tab ready";
+      this.item.tooltip = `Suggestion ready. Shortcut chip is at the caret — press ${shortcut} to preview code, then Tab to accept.`;
       return;
     }
 
@@ -260,29 +1315,361 @@ class TabAutocompleteStatusBar {
         ? ` · last ${this.lastLatencyMs}ms`
         : "";
     this.item.text = `$(code) Tab: ${label}`;
-    this.item.tooltip = `Harbor Tab autocomplete · ${label}${latency}`;
+    this.item.tooltip = `Harbor Tab autocomplete · ${label}${latency}\nPrefetch while typing; a caret chip appears when ready (no code until ${shortcut}).`;
   }
 }
+
+function isShortcutHintText(text: string): boolean {
+  const shortcut = showSuggestionShortcutLabel();
+  const t = text.trim();
+  return t === shortcut || text === ` ${shortcut}` || text === shortcut;
+}
+
+/**
+ * Ready-chip at the caret: VS Code inlay hint (segmented pill) on the cursor
+ * position — does not insert document lines. Clickable parts trigger show.
+ */
+class CaretShortcutHintController
+  implements vscode.Disposable, vscode.InlayHintsProvider
+{
+  private readonly disposables: vscode.Disposable[] = [];
+  private ready:
+    | { uri: string; position: vscode.Position; version: number }
+    | undefined;
+  private readonly onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeInlayHints = this.onDidChange.event;
+
+  constructor() {
+    this.disposables.push(
+      vscode.languages.registerInlayHintsProvider({ pattern: "**" }, this),
+      this.onDidChange
+    );
+  }
+
+  dispose(): void {
+    this.hide();
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+  }
+
+  show(editor: vscode.TextEditor, position: vscode.Position): void {
+    this.ready = {
+      uri: editor.document.uri.toString(),
+      position,
+      version: editor.document.version,
+    };
+    this.onDidChange.fire();
+  }
+
+  hide(): void {
+    if (!this.ready) {
+      return;
+    }
+    this.ready = undefined;
+    this.onDidChange.fire();
+  }
+
+  provideInlayHints(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    _token: vscode.CancellationToken
+  ): vscode.InlayHint[] {
+    const ready = this.ready;
+    if (!ready || ready.uri !== document.uri.toString()) {
+      return [];
+    }
+    if (ready.version !== document.version) {
+      // Stale — document changed under the caret chip.
+      return [];
+    }
+    if (!range.contains(ready.position) && !range.contains(ready.position.translate(0, 1))) {
+      // Still show if the line is in range (contains can fail at EOL).
+      if (
+        ready.position.line < range.start.line ||
+        ready.position.line > range.end.line
+      ) {
+        return [];
+      }
+    }
+
+    const shortcut = showSuggestionShortcutLabel();
+    const showPart = new vscode.InlayHintLabelPart(` ${shortcut} `);
+    showPart.tooltip = `Show Tab suggestion (${shortcut})`;
+    showPart.command = {
+      command: SHOW_SUGGESTION_CMD,
+      title: "Show Tab suggestion",
+    };
+
+    const tabPart = new vscode.InlayHintLabelPart(" Tab ");
+    tabPart.tooltip = "Show suggestion, then Tab to accept";
+    tabPart.command = {
+      command: SHOW_SUGGESTION_CMD,
+      title: "Show Tab suggestion",
+    };
+
+    // Sit on the caret line at the cursor (the editor caret / "черточка").
+    const hint = new vscode.InlayHint(ready.position, [showPart, tabPart]);
+    hint.paddingLeft = true;
+    hint.paddingRight = true;
+    hint.kind = vscode.InlayHintKind.Type;
+    return [hint];
+  }
+}
+
+type PrefetchJob = {
+  document: vscode.TextDocument;
+  position: vscode.Position;
+  textBeforeCursor: string;
+  textAfterCursor: string;
+  modelId: string;
+  alternatives: number;
+  debounceMs: number;
+};
 
 class HarborTabInlineCompletionProvider
   implements vscode.InlineCompletionItemProvider
 {
-  private currentAbortController: AbortController | undefined;
   private requestCounter = 0;
   private lastAcceptedCompletion:
     | { text: string; position: vscode.Position; timestamp: number }
     | undefined;
   private readonly holeFiller = new DefaultHoleFiller();
   private readonly cache = new SuggestionCache();
+  /** modelId → epoch ms until which LLM Tab calls are paused */
+  private readonly cooldownUntilByModel = new Map<string, number>();
+  private prefetchInFlight = false;
+  private prefetchAgain = false;
+  private latestPrefetch: PrefetchJob | undefined;
+  private prefetchSerial = 0;
+  /** Last texts shown as ready chip — used when Invoke cache key drifts slightly. */
+  private lastReady:
+    | {
+        uri: string;
+        line: number;
+        texts: string[];
+        at: number;
+      }
+    | undefined;
 
-  constructor(private readonly statusBar: TabAutocompleteStatusBar) {}
+  constructor(
+    private readonly statusBar: TabAutocompleteStatusBar,
+    private readonly deletions: RecentDeletionTracker,
+    private readonly caretHint: CaretShortcutHintController
+  ) {}
+
+  private rememberReady(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    texts: string[]
+  ): void {
+    this.lastReady = {
+      uri: document.uri.toString(),
+      line: position.line,
+      texts: texts.slice(),
+      at: Date.now(),
+    };
+  }
+
+  private takeLastReady(
+    document: vscode.TextDocument,
+    position: vscode.Position
+  ): string[] | undefined {
+    const ready = this.lastReady;
+    if (!ready) {
+      return undefined;
+    }
+    if (ready.uri !== document.uri.toString()) {
+      return undefined;
+    }
+    if (Math.abs(ready.line - position.line) > 1) {
+      return undefined;
+    }
+    if (Date.now() - ready.at > 120_000) {
+      return undefined;
+    }
+    return ready.texts;
+  }
+
+  private setReady(
+    ready: boolean,
+    document?: vscode.TextDocument,
+    position?: vscode.Position
+  ): void {
+    this.statusBar.setSuggestionReady(ready);
+    if (!ready) {
+      this.caretHint.hide();
+      return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (
+      !editor ||
+      !document ||
+      !position ||
+      editor.document.uri.toString() !== document.uri.toString()
+    ) {
+      this.caretHint.hide();
+      return;
+    }
+    this.caretHint.show(editor, position);
+  }
+
+  private isModelCoolingDown(modelId: string): boolean {
+    const until = this.cooldownUntilByModel.get(modelId) || 0;
+    if (until <= Date.now()) {
+      if (until) {
+        this.cooldownUntilByModel.delete(modelId);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  private armCooldown(modelId: string, error: unknown): void {
+    const classified = classifyTabProviderFailure(error);
+    if (!classified) {
+      return;
+    }
+    const until = Date.now() + classified.cooldownMs;
+    const prev = this.cooldownUntilByModel.get(modelId) || 0;
+    this.cooldownUntilByModel.set(modelId, Math.max(prev, until));
+    const sec = Math.round(classified.cooldownMs / 1000);
+    log("cooldown", {
+      modelId,
+      reason: classified.short,
+      seconds: sec,
+    });
+    this.statusBar.setCooldown(
+      this.cooldownUntilByModel.get(modelId)!,
+      `${classified.short} — retry in ~${sec}s`
+    );
+  }
+
+
+  /** Queue a background prefetch that is not aborted by the next keystroke. */
+  private queuePrefetch(job: PrefetchJob): void {
+    this.latestPrefetch = job;
+    if (this.prefetchInFlight) {
+      this.prefetchAgain = true;
+      return;
+    }
+    this.prefetchInFlight = true;
+    void this.runPrefetchLoop();
+  }
+
+  private async runPrefetchLoop(): Promise<void> {
+    try {
+      do {
+        this.prefetchAgain = false;
+        const job = this.latestPrefetch;
+        if (!job) {
+          break;
+        }
+        const wait = await sleep(job.debounceMs);
+        void wait;
+        if (this.prefetchAgain || this.latestPrefetch !== job) {
+          continue;
+        }
+        if (this.isModelCoolingDown(job.modelId)) {
+          continue;
+        }
+
+        const requestId = ++this.requestCounter;
+        this.statusBar.onStart(requestId);
+        const started = Date.now();
+        try {
+          const texts = await this.fetchCompletionTexts(job);
+          this.statusBar.onEnd(requestId, Date.now() - started);
+          if (!texts || texts.length === 0) {
+            if (this.latestPrefetch === job) {
+              this.setReady(false);
+            }
+            continue;
+          }
+        this.cache.set(
+          job.document.uri.toString(),
+          job.textBeforeCursor,
+          job.textAfterCursor,
+          job.modelId,
+          job.alternatives,
+          texts
+        );
+          log("prefetch ready", {
+            alternatives: texts.length,
+            preview: texts[0].slice(0, 80).replace(/\n/g, "\\n"),
+          });
+          this.rememberReady(job.document, job.position, texts);
+          this.revealReadyHintIfCurrent(job);
+        } catch (error) {
+          this.statusBar.onEnd(requestId);
+          if (
+            error instanceof Error &&
+            (error.name === "AbortError" || /abort/i.test(error.message))
+          ) {
+            continue;
+          }
+          log("error", error);
+          this.armCooldown(job.modelId, error);
+        }
+      } while (this.prefetchAgain);
+    } finally {
+      this.prefetchInFlight = false;
+      if (this.prefetchAgain) {
+        this.prefetchInFlight = true;
+        void this.runPrefetchLoop();
+      }
+    }
+  }
+
+  private revealReadyHintIfCurrent(job: PrefetchJob): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.uri.toString() !== job.document.uri.toString()) {
+      return;
+    }
+    const pos = editor.selection.active;
+    const textBeforeCursor = truncatePrefix(
+      editor.document.getText(new vscode.Range(new vscode.Position(0, 0), pos)),
+      MAX_PREFIX_CHARS
+    );
+    const lastLine = editor.document.lineAt(editor.document.lineCount - 1);
+    const textAfterCursor = truncateSuffix(
+      editor.document.getText(
+        new vscode.Range(
+          pos,
+          new vscode.Position(
+            editor.document.lineCount - 1,
+            lastLine.text.length
+          )
+        )
+      ),
+      MAX_SUFFIX_CHARS
+    );
+    const cached = this.cache.get(
+      editor.document.uri.toString(),
+      textBeforeCursor,
+      textAfterCursor,
+      job.modelId,
+      job.alternatives
+    );
+    if (!cached || cached.length === 0) {
+      return;
+    }
+    this.setReady(true, editor.document, pos);
+    this.rememberReady(editor.document, pos, cached);
+  }
 
   onCompletionAccepted(text: string, position: vscode.Position): void {
+    if (isShortcutHintText(text)) {
+      // User pressed Tab on a stray shortcut chip — show real suggestion.
+      void vscode.commands.executeCommand("editor.action.inlineSuggest.trigger");
+      return;
+    }
     this.lastAcceptedCompletion = {
       text,
       position,
       timestamp: Date.now(),
     };
+    this.setReady(false);
   }
 
   async provideInlineCompletionItems(
@@ -295,17 +1682,60 @@ class HarborTabInlineCompletionProvider
     if (!config.tabAutocomplete.enabled) {
       return [];
     }
-    const modelId = config.tabAutocomplete.modelId.trim();
-    if (!modelId) {
-      return [];
-    }
-    if (!getEnabledModels().some((m) => m.id === modelId)) {
-      return [];
-    }
     if (shouldSkipDocument(document)) {
       return [];
     }
-    if (this.shouldSkipRequest(document, position, context)) {
+
+    this.deletions.onDocument(document);
+
+    const isInvoke =
+      context.triggerKind === vscode.InlineCompletionTriggerKind.Invoke;
+
+    // Local orphan-block delete suggestion (no LLM) — e.g. leftover `.on(event)`
+    // chain after deleting createEvent('testClicked'). Always visible.
+    const orphan = findOrphanBlock(document, position, this.deletions);
+    if (orphan) {
+      log("orphan block suggest", orphan.reason);
+      this.setReady(false);
+      const item = new vscode.InlineCompletionItem("", orphan.deleteRange);
+      item.filterText = document.getText(orphan.deleteRange);
+      const editItem = item as vscode.InlineCompletionItem & {
+        isInlineEdit?: boolean;
+        showRange?: vscode.Range;
+        showInlineEditMenu?: boolean;
+      };
+      editItem.isInlineEdit = true;
+      editItem.showRange = orphan.deleteRange;
+      editItem.showInlineEditMenu = true;
+      item.command = {
+        command: DELETE_ORPHAN_LINE_CMD,
+        title: "Delete orphan block",
+        arguments: [document.uri, orphan.startLine, orphan.endLine],
+      };
+      return [item];
+    }
+
+    // Unused binding in a comma list — prefer `$newStore,` over model `],`.
+    const listFill = findUnusedBindingListFill(document, position);
+    if (listFill) {
+      log("unused binding list suggest", listFill.text);
+      this.setReady(false);
+      return [this.toItem(listFill.text, position, listFill.range)];
+    }
+
+    const modelId = config.tabAutocomplete.modelId.trim();
+    if (!modelId) {
+      this.setReady(false);
+      return [];
+    }
+    if (!getEnabledModels().some((m) => m.id === modelId)) {
+      this.setReady(false);
+      return [];
+    }
+    if (this.shouldSkipRequest(document, position, context, isInvoke)) {
+      if (!isInvoke) {
+        this.setReady(false);
+      }
       return [];
     }
 
@@ -325,72 +1755,131 @@ class HarborTabInlineCompletionProvider
     );
 
     // Instant reuse when the user is typing through a cached suggestion.
+    const alternatives = config.tabAutocomplete.alternatives;
     const cached = this.cache.get(
       document.uri.toString(),
       textBeforeCursor,
       textAfterCursor,
-      modelId
+      modelId,
+      alternatives
     );
-    if (cached) {
-      log("cache hit", cached.slice(0, 80).replace(/\n/g, "\\n"));
-      return [
-        this.toItem(cached, position),
-      ];
+    if (cached && cached.length > 0) {
+      log("cache hit", {
+        alternatives: cached.length,
+        preview: cached[0].slice(0, 80).replace(/\n/g, "\\n"),
+        show: isInvoke,
+      });
+      if (isInvoke) {
+        this.setReady(false);
+        return cached.map((text) => this.toItem(text, position));
+      }
+      // Prefetch path: caret shortcut chip only (real code stays cached).
+      this.rememberReady(document, position, cached);
+      this.setReady(true, document, position);
+      return [];
     }
 
-    if (this.requestCounter >= Number.MAX_SAFE_INTEGER) {
-      this.requestCounter = 0;
+    // Explicit show: fall back to last ready chip texts if prefix drifted.
+    if (isInvoke) {
+      const readyTexts = this.takeLastReady(document, position);
+      if (readyTexts && readyTexts.length > 0) {
+        log("invoke lastReady", {
+          alternatives: readyTexts.length,
+          preview: readyTexts[0].slice(0, 80).replace(/\n/g, "\\n"),
+        });
+        this.setReady(false);
+        return readyTexts.map((text) => this.toItem(text, position));
+      }
     }
-    const currentRequestId = ++this.requestCounter;
 
-    if (this.currentAbortController) {
-      this.currentAbortController.abort();
-      this.currentAbortController = undefined;
+    if (this.isModelCoolingDown(modelId)) {
+      this.setReady(false);
+      return [];
     }
 
-    // Faster debounce after trigger chars (; { ( = , space newline).
     const charBefore =
       position.character > 0
         ? document.lineAt(position.line).text.charAt(position.character - 1)
         : "";
-    const fastTrigger = /[;{}\n=,(\[]/.test(charBefore) || charBefore === " ";
-    const debounceMs = debounceMsForAggressiveness(
-      config.tabAutocomplete.aggressiveness,
-      fastTrigger
-    );
+    const fastTrigger =
+      /[\w$;{}\n=,(\[\].]/.test(charBefore) || charBefore === " ";
+    const debounceMs = isInvoke
+      ? 0
+      : debounceMsForAggressiveness(
+          config.tabAutocomplete.aggressiveness,
+          fastTrigger
+        );
 
-    const stillActive = await delay(debounceMs, token);
-    if (!stillActive || !this.isRequestStillValid(currentRequestId, token)) {
-      return [];
+    if (isInvoke) {
+      if (this.requestCounter >= Number.MAX_SAFE_INTEGER) {
+        this.requestCounter = 0;
+      }
+      const currentRequestId = ++this.requestCounter;
+      this.statusBar.onStart(currentRequestId);
+      const started = Date.now();
+      try {
+        const texts = await this.fetchCompletionTexts({
+          document,
+          position,
+          textBeforeCursor,
+          textAfterCursor,
+          modelId,
+          alternatives,
+          debounceMs: 0,
+        });
+        this.statusBar.onEnd(currentRequestId, Date.now() - started);
+        if (!texts || texts.length === 0) {
+          this.setReady(false);
+          return [];
+        }
+        this.cache.set(
+          document.uri.toString(),
+          textBeforeCursor,
+          textAfterCursor,
+          modelId,
+          alternatives,
+          texts
+        );
+        this.setReady(false);
+        return texts.map((text) => this.toItem(text, position));
+      } catch (error) {
+        this.statusBar.onEnd(currentRequestId);
+        if (
+          !(
+            error instanceof Error &&
+            (error.name === "AbortError" || /abort/i.test(error.message))
+          )
+        ) {
+          log("error", error);
+          this.armCooldown(modelId, error);
+        }
+        this.setReady(false);
+        return [];
+      }
     }
 
-    this.statusBar.onStart(currentRequestId);
-    const started = Date.now();
-    try {
-      const result = await this.generateCompletion(
-        document,
-        position,
-        token,
-        modelId,
-        currentRequestId,
-        textBeforeCursor,
-        textAfterCursor
-      );
-      this.statusBar.onEnd(currentRequestId, Date.now() - started);
-      return result;
-    } catch {
-      this.statusBar.onEnd(currentRequestId);
-      return [];
-    }
+    // Automatic: background prefetch survives keystrokes; chip via decoration.
+    this.setReady(false);
+    this.queuePrefetch({
+      document,
+      position,
+      textBeforeCursor,
+      textAfterCursor,
+      modelId,
+      alternatives,
+      debounceMs,
+    });
+    return [];
   }
 
   private toItem(
     text: string,
-    position: vscode.Position
+    position: vscode.Position,
+    range?: vscode.Range
   ): vscode.InlineCompletionItem {
     const item = new vscode.InlineCompletionItem(
       text,
-      new vscode.Range(position, position)
+      range ?? new vscode.Range(position, position)
     );
     item.command = {
       command: COMPLETION_ACCEPTED_CMD,
@@ -403,12 +1892,14 @@ class HarborTabInlineCompletionProvider
   private shouldSkipRequest(
     document: vscode.TextDocument,
     position: vscode.Position,
-    context: vscode.InlineCompletionContext
+    context: vscode.InlineCompletionContext,
+    isInvoke: boolean
   ): boolean {
     const currentTime = Date.now();
     const currentLine = document.lineAt(position.line);
 
-    if (context.selectedCompletionInfo) {
+    // IntelliSense selection suppresses Automatic Tab, but never blocks ⌘⏎ / Invoke.
+    if (!isInvoke && context.selectedCompletionInfo) {
       return true;
     }
 
@@ -440,17 +1931,21 @@ class HarborTabInlineCompletionProvider
       }
     }
 
-    const charAtCursor = currentLine.text.charAt(position.character);
-    const charBeforeCursor =
-      position.character > 0
-        ? currentLine.text.charAt(position.character - 1)
-        : "";
-    if (
-      charAtCursor &&
-      /\w/.test(charAtCursor) &&
-      /\w/.test(charBeforeCursor)
-    ) {
-      return true;
+    // Allow Invoke anytime; Automatic still skips true mid-identifier edits
+    // (cursor between word chars) to avoid thrashing, but fires at word end.
+    if (!isInvoke) {
+      const charAtCursor = currentLine.text.charAt(position.character);
+      const charBeforeCursor =
+        position.character > 0
+          ? currentLine.text.charAt(position.character - 1)
+          : "";
+      if (
+        charAtCursor &&
+        /\w/.test(charAtCursor) &&
+        /\w/.test(charBeforeCursor)
+      ) {
+        return true;
+      }
     }
 
     // Empty brand-new file with almost no signal — wait for a bit of context.
@@ -461,18 +1956,17 @@ class HarborTabInlineCompletionProvider
     return false;
   }
 
-  private async generateCompletion(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    token: vscode.CancellationToken,
-    modelId: string,
-    requestId: number,
-    textBeforeCursor: string,
-    textAfterCursor: string
-  ): Promise<vscode.InlineCompletionItem[]> {
-    if (!this.isRequestStillValid(requestId, token)) {
-      return [];
-    }
+  private async fetchCompletionTexts(
+    job: PrefetchJob
+  ): Promise<string[] | undefined> {
+    const {
+      document,
+      position,
+      textBeforeCursor,
+      textAfterCursor,
+      modelId,
+      alternatives,
+    } = job;
 
     const params: AutoCompleteContext = {
       textBeforeCursor,
@@ -480,127 +1974,205 @@ class HarborTabInlineCompletionProvider
       filename: path.basename(document.fileName || document.uri.fsPath || ""),
       language: document.languageId,
       currentLineText: document.lineAt(position.line).text,
+      focus: buildTabFocusContext(
+        document.getText(),
+        position.line,
+        this.deletions.recentlyAddedIds()
+      ),
     };
 
-    this.currentAbortController = new AbortController();
-    const tokenListener = token.onCancellationRequested(() => {
-      this.currentAbortController?.abort();
+    const endpoint = resolveModelEndpoint(modelId);
+    if (!endpoint.baseUrl) {
+      const msg = "no provider baseUrl for model";
+      log(msg, modelId);
+      this.statusBar.setError(msg);
+      return undefined;
+    }
+
+    const config = getConfig();
+    const client = getOpenAICompatibleClient(
+      endpoint.baseUrl,
+      endpoint.apiKey || "",
+      {
+        rejectUnauthorized: config.rejectUnauthorized,
+        caBundlePath: config.caBundlePath,
+      }
+    );
+
+    const { messages } = this.holeFiller.prompt(params, alternatives);
+    const sameLineSuffix = (textAfterCursor.split("\n")[0] || "");
+    const baseTokens = sameLineSuffix.length > 0 ? 36 : MAX_COMPLETION_TOKENS;
+    const maxTokens = Math.min(
+      120,
+      baseTokens + (alternatives > 1 ? 24 * (alternatives - 1) : 0)
+    );
+
+    log("request", {
+      modelId,
+      providerId: endpoint.providerId,
+      prefixLen: textBeforeCursor.length,
+      suffixLen: textAfterCursor.length,
+      language: document.languageId,
+      maxTokens,
+      alternatives,
+      focusRegion: params.focus?.region,
+      recentBindings: params.focus?.recentBindings,
     });
 
-    try {
-      const endpoint = resolveModelEndpoint(modelId);
-      if (!endpoint.baseUrl) {
-        const msg = "no provider baseUrl for model";
-        log(msg, modelId);
-        this.statusBar.setError(msg);
-        return [];
-      }
+    // No cancellation tied to editor token — typing must not kill prefetch.
+    const result = await client.chatCompletions(
+      {
+        model: modelId,
+        messages,
+        temperature: 0.1,
+        max_tokens: maxTokens,
+      },
+      undefined
+    );
 
-      const config = getConfig();
-      const client = getOpenAICompatibleClient(
-        endpoint.baseUrl,
-        endpoint.apiKey || "",
-        {
-          rejectUnauthorized: config.rejectUnauthorized,
-          caBundlePath: config.caBundlePath,
-        }
-      );
-
-      const { messages } = this.holeFiller.prompt(params);
-      const sameLineSuffix = (textAfterCursor.split("\n")[0] || "");
-      const maxTokens =
-        sameLineSuffix.length > 0 ? 48 : MAX_COMPLETION_TOKENS;
-
-      log("request", {
-        modelId,
-        providerId: endpoint.providerId,
-        prefixLen: textBeforeCursor.length,
-        suffixLen: textAfterCursor.length,
-        language: document.languageId,
-        maxTokens,
-      });
-
-      const result = await client.chatCompletions(
-        {
-          model: modelId,
-          messages,
-          temperature: 0.1,
-          max_tokens: maxTokens,
-        },
-        this.currentAbortController.signal
-      );
-
-      if (!this.isRequestStillValid(requestId, token)) {
-        return [];
-      }
-
-      const content = result.message.content;
-      const raw =
-        typeof content === "string"
+    const content = result.message.content;
+    const raw =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
           ? content
-          : Array.isArray(content)
-            ? content
-                .map((part) =>
-                  part && typeof part === "object" && "text" in part
-                    ? String((part as { text?: string }).text || "")
-                    : ""
-                )
-                .join("")
-            : "";
+              .map((part) =>
+                part && typeof part === "object" && "text" in part
+                  ? String((part as { text?: string }).text || "")
+                  : ""
+              )
+              .join("")
+          : "";
 
-      if (!raw) {
-        log("empty model response");
-        return [];
-      }
-
-      const response = refineCompletionText(raw, params);
-      if (!response.trim()) {
-        log("empty after refine", raw.slice(0, 200));
-        return [];
-      }
-
-      this.cache.set(
-        document.uri.toString(),
-        textBeforeCursor,
-        textAfterCursor,
-        modelId,
-        response
-      );
-
-      log("suggestion", response.slice(0, 120).replace(/\n/g, "\\n"));
-      return [this.toItem(response, position)];
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        (error.name === "AbortError" || /abort/i.test(error.message))
-      ) {
-        return [];
-      }
-      const msg = error instanceof Error ? error.message : String(error);
-      log("error", error);
-      this.statusBar.setError(msg.slice(0, 120));
+    if (!raw) {
+      log("empty model response");
       return [];
-    } finally {
-      tokenListener.dispose();
     }
-  }
 
-  private isRequestStillValid(
-    requestId: number,
-    token: vscode.CancellationToken
-  ): boolean {
-    return requestId === this.requestCounter && !token.isCancellationRequested;
+    const texts = refineCompletionAlternatives(raw, params, alternatives);
+    if (texts.length === 0) {
+      log("empty after refine", raw.slice(0, 200));
+      return [];
+    }
+
+    this.cooldownUntilByModel.delete(modelId);
+    return texts;
   }
 }
 
 /**
- * Register Tab autocomplete (inline ghost text) for Harbor Agents.
+ * Visual strikethrough for orphan lines (stable API). Complements proposed
+ * `isInlineEdit` when the host supports it.
  */
+class OrphanStrikethroughController implements vscode.Disposable {
+  private readonly decorationType: vscode.TextEditorDecorationType;
+  private readonly disposables: vscode.Disposable[] = [];
+  private currentKey: string | undefined;
+
+  constructor(private readonly deletions: RecentDeletionTracker) {
+    this.decorationType = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      textDecoration: "line-through solid",
+      opacity: "0.55",
+      backgroundColor: new vscode.ThemeColor("diffEditor.removedLineBackground"),
+      overviewRulerColor: new vscode.ThemeColor(
+        "diffEditor.removedLineBackground"
+      ),
+      overviewRulerLane: vscode.OverviewRulerLane.Center,
+      rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+    });
+
+    const refresh = () => this.refresh();
+    this.disposables.push(
+      vscode.window.onDidChangeActiveTextEditor(refresh),
+      vscode.window.onDidChangeTextEditorSelection(refresh),
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        const ed = vscode.window.activeTextEditor;
+        if (ed && e.document.uri.toString() === ed.document.uri.toString()) {
+          refresh();
+        }
+      }),
+      vscode.languages.onDidChangeDiagnostics((e) => {
+        const ed = vscode.window.activeTextEditor;
+        if (!ed) {
+          return;
+        }
+        if (e.uris.some((u) => u.toString() === ed.document.uri.toString())) {
+          refresh();
+        }
+      })
+    );
+    refresh();
+  }
+
+  dispose(): void {
+    this.clear();
+    this.decorationType.dispose();
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+  }
+
+  private clear(): void {
+    const ed = vscode.window.activeTextEditor;
+    if (ed) {
+      ed.setDecorations(this.decorationType, []);
+    }
+    this.currentKey = undefined;
+  }
+
+  refresh(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !getConfig().tabAutocomplete.enabled) {
+      this.clear();
+      return;
+    }
+    if (shouldSkipDocument(editor.document)) {
+      this.clear();
+      return;
+    }
+
+    this.deletions.onDocument(editor.document);
+    const orphan = findOrphanBlock(
+      editor.document,
+      editor.selection.active,
+      this.deletions
+    );
+    if (!orphan) {
+      this.clear();
+      return;
+    }
+
+    const key = `${editor.document.uri.toString()}:${orphan.startLine}-${orphan.endLine}:${orphan.reason}`;
+    const hover = new vscode.MarkdownString(
+      `**Harbor Tab** — ${orphan.reason}. Press **Tab** or use Quick Fix to delete.`
+    );
+    editor.setDecorations(
+      this.decorationType,
+      orphan.lineRanges.map((range) => ({
+        range,
+        hoverMessage: hover,
+      }))
+    );
+    if (this.currentKey !== key) {
+      this.currentKey = key;
+      log("orphan strikethrough", orphan.reason);
+      void vscode.commands.executeCommand("editor.action.inlineSuggest.trigger");
+    }
+  }
+}
 export function startTabAutocomplete(
   context: vscode.ExtensionContext
 ): void {
   const statusBar = new TabAutocompleteStatusBar();
-  const provider = new HarborTabInlineCompletionProvider(statusBar);
+  const deletions = new RecentDeletionTracker();
+  const caretHint = new CaretShortcutHintController();
+  const provider = new HarborTabInlineCompletionProvider(
+    statusBar,
+    deletions,
+    caretHint
+  );
+  const strikethrough = new OrphanStrikethroughController(deletions);
   output = vscode.window.createOutputChannel("Harbor Tab Autocomplete");
 
   const ensureInlineSuggest = async () => {
@@ -616,16 +2188,91 @@ export function startTabAutocomplete(
         vscode.ConfigurationTarget.Global
       );
     }
+    // Ready chip uses inlay hints (segmented pill at the caret).
+    if (cfg.get<boolean>("inlayHints.enabled") === false) {
+      log("editor.inlayHints.enabled is false — enabling for Tab chip");
+      await cfg.update(
+        "inlayHints.enabled",
+        true,
+        vscode.ConfigurationTarget.Global
+      );
+    }
   };
   void ensureInlineSuggest();
+
+  const triggerShowSuggestion = async () => {
+    if (!getConfig().tabAutocomplete.enabled) {
+      return;
+    }
+    log("show suggestion", showSuggestionShortcutLabel());
+    // IntelliSense steals focus / blocks inline ghost — dismiss it first.
+    try {
+      await vscode.commands.executeCommand("hideSuggestWidget");
+    } catch {
+      // ignore if command unavailable
+    }
+    await vscode.commands.executeCommand("editor.action.inlineSuggest.hide");
+    await vscode.commands.executeCommand("editor.action.inlineSuggest.trigger");
+  };
+  statusBar.setReadyClickHandler(() => {
+    void triggerShowSuggestion();
+  });
+
+  const orphanCodeActions: vscode.CodeActionProvider = {
+    provideCodeActions(document, range) {
+      if (!getConfig().tabAutocomplete.enabled) {
+        return [];
+      }
+      const pos = range.start;
+      const orphan = findOrphanBlock(document, pos, deletions);
+      if (!orphan) {
+        return [];
+      }
+      const n = orphan.endLine - orphan.startLine + 1;
+      const action = new vscode.CodeAction(
+        n > 1
+          ? `Harbor Tab: delete orphan block (${n} lines)`
+          : "Harbor Tab: delete orphan line",
+        vscode.CodeActionKind.QuickFix
+      );
+      action.isPreferred = true;
+      action.command = {
+        command: DELETE_ORPHAN_LINE_CMD,
+        title: "Delete orphan block",
+        arguments: [document.uri, orphan.startLine, orphan.endLine],
+      };
+      return [action];
+    },
+  };
 
   context.subscriptions.push(
     statusBar,
     output,
+    caretHint,
+    strikethrough,
     vscode.languages.registerInlineCompletionItemProvider(
       { pattern: "**" },
       provider
     ),
+    vscode.languages.registerCodeActionsProvider(
+      [
+        { language: "typescript" },
+        { language: "typescriptreact" },
+        { language: "javascript" },
+        { language: "javascriptreact" },
+      ],
+      orphanCodeActions,
+      { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }
+    ),
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.uri.scheme !== "file" && e.document.uri.scheme !== "untitled") {
+        return;
+      }
+      deletions.noteChange(e);
+    }),
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      deletions.onDocument(doc);
+    }),
     vscode.commands.registerCommand(
       COMPLETION_ACCEPTED_CMD,
       (text: string, position: vscode.Position) => {
@@ -634,9 +2281,50 @@ export function startTabAutocomplete(
         }
       }
     ),
+    vscode.commands.registerCommand(
+      DELETE_ORPHAN_LINE_CMD,
+      async (uri?: vscode.Uri, startLine?: number, endLine?: number) => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          return;
+        }
+        if (uri && editor.document.uri.toString() !== uri.toString()) {
+          return;
+        }
+        let from = startLine;
+        let to = endLine;
+        if (typeof from !== "number" || typeof to !== "number") {
+          const orphan = findOrphanBlock(
+            editor.document,
+            editor.selection.active,
+            deletions
+          );
+          if (!orphan) {
+            return;
+          }
+          from = orphan.startLine;
+          to = orphan.endLine;
+        }
+        const doc = editor.document;
+        const last = Math.min(to, doc.lineCount - 1);
+        const first = Math.max(0, Math.min(from, last));
+        const deleteStart = doc.lineAt(first).range.start;
+        const deleteEnd =
+          last + 1 < doc.lineCount
+            ? doc.lineAt(last + 1).range.start
+            : doc.lineAt(last).range.end;
+        await editor.edit((edit) => {
+          edit.delete(new vscode.Range(deleteStart, deleteEnd));
+        });
+        log("deleted orphan block", { from: first, to: last });
+        strikethrough.refresh();
+      }
+    ),
+    vscode.commands.registerCommand(SHOW_SUGGESTION_CMD, () => {
+      void triggerShowSuggestion();
+    }),
     vscode.commands.registerCommand(STATUS_CLICK_CMD, () => {
-      output?.show(true);
-      void vscode.commands.executeCommand("agentPanel.openSettings");
+      statusBar.handleStatusClick();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
@@ -649,6 +2337,10 @@ export function startTabAutocomplete(
       }
     })
   );
+
+  for (const doc of vscode.workspace.textDocuments) {
+    deletions.onDocument(doc);
+  }
 
   log("Tab autocomplete registered", {
     enabled: getConfig().tabAutocomplete.enabled,
