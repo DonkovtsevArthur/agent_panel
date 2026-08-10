@@ -169,6 +169,17 @@ export interface AgentPanelConfig {
   autoCompact: {
     enabled: boolean;
   };
+  /**
+   * Inline Tab autocomplete (ghost text). Uses Harbor providers via
+   * openaiClient — not a separate TabCoder profile system.
+   */
+  tabAutocomplete: {
+    enabled: boolean;
+    /** Model id from agentPanel.models (separate from chat selection). */
+    modelId: string;
+    /** How eagerly to request suggestions while typing. */
+    aggressiveness: "low" | "medium" | "high";
+  };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
     enabled: boolean;
@@ -492,6 +503,20 @@ export function getConfig(): AgentPanelConfig {
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
     },
+    tabAutocomplete: (() => {
+      const rawAgg = String(
+        cfg.get<string>("tabAutocomplete.aggressiveness") || "medium"
+      )
+        .trim()
+        .toLowerCase();
+      const aggressiveness =
+        rawAgg === "low" || rawAgg === "high" ? rawAgg : "medium";
+      return {
+        enabled: cfg.get<boolean>("tabAutocomplete.enabled") === true,
+        modelId: String(cfg.get<string>("tabAutocomplete.modelId") || "").trim(),
+        aggressiveness,
+      };
+    })(),
     selectionHints: {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },

@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.36",
+  "version": "1.1.40",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -238,6 +238,18 @@
         "key": "ctrl+alt+shift+h",
         "mac": "cmd+alt+shift+h",
         "when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
+      },
+      {
+        "command": "editor.action.inlineSuggest.acceptNextWord",
+        "key": "ctrl+right",
+        "mac": "alt+right",
+        "when": "inlineSuggestionVisible && !editorReadonly"
+      },
+      {
+        "command": "editor.action.inlineSuggest.acceptNextLine",
+        "key": "ctrl+down",
+        "mac": "alt+down",
+        "when": "inlineSuggestionVisible && !editorReadonly"
       }
     ],
     "configuration": {
@@ -499,6 +511,31 @@
           "type": "boolean",
           "default": true,
           "description": "%config.autoCompact.enabled.description%"
+        },
+        "agentPanel.tabAutocomplete.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.tabAutocomplete.enabled.description%"
+        },
+        "agentPanel.tabAutocomplete.modelId": {
+          "type": "string",
+          "default": "",
+          "description": "%config.tabAutocomplete.modelId.description%"
+        },
+        "agentPanel.tabAutocomplete.aggressiveness": {
+          "type": "string",
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "enumDescriptions": [
+            "%config.tabAutocomplete.aggressiveness.enum.low%",
+            "%config.tabAutocomplete.aggressiveness.enum.medium%",
+            "%config.tabAutocomplete.aggressiveness.enum.high%"
+          ],
+          "description": "%config.tabAutocomplete.aggressiveness.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

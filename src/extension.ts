@@ -6,6 +6,7 @@ import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
 import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
+import { startTabAutocomplete } from "./tabAutocomplete";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   startEditorContextTracking(context.subscriptions);
   registerGitDiffProvider(context.subscriptions);
   registerSelectionCodeLens(context.subscriptions);
+  startTabAutocomplete(context);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

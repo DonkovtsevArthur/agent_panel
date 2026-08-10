@@ -171,6 +171,21 @@
       autoCompact: "Auto compact",
       autoCompactNote:
         "Compress conversation context when it approaches the model input limit.",
+      tabAutocomplete: "Tab autocomplete",
+      tabAutocompleteEnable: "Enable Tab autocomplete",
+      tabAutocompleteNote:
+        "Inline ghost-text via your Harbor provider. Prefer coder models. Disable standalone TabCoder if installed.",
+      tabAutocompleteModel: "Tab model",
+      tabAutocompleteModelEmpty: "Select a model",
+      tabAutocompleteModelHint:
+        "Coder models (Qwen-Coder, DeepSeek, grok-code) usually beat chat/flash for Tab.",
+      tabAutocompleteAgg: "Aggressiveness",
+      tabAutocompleteAggLow: "Low — fewer requests",
+      tabAutocompleteAggMedium: "Medium — balanced",
+      tabAutocompleteAggHigh: "High — faster, more calls",
+      tabAutocompleteKeysHint:
+        "Accept: Tab (all), Ctrl+Right / Alt+Right (word), Ctrl+Down / Alt+Down (line).",
+      tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
       model: "Model",
       provider: "Provider",
@@ -543,6 +558,21 @@
       autoCompact: "Автосжатие контекста",
       autoCompactNote:
         "Сжимать контекст разговора, когда он приближается к лимиту входа модели.",
+      tabAutocomplete: "Tab autocomplete",
+      tabAutocompleteEnable: "Включить Tab autocomplete",
+      tabAutocompleteNote:
+        "Inline-подсказки через ваш провайдер Harbor. Лучше coder-модели. Отключите отдельный TabCoder, если оба установлены.",
+      tabAutocompleteModel: "Модель для Tab",
+      tabAutocompleteModelEmpty: "Выберите модель",
+      tabAutocompleteModelHint:
+        "Coder-модели (Qwen-Coder, DeepSeek, grok-code) обычно лучше chat/flash для Tab.",
+      tabAutocompleteAgg: "Агрессивность",
+      tabAutocompleteAggLow: "Низкая — меньше запросов",
+      tabAutocompleteAggMedium: "Средняя — баланс",
+      tabAutocompleteAggHigh: "Высокая — быстрее, больше вызовов",
+      tabAutocompleteKeysHint:
+        "Принять: Tab (всё), Ctrl+Right / Alt+Right (слово), Ctrl+Down / Alt+Down (строка).",
+      tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
       model: "Модель",
       provider: "Провайдер",
@@ -947,6 +977,15 @@
   );
   const settingsAutoCompactEnabled = document.getElementById(
     "settingsAutoCompactEnabled"
+  );
+  const settingsTabAutocompleteEnabled = document.getElementById(
+    "settingsTabAutocompleteEnabled"
+  );
+  const settingsTabAutocompleteModel = document.getElementById(
+    "settingsTabAutocompleteModel"
+  );
+  const settingsTabAutocompleteAggressiveness = document.getElementById(
+    "settingsTabAutocompleteAggressiveness"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1501,6 +1540,64 @@
     );
     if (settingsAutoCompactNote) {
       settingsAutoCompactNote.textContent = t("autoCompactNote");
+    }
+    const settingsTabAutocompleteTitle = document.getElementById(
+      "settingsTabAutocompleteTitle"
+    );
+    if (settingsTabAutocompleteTitle) {
+      settingsTabAutocompleteTitle.textContent = t("tabAutocomplete");
+    }
+    const settingsTabAutocompleteLabel = document.getElementById(
+      "settingsTabAutocompleteLabel"
+    );
+    if (settingsTabAutocompleteLabel) {
+      settingsTabAutocompleteLabel.textContent = t("tabAutocompleteEnable");
+    }
+    const settingsTabAutocompleteNote = document.getElementById(
+      "settingsTabAutocompleteNote"
+    );
+    if (settingsTabAutocompleteNote) {
+      settingsTabAutocompleteNote.textContent = t("tabAutocompleteNote");
+    }
+    const settingsTabAutocompleteModelLabel = document.getElementById(
+      "settingsTabAutocompleteModelLabel"
+    );
+    if (settingsTabAutocompleteModelLabel) {
+      settingsTabAutocompleteModelLabel.textContent = t("tabAutocompleteModel");
+    }
+    const settingsTabAutocompleteModelHint = document.getElementById(
+      "settingsTabAutocompleteModelHint"
+    );
+    if (settingsTabAutocompleteModelHint) {
+      settingsTabAutocompleteModelHint.textContent = t(
+        "tabAutocompleteModelHint"
+      );
+    }
+    const settingsTabAutocompleteAggLabel = document.getElementById(
+      "settingsTabAutocompleteAggLabel"
+    );
+    if (settingsTabAutocompleteAggLabel) {
+      settingsTabAutocompleteAggLabel.textContent = t("tabAutocompleteAgg");
+    }
+    if (settingsTabAutocompleteAggressiveness) {
+      const optLow = settingsTabAutocompleteAggressiveness.querySelector(
+        'option[value="low"]'
+      );
+      const optMed = settingsTabAutocompleteAggressiveness.querySelector(
+        'option[value="medium"]'
+      );
+      const optHigh = settingsTabAutocompleteAggressiveness.querySelector(
+        'option[value="high"]'
+      );
+      if (optLow) optLow.textContent = t("tabAutocompleteAggLow");
+      if (optMed) optMed.textContent = t("tabAutocompleteAggMedium");
+      if (optHigh) optHigh.textContent = t("tabAutocompleteAggHigh");
+    }
+    const settingsTabAutocompleteKeysHint = document.getElementById(
+      "settingsTabAutocompleteKeysHint"
+    );
+    if (settingsTabAutocompleteKeysHint) {
+      settingsTabAutocompleteKeysHint.textContent = t("tabAutocompleteKeysHint");
     }
     const settingsSelectionHintsLabel = document.getElementById(
       "settingsSelectionHintsLabel"
@@ -6396,6 +6493,57 @@
 
   function renderSettingsModels() {
     renderSettingsCatalog();
+    fillTabAutocompleteModelSelect(
+      settingsTabAutocompleteModel
+        ? settingsTabAutocompleteModel.value
+        : ""
+    );
+  }
+
+  function isCoderLikeModelId(id, label) {
+    const s = `${id || ""} ${label || ""}`.toLowerCase();
+    return /coder|code-|codestral|deepseek|grok-code|starcoder|codellama|qwen2\.5-coder|qwen3-coder/.test(
+      s
+    );
+  }
+
+  function fillTabAutocompleteModelSelect(selectedId) {
+    if (!settingsTabAutocompleteModel) {
+      return;
+    }
+    const previous = String(
+      selectedId != null && selectedId !== ""
+        ? selectedId
+        : settingsTabAutocompleteModel.value || ""
+    ).trim();
+    const enabled = settingsModels
+      .filter((m) => m && m.id && m.enabled !== false)
+      .slice()
+      .sort((a, b) => {
+        const ac = isCoderLikeModelId(a.id, a.label) ? 0 : 1;
+        const bc = isCoderLikeModelId(b.id, b.label) ? 0 : 1;
+        if (ac !== bc) return ac - bc;
+        return String(a.label || a.id).localeCompare(String(b.label || b.id));
+      });
+    settingsTabAutocompleteModel.innerHTML = "";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = t("tabAutocompleteModelEmpty");
+    settingsTabAutocompleteModel.appendChild(empty);
+    for (const model of enabled) {
+      const opt = document.createElement("option");
+      opt.value = model.id;
+      const base = model.label || model.id;
+      opt.textContent = isCoderLikeModelId(model.id, model.label)
+        ? `${base} (${t("tabAutocompleteCoderTag")})`
+        : base;
+      settingsTabAutocompleteModel.appendChild(opt);
+    }
+    if (previous && enabled.some((m) => m.id === previous)) {
+      settingsTabAutocompleteModel.value = previous;
+    } else {
+      settingsTabAutocompleteModel.value = "";
+    }
   }
 
   function setJsonHint(text, isError) {
@@ -8158,6 +8306,18 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    fillTabAutocompleteModelSelect(settings.tabAutocompleteModelId || "");
+    if (settingsTabAutocompleteEnabled) {
+      settingsTabAutocompleteEnabled.checked =
+        settings.tabAutocompleteEnabled === true;
+    }
+    if (settingsTabAutocompleteAggressiveness) {
+      const agg = String(settings.tabAutocompleteAggressiveness || "medium")
+        .trim()
+        .toLowerCase();
+      settingsTabAutocompleteAggressiveness.value =
+        agg === "low" || agg === "high" ? agg : "medium";
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -8277,6 +8437,15 @@
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
         : true,
+      tabAutocompleteEnabled: settingsTabAutocompleteEnabled
+        ? settingsTabAutocompleteEnabled.checked
+        : false,
+      tabAutocompleteModelId: settingsTabAutocompleteModel
+        ? settingsTabAutocompleteModel.value.trim()
+        : "",
+      tabAutocompleteAggressiveness: settingsTabAutocompleteAggressiveness
+        ? settingsTabAutocompleteAggressiveness.value
+        : "medium",
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
@@ -12002,7 +12171,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();

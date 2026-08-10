@@ -22,6 +22,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |
 | OpenAI-compatible client | `src/openaiClient.ts` (utility paths e.g. commit message; chat turns use Cline gateway) |
+| Tab autocomplete (inline ghost text) | `src/tabAutocomplete.ts` + `src/tabAutocompleteHoleFiller.ts` — UX adapted from `vendor/tabcoder` (Apache-2.0); LLM via Harbor providers only. Settings: `agentPanel.tabAutocomplete.enabled` + `modelId`. Disable standalone TabCoder if installed. |
 | Model capabilities / routing | `src/modelCapabilities.ts`, `src/modelRouting.ts` |
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |

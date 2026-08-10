@@ -1,0 +1,16 @@
+{
+  "name": "tabcoder",
+  "displayName": "TabCoder (Harbor vendor snapshot)",
+  "description": "Upstream TabCoder source snapshot for Harbor Agents. Runtime autocomplete lives in Harbor src/tabAutocomplete*.ts — do not npm install AI SDK deps here.",
+  "version": "0.0.2-harbor",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "scripts": {
+    "note": "echo See HARBOR.md — not built as a standalone extension inside Harbor"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
