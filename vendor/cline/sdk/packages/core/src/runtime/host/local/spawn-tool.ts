@@ -35,10 +35,95 @@ export interface SpawnToolDeps {
 	invokeBackendOptional(method: string, ...args: unknown[]): Promise<void>;
 }
 
-export interface SessionSubAgentLifecycleCallbacks {
+export type SessionSubAgentLifecycleCallbacks = {
 	onSubAgentEvent: (event: AgentEvent) => void;
 	onSubAgentStart: (context: SubAgentStartContext) => void;
 	onSubAgentEnd: (context: SubAgentEndContext) => void;
+};
+
+/** Serialize spawn_agent runs per root session — LiteLLM often 400s parallel child streams. */
+const spawnTailByRootSession = new Map<string, Promise<void>>();
+
+function enqueueRootSpawn<T>(
+	rootSessionId: string,
+	task: () => Promise<T>,
+): Promise<T> {
+	const prev = spawnTailByRootSession.get(rootSessionId) ?? Promise.resolve();
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	spawnTailByRootSession.set(
+		rootSessionId,
+		prev.then(
+			() => gate,
+			() => gate,
+		),
+	);
+	return prev.then(
+		async () => {
+			try {
+				return await task();
+			} finally {
+				release();
+			}
+		},
+		async () => {
+			try {
+				return await task();
+			} finally {
+				release();
+			}
+		},
+	);
+}
+
+function sanitizeSubagentKnownModels(
+	knownModels: CoreSessionConfig["knownModels"] | undefined,
+): CoreSessionConfig["knownModels"] | undefined {
+	if (!knownModels) {
+		return knownModels;
+	}
+	const out: NonNullable<CoreSessionConfig["knownModels"]> = {};
+	for (const [id, model] of Object.entries(knownModels)) {
+		if (!model || typeof model !== "object") {
+			continue;
+		}
+		const caps = Array.isArray(model.capabilities)
+			? model.capabilities.filter(
+					(cap) => cap !== "reasoning" && cap !== "reasoning-effort",
+				)
+			: ["tools"];
+		out[id] = {
+			...model,
+			capabilities: caps.length > 0 ? caps : ["tools"],
+		};
+	}
+	return out;
+}
+
+/**
+ * Harbor openai-compatible + Claude: do NOT force `thinking: false` on children.
+ * Parent Claude works with OpenAI-style `reasoning_effort` (capabilities omit
+ * `reasoning` so Anthropic wire thinking is not emitted). Forcing thinking off
+ * on children still yields LiteLLM/OpenRouter `streaming_error` 400 for
+ * claude-sonnet/haiku, while gpt/kimi/deepseek children succeed either way.
+ * Only strip catalog `reasoning` capabilities; inherit parent thinking/effort.
+ */
+function buildSubagentConnectionOverlay(config: CoreSessionConfig): {
+	knownModels: CoreSessionConfig["knownModels"] | undefined;
+	providerConfig: CoreSessionConfig["providerConfig"];
+} {
+	const knownModels = sanitizeSubagentKnownModels(
+		config.knownModels ?? config.providerConfig?.knownModels,
+	);
+	return {
+		knownModels,
+		providerConfig: {
+			...(config.providerConfig ?? {}),
+			...(knownModels ? { knownModels } : {}),
+		},
+	};
 }
 
 export function createSessionSubAgentLifecycleCallbacks(
@@ -130,28 +215,31 @@ export function createSessionSpawnTool(
 		rootSessionId,
 	);
 	const createSubAgentTools = () => {
+		// Children get parent mode tools but never nested spawn_agent (avoids
+		// recursive fan-out + keeps the tool list aligned with the sub-agent
+		// system prompt which says spawn is unavailable).
 		const tools: AgentTool[] = config.enableTools
 			? createBuiltinTools({
 					cwd: config.cwd,
 					telemetry: config.telemetry,
 					...ToolPresets[resolveToolPresetName({ mode: config.mode })],
+					enableAskQuestion: false,
+					enableSpawnAgent: false,
+					enableAgentTeams: false,
 					executors: toolExecutors,
 				})
 			: [];
-		if (config.enableSpawnAgent) {
-			tools.push(
-				createSessionSpawnTool(deps, config, rootSessionId, toolExecutors),
-			);
-		}
 		return filterDisabledTools(tools);
 	};
 
-	return createSpawnAgentTool({
+	const overlay = buildSubagentConnectionOverlay(config);
+	const tool = createSpawnAgentTool({
 		configProvider: {
-			getRuntimeConfig: () =>
-				deps
+			getRuntimeConfig: () => {
+				const live = deps
 					.getSession(rootSessionId)
-					?.runtime.delegatedAgentConfigProvider?.getRuntimeConfig() ?? {
+					?.runtime.delegatedAgentConfigProvider?.getRuntimeConfig();
+				const base = live ?? {
 					providerId: config.providerId,
 					modelId: config.modelId,
 					cwd: config.cwd,
@@ -160,17 +248,27 @@ export function createSessionSpawnTool(
 					headers: config.headers,
 					providerConfig: config.providerConfig,
 					knownModels: config.knownModels,
-					thinking: config.thinking,
 					maxIterations: config.maxIterations,
 					hooks: config.hooks,
 					extensions: config.extensions,
 					logger: config.logger,
 					telemetry: config.telemetry,
-				},
-			getConnectionConfig: () =>
-				deps
+					workspaceMetadata: config.workspaceMetadata,
+				};
+				return {
+					...base,
+					...overlay,
+					providerConfig: {
+						...(base.providerConfig ?? {}),
+						...overlay.providerConfig,
+					},
+				};
+			},
+			getConnectionConfig: () => {
+				const live = deps
 					.getSession(rootSessionId)
-					?.runtime.delegatedAgentConfigProvider?.getConnectionConfig() ?? {
+					?.runtime.delegatedAgentConfigProvider?.getConnectionConfig();
+				const base = live ?? {
 					providerId: config.providerId,
 					modelId: config.modelId,
 					apiKey: config.apiKey,
@@ -178,11 +276,25 @@ export function createSessionSpawnTool(
 					headers: config.headers,
 					providerConfig: config.providerConfig,
 					knownModels: config.knownModels,
-					thinking: config.thinking,
-				},
+				};
+				return {
+					...base,
+					...overlay,
+					providerConfig: {
+						...(base.providerConfig ?? {}),
+						...overlay.providerConfig,
+					},
+				};
+			},
 			updateConnectionDefaults: () => {},
 		},
 		createSubAgentTools,
 		...lifecycle,
 	}) as AgentTool;
+
+	return {
+		...tool,
+		execute: (input, context) =>
+			enqueueRootSpawn(rootSessionId, () => tool.execute(input, context)),
+	} as AgentTool;
 }

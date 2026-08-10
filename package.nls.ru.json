@@ -49,7 +49,7 @@
   "config.visionRouting.preferredModelId.description": "Устарело. См. agentPanel.visionRouting.preferredModelIds (для чата тоже не используется).",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.soundNotifications.enabled.description": "Проигрывать звук при успешном завершении или ошибке агента.",
-  "config.subagents.enabled.description": "Разрешить параллельных субагентов (spawn_agent) в Agent, Plan и Ask. Дети наследуют режим: в Plan/Ask только исследование, в Agent — и правки.",
+  "config.subagents.enabled.description": "Разрешить параллельных субагентов (spawn_agent) в Agent, Plan и Ask. Вкл — модель получает правило делегировать независимые части через spawn_agent; выкл — tool недоступен. Дети наследуют режим: в Plan/Ask только исследование, в Agent — и правки.",
   "config.parallelToolCalls.enabled.description": "Выполнять несколько tool calls из одного ответа модели одновременно (чтение, поиск и другие независимые tools).",
   "config.autoCompact.enabled.description": "Автоматически сжимать контекст разговора, когда он приближается к лимиту входа модели.",
   "config.selectionHints.enabled.description": "Показывать всплывающие действия «Добавить в чат» над выделенным кодом в редакторе.",

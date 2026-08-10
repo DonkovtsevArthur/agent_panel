@@ -43,6 +43,67 @@ export function harborDefaultRulesForLanguage(lang: UiLanguage): string {
   ].join("\n");
 }
 
+/**
+ * Injected into Cline rules only when Settings → Parallel agents is on
+ * (`enableSpawnAgent`). When off, spawn_agent is not registered and this
+ * text is omitted.
+ */
+export function harborSubagentsRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# spawn_agent — ДОСТУПЕН",
+      "В этом ходе у тебя есть tool spawn_agent (параллельные субагенты). Никогда не пиши, что субагенты/параллельные агенты недоступны — это ложь.",
+      "Рабочий паттерн (как у зрелых coding-агентов):",
+      "1) При необходимости быстро собери каркас (list/read top-level), чтобы знать конкретные пути.",
+      "2) Для 2+ независимых частей вызови spawn_agent (systemPrompt + task) — в task давай конкретные файлы/папки и что описать, не общую «исследуй всё».",
+      "3) Несколько spawn_agent можно в одном ответе; после их завершения сам сведи итог.",
+      "Не подменяй делегирование только своими read_files/search_codebase. Не используй team_* вместо spawn_agent для этой настройки.",
+    ].join("\n");
+  }
+  return [
+    "# spawn_agent — AVAILABLE",
+    "This turn includes the spawn_agent tool (parallel sub-agents). Never claim subagents/parallel agents are unavailable — that is false.",
+    "Working pattern:",
+    "1) If needed, quickly gather a skeleton (list/read top-level) so you know concrete paths.",
+    "2) For 2+ independent parts call spawn_agent (systemPrompt + task) — put concrete files/folders and what to report in task, not a vague “explore everything”.",
+    "3) Multiple spawn_agent calls may be in one response; after they finish, synthesize yourself.",
+    "Do not substitute delegation with only your own read_files/search_codebase. Do not use team_* instead of spawn_agent for this setting.",
+  ].join("\n");
+}
+
+/**
+ * Appended to the runtime user prompt (UI text unchanged) when Parallel agents
+ * is on — models heed turn-local nudges more reliably than rules alone.
+ */
+export function harborSubagentsUserNudgeForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "[Harbor] Tool spawn_agent ДОСТУПЕН.",
+      "При 2+ независимых частях: при необходимости быстро глянь каркас, затем spawn_agent с конкретными путями/файлами в task.",
+      "Запрещено отвечать «субагенты недоступны».",
+    ].join(" ");
+  }
+  return [
+    "[Harbor] Tool spawn_agent is AVAILABLE.",
+    "For 2+ independent parts: briefly map the skeleton if needed, then spawn_agent with concrete paths/files in task.",
+    "Never claim subagents are unavailable.",
+  ].join(" ");
+}
+
+/** Append parallel-agents call instructions to the runtime user prompt. */
+export function appendSubagentsRuntimeNudge(
+  userText: string,
+  enabled: boolean,
+  lang: UiLanguage
+): string {
+  const base = String(userText || "").trim();
+  if (!enabled) {
+    return base;
+  }
+  const nudge = harborSubagentsUserNudgeForLanguage(lang);
+  return base ? `${base}\n\n${nudge}` : nudge;
+}
+
 /** Built-in / legacy defaults — treat as «not customized» so UI language can swap them. */
 export function isBuiltinSystemPrompt(value: string): boolean {
   const text = String(value || "").trim();

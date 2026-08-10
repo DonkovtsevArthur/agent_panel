@@ -164,7 +164,7 @@
       soundNotifications: "Sound notifications",
       parallelAgents: "Parallel agents",
       parallelAgentsNote:
-        "Agent, Plan, and Ask. Children follow the current mode (Plan/Ask stay read-only).",
+        "On: spawn_agent + instruct to delegate. Off: no sub-agents. Plan/Ask children stay read-only.",
       parallelToolCalls: "Parallel tool calls",
       parallelToolCallsNote:
         "Run independent tools from one model response at the same time.",
@@ -334,6 +334,7 @@
       toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanSpawn: (task) =>
         task ? `Sub-agent · ${task}` : "Sub-agent",
+      toolSpawnError: (err) => (err ? `error: ${err}` : "error"),
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolHumanCreate: (path) => (path ? `Create ${path}` : "Create file"),
@@ -535,7 +536,7 @@
       soundNotifications: "Звуковые уведомления",
       parallelAgents: "Параллельные агенты",
       parallelAgentsNote:
-        "Agent, Plan и Ask. Дети наследуют режим (в Plan/Ask только чтение).",
+        "Вкл: spawn_agent + правило делегировать. Выкл: без субагентов. В Plan/Ask дети только читают.",
       parallelToolCalls: "Параллельные tool calls",
       parallelToolCallsNote:
         "Выполнять независимые tools из одного ответа модели одновременно.",
@@ -705,6 +706,7 @@
       toolHumanScreenshotExplore: "Explore · screenshot probes",
       toolHumanSpawn: (task) =>
         task ? `Субагент · ${task}` : "Субагент",
+      toolSpawnError: (err) => (err ? `ошибка: ${err}` : "ошибка"),
       toolHumanMcp: (name) => (name ? `MCP · ${name}` : "MCP"),
       toolHumanTool: (name) => name || "Tool",
       toolHumanCreate: (path) => (path ? `Создать ${path}` : "Создать файл"),
@@ -3975,7 +3977,7 @@
     return `…/${parts.slice(-2).join("/")}`;
   }
 
-  function formatToolHumanLabel(name, argsPreview, metrics, status) {
+  function formatToolHumanLabel(name, argsPreview, metrics, status, resultPreview) {
     const toolName = canonicalToolName(name);
     let args = {};
     const rawArgs = String(argsPreview || "").trim();
@@ -4103,7 +4105,19 @@
       case "spawn_agent": {
         const task = String(args.task || args.prompt || "").trim();
         const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
-        return t("toolHumanSpawn", short);
+        const base = t("toolHumanSpawn", short);
+        if (status === "error") {
+          const err = String(resultPreview || "")
+            .replace(/^Субагент ошибка:\s*/i, "")
+            .replace(/^Sub-agent error:\s*/i, "")
+            .trim();
+          if (err) {
+            const errShort = err.length > 100 ? `${err.slice(0, 97)}…` : err;
+            return `${base} · ${t("toolSpawnError", errShort)}`;
+          }
+          return `${base} · ${t("toolSpawnError", "")}`;
+        }
+        return base;
       }
       case "vision_attached_screenshot":
         return t("toolHumanVisionAttached");
@@ -5146,19 +5160,58 @@
       collapseTurnThinkingDuplicates();
     } else if (step.kind === "tool") {
       el.classList.remove("agent-step-thinking");
-      const label = formatToolHumanLabel(
-        step.name,
-        step.argsPreview,
-        step.metrics,
-        step.status
-      );
+      if (step.resultPreview) {
+        el.dataset.resultPreview = String(step.resultPreview);
+      }
       const icon = toolStepIcon(step.name, step.status);
       el.innerHTML =
         `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${icon}</span>` +
         `<span class="agent-step-label"></span>`;
       const labelEl = el.querySelector(".agent-step-label");
       if (labelEl) {
-        labelEl.textContent = label;
+        const toolName = String(step.name || "");
+        const isSpawn =
+          toolName === "spawn_agent" || toolName.startsWith("subagent_");
+        if (isSpawn && step.status === "error") {
+          let task = "";
+          try {
+            const args = JSON.parse(String(step.argsPreview || "{}"));
+            task = String(args.task || args.prompt || "").trim();
+          } catch {
+            const m = String(step.argsPreview || "").match(
+              /"task"\s*:\s*"((?:\\.|[^"\\])*)"/
+            );
+            if (m) {
+              task = m[1].replace(/\\"/g, '"');
+            }
+          }
+          const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
+          const title = t("toolHumanSpawn", short);
+          let err = String(step.resultPreview || el.dataset.resultPreview || "")
+            .replace(/^Субагент ошибка:\s*/i, "")
+            .replace(/^Sub-agent error:\s*/i, "")
+            .trim();
+          if (err.length > 100) {
+            err = `${err.slice(0, 97)}…`;
+          }
+          labelEl.textContent = "";
+          const titleSpan = document.createElement("span");
+          titleSpan.className = "agent-step-title";
+          titleSpan.textContent = title;
+          labelEl.appendChild(titleSpan);
+          const errSpan = document.createElement("span");
+          errSpan.className = "agent-step-error";
+          errSpan.textContent = ` · ${t("toolSpawnError", err)}`;
+          labelEl.appendChild(errSpan);
+        } else {
+          labelEl.textContent = formatToolHumanLabel(
+            step.name,
+            step.argsPreview,
+            step.metrics,
+            step.status,
+            step.resultPreview || el.dataset.resultPreview || ""
+          );
+        }
       }
     } else {
       el.classList.remove("agent-step-thinking");
