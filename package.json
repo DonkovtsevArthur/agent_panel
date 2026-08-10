@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.55",
+  "version": "1.1.60",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -126,6 +126,21 @@
       {
         "command": "agentPanel.tabAutocomplete.showSuggestion",
         "title": "%command.tabAutocomplete.showSuggestion.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.deleteOrphanLine",
+        "title": "%command.tabAutocomplete.deleteOrphanLine.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.jumpNextEdit",
+        "title": "%command.tabAutocomplete.jumpNextEdit.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.dismissNextEdit",
+        "title": "%command.tabAutocomplete.dismissNextEdit.title%",
         "category": "%command.category%"
       }
     ],
@@ -276,6 +291,24 @@
         "key": "ctrl+enter",
         "mac": "cmd+enter",
         "when": "editorTextFocus && !editorReadonly && config.agentPanel.tabAutocomplete.enabled"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.deleteOrphanLine",
+        "key": "tab",
+        "mac": "tab",
+        "when": "agentPanel.tabAutocomplete.orphanActive && editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inSnippetMode && !editorTabMovesFocus && config.agentPanel.tabAutocomplete.enabled"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.jumpNextEdit",
+        "key": "tab",
+        "mac": "tab",
+        "when": "agentPanel.tabAutocomplete.nextEditActive && !agentPanel.tabAutocomplete.orphanActive && !inlineSuggestionVisible && editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inSnippetMode && !editorTabMovesFocus && config.agentPanel.tabAutocomplete.enabled && config.agentPanel.tabAutocomplete.nextEdit"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.dismissNextEdit",
+        "key": "escape",
+        "mac": "escape",
+        "when": "agentPanel.tabAutocomplete.nextEditActive && editorTextFocus && !inlineSuggestionVisible && !suggestWidgetVisible && config.agentPanel.tabAutocomplete.enabled"
       }
     ],
     "configuration": {
@@ -573,6 +606,26 @@
             "%config.tabAutocomplete.alternatives.enum.3%"
           ],
           "description": "%config.tabAutocomplete.alternatives.description%"
+        },
+        "agentPanel.tabAutocomplete.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/dist/**",
+            "**/out/**",
+            "**/build/**",
+            "**/node_modules/**",
+            "**/*.min.js",
+            "**/*generated*"
+          ],
+          "description": "%config.tabAutocomplete.excludeGlobs.description%"
+        },
+        "agentPanel.tabAutocomplete.nextEdit": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.tabAutocomplete.nextEdit.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

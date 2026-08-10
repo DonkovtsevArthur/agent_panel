@@ -20,11 +20,23 @@ import {
   refineCompletionAlternatives,
   type AutoCompleteContext,
 } from "./tabAutocompleteHoleFiller";
+import { buildTabExtraContext } from "./tabAutocompleteExtraContext";
+import {
+  pathMatchesAnyExcludeGlob,
+} from "./tabAutocompleteExclude";
+import { buildTabLspContext } from "./tabAutocompleteLspContext";
+import { findNextEditTarget } from "./tabAutocompleteNextEdit";
 
 const COMPLETION_ACCEPTED_CMD = "agentPanel.tabAutocomplete.completionAccepted";
 const STATUS_CLICK_CMD = "agentPanel.tabAutocomplete.statusBarClicked";
 const DELETE_ORPHAN_LINE_CMD = "agentPanel.tabAutocomplete.deleteOrphanLine";
 const SHOW_SUGGESTION_CMD = "agentPanel.tabAutocomplete.showSuggestion";
+const JUMP_NEXT_EDIT_CMD = "agentPanel.tabAutocomplete.jumpNextEdit";
+const DISMISS_NEXT_EDIT_CMD = "agentPanel.tabAutocomplete.dismissNextEdit";
+/** Context key for Tab keybinding while an orphan delete chip is active. */
+const ORPHAN_ACTIVE_CTX = "agentPanel.tabAutocomplete.orphanActive";
+/** Context key for Tab → jump to next-edit target. */
+const NEXT_EDIT_ACTIVE_CTX = "agentPanel.tabAutocomplete.nextEditActive";
 const MAX_COMPLETION_TOKENS = 72;
 /** Keep prompts small for corporate gateways / latency. */
 const MAX_PREFIX_CHARS = 3_500;
@@ -37,6 +49,10 @@ const RECENT_ADD_TTL_MS = 180_000;
 const COOLDOWN_QUOTA_MS = 120_000;
 const COOLDOWN_SERVER_MS = 45_000;
 const COOLDOWN_OTHER_MS = 20_000;
+/** Pending next-edit chip lifetime after Accept. */
+const NEXT_EDIT_TTL_MS = 30_000;
+/** Clear next-edit if the caret moves this many lines away. */
+const NEXT_EDIT_DISMISS_LINES = 20;
 
 const JS_RESERVED = new Set([
   "break",
@@ -1011,6 +1027,23 @@ function shouldSkipDocument(document: vscode.TextDocument): boolean {
   if (document.lineCount > 8_000) {
     return true;
   }
+  // User-configured exclude globs (dist / generated / …).
+  if (document.uri.scheme === "file" && name) {
+    const globs = getConfig().tabAutocomplete.excludeGlobs;
+    if (globs.length > 0) {
+      let rel: string | undefined;
+      const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+      if (folder) {
+        rel = path
+          .relative(folder.uri.fsPath, document.uri.fsPath)
+          .split(path.sep)
+          .join("/");
+      }
+      if (pathMatchesAnyExcludeGlob(name, globs, rel)) {
+        return true;
+      }
+    }
+  }
   return false;
 }
 
@@ -1326,15 +1359,31 @@ function isShortcutHintText(text: string): boolean {
 }
 
 /**
- * Ready-chip at the caret: VS Code inlay hint (segmented pill) on the cursor
- * position — does not insert document lines. Clickable parts trigger show.
+ * Caret chips: ready (⌘⏎ | Tab), orphan-delete (Tab), next-edit jump (Tab).
  */
 class CaretShortcutHintController
   implements vscode.Disposable, vscode.InlayHintsProvider
 {
   private readonly disposables: vscode.Disposable[] = [];
   private ready:
-    | { uri: string; position: vscode.Position; version: number }
+    | {
+        kind: "ready" | "orphan";
+        uri: string;
+        position: vscode.Position;
+        version: number;
+        orphanStart?: number;
+        orphanEnd?: number;
+      }
+    | undefined;
+  private nextEdit:
+    | {
+        uri: string;
+        position: vscode.Position;
+        version: number;
+        reason: string;
+        expiresAt: number;
+        originLine: number;
+      }
     | undefined;
   private readonly onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeInlayHints = this.onDidChange.event;
@@ -1348,6 +1397,7 @@ class CaretShortcutHintController
 
   dispose(): void {
     this.hide();
+    this.clearNextEdit();
     for (const d of this.disposables) {
       d.dispose();
     }
@@ -1355,11 +1405,96 @@ class CaretShortcutHintController
 
   show(editor: vscode.TextEditor, position: vscode.Position): void {
     this.ready = {
+      kind: "ready",
       uri: editor.document.uri.toString(),
       position,
       version: editor.document.version,
     };
     this.onDidChange.fire();
+  }
+
+  /** Chip that means “press Tab to delete this orphan line/block”. */
+  showOrphan(
+    editor: vscode.TextEditor,
+    position: vscode.Position,
+    startLine: number,
+    endLine: number
+  ): void {
+    this.ready = {
+      kind: "orphan",
+      uri: editor.document.uri.toString(),
+      position,
+      version: editor.document.version,
+      orphanStart: startLine,
+      orphanEnd: endLine,
+    };
+    this.onDidChange.fire();
+  }
+
+  showNextEdit(
+    editor: vscode.TextEditor,
+    position: vscode.Position,
+    reason: string,
+    originLine: number,
+    ttlMs: number = NEXT_EDIT_TTL_MS
+  ): void {
+    this.nextEdit = {
+      uri: editor.document.uri.toString(),
+      position,
+      version: editor.document.version,
+      reason,
+      expiresAt: Date.now() + Math.max(5_000, ttlMs),
+      originLine,
+    };
+    void vscode.commands.executeCommand("setContext", NEXT_EDIT_ACTIVE_CTX, true);
+    this.onDidChange.fire();
+  }
+
+  /** Clear only the prefetch-ready chip; keep orphan chip if present. */
+  hideReady(): void {
+    if (!this.ready || this.ready.kind !== "ready") {
+      return;
+    }
+    this.ready = undefined;
+    this.onDidChange.fire();
+  }
+
+  /** Clear only the orphan-delete chip. */
+  hideOrphan(): void {
+    if (!this.ready || this.ready.kind !== "orphan") {
+      return;
+    }
+    this.ready = undefined;
+    this.onDidChange.fire();
+  }
+
+  clearNextEdit(): void {
+    if (!this.nextEdit) {
+      return;
+    }
+    this.nextEdit = undefined;
+    void vscode.commands.executeCommand("setContext", NEXT_EDIT_ACTIVE_CTX, false);
+    this.onDidChange.fire();
+  }
+
+  getNextEdit():
+    | {
+        uri: string;
+        position: vscode.Position;
+        reason: string;
+        expiresAt: number;
+        originLine: number;
+      }
+    | undefined {
+    const ne = this.nextEdit;
+    if (!ne) {
+      return undefined;
+    }
+    if (Date.now() > ne.expiresAt) {
+      this.clearNextEdit();
+      return undefined;
+    }
+    return ne;
   }
 
   hide(): void {
@@ -1375,22 +1510,69 @@ class CaretShortcutHintController
     range: vscode.Range,
     _token: vscode.CancellationToken
   ): vscode.InlayHint[] {
+    const hints: vscode.InlayHint[] = [];
+
+    const ne = this.nextEdit;
+    if (
+      ne &&
+      ne.uri === document.uri.toString() &&
+      Date.now() <= ne.expiresAt &&
+      ne.position.line >= range.start.line &&
+      ne.position.line <= range.end.line
+    ) {
+      // Refresh version drift: still show if line text exists.
+      const jumpPart = new vscode.InlayHintLabelPart(" Next ");
+      jumpPart.tooltip = `Next edit: ${ne.reason}. Press Tab to jump.`;
+      jumpPart.command = {
+        command: JUMP_NEXT_EDIT_CMD,
+        title: "Jump to next edit",
+      };
+      const tabPart = new vscode.InlayHintLabelPart(" Tab ");
+      tabPart.tooltip = "Jump to next edit target";
+      tabPart.command = {
+        command: JUMP_NEXT_EDIT_CMD,
+        title: "Jump to next edit",
+      };
+      const hint = new vscode.InlayHint(ne.position, [jumpPart, tabPart]);
+      hint.paddingLeft = true;
+      hint.paddingRight = true;
+      hint.kind = vscode.InlayHintKind.Parameter;
+      hints.push(hint);
+    }
+
     const ready = this.ready;
     if (!ready || ready.uri !== document.uri.toString()) {
-      return [];
+      return hints;
     }
     if (ready.version !== document.version) {
-      // Stale — document changed under the caret chip.
-      return [];
+      return hints;
     }
-    if (!range.contains(ready.position) && !range.contains(ready.position.translate(0, 1))) {
-      // Still show if the line is in range (contains can fail at EOL).
+    if (
+      !range.contains(ready.position) &&
+      !range.contains(ready.position.translate(0, 1))
+    ) {
       if (
         ready.position.line < range.start.line ||
         ready.position.line > range.end.line
       ) {
-        return [];
+        return hints;
       }
+    }
+
+    if (ready.kind === "orphan") {
+      const tabPart = new vscode.InlayHintLabelPart(" Tab ");
+      tabPart.tooltip = "Delete orphan line / block";
+      tabPart.command = {
+        command: DELETE_ORPHAN_LINE_CMD,
+        title: "Delete orphan line",
+        arguments: [document.uri, ready.orphanStart, ready.orphanEnd],
+      };
+      const hint = new vscode.InlayHint(ready.position, [tabPart]);
+      hint.paddingLeft = true;
+      hint.paddingRight = true;
+      hint.kind = vscode.InlayHintKind.Type;
+      hints.push(hint);
+      return hints;
     }
 
     const shortcut = showSuggestionShortcutLabel();
@@ -1408,12 +1590,12 @@ class CaretShortcutHintController
       title: "Show Tab suggestion",
     };
 
-    // Sit on the caret line at the cursor (the editor caret / "черточка").
     const hint = new vscode.InlayHint(ready.position, [showPart, tabPart]);
     hint.paddingLeft = true;
     hint.paddingRight = true;
     hint.kind = vscode.InlayHintKind.Type;
-    return [hint];
+    hints.push(hint);
+    return hints;
   }
 }
 
@@ -1498,7 +1680,8 @@ class HarborTabInlineCompletionProvider
   ): void {
     this.statusBar.setSuggestionReady(ready);
     if (!ready) {
-      this.caretHint.hide();
+      // Do not clear an orphan-delete chip — strikethrough owns that mode.
+      this.caretHint.hideReady();
       return;
     }
     const editor = vscode.window.activeTextEditor;
@@ -1508,7 +1691,7 @@ class HarborTabInlineCompletionProvider
       !position ||
       editor.document.uri.toString() !== document.uri.toString()
     ) {
-      this.caretHint.hide();
+      this.caretHint.hideReady();
       return;
     }
     this.caretHint.show(editor, position);
@@ -1670,6 +1853,58 @@ class HarborTabInlineCompletionProvider
       timestamp: Date.now(),
     };
     this.setReady(false);
+    this.maybeOfferNextEdit(text, position);
+  }
+
+  /** After Accept — offer a one-shot jump chip to the likely next hole. */
+  private maybeOfferNextEdit(text: string, position: vscode.Position): void {
+    if (!getConfig().tabAutocomplete.nextEdit) {
+      this.caretHint.clearNextEdit();
+      return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || shouldSkipDocument(editor.document)) {
+      this.caretHint.clearNextEdit();
+      return;
+    }
+
+    const target = findNextEditTarget(
+      editor.document.getText(),
+      position.line,
+      text
+    );
+    if (!target) {
+      this.caretHint.clearNextEdit();
+      return;
+    }
+
+    const line = Math.max(
+      0,
+      Math.min(target.line, editor.document.lineCount - 1)
+    );
+    if (Math.abs(line - position.line) <= 1) {
+      this.caretHint.clearNextEdit();
+      return;
+    }
+    const lineText = editor.document.lineAt(line).text;
+    const character = Math.max(
+      0,
+      Math.min(target.character, lineText.length)
+    );
+    const pos = new vscode.Position(line, character);
+    this.caretHint.showNextEdit(
+      editor,
+      pos,
+      target.reason,
+      position.line,
+      NEXT_EDIT_TTL_MS
+    );
+    log("next edit offered", {
+      kind: target.kind,
+      reason: target.reason,
+      line,
+      fromLine: position.line,
+    });
   }
 
   async provideInlineCompletionItems(
@@ -1697,8 +1932,27 @@ class HarborTabInlineCompletionProvider
     if (orphan) {
       log("orphan block suggest", orphan.reason);
       this.setReady(false);
+      const editor = vscode.window.activeTextEditor;
+      if (
+        editor &&
+        editor.document.uri.toString() === document.uri.toString()
+      ) {
+        this.caretHint.showOrphan(
+          editor,
+          position,
+          orphan.startLine,
+          orphan.endLine
+        );
+      }
+      void vscode.commands.executeCommand(
+        "setContext",
+        ORPHAN_ACTIVE_CTX,
+        true
+      );
+      // Prefer a real delete via command + Tab keybinding: empty inline
+      // replacements are often ignored by the host (no ghost → Tab does nothing).
       const item = new vscode.InlineCompletionItem("", orphan.deleteRange);
-      item.filterText = document.getText(orphan.deleteRange);
+      item.filterText = document.getText(orphan.deleteRange) || " ";
       const editItem = item as vscode.InlineCompletionItem & {
         isInlineEdit?: boolean;
         showRange?: vscode.Range;
@@ -1714,6 +1968,8 @@ class HarborTabInlineCompletionProvider
       };
       return [item];
     }
+
+    void vscode.commands.executeCommand("setContext", ORPHAN_ACTIVE_CTX, false);
 
     // Unused binding in a comma list — prefer `$newStore,` over model `],`.
     const listFill = findUnusedBindingListFill(document, position);
@@ -1968,6 +2224,10 @@ class HarborTabInlineCompletionProvider
       alternatives,
     } = job;
 
+    const [extra, lsp] = await Promise.all([
+      buildTabExtraContext(document),
+      buildTabLspContext(document, position),
+    ]);
     const params: AutoCompleteContext = {
       textBeforeCursor,
       textAfterCursor,
@@ -1979,6 +2239,9 @@ class HarborTabInlineCompletionProvider
         position.line,
         this.deletions.recentlyAddedIds()
       ),
+      relatedFiles: extra.related,
+      projectRules: extra.projectRules,
+      lsp,
     };
 
     const endpoint = resolveModelEndpoint(modelId);
@@ -2017,6 +2280,9 @@ class HarborTabInlineCompletionProvider
       alternatives,
       focusRegion: params.focus?.region,
       recentBindings: params.focus?.recentBindings,
+      relatedFiles: (params.relatedFiles || []).map((f) => f.label),
+      projectRulesChars: params.projectRules?.length || 0,
+      lspChars: params.lsp?.length || 0,
     });
 
     // No cancellation tied to editor token — typing must not kill prefetch.
@@ -2069,7 +2335,10 @@ class OrphanStrikethroughController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private currentKey: string | undefined;
 
-  constructor(private readonly deletions: RecentDeletionTracker) {
+  constructor(
+    private readonly deletions: RecentDeletionTracker,
+    private readonly caretHint: CaretShortcutHintController
+  ) {
     this.decorationType = vscode.window.createTextEditorDecorationType({
       isWholeLine: true,
       textDecoration: "line-through solid",
@@ -2119,6 +2388,8 @@ class OrphanStrikethroughController implements vscode.Disposable {
       ed.setDecorations(this.decorationType, []);
     }
     this.currentKey = undefined;
+    this.caretHint.hideOrphan();
+    void vscode.commands.executeCommand("setContext", ORPHAN_ACTIVE_CTX, false);
   }
 
   refresh(): void {
@@ -2145,7 +2416,7 @@ class OrphanStrikethroughController implements vscode.Disposable {
 
     const key = `${editor.document.uri.toString()}:${orphan.startLine}-${orphan.endLine}:${orphan.reason}`;
     const hover = new vscode.MarkdownString(
-      `**Harbor Tab** — ${orphan.reason}. Press **Tab** or use Quick Fix to delete.`
+      `**Harbor Tab** — ${orphan.reason}. Press **Tab** (or click the Tab chip) to delete.`
     );
     editor.setDecorations(
       this.decorationType,
@@ -2154,6 +2425,13 @@ class OrphanStrikethroughController implements vscode.Disposable {
         hoverMessage: hover,
       }))
     );
+    this.caretHint.showOrphan(
+      editor,
+      editor.selection.active,
+      orphan.startLine,
+      orphan.endLine
+    );
+    void vscode.commands.executeCommand("setContext", ORPHAN_ACTIVE_CTX, true);
     if (this.currentKey !== key) {
       this.currentKey = key;
       log("orphan strikethrough", orphan.reason);
@@ -2172,7 +2450,7 @@ export function startTabAutocomplete(
     deletions,
     caretHint
   );
-  const strikethrough = new OrphanStrikethroughController(deletions);
+  const strikethrough = new OrphanStrikethroughController(deletions, caretHint);
   output = vscode.window.createOutputChannel("Harbor Tab Autocomplete");
 
   const ensureInlineSuggest = async () => {
@@ -2269,6 +2547,12 @@ export function startTabAutocomplete(
         return;
       }
       deletions.noteChange(e);
+      const ne = caretHint.getNextEdit();
+      if (ne && e.document.uri.toString() === ne.uri) {
+        if (ne.position.line >= e.document.lineCount) {
+          caretHint.clearNextEdit();
+        }
+      }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => {
       deletions.onDocument(doc);
@@ -2281,6 +2565,60 @@ export function startTabAutocomplete(
         }
       }
     ),
+    vscode.commands.registerCommand(JUMP_NEXT_EDIT_CMD, async () => {
+      if (!getConfig().tabAutocomplete.enabled) {
+        return;
+      }
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        return;
+      }
+      const ne = caretHint.getNextEdit();
+      if (!ne || ne.uri !== editor.document.uri.toString()) {
+        caretHint.clearNextEdit();
+        return;
+      }
+      const line = Math.max(
+        0,
+        Math.min(ne.position.line, editor.document.lineCount - 1)
+      );
+      const lineText = editor.document.lineAt(line).text;
+      const character = Math.max(
+        0,
+        Math.min(ne.position.character, lineText.length)
+      );
+      const pos = new vscode.Position(line, character);
+      caretHint.clearNextEdit();
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(
+        new vscode.Range(pos, pos),
+        vscode.TextEditorRevealType.InCenterIfOutsideViewport
+      );
+      log("jumped next edit", { reason: ne.reason, line });
+      await triggerShowSuggestion();
+    }),
+    vscode.commands.registerCommand(DISMISS_NEXT_EDIT_CMD, () => {
+      caretHint.clearNextEdit();
+      log("dismissed next edit");
+    }),
+    vscode.window.onDidChangeTextEditorSelection((e) => {
+      const ne = caretHint.getNextEdit();
+      if (!ne) {
+        return;
+      }
+      if (e.textEditor.document.uri.toString() !== ne.uri) {
+        caretHint.clearNextEdit();
+        return;
+      }
+      const line = e.selections[0]?.active.line ?? 0;
+      const farFromTarget =
+        Math.abs(line - ne.position.line) > NEXT_EDIT_DISMISS_LINES;
+      const farFromOrigin =
+        Math.abs(line - ne.originLine) > NEXT_EDIT_DISMISS_LINES;
+      if (farFromTarget && farFromOrigin) {
+        caretHint.clearNextEdit();
+      }
+    }),
     vscode.commands.registerCommand(
       DELETE_ORPHAN_LINE_CMD,
       async (uri?: vscode.Uri, startLine?: number, endLine?: number) => {
@@ -2334,6 +2672,12 @@ export function startTabAutocomplete(
       ) {
         statusBar.refresh();
         void ensureInlineSuggest();
+        if (
+          !getConfig().tabAutocomplete.enabled ||
+          !getConfig().tabAutocomplete.nextEdit
+        ) {
+          caretHint.clearNextEdit();
+        }
       }
     })
   );

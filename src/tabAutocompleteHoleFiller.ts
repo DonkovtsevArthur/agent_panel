@@ -15,6 +15,20 @@ export type AutoCompleteContext = {
    * Injected into the user prompt — keep short.
    */
   focus?: TabFocusContext;
+  /** Short snippets from relative imports / one sibling open tab. */
+  relatedFiles?: TabRelatedSnippet[];
+  /** Truncated AGENTS.md / .cursor/rules digest for style consistency. */
+  projectRules?: string;
+  /**
+   * Short LSP digest at the caret (signature help + hover).
+   * Prefer when filling calls / typed identifiers.
+   */
+  lsp?: string;
+};
+
+export type TabRelatedSnippet = {
+  label: string;
+  snippet: string;
 };
 
 export type TabFocusContext = {
@@ -242,6 +256,123 @@ function formatFocusBlock(focus: TabFocusContext): string {
   return lines.join("\n");
 }
 
+function formatLspBlock(lsp: string): string {
+  const text = String(lsp || "").trim();
+  if (!text) {
+    return "";
+  }
+  return [
+    "## LSP (types / signature at caret — prefer when filling calls)",
+    text,
+    "",
+  ].join("\n");
+}
+
+function formatExtraContext(ctx: AutoCompleteContext): string {
+  const parts: string[] = [];
+  const lsp = formatLspBlock(ctx.lsp || "");
+  if (lsp) {
+    parts.push(lsp);
+  }
+  const rules = String(ctx.projectRules || "").trim();
+  if (rules) {
+    parts.push("## PROJECT RULES (short — follow for style / naming)");
+    parts.push(
+      "(Use for naming/conventions only — do NOT turn rules into new comments in the fill.)"
+    );
+    parts.push(rules);
+    parts.push("");
+  }
+  const files = ctx.relatedFiles || [];
+  if (files.length > 0) {
+    parts.push("## RELATED FILES (imports / open tab — stay consistent)");
+    for (const file of files.slice(0, 2)) {
+      parts.push(`### ${file.label}`);
+      parts.push("```");
+      parts.push(file.snippet.trimEnd());
+      parts.push("```");
+    }
+    parts.push("");
+  }
+  return parts.join("\n");
+}
+
+/** Symbols mentioned on the next few lines — used to ground comment fills. */
+function upcomingBindingNames(ctx: AutoCompleteContext): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const lines = String(ctx.textAfterCursor || "").split("\n").slice(0, 10);
+  for (const line of lines) {
+    const m =
+      /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/.exec(line) ||
+      /^\s*(?:export\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)\b/.exec(line);
+    if (!m?.[1] || seen.has(m[1])) {
+      continue;
+    }
+    seen.add(m[1]);
+    out.push(m[1]);
+    if (out.length >= 6) {
+      break;
+    }
+  }
+  return out;
+}
+
+function buildCommentFillNudge(ctx: AutoCompleteContext): string {
+  const upcoming = upcomingBindingNames(ctx);
+  const recent = ctx.focus?.recentBindings || [];
+  const nearby = ctx.focus?.nearbyBindings || [];
+  const symbols = [...new Set([...recent, ...upcoming, ...nearby])].slice(0, 8);
+  const region = ctx.focus?.region;
+  const symbolBit = symbols.length
+    ? ` Anchor the comment to: ${symbols.map((s) => `\`${s}\``).join(", ")}.`
+    : "";
+  const regionBit =
+    region && region !== "code"
+      ? ` Local region is ${region}, but do NOT reply with just the word "${region}".`
+      : "";
+  return (
+    " Cursor is inside a comment — finish with a short meaningful phrase about what the following code does" +
+    " (purpose / domain), not a section banner." +
+    symbolBit +
+    regionBit +
+    ' Bad: "events". Better: " search text events for $testSearch ".'
+  );
+}
+
+/** Bare section labels the model loves and users hate. */
+const USELESS_COMMENT_FILL_RE =
+  /^(events?|stores?|effects?|units?|types?|helpers?|utils?|hooks?|constants?|models?|actions?|selectors?|components?|todo|fixme|hack|note|section|imports?|exports?|public|private|---+|===+|\*\*\*+)$/i;
+
+/**
+ * Reject empty / one-word section-header comment completions.
+ */
+export function isUselessCommentFill(text: string): boolean {
+  let t = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+  // Completion is only the text after `//` — strip leftover markers if present.
+  t = t.replace(/^\/\*+/, "").replace(/\*\/$/, "").replace(/^\/\//, "").trim();
+  t = t.replace(/^#+/, "").trim();
+  if (!t) {
+    return true;
+  }
+  if (USELESS_COMMENT_FILL_RE.test(t)) {
+    return true;
+  }
+  // Single short token that looks like a folder/section name.
+  if (!/\s/.test(t) && t.length <= 14 && /^[A-Za-z][\w-]*$/.test(t)) {
+    if (
+      /^(event|store|effect|unit|type|helper|util|hook|const|model|action)/i.test(
+        t
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class DefaultHoleFiller {
   systemPrompt(): string {
     return `You are a HOLE FILLER for inline editor autocomplete (ghost text).
@@ -252,6 +383,10 @@ Rules:
 - Do NOT invent large new features, whole files, or long refactors.
 - Prefer finishing the current statement / line; at most a few short lines.
 - When a FOCUS section is present, treat it as the user's intent (e.g. after adding a store, complete a related event in an events block).
+- When an LSP section is present, prefer its signature/types for calls and identifiers at the cursor.
+- When PROJECT RULES or RELATED FILES are present, match their naming/style and reuse symbols from those snippets when relevant.
+- Do NOT invent comments, JSDoc, section headers, or explanatory prose — only emit them if the cursor is already inside a comment the user started (\`//\`, \`/*\`, \`#\`). Prefer real code (bindings, calls, types).
+- If finishing a comment: write a short meaningful phrase about the nearby/following code (symbols, intent). Never a bare section label like "events", "stores", "TODO".
 - Keep indentation consistent with the hole.
 - Put each answer inside <COMPLETION>...</COMPLETION>.
 
@@ -314,10 +449,12 @@ const $cartStore = createStore(null)
     if (ctx.language) {
       context += `Language: "${ctx.language}"\n`;
     }
+    context += formatExtraContext(ctx);
     if (ctx.focus) {
       context += formatFocusBlock(ctx.focus);
     }
     const sameLineSuffix = (ctx.textAfterCursor.split("\n")[0] || "");
+    const writingComment = isCursorInsideComment(ctx);
     const guidance =
       sameLineSuffix.length > 0
         ? "Finish ONLY the current line (no newlines). Do not repeat text after {{FILL_HERE}}."
@@ -326,13 +463,23 @@ const $cartStore = createStore(null)
     const focusNudge = ctx.focus?.recentBindings.length
       ? " Strongly prefer relating the fill to the FOCUS recent bindings / region."
       : "";
+    const relatedNudge =
+      (ctx.relatedFiles && ctx.relatedFiles.length > 0) || ctx.projectRules
+        ? " Prefer symbols and naming from RELATED FILES / PROJECT RULES when they fit."
+        : "";
+    const lspNudge = String(ctx.lsp || "").trim()
+      ? " Honor LSP signature/types when filling the call or typed identifier."
+      : "";
+    const commentNudge = writingComment
+      ? buildCommentFillNudge(ctx)
+      : " Do NOT add comments/JSDoc/section banners — code only.";
 
     const k = Math.max(1, Math.min(3, Math.floor(alternatives) || 1));
     if (k <= 1) {
-      return `${context}<QUERY>\n${ctx.textBeforeCursor}{{FILL_HERE}}${ctx.textAfterCursor}\n</QUERY>\nTASK: Fill {{FILL_HERE}} only. ${guidance}${focusNudge} Answer with one <COMPLETION>...</COMPLETION> and nothing else.\n<COMPLETION>`;
+      return `${context}<QUERY>\n${ctx.textBeforeCursor}{{FILL_HERE}}${ctx.textAfterCursor}\n</QUERY>\nTASK: Fill {{FILL_HERE}} only. ${guidance}${focusNudge}${relatedNudge}${lspNudge}${commentNudge} Answer with one <COMPLETION>...</COMPLETION> and nothing else.\n<COMPLETION>`;
     }
 
-    return `${context}<QUERY>\n${ctx.textBeforeCursor}{{FILL_HERE}}${ctx.textAfterCursor}\n</QUERY>\nTASK: Fill {{FILL_HERE}} only. ${guidance}${focusNudge} Return up to ${k} DISTINCT minimal alternatives as separate closed tags:\n<COMPLETION>…</COMPLETION>\nMost likely first (best match to FOCUS). Each alternative is a full short fill (not a continuation of another). No commentary outside tags.`;
+    return `${context}<QUERY>\n${ctx.textBeforeCursor}{{FILL_HERE}}${ctx.textAfterCursor}\n</QUERY>\nTASK: Fill {{FILL_HERE}} only. ${guidance}${focusNudge}${relatedNudge}${lspNudge}${commentNudge} Return up to ${k} DISTINCT minimal alternatives as separate closed tags:\n<COMPLETION>…</COMPLETION>\nMost likely first (best match to LSP / FOCUS / RELATED FILES). Each alternative is a full short fill (not a continuation of another). No commentary outside tags.`;
   }
 
   prompt(
@@ -462,11 +609,149 @@ function applyHardCaps(response: string, midLine: boolean): string {
   return out;
 }
 
+/** True when the caret is already inside a user-started comment. */
+export function isCursorInsideComment(ctx: AutoCompleteContext): boolean {
+  const before = ctx.textBeforeCursor || "";
+  const line = before.split("\n").pop() || "";
+  const lang = String(ctx.language || "").toLowerCase();
+
+  const lineCommentIdx = line.indexOf("//");
+  if (lineCommentIdx >= 0) {
+    return true;
+  }
+
+  if (
+    lang === "python" ||
+    lang === "ruby" ||
+    lang === "shellscript" ||
+    lang === "yaml" ||
+    lang === "dockerfile"
+  ) {
+    const hash = line.indexOf("#");
+    if (hash >= 0) {
+      return true;
+    }
+  }
+
+  const lastOpen = before.lastIndexOf("/*");
+  const lastClose = before.lastIndexOf("*/");
+  if (lastOpen >= 0 && lastOpen > lastClose) {
+    return true;
+  }
+  return false;
+}
+
+function isCommentOnlyLine(line: string, language?: string): boolean {
+  const t = line.trim();
+  if (!t) {
+    return false;
+  }
+  if (
+    t.startsWith("//") ||
+    t.startsWith("/*") ||
+    t.startsWith("*") ||
+    t === "*/" ||
+    t.startsWith("*/")
+  ) {
+    return true;
+  }
+  const lang = String(language || "").toLowerCase();
+  if (
+    (lang === "python" ||
+      lang === "ruby" ||
+      lang === "shellscript" ||
+      lang === "yaml" ||
+      lang === "dockerfile") &&
+    t.startsWith("#")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Strip trailing `// …` / `# …` from a code line (not inside strings — best-effort). */
+function stripTrailingLineComment(line: string, language?: string): string {
+  const lang = String(language || "").toLowerCase();
+  const hashLang =
+    lang === "python" ||
+    lang === "ruby" ||
+    lang === "shellscript" ||
+    lang === "yaml" ||
+    lang === "dockerfile";
+
+  // Skip if the whole line is already a comment.
+  if (isCommentOnlyLine(line, language)) {
+    return line;
+  }
+
+  // Avoid stripping URLs in strings crudely: only strip when `//` has code before it.
+  const slash = line.search(/(?<=\S)\s*\/\//);
+  if (slash >= 0) {
+    const before = line.slice(0, slash);
+    const dq = (before.match(/"/g) || []).length;
+    const sq = (before.match(/'/g) || []).length;
+    if (dq % 2 === 0 && sq % 2 === 0) {
+      return before.replace(/\s+$/, "");
+    }
+  }
+
+  if (hashLang) {
+    const hash = line.search(/(?<=\S)\s*#/);
+    if (hash >= 0) {
+      const before = line.slice(0, hash);
+      const dq = (before.match(/"/g) || []).length;
+      const sq = (before.match(/'/g) || []).length;
+      if (dq % 2 === 0 && sq % 2 === 0) {
+        return before.replace(/\s+$/, "");
+      }
+    }
+  }
+  return line;
+}
+
+/**
+ * Drop unsolicited comments/JSDoc the model invents when the user is writing code.
+ */
+export function stripUnsolicitedComments(
+  response: string,
+  ctx: AutoCompleteContext
+): string {
+  if (!response || isCursorInsideComment(ctx)) {
+    return response;
+  }
+
+  let out = response.replace(/\r\n/g, "\n");
+
+  // Strip leading JSDoc / block comment if the whole fill starts with one.
+  out = out.replace(/^\s*\/\*\*[\s\S]*?\*\/\s*/, "");
+  out = out.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, "");
+
+  const lines = out.split("\n");
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (isCommentOnlyLine(line, ctx.language)) {
+      continue;
+    }
+    kept.push(stripTrailingLineComment(line, ctx.language));
+  }
+
+  // Trim leading/trailing blank lines left after stripping comments.
+  while (kept.length > 0 && !kept[0].trim()) {
+    kept.shift();
+  }
+  while (kept.length > 0 && !kept[kept.length - 1].trim()) {
+    kept.pop();
+  }
+
+  return kept.join("\n");
+}
+
 /**
  * Clean model output into insertable ghost text.
  * - strip fences / echoed line
  * - drop overlap with suffix after cursor
  * - hard caps so Tab never dumps a whole file
+ * - drop unsolicited comments
  */
 export function refineCompletionText(
   raw: string,
@@ -476,6 +761,7 @@ export function refineCompletionText(
   response = response.replace(/^```[\w-]*\n?/, "").replace(/\n?```$/, "");
   response = stripPrefixEcho(response, ctx);
   response = trimAgainstSuffix(response, ctx);
+  response = stripUnsolicitedComments(response, ctx);
 
   const midLine = (ctx.textAfterCursor.split("\n")[0] || "").length > 0;
   response = applyHardCaps(response, midLine);
@@ -487,6 +773,16 @@ export function refineCompletionText(
     response.length > 80 &&
     response.includes(prefixSample.slice(0, 40))
   ) {
+    return "";
+  }
+
+  // If only whitespace remains after comment stripping — no suggestion.
+  if (!response.trim()) {
+    return "";
+  }
+
+  // Bare "// events" style fills — drop; prefer no ghost over a useless label.
+  if (isCursorInsideComment(ctx) && isUselessCommentFill(response)) {
     return "";
   }
 

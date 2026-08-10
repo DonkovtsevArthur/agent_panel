@@ -18,6 +18,7 @@ import {
   resolveModelContextWindow,
 } from "./modelCapabilities";
 import { normalizeReasoningEffort } from "./reasoningEffort";
+import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -184,6 +185,16 @@ export interface AgentPanelConfig {
      * call (cycle with Alt+[ / Alt+]).
      */
     alternatives: 1 | 2 | 3;
+    /**
+     * Glob patterns for paths where Tab should stay silent
+     * (dist / generated / node_modules / …).
+     */
+    excludeGlobs: string[];
+    /**
+     * After accepting a suggestion, offer a one-shot jump to the likely
+     * next edit (e.g. store → events section).
+     */
+    nextEdit: boolean;
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
@@ -524,6 +535,10 @@ export function getConfig(): AgentPanelConfig {
         modelId: String(cfg.get<string>("tabAutocomplete.modelId") || "").trim(),
         aggressiveness,
         alternatives,
+        excludeGlobs: normalizeExcludeGlobs(
+          cfg.get<string[]>("tabAutocomplete.excludeGlobs")
+        ),
+        nextEdit: cfg.get<boolean>("tabAutocomplete.nextEdit") === true,
       };
     })(),
     selectionHints: {
