@@ -129,6 +129,9 @@ type SettingsPayload = {
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
+  tabAutocompleteEnabled?: boolean;
+  tabAutocompleteModelId?: string;
+  tabAutocompleteAggressiveness?: string;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -4023,6 +4026,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         subagentsEnabled: config.subagents.enabled,
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
+        tabAutocompleteEnabled: config.tabAutocomplete.enabled,
+        tabAutocompleteModelId: config.tabAutocomplete.modelId,
+        tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4444,6 +4450,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       raw.autoCompactEnabled !== false,
       target
     );
+    await cfg.update(
+      "tabAutocomplete.enabled",
+      raw.tabAutocompleteEnabled === true,
+      target
+    );
+    await cfg.update(
+      "tabAutocomplete.modelId",
+      String(raw.tabAutocompleteModelId || "").trim(),
+      target
+    );
+    const aggRaw = String(raw.tabAutocompleteAggressiveness || "medium")
+      .trim()
+      .toLowerCase();
+    const aggressiveness =
+      aggRaw === "low" || aggRaw === "high" ? aggRaw : "medium";
+    await cfg.update("tabAutocomplete.aggressiveness", aggressiveness, target);
     await cfg.update(
       "selectionHints.enabled",
       raw.selectionHintsEnabled !== false,
@@ -5036,6 +5058,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
           </label>
           <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
+          <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
+          <label class="settings-field settings-check">
+            <input id="settingsTabAutocompleteEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteNote">Inline ghost-text via your Harbor provider. Prefer coder models (Qwen-Coder, DeepSeek, grok-code). Tab = all; Ctrl/Alt+Right = word; Ctrl/Alt+Down = line.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsTabAutocompleteModelLabel">Tab model</span>
+            <select id="settingsTabAutocompleteModel" class="settings-input"></select>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteModelHint">Coder models usually give better inline fills than chat/flash models.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
+            <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Accept: Tab (all), Ctrl+Right / Alt+Right (word), Ctrl+Down / Alt+Down (line).</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>

@@ -1,10 +1,20 @@
-# vendor/cline — форк Cline
+# vendor/
+
+## `vendor/cline` — форк Cline
 
 Локальная копия [cline/cline](https://github.com/cline/cline) (SDK + apps).
 
 Harbor UI живёт в корне репозитория; **runtime-агент** — Cline (`@cline/sdk` / packages в `sdk/packages/`).
 
-## Как это связано
+## `vendor/tabcoder` — форк TabCoder (autocomplete UX)
+
+Snapshot [alexandrevilain/tabcoder](https://github.com/alexandrevilain/tabcoder) (Apache-2.0). See `vendor/tabcoder/HARBOR.md`.
+
+Harbor **does not** run TabCoder as a nested extension and **does not** use its AI SDK / provider profiles. Runtime Tab autocomplete is in `src/tabAutocomplete*.ts` (hole-fill prompts + debounce/filters adapted from TabCoder); completions call Harbor `openaiClient` with Settings providers.
+
+If a Marketplace TabCoder extension is also installed, disable one of them — two inline completion providers will compete.
+
+## Как это связано (Cline)
 
 | Путь | Роль |
 |------|------|
