@@ -189,6 +189,12 @@
       tabAutocompleteAlts3: "3 — three alternatives",
       tabAutocompleteAltsHint:
         "Distinct ghost texts in one request. Cycle Alt+[ / Alt+]; Tab accepts the current one.",
+      tabAutocompleteExclude: "Exclude globs",
+      tabAutocompleteExcludeHint:
+        "One glob per line. Tab stays silent on matches (dist, generated, …). Clear all lines to allow every path.",
+      tabAutocompleteNextEdit: "Next Edit after Accept",
+      tabAutocompleteNextEditHint:
+        "After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.",
       tabAutocompleteKeysHint:
         "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
@@ -582,6 +588,12 @@
       tabAutocompleteAlts3: "3 — три варианта",
       tabAutocompleteAltsHint:
         "Разные ghost text за один запрос. Цикл Alt+[ / Alt+]; Tab принимает текущий.",
+      tabAutocompleteExclude: "Исключить (globs)",
+      tabAutocompleteExcludeHint:
+        "По одному glob на строку. Tab молчит на совпадениях (dist, generated, …). Пустой список — разрешить все пути.",
+      tabAutocompleteNextEdit: "Next Edit после Accept",
+      tabAutocompleteNextEditHint:
+        "После принятия Tab — чип Next в месте следующей правки (store → events, event → .on). Tab — прыжок, Esc — скрыть.",
       tabAutocompleteKeysHint:
         "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
@@ -1001,6 +1013,12 @@
   );
   const settingsTabAutocompleteAlternatives = document.getElementById(
     "settingsTabAutocompleteAlternatives"
+  );
+  const settingsTabAutocompleteExcludeGlobs = document.getElementById(
+    "settingsTabAutocompleteExcludeGlobs"
+  );
+  const settingsTabAutocompleteNextEdit = document.getElementById(
+    "settingsTabAutocompleteNextEdit"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1633,6 +1651,38 @@
     );
     if (settingsTabAutocompleteAltsHint) {
       settingsTabAutocompleteAltsHint.textContent = t("tabAutocompleteAltsHint");
+    }
+    const settingsTabAutocompleteExcludeLabel = document.getElementById(
+      "settingsTabAutocompleteExcludeLabel"
+    );
+    if (settingsTabAutocompleteExcludeLabel) {
+      settingsTabAutocompleteExcludeLabel.textContent = t(
+        "tabAutocompleteExclude"
+      );
+    }
+    const settingsTabAutocompleteExcludeHint = document.getElementById(
+      "settingsTabAutocompleteExcludeHint"
+    );
+    if (settingsTabAutocompleteExcludeHint) {
+      settingsTabAutocompleteExcludeHint.textContent = t(
+        "tabAutocompleteExcludeHint"
+      );
+    }
+    const settingsTabAutocompleteNextEditLabel = document.getElementById(
+      "settingsTabAutocompleteNextEditLabel"
+    );
+    if (settingsTabAutocompleteNextEditLabel) {
+      settingsTabAutocompleteNextEditLabel.textContent = t(
+        "tabAutocompleteNextEdit"
+      );
+    }
+    const settingsTabAutocompleteNextEditHint = document.getElementById(
+      "settingsTabAutocompleteNextEditHint"
+    );
+    if (settingsTabAutocompleteNextEditHint) {
+      settingsTabAutocompleteNextEditHint.textContent = t(
+        "tabAutocompleteNextEditHint"
+      );
     }
     const settingsTabAutocompleteKeysHint = document.getElementById(
       "settingsTabAutocompleteKeysHint"
@@ -8365,6 +8415,16 @@
         alts === 1 || alts === 3 ? alts : 2
       );
     }
+    if (settingsTabAutocompleteExcludeGlobs) {
+      const globs = Array.isArray(settings.tabAutocompleteExcludeGlobs)
+        ? settings.tabAutocompleteExcludeGlobs
+        : [];
+      settingsTabAutocompleteExcludeGlobs.value = globs.join("\n");
+    }
+    if (settingsTabAutocompleteNextEdit) {
+      settingsTabAutocompleteNextEdit.checked =
+        settings.tabAutocompleteNextEdit === true;
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -8496,6 +8556,15 @@
       tabAutocompleteAlternatives: settingsTabAutocompleteAlternatives
         ? Number(settingsTabAutocompleteAlternatives.value) || 2
         : 2,
+      tabAutocompleteExcludeGlobs: settingsTabAutocompleteExcludeGlobs
+        ? settingsTabAutocompleteExcludeGlobs.value
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+      tabAutocompleteNextEdit: settingsTabAutocompleteNextEdit
+        ? settingsTabAutocompleteNextEdit.checked
+        : false,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,

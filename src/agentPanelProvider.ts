@@ -46,6 +46,7 @@ import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
+import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 import {
   modeThinkingLabel,
   parseCustomModes,
@@ -133,6 +134,10 @@ type SettingsPayload = {
   tabAutocompleteModelId?: string;
   tabAutocompleteAggressiveness?: string;
   tabAutocompleteAlternatives?: number;
+  /** One glob per line / array entry — Tab stays silent on matches. */
+  tabAutocompleteExcludeGlobs?: string[] | string;
+  /** After Accept, offer jump to likely next edit. */
+  tabAutocompleteNextEdit?: boolean;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -4031,6 +4036,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         tabAutocompleteModelId: config.tabAutocomplete.modelId,
         tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
         tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
+        tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
+        tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4471,6 +4478,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const altsRaw = Number(raw.tabAutocompleteAlternatives);
     const alternatives = altsRaw === 1 || altsRaw === 3 ? altsRaw : 2;
     await cfg.update("tabAutocomplete.alternatives", alternatives, target);
+    const excludeRaw = raw.tabAutocompleteExcludeGlobs;
+    const excludeGlobs = normalizeExcludeGlobs(
+      typeof excludeRaw === "string"
+        ? excludeRaw
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : excludeRaw
+    );
+    await cfg.update("tabAutocomplete.excludeGlobs", excludeGlobs, target);
+    await cfg.update(
+      "tabAutocomplete.nextEdit",
+      raw.tabAutocompleteNextEdit === true,
+      target
+    );
     await cfg.update(
       "selectionHints.enabled",
       raw.selectionHintsEnabled !== false,
@@ -5091,6 +5113,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </select>
           </label>
           <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Up to N distinct ghost texts per request. Cycle Alt+[ / Alt+]; Tab accepts the current one.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
+            <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches (dist, generated, …). Clear all lines to allow every path.</p>
+          <label class="settings-field settings-check">
+            <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
+            <span class="settings-label" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteNextEditHint">After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.</p>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
