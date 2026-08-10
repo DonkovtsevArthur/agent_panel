@@ -17,7 +17,9 @@ import {
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
 import {
+  appendSubagentsRuntimeNudge,
   harborDefaultRulesForLanguage,
+  harborSubagentsRulesForLanguage,
   isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
@@ -636,21 +638,33 @@ function looksLikeEditTool(name: string): boolean {
  * Cline editor/apply_patch catch failures and return `{ success: false, error }`
  * without throwing. Treat that as a real tool failure so the model retries
  * instead of narrating "done" while the disk is unchanged.
+ * spawn_agent returns `{ finishReason: "error", text }` the same soft way.
  */
 function toolOutputIsSoftFail(output: unknown): boolean {
   if (!output || typeof output !== "object") {
     return false;
   }
-  return (output as { success?: unknown }).success === false;
+  const row = output as { success?: unknown; finishReason?: unknown };
+  if (row.success === false) {
+    return true;
+  }
+  return String(row.finishReason || "").trim() === "error";
 }
 
 function errorMessageFromToolOutput(output: unknown): string {
   if (!output || typeof output !== "object") {
     return "";
   }
-  const err = (output as { error?: unknown }).error;
+  const row = output as { error?: unknown; text?: unknown; finishReason?: unknown };
+  const err = row.error;
   if (typeof err === "string" && err.trim()) {
     return err.trim();
+  }
+  if (String(row.finishReason || "").trim() === "error") {
+    const text = typeof row.text === "string" ? row.text.trim() : "";
+    if (text) {
+      return text;
+    }
   }
   try {
     return JSON.stringify(output);
@@ -674,16 +688,51 @@ function pathFromToolInput(input: unknown): string | undefined {
 }
 
 /** Prefer spawn_agent text summary over raw JSON for step cards. */
+function shortSpawnErrorMessage(text: string): string {
+  const raw = String(text || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const msgMatch = raw.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (msgMatch) {
+    return msgMatch[1]
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, " ")
+      .trim()
+      .slice(0, 140);
+  }
+  const codeMatch = raw.match(/"code"\s*:\s*"([^"]+)"/);
+  if (codeMatch) {
+    return codeMatch[1].trim();
+  }
+  const first = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .find(Boolean);
+  return String(first || raw)
+    .replace(/^litellm\.\w+:\s*/i, "")
+    .replace(/^APIError:\s*/i, "")
+    .slice(0, 140);
+}
+
 function spawnAgentResultPreview(
   toolName: string,
   output: unknown,
   errMsg: string
 ): string {
   if (errMsg) {
-    return previewJson(errMsg, 240);
+    return shortSpawnErrorMessage(errMsg) || previewJson(errMsg, 240);
   }
   if (toolName === "spawn_agent" && output && typeof output === "object") {
-    const text = String((output as { text?: unknown }).text || "").trim();
+    const row = output as {
+      text?: unknown;
+      finishReason?: unknown;
+    };
+    const finish = String(row.finishReason || "").trim();
+    const text = String(row.text || "").trim();
+    if (finish === "error" && text) {
+      return shortSpawnErrorMessage(text) || text.slice(0, 140);
+    }
     if (text) {
       return text.length > 240 ? `${text.slice(0, 237)}...` : text;
     }
@@ -860,6 +909,44 @@ function newSessionId(): string {
 }
 
 /**
+ * Build a `providerConfig` for ClineCore `start` that surfaces upstream 4xx/5xx
+ * bodies. Without this, openai-compatible / LiteLLM/OpenRouter rejections arrive
+ * as bare "Request failed with status code 400" and the real cause is invisible —
+ * especially painful for spawn_agent children.
+ */
+function buildHarborProviderConfig(): {
+  providerId: string;
+  options: {
+    onResponseError: (response: {
+      status: number;
+      clone: () => { text: () => Promise<string> };
+    }) => Promise<void>;
+  };
+} {
+  return {
+    providerId: "openai-compatible",
+    options: {
+      onResponseError: async (response) => {
+        if (response.status < 400) {
+          return;
+        }
+        let body = "";
+        try {
+          body = await response.clone().text();
+        } catch {
+          /* body already consumed / unreadable — leave empty */
+        }
+        const trimmed = String(body || "").trim();
+        const snippet =
+          trimmed.length > 4000 ? `${trimmed.slice(0, 3997)}...` : trimmed;
+        const suffix = snippet ? `: ${snippet}` : "";
+        throw new Error(`upstream ${response.status}${suffix}`);
+      },
+    },
+  };
+}
+
+/**
  * Run one Harbor chat turn via ClineCore local session host (plan/act).
  */
 export async function runClineAgentTurn(options: {
@@ -899,6 +986,7 @@ export async function runClineAgentTurn(options: {
   // (parallelism, plan/act tags, verify-after-edit, gather-context-first)
   // stays intact instead of being replaced wholesale.
   const uiLang = resolveUiLanguage(getConfig().language);
+  const enableSpawnAgent = config.subagents.enabled !== false;
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
@@ -906,6 +994,9 @@ export async function runClineAgentTurn(options: {
     : String(config.systemPrompt || "").trim();
   const harborRules = [
     customRules,
+    // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
+    // When off: no tool (enableSpawnAgent false) and no rules below.
+    enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
@@ -941,7 +1032,6 @@ export async function runClineAgentTurn(options: {
   /** Sum turn deltas so parent + forwarded child usage both count. */
   let usagePromptTokens = 0;
   let usageCompletionTokens = 0;
-  const enableSpawnAgent = config.subagents.enabled !== false;
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
@@ -1226,6 +1316,11 @@ export async function runClineAgentTurn(options: {
     userPrompt = "Look at the attached image(s) and answer.";
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
+  userPrompt = appendSubagentsRuntimeNudge(
+    userPrompt,
+    enableSpawnAgent,
+    uiLang
+  );
 
   const userImages: string[] = [];
   for (const att of options.attachments || []) {
@@ -1284,6 +1379,9 @@ export async function runClineAgentTurn(options: {
         systemPrompt: baseSystemPrompt,
         ...reasoningOptions,
         ...modelInfoData,
+        // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
+        // "Request failed with status code N" — critical for spawn_agent children.
+        providerConfig: buildHarborProviderConfig(),
       },
     });
 

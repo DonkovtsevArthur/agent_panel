@@ -1156,19 +1156,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     const controller = this.chatRuns.get(chatId);
-    if (!controller) {
-      return;
-    }
-    this.chatRuns.delete(chatId);
-    this.chatRunTokens.delete(chatId);
-    controller.abort();
-  }
-
-  private abortAllRuns(): void {
-    for (const [chatId, controller] of this.chatRuns.entries()) {
+    if (controller) {
       this.chatRuns.delete(chatId);
       this.chatRunTokens.delete(chatId);
       controller.abort();
+    }
+    // Clear list loader immediately — do not wait for the async turn catch.
+    // Stop already posts "stopped" (chat busy), but agentsList runState was
+    // only cleared later (or never, for commit/discard early-return on abort).
+    if (this.chatRunState.get(chatId) === "running") {
+      this.setRunStateForChat(chatId);
+    }
+  }
+
+  private abortAllRuns(): void {
+    const runningIds = [...this.chatRuns.keys()];
+    for (const chatId of runningIds) {
+      const controller = this.chatRuns.get(chatId);
+      if (!controller) {
+        continue;
+      }
+      this.chatRuns.delete(chatId);
+      this.chatRunTokens.delete(chatId);
+      controller.abort();
+    }
+    let cleared = false;
+    for (const chatId of runningIds) {
+      if (this.chatRunState.get(chatId) === "running") {
+        this.chatRunState.delete(chatId);
+        cleared = true;
+      }
+    }
+    if (cleared) {
+      this.postAgentsList();
     }
   }
 

@@ -49,7 +49,7 @@
   "config.visionRouting.preferredModelId.description": "Deprecated. Use agentPanel.visionRouting.preferredModelIds (also unused for chat turns).",
   "config.maxResponseChars.description": "Maximum chat response length; longer output is truncated. Repetitive loops are also trimmed.",
   "config.soundNotifications.enabled.description": "Play a sound when an agent run succeeds or fails.",
-  "config.subagents.enabled.description": "Allow parallel sub-agents (spawn_agent) in Agent, Plan, and Ask. Children follow the current mode: Plan/Ask stay read-focused; Agent may edit.",
+  "config.subagents.enabled.description": "Allow parallel sub-agents (spawn_agent) in Agent, Plan, and Ask. When on, the model is instructed to delegate independent work via spawn_agent; when off, the tool is unavailable. Children follow the current mode: Plan/Ask stay read-focused; Agent may edit.",
   "config.parallelToolCalls.enabled.description": "Execute multiple tool calls from one model response at the same time (reads, searches, and other independent tools).",
   "config.autoCompact.enabled.description": "Automatically compress conversation context when it approaches the model input limit.",
   "config.selectionHints.enabled.description": "Show floating Add to Chat actions above the selected code in the editor.",
