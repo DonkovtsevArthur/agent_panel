@@ -543,6 +543,50 @@ export function startTabFileBriefTracking(
         scheduleTabFileBriefRefresh(e.document);
       }
     }),
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.uri.scheme !== "file") {
+        return;
+      }
+      // Refresh brief for the saved file itself.
+      scheduleTabFileBriefRefresh(doc);
+
+      // If a twin / neighbor of the active editor was saved, refresh that editor's brief.
+      const editor = vscode.window.activeTextEditor;
+      if (
+        !editor ||
+        editor.document.uri.scheme !== "file" ||
+        editor.document.uri.toString() === doc.uri.toString()
+      ) {
+        return;
+      }
+      void (async () => {
+        const activePath = editor.document.uri.fsPath;
+        const savedPath = doc.uri.fsPath;
+        const { neighborPathCandidates } = await import(
+          "./tabAutocompleteExtraContext"
+        );
+        if (neighborPathCandidates(activePath).includes(savedPath)) {
+          scheduleTabFileBriefRefresh(editor.document);
+          log("brief refresh — neighbor saved", path.basename(savedPath));
+          return;
+        }
+        const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+        if (!folder) {
+          return;
+        }
+        const { resolveStructuralCounterpart } = await import(
+          "./tabAutocompleteStructure"
+        );
+        const twin = await resolveStructuralCounterpart(
+          folder.uri.fsPath,
+          activePath
+        );
+        if (twin?.path === savedPath) {
+          scheduleTabFileBriefRefresh(editor.document);
+          log("brief refresh — twin saved", twin.twinRel);
+        }
+      })();
+    }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
       cache.delete(doc.uri.toString());
       const t = debounceTimers.get(doc.uri.toString());

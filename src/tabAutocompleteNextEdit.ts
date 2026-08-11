@@ -53,7 +53,7 @@ export function classifyAcceptedText(text: string): NextEditKind | undefined {
   return undefined;
 }
 
-function extractPrimaryBinding(text: string): string | undefined {
+export function extractPrimaryBinding(text: string): string | undefined {
   const store = /(?:const|let|var)\s+(\$[A-Za-z_$][\w$]*)\b/.exec(text);
   if (store?.[1]) {
     return store[1];

@@ -33,7 +33,11 @@ import {
   modelFallbackEligibility,
   selectFallbackModel,
 } from "./modelRouting";
-import { explainKnownProviderError, humanizeProviderError } from "./providerErrors";
+import {
+  explainKnownProviderError,
+  humanizeProviderError,
+  providerErrorDetail,
+} from "./providerErrors";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -140,6 +144,8 @@ type SettingsPayload = {
   tabAutocompleteNextEdit?: boolean;
   /** chip | inline */
   tabAutocompleteShowMode?: string;
+  /** FIM /completions */
+  tabAutocompleteFim?: boolean;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -1056,7 +1062,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return Boolean(chatId && this.store.activeChatId === chatId);
   }
 
-  private postRunFailed(chatId: string, text: string): void {
+  private postRunFailed(
+    chatId: string,
+    text: string,
+    detail?: string
+  ): void {
     if (!this.isActiveChat(chatId)) {
       return;
     }
@@ -1064,6 +1074,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "runFailed",
       chatId,
       text,
+      ...(detail ? { detail } : {}),
     });
   }
 
@@ -3286,9 +3297,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             : `Connection to the model was interrupted: ${reason}. Send the request again.`;
         }
       }
+      const detail = providerErrorDetail(error, messageText);
       const lastUi = runUiMessages[runUiMessages.length - 1];
-      if (!(lastUi?.role === "error" && lastUi.text === messageText)) {
-        runUiMessages.push({ role: "error", text: messageText });
+      if (
+        !(
+          lastUi?.role === "error" &&
+          lastUi.text === messageText &&
+          String(lastUi.detail || "") === String(detail || "")
+        )
+      ) {
+        runUiMessages.push({
+          role: "error",
+          text: messageText,
+          ...(detail ? { detail } : {}),
+        });
       }
       // Persist even if AbortSignal flipped mid-catch; do not rely on
       // syncRunChat → isChatRunCurrent (!aborted).
@@ -3303,7 +3325,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.postRunFinished(runChatId, "error");
       // Dedicated runFailed: append + seal + clear busy in one webview message.
       // Do not gate on screen==="chat" — activeChatId is enough.
-      this.postRunFailed(runChatId, messageText);
+      this.postRunFailed(runChatId, messageText, detail);
       if (this.isActiveChat(runChatId)) {
         this.postRegenerateState();
       }
@@ -4042,6 +4064,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
         tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
         tabAutocompleteShowMode: config.tabAutocomplete.showMode,
+        tabAutocompleteFim: config.tabAutocomplete.fim,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4503,6 +4526,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "tabAutocomplete.showMode",
       showModeRaw === "inline" ? "inline" : "chip",
+      target
+    );
+    await cfg.update(
+      "tabAutocomplete.fim",
+      raw.tabAutocompleteFim === true,
       target
     );
     await cfg.update(
@@ -5155,7 +5183,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </select>
           </label>
           <p class="settings-hint" id="settingsTabAutocompleteShowModeHint">Chip = silent prefetch + ⌘⏎. Inline = ghost text appears automatically.</p>
-          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
+          <label class="settings-field settings-check">
+            <input id="settingsTabAutocompleteFim" type="checkbox" />
+            <span class="settings-label" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
+          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>

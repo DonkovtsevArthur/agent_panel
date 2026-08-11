@@ -1182,6 +1182,55 @@ body.vscode-dark .md-pre .syntax-property {
   white-space: normal;
 }
 
+.msg.error .msg-error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.msg.error .msg-error-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.msg.error .msg-error-help {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  opacity: 0.55;
+  background: transparent;
+  color: inherit;
+}
+
+.msg.error .msg-error-help .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.msg.error .msg-error-help:hover,
+.msg.error .msg-error-help:focus-visible,
+.msg.error .msg-error-help[aria-expanded="true"] {
+  opacity: 1;
+  background: transparent;
+}
+
+.msg.error .msg-error-detail {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground, #888);
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));
+  border-radius: 6px;
+}
+
 .msg.error .md-p,
 .msg.error .md-list,
 .msg.error .md-quote,

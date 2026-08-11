@@ -937,12 +937,12 @@ export async function buildTabExtraContext(
     await pushNeighbor();
   }
 
-  // Relative imports (mid-file / non-empty).
+  // Relative imports (mid-file / non-empty) — at most one snippet.
   if (!nearlyEmpty) {
     const source = document.getText();
-    const specs = extractRelativeImportSpecifiers(source).slice(0, 6);
+    const specs = extractRelativeImportSpecifiers(source).slice(0, 4);
     for (const spec of specs) {
-      if (state.related.length >= MAX_RELATED_FILES || state.budget < 120) {
+      if (state.related.length >= 1 || state.budget < 120) {
         break;
       }
       const resolved = await resolveRelativeImportFile(
@@ -952,18 +952,26 @@ export async function buildTabExtraContext(
       if (!resolved) {
         continue;
       }
-      await tryPushRelatedFile(state, resolved);
+      await tryPushRelatedFile(state, resolved, {
+        maxChars: 220,
+      });
     }
   }
 
-  // One other visible editor — skip on empty files (too much cross-file noise).
-  if (!nearlyEmpty && state.related.length < MAX_RELATED_FILES && state.budget >= 120) {
+  // One other visible editor — skip on empty files and when mid-file already
+  // has a related hit (keeps prompt tight).
+  if (
+    !nearlyEmpty &&
+    state.related.length === 0 &&
+    state.related.length < MAX_RELATED_FILES &&
+    state.budget >= 120
+  ) {
     const sibling = pickSiblingOpenDocument(document);
     if (sibling && !state.usedPaths.has(sibling.uri.fsPath)) {
       state.usedPaths.add(sibling.uri.fsPath);
       const snippet = pickExportSnippets(
         sibling.getText(),
-        Math.min(MAX_SNIPPET_CHARS, state.budget)
+        Math.min(220, state.budget)
       );
       if (snippet.trim()) {
         state.related.push({
@@ -978,14 +986,15 @@ export async function buildTabExtraContext(
   let projectRules: string | undefined;
   let projectMap: string | undefined;
   // Empty files: skip AGENTS.md — use SAME LAYER example + map instead.
-  if (root && state.budget >= 120) {
+  // Mid-file: tiny focused map only (style nudge).
+  if (root && state.budget >= 80) {
     const map = getTabProjectMapDigest(root, document.uri.fsPath, {
       mode: nearlyEmpty ? "full" : "focused",
     });
     if (map) {
       const cap = nearlyEmpty
         ? Math.min(MAX_PROJECT_MAP_CHARS, Math.max(state.budget, 400))
-        : Math.min(420, state.budget);
+        : Math.min(160, state.budget);
       projectMap = map.slice(0, cap);
     }
   }

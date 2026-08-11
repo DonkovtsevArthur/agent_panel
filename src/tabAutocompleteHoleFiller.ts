@@ -6,6 +6,10 @@
 
 import { languageFillNudge } from "./tabAutocompleteLanguage";
 import type { TabFileIdentity } from "./tabAutocompleteExtraContext";
+import {
+  failsSyntaxPostFilter,
+  syntaxRejectReason,
+} from "./tabAutocompleteSyntax";
 
 export type AutoCompleteContext = {
   textBeforeCursor: string;
@@ -71,6 +75,9 @@ export type HoleFillPromptMessage = {
 /** Hard caps so Tab never pastes a whole function/file dump. */
 const MAX_COMPLETION_CHARS = 280;
 const MAX_COMPLETION_LINES = 5;
+/** Mid-file (non-empty) — keep fills shorter to reduce fantasy. */
+const MID_FILE_COMPLETION_CHARS = 200;
+const MID_FILE_COMPLETION_LINES = 3;
 
 const BINDING_LINE_RE =
   /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/;
@@ -340,7 +347,9 @@ function formatExtraContext(ctx: AutoCompleteContext): string {
   const brief = String(ctx.fileBrief || "").trim();
   if (brief) {
     parts.push("## FILE BRIEF (micro-research on open — obey)");
-    parts.push(brief);
+    // Mid-file: keep only the head (layer / stem / suggested start) — full brief
+    // overfeeds the model and causes fantasy fills.
+    parts.push(emptyFile ? brief : brief.slice(0, 220));
     parts.push("");
   } else if (ctx.fileIdentity) {
     parts.push(formatFileIdentityBlock(ctx.fileIdentity, { emptyFile }));
@@ -349,23 +358,33 @@ function formatExtraContext(ctx: AutoCompleteContext): string {
   if (lsp) {
     parts.push(lsp);
   }
-  const rules = String(ctx.projectRules || "").trim();
-  if (rules) {
-    parts.push("## PROJECT RULES (short — follow for style / naming)");
-    parts.push(
-      "(Use for naming/conventions only — do NOT turn rules into new comments in the fill.)"
-    );
-    parts.push(rules);
-    parts.push("");
-  }
-  const map = String(ctx.projectMap || "").trim();
-  if (map) {
-    parts.push("## PROJECT MAP (style only — do NOT paste into fill)");
-    parts.push(
-      "(Copy naming/import style. Never emit the skeleton, example path, or sibling list as completion text.)"
-    );
-    parts.push(map);
-    parts.push("");
+  // Mid-file: skip project rules / map noise — prefer LSP + related + short brief.
+  if (emptyFile) {
+    const rules = String(ctx.projectRules || "").trim();
+    if (rules) {
+      parts.push("## PROJECT RULES (short — follow for style / naming)");
+      parts.push(
+        "(Use for naming/conventions only — do NOT turn rules into new comments in the fill.)"
+      );
+      parts.push(rules);
+      parts.push("");
+    }
+    const map = String(ctx.projectMap || "").trim();
+    if (map) {
+      parts.push("## PROJECT MAP (style only — do NOT paste into fill)");
+      parts.push(
+        "(Copy naming/import style. Never emit the skeleton, example path, or sibling list as completion text.)"
+      );
+      parts.push(map);
+      parts.push("");
+    }
+  } else {
+    const map = String(ctx.projectMap || "").trim();
+    if (map) {
+      parts.push("## PROJECT MAP (style only — do NOT paste into fill)");
+      parts.push(map.slice(0, 160));
+      parts.push("");
+    }
   }
   const files = ctx.relatedFiles || [];
   if (files.length > 0) {
@@ -374,10 +393,12 @@ function formatExtraContext(ctx: AutoCompleteContext): string {
         ? "## RELATED FILES (SAME LAYER = template; OTHER LAYER = naming only)"
         : "## RELATED FILES (symbol / neighbor / imports / open tab)"
     );
-    for (const file of files.slice(0, 2)) {
+    const limit = emptyFile ? 2 : 1;
+    for (const file of files.slice(0, limit)) {
       parts.push(`### ${file.label}`);
       parts.push("```");
-      parts.push(file.snippet.trimEnd());
+      const snip = file.snippet.trimEnd();
+      parts.push(emptyFile ? snip : snip.slice(0, 220));
       parts.push("```");
     }
     parts.push("");
@@ -862,21 +883,23 @@ export function duplicatesExistingObjectKey(
   return false;
 }
 
-function applyHardCaps(response: string, midLine: boolean): string {
+function applyHardCaps(response: string, midLine: boolean, emptyFile: boolean): string {
   let out = response.replace(/\r\n/g, "\n");
+  const maxLines = emptyFile ? MAX_COMPLETION_LINES : MID_FILE_COMPLETION_LINES;
+  const maxChars = emptyFile ? MAX_COMPLETION_CHARS : MID_FILE_COMPLETION_CHARS;
   if (midLine) {
     out = out.split("\n")[0] || "";
   } else {
     const lines = out.split("\n");
-    if (lines.length > MAX_COMPLETION_LINES) {
-      out = lines.slice(0, MAX_COMPLETION_LINES).join("\n");
+    if (lines.length > maxLines) {
+      out = lines.slice(0, maxLines).join("\n");
     }
   }
-  if (out.length > MAX_COMPLETION_CHARS) {
-    out = out.slice(0, MAX_COMPLETION_CHARS);
+  if (out.length > maxChars) {
+    out = out.slice(0, maxChars);
     // Avoid cutting mid-identifier when possible.
     const soft = out.replace(/\s+\S*$/, "");
-    if (soft.length >= Math.floor(MAX_COMPLETION_CHARS * 0.5)) {
+    if (soft.length >= Math.floor(maxChars * 0.5)) {
       out = soft;
     }
   }
@@ -1140,7 +1163,29 @@ export function isJunkCompletion(
     return true;
   }
 
+  if (failsSyntaxPostFilter(raw, ctx)) {
+    return true;
+  }
+
   return false;
+}
+
+/** Human-readable reject reason for Output diagnostics (or undefined if ok). */
+export function completionRejectReason(
+  text: string,
+  ctx: AutoCompleteContext
+): string | undefined {
+  if (isJunkCompletion(text, ctx)) {
+    const syn = syntaxRejectReason(text, ctx);
+    if (syn) {
+      return syn;
+    }
+    return "junk";
+  }
+  if (duplicatesExistingObjectKey(text, ctx)) {
+    return "duplicate-object-key";
+  }
+  return undefined;
 }
 
 /**
@@ -1172,7 +1217,7 @@ export function refineCompletionText(
       response = response.slice(0, 420).replace(/\s+\S*$/, "");
     }
   } else {
-    response = applyHardCaps(response, midLine);
+    response = applyHardCaps(response, midLine, false);
   }
   // Caps can cut mid-`</COMPLETION>` — strip leftovers again.
   response = stripCompletionMarkup(response);
