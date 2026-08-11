@@ -172,8 +172,8 @@ export function formatFigmaRemoteError(
     lower.includes("self signed")
   ) {
     return lang === "ru"
-      ? "TLS/сертификат: укажите CA bundle в Settings → CA bundle path (system + корпоративный CA), Reload Window, затем Connect Figma снова."
-      : "TLS/certificate error: set Settings → CA bundle path (system + corporate CA), Reload Window, then Connect Figma again.";
+      ? "TLS/сертификат: оставьте «Проверять TLS» выключенным в доп. настройках (или установите корпоративный CA в системное хранилище), Reload Window, затем Connect Figma снова."
+      : "TLS/certificate error: leave Validate TLS off in Advanced settings (or install the corporate CA in the system trust store), Reload Window, then Connect Figma again.";
   }
   if (looksLikeCatalogBlockedError(error)) {
     return lang === "ru"

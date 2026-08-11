@@ -144,6 +144,7 @@ type SettingsPayload = {
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
+  commitMessageModelId?: string;
   commitMessageScope?: "global" | "workspace";
   figmaEnabled?: boolean;
   autoglmEnabled?: boolean;
@@ -1698,7 +1699,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? message.rejectUnauthorized
         : config.rejectUnauthorized;
     const caBundlePath =
-      typeof message.caBundlePath === "string"
+      typeof message.caBundlePath === "string" && message.caBundlePath.trim()
         ? message.caBundlePath.trim()
         : config.caBundlePath;
 
@@ -4045,6 +4046,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
         commitMessageLanguage: config.commitMessage.language,
+        commitMessageModelId: config.commitMessage.modelId,
         commitMessageScope: config.commitMessage.scope,
         workspaceName:
           vscode.workspace.workspaceFolders?.[0]?.name ||
@@ -4424,7 +4426,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       Boolean(raw.rejectUnauthorized),
       target
     );
-    await cfg.update("caBundlePath", String(raw.caBundlePath || "").trim(), target);
     const systemPromptRaw = String(raw.systemPrompt || "").trim();
     await cfg.update(
       "systemPrompt",
@@ -4584,6 +4585,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : raw.commitMessageLanguage === "en"
           ? "en"
           : "auto";
+    const modelId = String(raw.commitMessageModelId || "").trim();
 
     if (scope === "global") {
       // Сбросить workspace-override, чтобы снова действовали глобальные значения.
@@ -4597,10 +4599,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         undefined,
         vscode.ConfigurationTarget.Workspace
       );
+      await cfg.update(
+        "commitMessage.modelId",
+        undefined,
+        vscode.ConfigurationTarget.Workspace
+      );
     }
 
     await cfg.update("commitMessage.prompt", prompt, target);
     await cfg.update("commitMessage.language", language, target);
+    await cfg.update("commitMessage.modelId", modelId, target);
   }
 
   private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
@@ -4991,6 +4999,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </select>
           </label>
           <label class="settings-field">
+            <span class="settings-label" id="settingsCommitModelLabel">Commit model</span>
+            <select id="settingsCommitModel" class="settings-input"></select>
+          </label>
+          <p class="settings-hint" id="settingsCommitModelHint">Empty = automatic light model. Otherwise uses the selected model from your catalog.</p>
+          <label class="settings-field">
             <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
             <select id="settingsCommitLanguage" class="settings-input">
               <option value="auto">Auto (follow UI language)</option>
@@ -5154,10 +5167,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field settings-check">
             <input id="settingsRejectUnauthorized" type="checkbox" />
             <span class="settings-label" id="settingsTlsValidateLabel">Validate TLS certificate</span>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCaBundleLabel">CA bundle path</span>
-            <input id="settingsCaBundle" class="settings-input" type="text" autocomplete="off" />
           </label>
         </section>
       </div>
