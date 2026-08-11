@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.60",
+  "version": "1.1.70",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -626,6 +626,19 @@
           "type": "boolean",
           "default": false,
           "description": "%config.tabAutocomplete.nextEdit.description%"
+        },
+        "agentPanel.tabAutocomplete.showMode": {
+          "type": "string",
+          "default": "chip",
+          "enum": [
+            "chip",
+            "inline"
+          ],
+          "enumDescriptions": [
+            "%config.tabAutocomplete.showMode.enum.chip%",
+            "%config.tabAutocomplete.showMode.enum.inline%"
+          ],
+          "description": "%config.tabAutocomplete.showMode.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

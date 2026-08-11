@@ -20,12 +20,39 @@ import {
   refineCompletionAlternatives,
   type AutoCompleteContext,
 } from "./tabAutocompleteHoleFiller";
-import { buildTabExtraContext } from "./tabAutocompleteExtraContext";
+import { buildTabExtraContext, neighborPathCandidates } from "./tabAutocompleteExtraContext";
 import {
   pathMatchesAnyExcludeGlob,
 } from "./tabAutocompleteExclude";
 import { buildTabLspContext } from "./tabAutocompleteLspContext";
-import { findNextEditTarget } from "./tabAutocompleteNextEdit";
+import {
+  classifyAcceptedText,
+  findNextEditTarget,
+  type NextEditTarget,
+} from "./tabAutocompleteNextEdit";
+import {
+  languageDebounceScale,
+  languageMaxTokens,
+} from "./tabAutocompleteLanguage";
+import {
+  createTabStatsStore,
+  formatRecentFillFeedback,
+  type TabStatsStore,
+} from "./tabAutocompleteStats";
+import {
+  ensureTabProjectMap,
+  getTabProjectMapDigest,
+  initTabProjectMap,
+  scheduleTabProjectMapBuild,
+  setTabProjectMapLogger,
+} from "./tabAutocompleteProjectMap";
+import {
+  ensureTabFileBrief,
+  getCachedTabFileBrief,
+  setTabFileBriefLogger,
+  startTabFileBriefTracking,
+} from "./tabAutocompleteFileBrief";
+import * as fs from "fs/promises";
 
 const COMPLETION_ACCEPTED_CMD = "agentPanel.tabAutocomplete.completionAccepted";
 const STATUS_CLICK_CMD = "agentPanel.tabAutocomplete.statusBarClicked";
@@ -340,18 +367,38 @@ function isLikelyRemovableDeclarationLine(lineText: string): boolean {
   return false;
 }
 
-function importLineOnlyForSymbol(lineText: string, id: string): boolean {
+function importNamesOnLine(lineText: string): string[] {
   const trimmed = lineText.trim();
   const named = /import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/.exec(trimmed);
   if (named) {
-    const names = named[1]
+    return named[1]
       .split(",")
       .map((p) => p.trim().split(/\s+as\s+/i)[0].trim())
       .filter(Boolean);
-    return names.length === 1 && names[0] === id;
   }
-  const def = /import\s+(\w+)\s+from\s*['"][^'"]+['"]/.exec(trimmed);
-  return Boolean(def && def[1] === id);
+  const def = /import\s+([A-Za-z_$][\w$]*)\s+from\s*['"][^'"]+['"]/.exec(trimmed);
+  if (def?.[1]) {
+    return [def[1]];
+  }
+  return [];
+}
+
+/** True when every imported name is in `missingIds` (safe to delete the import). */
+function importLineOnlyForMissingIds(
+  lineText: string,
+  missingIds: Set<string>
+): boolean {
+  const names = importNamesOnLine(lineText);
+  return names.length > 0 && names.every((n) => missingIds.has(n));
+}
+
+function importLineOnlyForSymbol(lineText: string, id: string): boolean {
+  return importLineOnlyForMissingIds(lineText, new Set([id]));
+}
+
+function isEmptyStructuralLine(lineText: string): boolean {
+  const t = lineText.trim();
+  return t === "{" || t === "}" || t === "};" || t === "}," || t === "();";
 }
 
 function lineReferencesSymbol(lineText: string, id: string): boolean {
@@ -433,6 +480,22 @@ function collectMissingSymbols(
     add(d.range.start.line, id);
   }
 
+  // Always mark leftover imports for recently deleted bindings (even if
+  // diagnostics already flagged other lines).
+  for (const id of recentlyDeleted) {
+    for (let i = 0; i < document.lineCount; i++) {
+      const text = document.lineAt(i).text;
+      if (!/^import\s/.test(text.trim())) {
+        continue;
+      }
+      if (importLineOnlyForMissingIds(text, recentlyDeletedSet)) {
+        add(i, id);
+      } else if (importLineOnlyForSymbol(text, id)) {
+        add(i, id);
+      }
+    }
+  }
+
   // Fallback when diagnostics lag: leftover refs to a recently deleted binding.
   // Skip incomplete declarations the user is still typing.
   if (diagnosticHits === 0) {
@@ -441,6 +504,9 @@ function collectMissingSymbols(
         const text = document.lineAt(i).text;
         if (isIncompleteDeclarationLine(text) || lineDefinesSymbol(text, id)) {
           continue;
+        }
+        if (/^import\s/.test(text.trim())) {
+          continue; // already handled above
         }
         if (lineReferencesSymbol(text, id)) {
           add(i, id);
@@ -455,7 +521,8 @@ function collectMissingSymbols(
 function isOrphanCandidateLine(
   document: vscode.TextDocument,
   lineNo: number,
-  missingIds: Set<string>
+  missingIds: Set<string>,
+  recentlyAdded?: Set<string>
 ): boolean {
   const text = document.lineAt(lineNo).text;
   if (isBlankOrCommentLine(text)) {
@@ -465,8 +532,21 @@ function isOrphanCandidateLine(
   if (isIncompleteDeclarationLine(text)) {
     return false;
   }
-  if (!isLikelyRemovableDeclarationLine(text) && !isChainContinuationLine(text)) {
+  const binding = declaredBindingName(text);
+  // User just introduced this binding — not an orphan leftover.
+  if (binding && recentlyAdded?.has(binding)) {
     return false;
+  }
+  if (!isLikelyRemovableDeclarationLine(text) && !isChainContinuationLine(text)) {
+    if (!isEmptyStructuralLine(text)) {
+      return false;
+    }
+  }
+  if (isEmptyStructuralLine(text)) {
+    return true;
+  }
+  if (/^import\s/.test(text.trim())) {
+    return importLineOnlyForMissingIds(text, missingIds);
   }
   for (const id of missingIds) {
     if (lineDefinesSymbol(text, id)) {
@@ -474,9 +554,6 @@ function isOrphanCandidateLine(
     }
     if (!lineReferencesSymbol(text, id)) {
       continue;
-    }
-    if (/^import\s/.test(text.trim())) {
-      return importLineOnlyForSymbol(text, id);
     }
     return true;
   }
@@ -490,7 +567,8 @@ function isOrphanCandidateLine(
 function expandOrphanBlock(
   document: vscode.TextDocument,
   seedLine: number,
-  missingIds: Set<string>
+  missingIds: Set<string>,
+  recentlyAdded?: Set<string>
 ): { start: number; end: number } {
   let start = seedLine;
   let end = seedLine;
@@ -503,13 +581,17 @@ function expandOrphanBlock(
     if (isBlankOrCommentLine(text)) {
       return true;
     }
+    const binding = declaredBindingName(text);
+    if (binding && recentlyAdded?.has(binding)) {
+      return false;
+    }
     if (isChainContinuationLine(text)) {
       return (
         [...missingIds].some((id) => lineReferencesSymbol(text, id)) ||
-        isOrphanCandidateLine(document, n, missingIds)
+        isOrphanCandidateLine(document, n, missingIds, recentlyAdded)
       );
     }
-    return isOrphanCandidateLine(document, n, missingIds);
+    return isOrphanCandidateLine(document, n, missingIds, recentlyAdded);
   };
 
   while (start > 0) {
@@ -531,8 +613,11 @@ function expandOrphanBlock(
       /^(export\s+)?(const|let|var)\s+/.test(prevText.trim()) &&
       !isIncompleteDeclarationLine(prevText)
     ) {
-      start = prev;
-      continue;
+      const headBinding = declaredBindingName(prevText);
+      if (!(headBinding && recentlyAdded?.has(headBinding))) {
+        start = prev;
+        continue;
+      }
     }
     // `$store.on(…)` → include preceding `const $store = …` when linked.
     const receiver = /^\s*([A-Za-z_$][\w$]*)\s*\./.exec(
@@ -540,7 +625,11 @@ function expandOrphanBlock(
     );
     if (receiver && !isIncompleteDeclarationLine(prevText)) {
       const binding = declaredBindingName(prevText);
-      if (binding && binding === receiver[1]) {
+      if (
+        binding &&
+        binding === receiver[1] &&
+        !(recentlyAdded?.has(binding))
+      ) {
         start = prev;
         continue;
       }
@@ -571,7 +660,7 @@ function expandOrphanBlock(
       const cur = document.lineAt(end).text;
       if (
         isChainContinuationLine(cur) ||
-        isOrphanCandidateLine(document, end, missingIds) ||
+        isOrphanCandidateLine(document, end, missingIds, recentlyAdded) ||
         Boolean(declaredBindingName(cur))
       ) {
         end = next;
@@ -746,7 +835,8 @@ function markOrphanLines(
   document: vscode.TextDocument,
   start: number,
   end: number,
-  missingIds: Set<string>
+  missingIds: Set<string>,
+  recentlyAdded?: Set<string>
 ): OrphanLineMark[] {
   const marks: OrphanLineMark[] = [];
   for (let i = start; i <= end; i++) {
@@ -760,6 +850,11 @@ function markOrphanLines(
       continue;
     }
     const binding = declaredBindingName(text);
+    // Freshly typed binding — never offer to delete it just because it's unused yet.
+    if (binding && recentlyAdded?.has(binding)) {
+      marks.push("keep");
+      continue;
+    }
     if (
       binding &&
       bindingReferencedOutside(document, binding, start, end)
@@ -767,18 +862,33 @@ function markOrphanLines(
       marks.push("keep");
       continue;
     }
+
+    const refsMissing = [...missingIds].some(
+      (id) =>
+        lineReferencesSymbol(text, id) && !lineDefinesSymbol(text, id)
+    );
+
+    // Live declaration that does not reference a deleted symbol — keep.
+    if (binding && !missingIds.has(binding) && !refsMissing) {
+      marks.push("keep");
+      continue;
+    }
+
     if (
-      isOrphanCandidateLine(document, i, missingIds) ||
-      isChainContinuationLine(text)
+      isOrphanCandidateLine(document, i, missingIds, recentlyAdded) ||
+      (isChainContinuationLine(text) && refsMissing) ||
+      isEmptyStructuralLine(text)
     ) {
       marks.push("delete");
       continue;
     }
-    // Chain head (`const $x = …`) pulled in by expand — delete only if unused outside.
-    if (binding && /^(export\s+)?(const|let|var)\s+/.test(text.trim())) {
+
+    // Unused const that still wires a deleted symbol → leftover, deletable.
+    if (binding && refsMissing) {
       marks.push("delete");
       continue;
     }
+
     marks.push("keep");
   }
   return marks;
@@ -796,6 +906,8 @@ function findOrphanBlock(
   if (missingByLine.size === 0) {
     return undefined;
   }
+
+  const recentlyAdded = new Set(tracker.recentlyAddedIds());
 
   let seed = -1;
   if (missingByLine.has(position.line)) {
@@ -829,15 +941,32 @@ function findOrphanBlock(
   if (isIncompleteDeclarationLine(seedText)) {
     return undefined;
   }
+  const seedBinding = declaredBindingName(seedText);
+  // Cursor on a just-added declaration that isn't a leftover ref — not an orphan.
   if (
-    !isOrphanCandidateLine(document, seed, missingIds) &&
+    seedBinding &&
+    recentlyAdded.has(seedBinding) &&
+    ![...missingIds].some(
+      (id) =>
+        lineReferencesSymbol(seedText, id) && !lineDefinesSymbol(seedText, id)
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    !isOrphanCandidateLine(document, seed, missingIds, recentlyAdded) &&
     !isChainContinuationLine(seedText) &&
     ![...missingIds].some((id) => lineReferencesSymbol(seedText, id))
   ) {
     return undefined;
   }
 
-  const expanded = expandOrphanBlock(document, seed, missingIds);
+  const expanded = expandOrphanBlock(
+    document,
+    seed,
+    missingIds,
+    recentlyAdded
+  );
   if (expanded.end - expanded.start > 20) {
     return undefined;
   }
@@ -846,7 +975,8 @@ function findOrphanBlock(
     document,
     expanded.start,
     expanded.end,
-    missingIds
+    missingIds,
+    recentlyAdded
   );
   const seedIdx = seed - expanded.start;
   if (seedIdx < 0 || seedIdx >= marks.length || marks[seedIdx] === "keep") {
@@ -930,6 +1060,60 @@ function findOrphanBlock(
         ? `orphan block (${n} lines) for '${reasonIds}'`
         : `orphan line for '${reasonIds}'`,
   };
+}
+
+async function findCrossFileNextEdit(
+  currentFilePath: string,
+  acceptedText: string
+): Promise<NextEditTarget | undefined> {
+  const kind = classifyAcceptedText(acceptedText);
+  if (!kind || kind === "import" || kind === "wiring") {
+    return undefined;
+  }
+  const prefer =
+    kind === "store"
+      ? /(?:^|\/)events?\./i
+      : kind === "event"
+        ? /(?:^|\/)stores?\./i
+        : /(?:^|\/)(units?|samples?|wiring)\./i;
+
+  for (const candidate of neighborPathCandidates(currentFilePath).slice(0, 16)) {
+    const base = path.basename(candidate);
+    if (!prefer.test(base) && !prefer.test(candidate)) {
+      continue;
+    }
+    try {
+      await fs.access(candidate);
+    } catch {
+      continue;
+    }
+    let raw: string;
+    try {
+      raw = await fs.readFile(candidate, "utf8");
+    } catch {
+      continue;
+    }
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    let line = 0;
+    for (let i = 0; i < Math.min(lines.length, 50); i++) {
+      const t = (lines[i] || "").trim();
+      if (!t) {
+        line = i;
+        break;
+      }
+      if (/^(?:export\s+)?(?:const|let|var|function|class)\b/.test(t)) {
+        line = Math.min(lines.length - 1, i + 1);
+      }
+    }
+    return {
+      line,
+      character: 0,
+      kind,
+      reason: `open ${base}`,
+      filePath: candidate,
+    };
+  }
+  return undefined;
 }
 
 function debounceMsForAggressiveness(
@@ -1203,6 +1387,8 @@ class TabAutocompleteStatusBar {
   private cooldownReason: string | undefined;
   private cooldownTimer: ReturnType<typeof setTimeout> | undefined;
   private suggestionReady = false;
+  private streaming = false;
+  private readonly requestTimes: number[] = [];
   private onReadyClick: (() => void) | undefined;
 
   constructor() {
@@ -1235,14 +1421,42 @@ class TabAutocompleteStatusBar {
     void vscode.commands.executeCommand("agentPanel.openSettings");
   }
 
+  private pruneRequestTimes(now = Date.now()): void {
+    const cutoff = now - 60_000;
+    while (this.requestTimes.length > 0 && this.requestTimes[0] < cutoff) {
+      this.requestTimes.shift();
+    }
+  }
+
+  noteApiRequest(): void {
+    const now = Date.now();
+    this.requestTimes.push(now);
+    this.pruneRequestTimes(now);
+  }
+
+  requestsPerMinute(): number {
+    this.pruneRequestTimes();
+    return this.requestTimes.length;
+  }
+
+  setStreaming(streaming: boolean): void {
+    if (this.streaming === streaming) {
+      return;
+    }
+    this.streaming = streaming;
+    this.refresh();
+  }
+
   onStart(requestId: number): void {
     this.activeRequests.add(requestId);
     this.lastError = undefined;
+    this.noteApiRequest();
     this.refresh();
   }
 
   onEnd(requestId: number, latencyMs?: number): void {
     this.activeRequests.delete(requestId);
+    this.streaming = false;
     if (typeof latencyMs === "number") {
       this.lastLatencyMs = latencyMs;
       this.clearCooldown();
@@ -1304,8 +1518,14 @@ class TabAutocompleteStatusBar {
     const shortcut = showSuggestionShortcutLabel();
 
     if (this.activeRequests.size > 0) {
-      this.item.text = `$(sync~spin) Tab: ${label}`;
-      this.item.tooltip = `Harbor Tab prefetching (${this.activeRequests.size})\nGhost text stays hidden until ${shortcut}.`;
+      const rpm = this.requestsPerMinute();
+      if (this.streaming) {
+        this.item.text = `$(sync~spin) Tab streaming`;
+        this.item.tooltip = `Harbor Tab receiving tokens…\n${rpm} req/min · model ${label}`;
+      } else {
+        this.item.text = `$(sync~spin) Tab: ${label}`;
+        this.item.tooltip = `Harbor Tab prefetching (${this.activeRequests.size}) · ${rpm} req/min\nGhost text stays hidden until ${shortcut} (chip mode).`;
+      }
       return;
     }
 
@@ -1327,19 +1547,19 @@ class TabAutocompleteStatusBar {
     if (coolLeft > 0) {
       const sec = Math.ceil(coolLeft / 1000);
       this.item.text = `$(debug-pause) Tab: pause ${sec}s`;
-      this.item.tooltip = `Harbor Tab paused after provider error (${sec}s left).\n${this.cooldownReason || this.lastError || ""}\nOpen Output → Harbor Tab Autocomplete for details.`;
+      this.item.tooltip = `Harbor Tab paused after provider error (${sec}s left).\n${this.cooldownReason || this.lastError || ""}\n${this.requestsPerMinute()} req/min\nOpen Output → Harbor Tab Autocomplete for details.`;
       return;
     }
 
     if (this.lastError) {
       this.item.text = `$(warning) Tab: ${label}`;
-      this.item.tooltip = `Tab error: ${this.lastError}\nOpen Output → Harbor Tab Autocomplete for details.`;
+      this.item.tooltip = `Tab error: ${this.lastError}\n${this.requestsPerMinute()} req/min\nOpen Output → Harbor Tab Autocomplete for details.`;
       return;
     }
 
     if (this.suggestionReady) {
       this.item.text = "$(sparkle) Tab ready";
-      this.item.tooltip = `Suggestion ready. Shortcut chip is at the caret — press ${shortcut} to preview code, then Tab to accept.`;
+      this.item.tooltip = `Suggestion ready · ${this.requestsPerMinute()} req/min\nShortcut chip at the caret — press ${shortcut} to preview (chip mode), then Tab to accept.`;
       return;
     }
 
@@ -1347,8 +1567,14 @@ class TabAutocompleteStatusBar {
       typeof this.lastLatencyMs === "number"
         ? ` · last ${this.lastLatencyMs}ms`
         : "";
+    const rpm = this.requestsPerMinute();
+    const mode = config.tabAutocomplete.showMode === "inline" ? "inline" : "chip";
     this.item.text = `$(code) Tab: ${label}`;
-    this.item.tooltip = `Harbor Tab autocomplete · ${label}${latency}\nPrefetch while typing; a caret chip appears when ready (no code until ${shortcut}).`;
+    this.item.tooltip = `Harbor Tab autocomplete · ${label}${latency} · ${rpm}/min · ${mode}\nPrefetch while typing; ${
+      mode === "inline"
+        ? "ghost text shows when ready."
+        : `caret chip when ready (no code until ${shortcut}).`
+    }`;
   }
 }
 
@@ -1633,12 +1859,25 @@ class HarborTabInlineCompletionProvider
         at: number;
       }
     | undefined;
+  /** Cross-file Next Edit target (opened on jump). */
+  private pendingCrossFileNextEdit: NextEditTarget | undefined;
 
   constructor(
     private readonly statusBar: TabAutocompleteStatusBar,
     private readonly deletions: RecentDeletionTracker,
-    private readonly caretHint: CaretShortcutHintController
+    private readonly caretHint: CaretShortcutHintController,
+    private readonly stats: TabStatsStore
   ) {}
+
+  takeCrossFileNextEdit(): NextEditTarget | undefined {
+    const t = this.pendingCrossFileNextEdit;
+    this.pendingCrossFileNextEdit = undefined;
+    return t;
+  }
+
+  clearPendingCrossFileNextEdit(): void {
+    this.pendingCrossFileNextEdit = undefined;
+  }
 
   private rememberReady(
     document: vscode.TextDocument,
@@ -1782,7 +2021,14 @@ class HarborTabInlineCompletionProvider
             preview: texts[0].slice(0, 80).replace(/\n/g, "\\n"),
           });
           this.rememberReady(job.document, job.position, texts);
-          this.revealReadyHintIfCurrent(job);
+          if (getConfig().tabAutocomplete.showMode === "inline") {
+            this.setReady(false);
+            void vscode.commands.executeCommand(
+              "editor.action.inlineSuggest.trigger"
+            );
+          } else {
+            this.revealReadyHintIfCurrent(job);
+          }
         } catch (error) {
           this.statusBar.onEnd(requestId);
           if (
@@ -1853,11 +2099,17 @@ class HarborTabInlineCompletionProvider
       timestamp: Date.now(),
     };
     this.setReady(false);
-    this.maybeOfferNextEdit(text, position);
+    const editor = vscode.window.activeTextEditor;
+    const language = editor?.document.languageId || "";
+    this.stats.recordAccept(language, text);
+    void this.maybeOfferNextEdit(text, position);
   }
 
   /** After Accept — offer a one-shot jump chip to the likely next hole. */
-  private maybeOfferNextEdit(text: string, position: vscode.Position): void {
+  private async maybeOfferNextEdit(
+    text: string,
+    position: vscode.Position
+  ): Promise<void> {
     if (!getConfig().tabAutocomplete.nextEdit) {
       this.caretHint.clearNextEdit();
       return;
@@ -1868,16 +2120,35 @@ class HarborTabInlineCompletionProvider
       return;
     }
 
-    const target = findNextEditTarget(
-      editor.document.getText(),
-      position.line,
-      text
-    );
+    let target =
+      findNextEditTarget(editor.document.getText(), position.line, text) ||
+      (await findCrossFileNextEdit(editor.document.uri.fsPath, text));
     if (!target) {
       this.caretHint.clearNextEdit();
       return;
     }
 
+    if (target.filePath && target.filePath !== editor.document.uri.fsPath) {
+      // Show chip in the current editor pointing at cross-file jump (click/Tab opens).
+      this.pendingCrossFileNextEdit = target;
+      const pos = editor.selection.active;
+      this.caretHint.showNextEdit(
+        editor,
+        pos,
+        target.reason,
+        position.line,
+        NEXT_EDIT_TTL_MS
+      );
+      log("next edit offered (cross-file)", {
+        kind: target.kind,
+        reason: target.reason,
+        filePath: target.filePath,
+        line: target.line,
+      });
+      return;
+    }
+
+    this.pendingCrossFileNextEdit = undefined;
     const line = Math.max(
       0,
       Math.min(target.line, editor.document.lineCount - 1)
@@ -2025,11 +2296,13 @@ class HarborTabInlineCompletionProvider
         preview: cached[0].slice(0, 80).replace(/\n/g, "\\n"),
         show: isInvoke,
       });
-      if (isInvoke) {
+      const showInline =
+        isInvoke || getConfig().tabAutocomplete.showMode === "inline";
+      if (showInline) {
         this.setReady(false);
         return cached.map((text) => this.toItem(text, position));
       }
-      // Prefetch path: caret shortcut chip only (real code stays cached).
+      // Prefetch path (chip mode): caret shortcut chip only (real code stays cached).
       this.rememberReady(document, position, cached);
       this.setReady(true, document, position);
       return [];
@@ -2061,9 +2334,11 @@ class HarborTabInlineCompletionProvider
       /[\w$;{}\n=,(\[\].]/.test(charBefore) || charBefore === " ";
     const debounceMs = isInvoke
       ? 0
-      : debounceMsForAggressiveness(
-          config.tabAutocomplete.aggressiveness,
-          fastTrigger
+      : Math.round(
+          debounceMsForAggressiveness(
+            config.tabAutocomplete.aggressiveness,
+            fastTrigger
+          ) * languageDebounceScale(document.languageId)
         );
 
     if (isInvoke) {
@@ -2225,9 +2500,24 @@ class HarborTabInlineCompletionProvider
     } = job;
 
     const [extra, lsp] = await Promise.all([
-      buildTabExtraContext(document),
+      buildTabExtraContext(document, position),
       buildTabLspContext(document, position),
     ]);
+    // First Tab in a workspace: kick background map build if cache empty.
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const root = folder?.uri.fsPath;
+    if (root && !getTabProjectMapDigest(root)) {
+      void ensureTabProjectMap({ root });
+    }
+    // Prefer brief from open-time research; build on demand if missing.
+    let fileBrief = getCachedTabFileBrief(document.uri)?.digest;
+    if (!fileBrief) {
+      const brief = await ensureTabFileBrief(document);
+      fileBrief = brief?.digest;
+    }
+    const recentFeedback = formatRecentFillFeedback(
+      this.stats.recentFills(document.languageId)
+    );
     const params: AutoCompleteContext = {
       textBeforeCursor,
       textAfterCursor,
@@ -2241,7 +2531,11 @@ class HarborTabInlineCompletionProvider
       ),
       relatedFiles: extra.related,
       projectRules: extra.projectRules,
+      projectMap: extra.projectMap,
+      fileIdentity: extra.fileIdentity,
+      fileBrief,
       lsp,
+      recentFillFeedback: recentFeedback || undefined,
     };
 
     const endpoint = resolveModelEndpoint(modelId);
@@ -2265,9 +2559,12 @@ class HarborTabInlineCompletionProvider
     const { messages } = this.holeFiller.prompt(params, alternatives);
     const sameLineSuffix = (textAfterCursor.split("\n")[0] || "");
     const baseTokens = sameLineSuffix.length > 0 ? 36 : MAX_COMPLETION_TOKENS;
-    const maxTokens = Math.min(
-      120,
-      baseTokens + (alternatives > 1 ? 24 * (alternatives - 1) : 0)
+    const maxTokens = languageMaxTokens(
+      document.languageId,
+      Math.min(
+        120,
+        baseTokens + (alternatives > 1 ? 24 * (alternatives - 1) : 0)
+      )
     );
 
     log("request", {
@@ -2282,8 +2579,47 @@ class HarborTabInlineCompletionProvider
       recentBindings: params.focus?.recentBindings,
       relatedFiles: (params.relatedFiles || []).map((f) => f.label),
       projectRulesChars: params.projectRules?.length || 0,
+      projectMapChars: params.projectMap?.length || 0,
+      fileStem: params.fileIdentity?.stem,
+      fileLayer: params.fileIdentity?.layerMarker,
+      fileSiblings: params.fileIdentity?.siblingsOnDisk,
+      fileBriefChars: params.fileBrief?.length || 0,
       lspChars: params.lsp?.length || 0,
+      recentFeedbackChars: recentFeedback.length,
     });
+
+    let streamed = "";
+    let earlyPublished = false;
+    const publishEarly = (rawSoFar: string) => {
+      if (earlyPublished) {
+        return;
+      }
+      const early = refineCompletionAlternatives(rawSoFar, params, alternatives);
+      if (early.length === 0 || early[0].trim().length < 6) {
+        return;
+      }
+      earlyPublished = true;
+      const ranked = this.stats.rankAlternatives(document.languageId, early);
+      this.cache.set(
+        document.uri.toString(),
+        textBeforeCursor,
+        textAfterCursor,
+        modelId,
+        alternatives,
+        ranked
+      );
+      this.rememberReady(document, position, ranked);
+      if (config.tabAutocomplete.showMode === "inline") {
+        void vscode.commands.executeCommand(
+          "editor.action.inlineSuggest.trigger"
+        );
+      } else {
+        this.setReady(true, document, position);
+      }
+      log("stream early ready", {
+        preview: ranked[0].slice(0, 80).replace(/\n/g, "\\n"),
+      });
+    };
 
     // No cancellation tied to editor token — typing must not kill prefetch.
     const result = await client.chatCompletions(
@@ -2293,7 +2629,19 @@ class HarborTabInlineCompletionProvider
         temperature: 0.1,
         max_tokens: maxTokens,
       },
-      undefined
+      undefined,
+      {
+        onDelta: (delta) => {
+          if (!delta.content) {
+            return;
+          }
+          this.statusBar.setStreaming(true);
+          streamed += delta.content;
+          if (streamed.length >= 12) {
+            publishEarly(streamed);
+          }
+        },
+      }
     );
 
     const content = result.message.content;
@@ -2322,7 +2670,7 @@ class HarborTabInlineCompletionProvider
     }
 
     this.cooldownUntilByModel.delete(modelId);
-    return texts;
+    return this.stats.rankAlternatives(document.languageId, texts);
   }
 }
 
@@ -2445,13 +2793,24 @@ export function startTabAutocomplete(
   const statusBar = new TabAutocompleteStatusBar();
   const deletions = new RecentDeletionTracker();
   const caretHint = new CaretShortcutHintController();
+  const stats = createTabStatsStore(context.globalState);
+  initTabProjectMap(context.workspaceState);
+  output = vscode.window.createOutputChannel("Harbor Tab Autocomplete");
+  setTabProjectMapLogger((message, extra) => {
+    log(`projectMap: ${message}`, extra);
+  });
+  setTabFileBriefLogger((message, extra) => {
+    log(`fileBrief: ${message}`, extra);
+  });
+  scheduleTabProjectMapBuild();
+  startTabFileBriefTracking(context.subscriptions);
   const provider = new HarborTabInlineCompletionProvider(
     statusBar,
     deletions,
-    caretHint
+    caretHint,
+    stats
   );
   const strikethrough = new OrphanStrikethroughController(deletions, caretHint);
-  output = vscode.window.createOutputChannel("Harbor Tab Autocomplete");
 
   const ensureInlineSuggest = async () => {
     if (!getConfig().tabAutocomplete.enabled) {
@@ -2573,6 +2932,41 @@ export function startTabAutocomplete(
       if (!editor) {
         return;
       }
+
+      const crossTarget = provider.takeCrossFileNextEdit();
+      if (crossTarget?.filePath) {
+        caretHint.clearNextEdit();
+        const doc = await vscode.workspace.openTextDocument(
+          crossTarget.filePath
+        );
+        const ed = await vscode.window.showTextDocument(doc, {
+          preview: false,
+          preserveFocus: false,
+        });
+        const line = Math.max(
+          0,
+          Math.min(crossTarget.line, doc.lineCount - 1)
+        );
+        const lineText = doc.lineAt(line).text;
+        const character = Math.max(
+          0,
+          Math.min(crossTarget.character, lineText.length)
+        );
+        const pos = new vscode.Position(line, character);
+        ed.selection = new vscode.Selection(pos, pos);
+        ed.revealRange(
+          new vscode.Range(pos, pos),
+          vscode.TextEditorRevealType.InCenterIfOutsideViewport
+        );
+        log("jumped next edit cross-file", {
+          reason: crossTarget.reason,
+          filePath: crossTarget.filePath,
+          line,
+        });
+        await triggerShowSuggestion();
+        return;
+      }
+
       const ne = caretHint.getNextEdit();
       if (!ne || ne.uri !== editor.document.uri.toString()) {
         caretHint.clearNextEdit();
@@ -2598,6 +2992,7 @@ export function startTabAutocomplete(
       await triggerShowSuggestion();
     }),
     vscode.commands.registerCommand(DISMISS_NEXT_EDIT_CMD, () => {
+      provider.clearPendingCrossFileNextEdit();
       caretHint.clearNextEdit();
       log("dismissed next edit");
     }),
@@ -2677,6 +3072,14 @@ export function startTabAutocomplete(
           !getConfig().tabAutocomplete.nextEdit
         ) {
           caretHint.clearNextEdit();
+        }
+        if (
+          e.affectsConfiguration("agentPanel.tabAutocomplete.enabled") ||
+          e.affectsConfiguration("agentPanel.tabAutocomplete.modelId")
+        ) {
+          if (getConfig().tabAutocomplete.enabled) {
+            scheduleTabProjectMapBuild({ force: true, delayMs: 800 });
+          }
         }
       }
     })
