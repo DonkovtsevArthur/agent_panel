@@ -355,10 +355,17 @@ export function shouldContinueAfterLength(
 }
 
 function expandHome(p: string): string {
-  if (p.startsWith("~/")) {
-    return path.join(os.homedir(), p.slice(2));
+  const trimmed = String(p || "").trim();
+  if (!trimmed) {
+    return "";
   }
-  return p;
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
 }
 
 function tlsPoolKey(tls: ClientTlsOptions): string {
@@ -752,6 +759,73 @@ export class OpenAICompatibleClient {
       apiBody.reasoning_effort = body.reasoning_effort;
     }
     return apiBody;
+  }
+
+  /**
+   * Fill-in-the-middle via legacy `/completions` (prompt + suffix).
+   * Used by Tab when Settings → FIM is on. Returns raw text (may be empty).
+   */
+  async fimCompletions(
+    body: {
+      model: string;
+      prompt: string;
+      suffix: string;
+      max_tokens?: number;
+      temperature?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<string> {
+    const apiBody: Record<string, unknown> = {
+      model: body.model,
+      prompt: body.prompt,
+      suffix: body.suffix,
+      stream: false,
+    };
+    if (body.max_tokens !== undefined) {
+      apiBody.max_tokens = body.max_tokens;
+    }
+    if (body.temperature !== undefined) {
+      apiBody.temperature = body.temperature;
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`;
+    }
+    const current = await requestJson(`${this.baseUrl}/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(apiBody),
+      signal,
+      tls: this.tls,
+    });
+    if (current.status < 200 || current.status >= 300) {
+      throw new Error(
+        `FIM /completions HTTP ${current.status}: ${current.text.slice(0, 240)}`
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(current.text);
+    } catch {
+      throw new Error("FIM /completions returned non-JSON");
+    }
+    const row = parsed as {
+      choices?: Array<{ text?: string; message?: { content?: string } }>;
+    };
+    const choice = row.choices?.[0];
+    if (!choice) {
+      return "";
+    }
+    if (typeof choice.text === "string") {
+      return choice.text;
+    }
+    if (typeof choice.message?.content === "string") {
+      return choice.message.content;
+    }
+    return "";
   }
 
   async chatCompletions(

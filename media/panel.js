@@ -203,8 +203,11 @@
       tabAutocompleteShowModeInline: "Inline — ghost text automatically",
       tabAutocompleteShowModeHint:
         "Chip = silent prefetch + shortcut. Inline = ghost appears when ready.",
+      tabAutocompleteFim: "FIM (/completions)",
+      tabAutocompleteFimHint:
+        "Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.",
       tabAutocompleteKeysHint:
-        "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
+        "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ / Ctrl+Shift+Enter · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
       model: "Model",
@@ -233,6 +236,8 @@
       runFailedSummary: "Error",
       runFailedTransport:
         "Model server error: API 500. Send the request again.",
+      errorShowDetail: "Show full error",
+      errorHideDetail: "Hide full error",
       contextUsage: "Context usage",
       noModels: "No models",
       noModelsInSettings: "No models in settings",
@@ -610,8 +615,11 @@
       tabAutocompleteShowModeInline: "Inline — ghost сразу",
       tabAutocompleteShowModeHint:
         "Chip = тихий prefetch + шорткат. Inline = ghost появляется сам.",
+      tabAutocompleteFim: "FIM (/completions)",
+      tabAutocompleteFimHint:
+        "prompt+suffix fill-in-the-middle, если провайдер умеет. Иначе — hole-fill chat.",
       tabAutocompleteKeysHint:
-        "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
+        "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Стейтмент: ⌘⇧⏎ / Ctrl+Shift+Enter · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
       model: "Модель",
@@ -640,6 +648,8 @@
       runFailedSummary: "Ошибка",
       runFailedTransport:
         "Ошибка сервера модели: API 500. Отправьте запрос ещё раз.",
+      errorShowDetail: "Показать полный ответ",
+      errorHideDetail: "Скрыть полный ответ",
       contextUsage: "Использование контекста",
       noModels: "Нет моделей",
       noModelsInSettings: "Нет моделей в настройках",
@@ -1038,6 +1048,9 @@
   );
   const settingsTabAutocompleteShowMode = document.getElementById(
     "settingsTabAutocompleteShowMode"
+  );
+  const settingsTabAutocompleteFim = document.getElementById(
+    "settingsTabAutocompleteFim"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1725,6 +1738,18 @@
       settingsTabAutocompleteShowModeHint.textContent = t(
         "tabAutocompleteShowModeHint"
       );
+    }
+    const settingsTabAutocompleteFimLabel = document.getElementById(
+      "settingsTabAutocompleteFimLabel"
+    );
+    if (settingsTabAutocompleteFimLabel) {
+      settingsTabAutocompleteFimLabel.textContent = t("tabAutocompleteFim");
+    }
+    const settingsTabAutocompleteFimHint = document.getElementById(
+      "settingsTabAutocompleteFimHint"
+    );
+    if (settingsTabAutocompleteFimHint) {
+      settingsTabAutocompleteFimHint.textContent = t("tabAutocompleteFimHint");
     }
     const settingsTabAutocompleteKeysHint = document.getElementById(
       "settingsTabAutocompleteKeysHint"
@@ -4666,15 +4691,35 @@
    * End a failed run in the live UI: seal «Работаю…», show error bubble, clear busy.
    * Idempotent — safe if host also sent append/idle.
    */
-  function finishRunWithError(text) {
+  function finishRunWithError(text, detail) {
     const msg = String(text || "").trim();
+    const full = String(detail || "").trim();
     sealToolGroups();
     markFailedToolGroups();
     if (msg) {
       const last = uiMessagesCache[uiMessagesCache.length - 1];
-      if (!(last && last.role === "error" && String(last.text || "") === msg)) {
-        uiMessagesCache.push({ role: "error", text: msg });
-        appendMessage("error", msg, uiMessagesCache.length - 1, -1);
+      const same =
+        last &&
+        last.role === "error" &&
+        String(last.text || "") === msg &&
+        String(last.detail || "") === full;
+      if (!same) {
+        uiMessagesCache.push({
+          role: "error",
+          text: msg,
+          ...(full ? { detail: full } : {}),
+        });
+        appendMessage(
+          "error",
+          msg,
+          uiMessagesCache.length - 1,
+          -1,
+          undefined,
+          true,
+          undefined,
+          undefined,
+          full || undefined
+        );
       }
     }
     setAgentStatus("", true);
@@ -8516,6 +8561,9 @@
           ? "inline"
           : "chip";
     }
+    if (settingsTabAutocompleteFim) {
+      settingsTabAutocompleteFim.checked = settings.tabAutocompleteFim === true;
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -8661,6 +8709,9 @@
       tabAutocompleteShowMode: settingsTabAutocompleteShowMode
         ? settingsTabAutocompleteShowMode.value
         : "chip",
+      tabAutocompleteFim: settingsTabAutocompleteFim
+        ? settingsTabAutocompleteFim.checked
+        : false,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
@@ -10987,7 +11038,8 @@
         item.attachments,
         false,
         item.reasoning,
-        item.step
+        item.step,
+        item.detail
       );
     }
     restoreAgentStatus();
@@ -13824,7 +13876,7 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
-        finishRunWithError(msg.text || "");
+        finishRunWithError(msg.text || "", msg.detail || "");
         break;
       case "append":
         if (msg.chatId && !activeChatId) {
@@ -13834,7 +13886,7 @@
           break;
         }
         if (msg.role === "error") {
-          finishRunWithError(msg.text || "");
+          finishRunWithError(msg.text || "", msg.detail || "");
           break;
         }
         uiMessagesCache.push({
@@ -13843,6 +13895,7 @@
           attachments: msg.attachments,
           ...(msg.reasoning ? { reasoning: msg.reasoning } : {}),
           ...(msg.step ? { step: msg.step } : {}),
+          ...(msg.detail ? { detail: msg.detail } : {}),
         });
         appendMessage(
           msg.role,
@@ -13852,7 +13905,8 @@
           msg.attachments,
           true,
           msg.reasoning,
-          msg.step
+          msg.step,
+          msg.detail
         );
         if (msg.role === "assistant") {
           if (

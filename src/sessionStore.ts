@@ -37,6 +37,11 @@ export interface UiMessage {
   step?: UiMessageStep;
   /** Chat mode at send time (agent / plan / ask) — colors user bubble border. */
   mode?: string;
+  /**
+   * Full provider/gateway payload for `error` bubbles.
+   * Short `text` is shown by default; webview reveals this via the ? control.
+   */
+  detail?: string;
 }
 
 /** Cap persisted Thinking text so long Kimi/Claude traces do not bloat workspaceState. */

@@ -159,10 +159,41 @@ export function createTabStatsStore(memento: Memento): TabStatsStore {
     },
     rankAlternatives(language, texts) {
       const stats = data.byLang[language] || [];
+      const dismissed = data.recent.filter((r) => !r.accepted);
       const score = (t: string) => {
         const key = normalizeKey(t);
-        const hit = stats.find((s) => s.key === key || key.startsWith(s.key) || s.key.startsWith(key));
-        return hit?.count || 0;
+        const hit = stats.find(
+          (s) =>
+            s.key === key || key.startsWith(s.key) || s.key.startsWith(key)
+        );
+        let s = hit?.count || 0;
+        // Penalize patterns similar to recent dismisses.
+        for (const d of dismissed) {
+          const dk = normalizeKey(d.text);
+          if (!dk) {
+            continue;
+          }
+          if (key === dk || key.startsWith(dk.slice(0, 24)) || dk.startsWith(key.slice(0, 24))) {
+            s -= 3;
+          }
+        }
+        // Soft heuristics — prefer tight code fills.
+        if (/^\s*\/\//.test(t) || /^\s*\/\*/.test(t)) {
+          s -= 2;
+        }
+        if (/^\s*import\b/.test(t)) {
+          s -= 1;
+        }
+        if (t.split("\n").length > 4) {
+          s -= 1;
+        }
+        if (/^\s*\./.test(t)) {
+          s -= 2;
+        }
+        if (/PROJECT MAP|FILE BRIEF|<\/?COMPLE/i.test(t)) {
+          s -= 5;
+        }
+        return s;
       };
       return [...texts].sort((a, b) => score(b) - score(a));
     },

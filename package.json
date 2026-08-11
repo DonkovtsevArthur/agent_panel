@@ -142,6 +142,16 @@
         "command": "agentPanel.tabAutocomplete.dismissNextEdit",
         "title": "%command.tabAutocomplete.dismissNextEdit.title%",
         "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.acceptStatement",
+        "title": "%command.tabAutocomplete.acceptStatement.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.dismissSuggestion",
+        "title": "%command.tabAutocomplete.dismissSuggestion.title%",
+        "category": "%command.category%"
       }
     ],
     "menus": {
@@ -309,6 +319,18 @@
         "key": "escape",
         "mac": "escape",
         "when": "agentPanel.tabAutocomplete.nextEditActive && editorTextFocus && !inlineSuggestionVisible && !suggestWidgetVisible && config.agentPanel.tabAutocomplete.enabled"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.acceptStatement",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "inlineSuggestionVisible && !editorReadonly && config.agentPanel.tabAutocomplete.enabled"
+      },
+      {
+        "command": "agentPanel.tabAutocomplete.dismissSuggestion",
+        "key": "escape",
+        "mac": "escape",
+        "when": "inlineSuggestionVisible && editorTextFocus && config.agentPanel.tabAutocomplete.enabled"
       }
     ],
     "configuration": {
@@ -639,6 +661,11 @@
             "%config.tabAutocomplete.showMode.enum.inline%"
           ],
           "description": "%config.tabAutocomplete.showMode.description%"
+        },
+        "agentPanel.tabAutocomplete.fim": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.tabAutocomplete.fim.description%"
         },
         "agentPanel.selectionHints.enabled": {
           "type": "boolean",

@@ -200,6 +200,11 @@ export interface AgentPanelConfig {
      * `inline` — show ghost text automatically when ready.
      */
     showMode: "chip" | "inline";
+    /**
+     * Prefer OpenAI-style FIM (`/completions` with prompt+suffix) when the
+     * provider supports it. Falls back to hole-fill chat on failure.
+     */
+    fim: boolean;
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
@@ -556,6 +561,7 @@ export function getConfig(): AgentPanelConfig {
             .toLowerCase() === "inline"
             ? "inline"
             : "chip",
+        fim: cfg.get<boolean>("tabAutocomplete.fim") === true,
       };
     })(),
     selectionHints: {
