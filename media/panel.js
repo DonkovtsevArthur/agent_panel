@@ -195,6 +195,11 @@
       tabAutocompleteNextEdit: "Next Edit after Accept",
       tabAutocompleteNextEditHint:
         "After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.",
+      tabAutocompleteShowMode: "Show mode",
+      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter to show",
+      tabAutocompleteShowModeInline: "Inline — ghost text automatically",
+      tabAutocompleteShowModeHint:
+        "Chip = silent prefetch + shortcut. Inline = ghost appears when ready.",
       tabAutocompleteKeysHint:
         "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
@@ -594,6 +599,11 @@
       tabAutocompleteNextEdit: "Next Edit после Accept",
       tabAutocompleteNextEditHint:
         "После принятия Tab — чип Next в месте следующей правки (store → events, event → .on). Tab — прыжок, Esc — скрыть.",
+      tabAutocompleteShowMode: "Режим показа",
+      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter",
+      tabAutocompleteShowModeInline: "Inline — ghost сразу",
+      tabAutocompleteShowModeHint:
+        "Chip = тихий prefetch + шорткат. Inline = ghost появляется сам.",
       tabAutocompleteKeysHint:
         "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
@@ -1019,6 +1029,9 @@
   );
   const settingsTabAutocompleteNextEdit = document.getElementById(
     "settingsTabAutocompleteNextEdit"
+  );
+  const settingsTabAutocompleteShowMode = document.getElementById(
+    "settingsTabAutocompleteShowMode"
   );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
@@ -1682,6 +1695,32 @@
     if (settingsTabAutocompleteNextEditHint) {
       settingsTabAutocompleteNextEditHint.textContent = t(
         "tabAutocompleteNextEditHint"
+      );
+    }
+    const settingsTabAutocompleteShowModeLabel = document.getElementById(
+      "settingsTabAutocompleteShowModeLabel"
+    );
+    if (settingsTabAutocompleteShowModeLabel) {
+      settingsTabAutocompleteShowModeLabel.textContent = t(
+        "tabAutocompleteShowMode"
+      );
+    }
+    if (settingsTabAutocompleteShowMode) {
+      const chip = settingsTabAutocompleteShowMode.querySelector(
+        'option[value="chip"]'
+      );
+      const inline = settingsTabAutocompleteShowMode.querySelector(
+        'option[value="inline"]'
+      );
+      if (chip) chip.textContent = t("tabAutocompleteShowModeChip");
+      if (inline) inline.textContent = t("tabAutocompleteShowModeInline");
+    }
+    const settingsTabAutocompleteShowModeHint = document.getElementById(
+      "settingsTabAutocompleteShowModeHint"
+    );
+    if (settingsTabAutocompleteShowModeHint) {
+      settingsTabAutocompleteShowModeHint.textContent = t(
+        "tabAutocompleteShowModeHint"
       );
     }
     const settingsTabAutocompleteKeysHint = document.getElementById(
@@ -8425,6 +8464,13 @@
       settingsTabAutocompleteNextEdit.checked =
         settings.tabAutocompleteNextEdit === true;
     }
+    if (settingsTabAutocompleteShowMode) {
+      settingsTabAutocompleteShowMode.value =
+        String(settings.tabAutocompleteShowMode || "chip").toLowerCase() ===
+        "inline"
+          ? "inline"
+          : "chip";
+    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -8565,6 +8611,9 @@
       tabAutocompleteNextEdit: settingsTabAutocompleteNextEdit
         ? settingsTabAutocompleteNextEdit.checked
         : false,
+      tabAutocompleteShowMode: settingsTabAutocompleteShowMode
+        ? settingsTabAutocompleteShowMode.value
+        : "chip",
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,

@@ -195,6 +195,11 @@ export interface AgentPanelConfig {
      * next edit (e.g. store → events section).
      */
     nextEdit: boolean;
+    /**
+     * `chip` — prefetch silently, show with Ctrl+Enter / ⌘⏎.
+     * `inline` — show ghost text automatically when ready.
+     */
+    showMode: "chip" | "inline";
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
@@ -539,6 +544,12 @@ export function getConfig(): AgentPanelConfig {
           cfg.get<string[]>("tabAutocomplete.excludeGlobs")
         ),
         nextEdit: cfg.get<boolean>("tabAutocomplete.nextEdit") === true,
+        showMode:
+          String(cfg.get<string>("tabAutocomplete.showMode") || "chip")
+            .trim()
+            .toLowerCase() === "inline"
+            ? "inline"
+            : "chip",
       };
     })(),
     selectionHints: {

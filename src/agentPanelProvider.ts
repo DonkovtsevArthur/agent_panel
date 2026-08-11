@@ -138,6 +138,8 @@ type SettingsPayload = {
   tabAutocompleteExcludeGlobs?: string[] | string;
   /** After Accept, offer jump to likely next edit. */
   tabAutocompleteNextEdit?: boolean;
+  /** chip | inline */
+  tabAutocompleteShowMode?: string;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -4038,6 +4040,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
         tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
         tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
+        tabAutocompleteShowMode: config.tabAutocomplete.showMode,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -4491,6 +4494,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "tabAutocomplete.nextEdit",
       raw.tabAutocompleteNextEdit === true,
+      target
+    );
+    const showModeRaw = String(raw.tabAutocompleteShowMode || "chip")
+      .trim()
+      .toLowerCase();
+    await cfg.update(
+      "tabAutocomplete.showMode",
+      showModeRaw === "inline" ? "inline" : "chip",
       target
     );
     await cfg.update(
@@ -5123,6 +5134,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
           </label>
           <p class="settings-hint" id="settingsTabAutocompleteNextEditHint">After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsTabAutocompleteShowModeLabel">Show mode</span>
+            <select id="settingsTabAutocompleteShowMode" class="settings-input">
+              <option value="chip" selected>Chip</option>
+              <option value="inline">Inline</option>
+            </select>
+          </label>
+          <p class="settings-hint" id="settingsTabAutocompleteShowModeHint">Chip = silent prefetch + ⌘⏎. Inline = ghost text appears automatically.</p>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />

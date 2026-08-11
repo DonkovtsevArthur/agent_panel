@@ -13,6 +13,8 @@ export type NextEditTarget = {
   character: number;
   kind: NextEditKind;
   reason: string;
+  /** Absolute path when the jump is in another file. */
+  filePath?: string;
 };
 
 const SECTION_RE =
@@ -31,7 +33,7 @@ function isBlank(line: string): boolean {
   return !String(line || "").trim();
 }
 
-function classifyAcceptedText(text: string): NextEditKind | undefined {
+export function classifyAcceptedText(text: string): NextEditKind | undefined {
   const t = String(text || "");
   if (/^\s*import\b/.test(t)) {
     return "import";
