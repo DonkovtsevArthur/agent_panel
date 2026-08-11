@@ -67,7 +67,6 @@
       languageRu: "Русский",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
-      caBundlePath: "CA bundle path",
       agentBehavior: "Agent behavior",
       browserAgent: "Browser agent",
       browserAgentTitle: "Browser agent (AutoGLM)",
@@ -89,6 +88,10 @@
       commitScopeWorkspaceNamed: (name) => name || "This workspace",
       commitLanguage: "Commit message language",
       commitLanguageAuto: "Auto (follow UI language)",
+      commitModel: "Commit model",
+      commitModelEmpty: "Auto (light model)",
+      commitModelHint:
+        "Empty = automatic light model. Otherwise uses the selected model from your catalog.",
       commitPrompt: "Commit prompt / rule",
       commitPromptPlaceholder:
         "Optional. Example: write short English commit messages focused on why.",
@@ -468,7 +471,6 @@
       languageRu: "Русский",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
-      caBundlePath: "Путь к CA bundle",
       agentBehavior: "Поведение агента",
       browserAgent: "Браузерный агент",
       browserAgentTitle: "Браузерный агент (AutoGLM)",
@@ -490,6 +492,10 @@
       commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
       commitLanguage: "Язык сообщения коммита",
       commitLanguageAuto: "Авто (как язык интерфейса)",
+      commitModel: "Модель для коммитов",
+      commitModelEmpty: "Авто (лёгкая модель)",
+      commitModelHint:
+        "Пусто — автоматический выбор лёгкой модели. Иначе — выбранная модель из каталога.",
       commitPrompt: "Промпт / правило коммита",
       commitPromptPlaceholder:
         "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
@@ -1048,12 +1054,12 @@
   const settingsAutoglmBinaryPath = document.getElementById(
     "settingsAutoglmBinaryPath"
   );
-  const settingsCaBundle = document.getElementById("settingsCaBundle");
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsCommitScope = document.getElementById("settingsCommitScope");
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
   );
+  const settingsCommitModel = document.getElementById("settingsCommitModel");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
   const settingsCommitNote = document.getElementById("settingsCommitNote");
   const settingsCommitScopeLabel = document.getElementById(
@@ -1061,6 +1067,9 @@
   );
   const settingsCommitLanguageLabel = document.getElementById(
     "settingsCommitLanguageLabel"
+  );
+  const settingsCommitModelLabel = document.getElementById(
+    "settingsCommitModelLabel"
   );
   const settingsCommitPromptLabel = document.getElementById(
     "settingsCommitPromptLabel"
@@ -1515,12 +1524,6 @@
     if (settingsTlsValidateLabel) {
       settingsTlsValidateLabel.textContent = t("validateTls");
     }
-    const settingsCaBundleLabel = document.getElementById(
-      "settingsCaBundleLabel"
-    );
-    if (settingsCaBundleLabel) {
-      settingsCaBundleLabel.textContent = t("caBundlePath");
-    }
     const settingsSystemPromptLabel = document.getElementById(
       "settingsSystemPromptLabel"
     );
@@ -1814,6 +1817,15 @@
     }
     if (settingsCommitLanguageLabel) {
       settingsCommitLanguageLabel.textContent = t("commitLanguage");
+    }
+    const settingsCommitModelHint = document.getElementById(
+      "settingsCommitModelHint"
+    );
+    if (settingsCommitModelLabel) {
+      settingsCommitModelLabel.textContent = t("commitModel");
+    }
+    if (settingsCommitModelHint) {
+      settingsCommitModelHint.textContent = t("commitModelHint");
     }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
@@ -6628,6 +6640,9 @@
         ? settingsTabAutocompleteModel.value
         : ""
     );
+    fillCommitMessageModelSelect(
+      settingsCommitModel ? settingsCommitModel.value : ""
+    );
   }
 
   function isCoderLikeModelId(id, label) {
@@ -6673,6 +6688,39 @@
       settingsTabAutocompleteModel.value = previous;
     } else {
       settingsTabAutocompleteModel.value = "";
+    }
+  }
+
+  function fillCommitMessageModelSelect(selectedId) {
+    if (!settingsCommitModel) {
+      return;
+    }
+    const previous = String(
+      selectedId != null && selectedId !== ""
+        ? selectedId
+        : settingsCommitModel.value || ""
+    ).trim();
+    const enabled = settingsModels
+      .filter((m) => m && m.id && m.enabled !== false)
+      .slice()
+      .sort((a, b) =>
+        String(a.label || a.id).localeCompare(String(b.label || b.id))
+      );
+    settingsCommitModel.innerHTML = "";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = t("commitModelEmpty");
+    settingsCommitModel.appendChild(empty);
+    for (const model of enabled) {
+      const opt = document.createElement("option");
+      opt.value = model.id;
+      opt.textContent = model.label || model.id;
+      settingsCommitModel.appendChild(opt);
+    }
+    if (previous && enabled.some((m) => m.id === previous)) {
+      settingsCommitModel.value = previous;
+    } else {
+      settingsCommitModel.value = "";
     }
   }
 
@@ -7193,7 +7241,6 @@
       rejectUnauthorized: settingsRejectUnauthorized
         ? settingsRejectUnauthorized.checked
         : true,
-      caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
     });
     return requestId;
   }
@@ -8381,9 +8428,6 @@
     if (settingsRejectUnauthorized) {
       settingsRejectUnauthorized.checked = Boolean(settings.rejectUnauthorized);
     }
-    if (settingsCaBundle) {
-      settingsCaBundle.value = settings.caBundlePath || "";
-    }
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
     }
@@ -8398,6 +8442,7 @@
     if (settingsCommitPrompt) {
       settingsCommitPrompt.value = settings.commitMessagePrompt || "";
     }
+    fillCommitMessageModelSelect(settings.commitMessageModelId || "");
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -8561,7 +8606,6 @@
       rejectUnauthorized: settingsRejectUnauthorized
         ? settingsRejectUnauthorized.checked
         : false,
-      caBundlePath: settingsCaBundle ? settingsCaBundle.value.trim() : "",
       systemPrompt: settingsSystemPrompt ? settingsSystemPrompt.value : "",
       commitMessagePrompt: settingsCommitPrompt
         ? settingsCommitPrompt.value
@@ -8569,6 +8613,9 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
+      commitMessageModelId: settingsCommitModel
+        ? settingsCommitModel.value.trim()
+        : "",
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
@@ -12326,7 +12373,7 @@
       }
       if (
         target.closest(
-          "#settingsCaBundle, #settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsAutoglmBinaryPath"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsAutoglmBinaryPath"
         )
       ) {
         schedulePersistSettings();
@@ -12339,7 +12386,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModel, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();

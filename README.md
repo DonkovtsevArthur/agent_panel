@@ -94,7 +94,7 @@
 }
 ```
 
-Корпоративный TLS (опционально): `agentPanel.rejectUnauthorized`, `agentPanel.caBundlePath`.
+Корпоративный TLS (опционально): `agentPanel.rejectUnauthorized` (по умолчанию выкл. — без CA bundle).
 
 ## Приватность
 

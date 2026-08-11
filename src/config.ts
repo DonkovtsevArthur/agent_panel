@@ -209,6 +209,8 @@ export interface AgentPanelConfig {
   caBundlePath: string;
   commitMessage: {
     prompt: string;
+    /** Empty = auto light/utility model. */
+    modelId: string;
     language: "auto" | "en" | "ru";
     /** Откуда сейчас действуют настройки commit message. */
     scope: "global" | "workspace";
@@ -434,7 +436,11 @@ function readCommitMessageLanguage(
 function resolveCommitMessageScope(
   cfg: vscode.WorkspaceConfiguration
 ): "global" | "workspace" {
-  for (const key of ["commitMessage.prompt", "commitMessage.language"]) {
+  for (const key of [
+    "commitMessage.prompt",
+    "commitMessage.language",
+    "commitMessage.modelId",
+  ]) {
     const info = cfg.inspect(key);
     if (
       info?.workspaceValue !== undefined ||
@@ -556,9 +562,7 @@ export function getConfig(): AgentPanelConfig {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },
     rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? false,
-    caBundlePath:
-      cfg.get<string>("caBundlePath") ??
-      "",
+    caBundlePath: "",
     commitMessage: (() => {
       const commitLanguage = readCommitMessageLanguage(
         cfg.get("commitMessage.language")
@@ -574,6 +578,7 @@ export function getConfig(): AgentPanelConfig {
         prompt: isBuiltinCommitMessagePrompt(storedPrompt)
           ? defaultCommitMessagePromptForLanguage(commitLangResolved)
           : storedPrompt,
+        modelId: String(cfg.get<string>("commitMessage.modelId") || "").trim(),
         language: commitLanguage,
         scope: resolveCommitMessageScope(cfg),
       };

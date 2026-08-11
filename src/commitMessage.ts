@@ -398,8 +398,12 @@ export async function composeCommitMessageText(
       : "") ||
     enabled[0]?.id ||
     "";
-  // Под капотом для коммита — лёгкая модель, если она включена; иначе основная.
+  const preferredModelId = String(config.commitMessage.modelId || "").trim();
+  // Явный выбор в Settings → иначе лёгкая/utility-модель, иначе основная.
   const modelId =
+    (preferredModelId && enabled.some((m) => m.id === preferredModelId)
+      ? preferredModelId
+      : "") ||
     selectUtilityModel(enabled, { fallbackModelId: mainModelId })?.modelId ||
     mainModelId;
   if (!modelId) {
