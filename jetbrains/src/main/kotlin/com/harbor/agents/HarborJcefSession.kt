@@ -131,8 +131,8 @@ class HarborJcefSession(
     hostBridge.requestReady(surface = "panel")
   }
 
-  override fun postToWebview(json: String) {
-    hostBridge.postToWebview(json)
+  override fun postToWebview(json: String, forceRepaint: Boolean) {
+    hostBridge.postToWebview(json, forceRepaint = forceRepaint)
   }
 
   private fun loadHarborUi() {

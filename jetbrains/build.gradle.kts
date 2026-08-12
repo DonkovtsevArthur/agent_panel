@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "0.1.41"
+version = "0.1.55"
 
 repositories {
     mavenCentral()
@@ -29,15 +29,57 @@ intellijPlatform {
         name = "Harbor Agents"
         version = project.version.toString()
         ideaVersion {
-            // com.intellij.modules.jcef alias exists since 2025.3.1; required for 2026.2+
-            sinceBuild = "253.2430"
+            // WebStorm / IU 2025.2+ (252). JCEF may be platform-bundled (252)
+            // or a separate plugin / content modules (253+ / 2026.2+).
+            sinceBuild = "252.23892"
             untilBuild.set(provider { null })
         }
         description.set(
             """
-            Harbor Agents for WebStorm / IntelliJ: chat with Agent / Plan / Ask modes,
-            providers, MCP, and commit-from-review. Shares the webview UI and Node
-            sidecar core with the VS Code Harbor Agents extension.
+            <p><b>Harbor Agents</b> (Гавань агентов) — локальная панель AI-агента для WebStorm / IntelliJ.
+            Подключаете свой OpenAI-compatible API: чаты и настройки остаются на вашей машине, без облака Harbor.</p>
+
+            <h3>Возможности</h3>
+            <ul>
+              <li><b>Режимы Agent / Plan / Ask</b> — правки и терминал, план без правок, вопросы по коду</li>
+              <li><b>Свой провайдер</b> — OpenAI, Azure, корпоративные gateway, локальные модели</li>
+              <li><b>Инструменты</b> — поиск по проекту, чтение и правка файлов, команды в терминале</li>
+              <li><b>Контекст из IDE</b> — добавить выделение или файл в чат (контекстное меню и хоткеи)</li>
+              <li><b>MCP</b> — Figma и свои серверы (stdio / HTTP)</li>
+              <li><b>Review и Git</b> — карточки diff, генерация commit message, commit &amp; push из панели</li>
+              <li><b>Сессии локально</b> — чаты хранятся в проекте (<code>.idea/harbor</code>)</li>
+            </ul>
+
+            <h3>Быстрый старт</h3>
+            <ol>
+              <li>Откройте tool window <b>Harbor Agents</b></li>
+              <li>Settings → добавьте провайдера (<code>baseUrl</code>, <code>apiKey</code>) и модели</li>
+              <li>Выделите код → <b>⇧⌘L</b> / <b>Ctrl+Shift+L</b> — добавить в чат</li>
+              <li>Файл → <b>⇧⌘H</b> / <b>Ctrl+Shift+H</b> — добавить файл в чат</li>
+            </ol>
+
+            <h3>Требования</h3>
+            <ul>
+              <li>WebStorm / IntelliJ <b>2025.2+</b> (build 252+) с JCEF / Web Browser</li>
+              <li>Node.js для sidecar-рантайма агента</li>
+              <li>OpenAI-compatible API и хотя бы один model id</li>
+            </ul>
+            """.trimIndent()
+        )
+        changeNotes.set(
+            """
+            <b>0.1.55</b>
+            <ul>
+              <li>Клик по чату в списке с первого раза (JCEF OSR pointerdown + focus)</li>
+            </ul>
+            <b>0.1.54</b>
+            <ul>
+              <li>Фикс пропадания сообщений пользователя при быстром переключении чатов (JCEF)</li>
+            </ul>
+            <b>0.1.53</b>
+            <ul>
+              <li>Фикс кнопки «отправить» при редактировании сообщения пользователя (JCEF)</li>
+            </ul>
             """.trimIndent()
         )
     }

@@ -961,9 +961,13 @@ export function buildBranchesList(
       if (!chat || chat.archivedAt) {
         return null;
       }
-      // Корень — «Основная»; форки — «Имя агента · 2», «· 3», …
+      // Корень — «Main»; форки — стабильный chat.title («Имя · N»), без
+      // перенумерации после удаления середины (иначе «удалил ·2 — остался ·2»).
+      const forkTitle = String(chat.title || "").trim();
       const label =
-        index === 0 ? "Main" : `${agentName} · ${index + 1}`;
+        index === 0
+          ? "Main"
+          : forkTitle || `${agentName} · ${index + 1}`;
       const item: ChatBranchItem = {
         id,
         label,
@@ -1009,7 +1013,17 @@ export function branchChatFromMessage(
 
   const now = Date.now();
   const agentName = String(agent.name || "").trim() || "Agent";
-  const branchIndex = ids.length + 1;
+  // Next ordinal = max existing «· N» in titles (and list length), so deleting
+  // ·2 then forking again yields ·4 rather than reusing ·3 / looking undeleted.
+  let maxBranch = ids.length;
+  for (const id of ids) {
+    const title = String(store.chats[id]?.title || "");
+    const m = /·\s*(\d+)\s*$/.exec(title);
+    if (m) {
+      maxBranch = Math.max(maxBranch, Number(m[1]) || 0);
+    }
+  }
+  const branchIndex = maxBranch + 1;
   const chat: ChatSession = {
     id: uid("chat"),
     title: `${agentName} · ${branchIndex}`,

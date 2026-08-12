@@ -1,0 +1,7 @@
+<idea-plugin>
+  <!--
+    Loaded only when com.intellij.modules.jcef is present (2025.3.1+).
+    Main plugin code already uses JBCef via reflection / direct API when available;
+    this file exists so optional depends is valid on 2025.2 (where the alias is absent).
+  -->
+</idea-plugin>

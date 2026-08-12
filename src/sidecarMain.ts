@@ -21,6 +21,7 @@ import {
 import { HarborHeadless } from "./vscodeHeadlessStub";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { initMcpManager } from "./mcpBundle";
+import { composeCommitMessageText } from "./commitMessage";
 import type * as vscode from "vscode";
 
 function writeNotification(method: string, params: unknown): void {
@@ -54,6 +55,60 @@ function rejectUnauthorizedFromSettings(settings: Record<string, unknown>): bool
     }
   }
   return false;
+}
+
+async function handleCommitMessage(
+  workspaceRoot: string,
+  settingsPath: string,
+  params: { paths?: unknown; cwd?: unknown }
+): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const fresh = readSettingsFile(settingsPath);
+  HarborHeadless.install({
+    workspaceRoot,
+    settings: fresh,
+    settingsPath,
+    storageDir: path.dirname(settingsPath),
+  });
+  applyHarborTlsPolicy(rejectUnauthorizedFromSettings(fresh));
+
+  const cwd =
+    typeof params.cwd === "string" && params.cwd.trim()
+      ? params.cwd.trim()
+      : workspaceRoot;
+  const paths = Array.isArray(params.paths)
+    ? params.paths.map((p) => String(p || "").trim()).filter(Boolean)
+    : [];
+
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 55_000);
+  try {
+    const message = await composeCommitMessageText(
+      cwd,
+      undefined,
+      abort.signal,
+      paths
+    );
+    if (!String(message || "").trim()) {
+      return {
+        ok: false,
+        error: "No changes to commit (empty diff).",
+        message: "",
+      };
+    }
+    return { ok: true, message };
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    if (abort.signal.aborted || /aborted/i.test(text)) {
+      return {
+        ok: false,
+        error: "Commit message generation timed out (55s).",
+        message: "",
+      };
+    }
+    return { ok: false, error: text, message: "" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function main(): void {
@@ -154,6 +209,13 @@ function main(): void {
     }
     if (method === "turn.abort") {
       return panel.handleWebviewMessage({ type: "stop" });
+    }
+    if (method === "commit.message") {
+      return handleCommitMessage(
+        workspaceRoot,
+        settingsPath,
+        (params || {}) as { paths?: unknown; cwd?: unknown }
+      );
     }
     return original(method, params);
   };

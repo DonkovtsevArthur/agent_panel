@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.76",
+  "version": "1.1.83",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -529,6 +529,10 @@
               },
               "placeholder": {
                 "type": "string"
+              },
+              "color": {
+                "type": "string",
+                "description": "Accent color for composer and user messages (#rrggbb)"
               },
               "enabled": {
                 "type": "boolean",

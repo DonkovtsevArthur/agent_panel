@@ -10,5 +10,5 @@ interface HarborWebSession {
   fun openSettingsModal(): Boolean
   fun closeSettingsModal()
   fun openChatSurface()
-  fun postToWebview(json: String)
+  fun postToWebview(json: String, forceRepaint: Boolean = false)
 }

@@ -64,6 +64,7 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       val settingsFile = File(ideaHarbor, "settings.json")
       pb.environment()["HARBOR_SESSION_PATH"] = File(ideaHarbor, "session.v2.json").absolutePath
       pb.environment()["HARBOR_SETTINGS_PATH"] = settingsFile.absolutePath
+      pb.environment()["HARBOR_LANG"] = HarborUiLanguage.resolve(project)
       // Match Harbor Advanced → Validate TLS (default off). Must be set before
       // Node boots so undici/OpenSSL honor corporate self-signed gateways.
       if (!readRejectUnauthorized(settingsFile)) {
@@ -102,15 +103,25 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
     if (params != null) {
       req.add("params", params)
     }
-    writeLine(req.toString())
+    if (!writeLine(req.toString())) {
+      pending.remove(id)
+      callback(null)
+    }
   }
 
-  private fun writeLine(line: String) {
-    val w = writer ?: return
-    synchronized(w) {
-      w.write(line)
-      w.newLine()
-      w.flush()
+  /** @return false if sidecar stdin is not available */
+  private fun writeLine(line: String): Boolean {
+    val w = writer ?: return false
+    return try {
+      synchronized(w) {
+        w.write(line)
+        w.newLine()
+        w.flush()
+      }
+      true
+    } catch (t: Throwable) {
+      log.warn("Harbor sidecar write failed", t)
+      false
     }
   }
 

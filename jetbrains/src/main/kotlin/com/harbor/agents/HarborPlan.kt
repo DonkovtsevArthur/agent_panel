@@ -33,16 +33,7 @@ object HarborPlan {
   }
 
   private fun preferredLang(project: Project): String {
-    return try {
-      val f = File(harborDir(project), "settings.json")
-      if (!f.isFile) {
-        return "en"
-      }
-      val m = Regex(""""language"\s*:\s*"(ru|en)"""").find(f.readText())
-      m?.groupValues?.getOrNull(1) ?: "en"
-    } catch (_: Exception) {
-      "en"
-    }
+    return HarborUiLanguage.resolve(project)
   }
 
   fun planFile(project: Project): File {

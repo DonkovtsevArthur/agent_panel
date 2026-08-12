@@ -321,7 +321,8 @@ class HarborHostBridge(
     val type = obj.get("type")?.asString ?: return
     if (type == "ready" || type == "send" || type == "stop" || type == "newAgent" ||
       type == "showSettings" || type == "deleteAgent" || type == "archiveAgent" ||
-      type == "restoreAgent" || type == "deleteAllArchived"
+      type == "restoreAgent" || type == "deleteAllArchived" ||
+      type == "deleteBranch" || type == "branchFromMessage" || type == "switchBranch"
     ) {
       log.info("Harbor webview→host type=$type")
     }
@@ -436,14 +437,14 @@ class HarborHostBridge(
       "openScm" -> {
         ToolWindowManager.getInstance(project).getToolWindow("Commit")?.show()
       }
-      "deleteAgent", "deleteAllArchived" -> {
+      "deleteAgent", "deleteAllArchived", "deleteBranch" -> {
         ApplicationManager.getApplication().invokeLater {
           val title = "Harbor Agents"
           val message =
-            if (type == "deleteAllArchived") {
-              "Delete all archived agents permanently?"
-            } else {
-              "Delete this agent permanently?"
+            when (type) {
+              "deleteAllArchived" -> "Delete all archived agents permanently?"
+              "deleteBranch" -> "Delete this branch permanently?"
+              else -> "Delete this agent permanently?"
             }
           val answer = Messages.showYesNoDialog(
             project,
