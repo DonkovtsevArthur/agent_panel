@@ -441,6 +441,18 @@ function readCommitMessageLanguage(
 function resolveCommitMessageScope(
   cfg: vscode.WorkspaceConfiguration
 ): "global" | "workspace" {
+  // JetBrains / headless persist an explicit UI flag (VS Code derives scope
+  // from ConfigurationTarget via inspect below).
+  const explicit = String(
+    cfg.get<string>("commitMessageScope") ||
+      cfg.get<string>("commitMessage.scope") ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  if (explicit === "workspace" || explicit === "global") {
+    return explicit;
+  }
   for (const key of [
     "commitMessage.prompt",
     "commitMessage.language",

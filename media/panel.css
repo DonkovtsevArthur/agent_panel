@@ -211,6 +211,10 @@ body {
   border-color: var(--mode-ask);
 }
 
+.msg.user.has-mode-accent {
+  border-color: var(--mode-accent);
+}
+
 .msg.user.is-editing {
   padding: 0;
   background: transparent;
@@ -286,6 +290,10 @@ body {
 
 .msg-edit-composer:has(.msg-edit-mode-picker[data-mode="ask"]) {
   border-color: var(--mode-ask);
+}
+
+.msg-edit-composer.has-mode-accent {
+  border-color: var(--mode-accent);
 }
 
 .msg-edit-input {
@@ -1976,6 +1984,10 @@ body.vscode-dark .md-pre .syntax-property {
   border-color: var(--mode-ask);
 }
 
+.composer.has-mode-accent {
+  border-color: var(--mode-accent);
+}
+
 .composer-wrap.is-drop-target .composer,
 .composer.is-drop-target {
   border-color: var(--vscode-focusBorder, #007fd4);
@@ -2501,6 +2513,12 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--mode-ask);
 }
 
+.mode-picker.has-mode-accent .model-trigger,
+.mode-picker.has-mode-accent .model-trigger:hover:not(:disabled),
+.mode-picker.has-mode-accent.is-open .model-trigger {
+  color: var(--mode-accent);
+}
+
 .mode-picker .model-option[data-mode="plan"] .model-option-label {
   color: var(--mode-plan);
   font-weight: 500;
@@ -2508,6 +2526,11 @@ body.vscode-dark .md-pre .syntax-property {
 
 .mode-picker .model-option[data-mode="ask"] .model-option-label {
   color: var(--mode-ask);
+  font-weight: 500;
+}
+
+.mode-picker .model-option.has-mode-accent .model-option-label {
+  color: var(--mode-accent);
   font-weight: 500;
 }
 
@@ -3722,6 +3745,52 @@ html[data-surface="settings"] .settings-layout {
   outline-offset: -1px;
 }
 
+/* JetBrains OSR: custom listbox instead of native <select> popup */
+.harbor-select-menu {
+  position: fixed;
+  z-index: 10050;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(
+    --vscode-editorWidget-background,
+    var(--vscode-input-background, #fff)
+  );
+  border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.harbor-select-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.harbor-select-option:hover {
+  background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
+}
+.harbor-select-option.is-selected {
+  background: var(
+    --vscode-list-activeSelectionBackground,
+    rgba(14, 99, 156, 0.35)
+  );
+  color: var(
+    --vscode-list-activeSelectionForeground,
+    var(--vscode-foreground)
+  );
+}
+html[data-harbor-host="jetbrains"] select.harbor-select-open {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
 .settings-textarea {
   resize: vertical;
   min-height: 96px;
@@ -3793,6 +3862,92 @@ html[data-surface="settings"] .settings-layout {
 
 .settings-hint.is-error {
   color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.mode-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.mode-color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+  background-color: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Preset fills via data-color — webview CSP blocks inline style="--swatch:…" */
+.mode-color-swatch[data-color="#a67c00"] {
+  background-color: #a67c00;
+}
+.mode-color-swatch[data-color="#2d6a4f"] {
+  background-color: #2d6a4f;
+}
+.mode-color-swatch[data-color="#0e639c"] {
+  background-color: #0e639c;
+}
+.mode-color-swatch[data-color="#7c3aed"] {
+  background-color: #7c3aed;
+}
+.mode-color-swatch[data-color="#be185d"] {
+  background-color: #be185d;
+}
+.mode-color-swatch[data-color="#c2410c"] {
+  background-color: #c2410c;
+}
+.mode-color-swatch[data-color="#0f766e"] {
+  background-color: #0f766e;
+}
+
+.mode-color-swatch.is-none {
+  background-color: transparent;
+  background-image:
+    linear-gradient(
+      135deg,
+      transparent 46%,
+      color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 46%,
+      color-mix(in srgb, var(--vscode-foreground) 45%, transparent) 54%,
+      transparent 54%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--vscode-foreground) 8%, transparent),
+      color-mix(in srgb, var(--vscode-foreground) 8%, transparent)
+    );
+}
+
+.mode-color-swatch.is-active {
+  box-shadow:
+    0 0 0 2px var(--vscode-editor-background, #1e1e1e),
+    0 0 0 3.5px var(--vscode-focusBorder, #007fd4);
+}
+
+.mode-color-custom {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.mode-color-custom input[type="color"] {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  background: transparent;
 }
 
 .settings-json-textarea {
@@ -4528,6 +4683,10 @@ html[data-surface="settings"] .settings-layout {
 
 .agent-run-status-running[data-mode="ask"] {
   --cube-accent: var(--mode-ask);
+}
+
+.agent-run-status-running.has-mode-accent {
+  --cube-accent: var(--mode-accent);
 }
 
 .agent-run-status-running .cube-bit {
