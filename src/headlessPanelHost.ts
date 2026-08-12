@@ -430,6 +430,12 @@ export class HeadlessPanelHost {
           String(msg.name || ""),
           Boolean(msg.enabled)
         );
+      case "skillsSetSourceEnabled":
+        return this.handleSkillsSetSourceEnabled(
+          String(msg.source || ""),
+          Boolean(msg.enabled),
+          String(msg.path || "")
+        );
       case "skillsAddDirectory":
         return this.handleSkillsAddDirectory(String(msg.path || ""));
       case "skillsRemoveDirectory":
@@ -499,7 +505,10 @@ export class HeadlessPanelHost {
       parallelToolCallsEnabled: config.parallelToolCalls.enabled,
       autoCompactEnabled: config.autoCompact.enabled,
       skillsEnabled: config.skills.enabled,
+      skillsWorkspaceEnabled: config.skills.workspaceEnabled,
+      skillsGlobalEnabled: config.skills.globalEnabled,
       skillsExtraDirectories: config.skills.extraDirectories,
+      skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
       skillsDisabled: config.skills.disabled,
       tabAutocompleteEnabled: config.tabAutocomplete.enabled,
       tabAutocompleteModelId: config.tabAutocomplete.modelId,
@@ -2067,6 +2076,46 @@ export class HeadlessPanelHost {
     return { ok: true };
   }
 
+  private handleSkillsSetSourceEnabled(
+    source: string,
+    enabled: boolean,
+    rawPath: string
+  ): unknown {
+    const src = String(source || "").trim().toLowerCase();
+    if (src === "workspace") {
+      this.persistUiSettings({ skillsWorkspaceEnabled: enabled !== false });
+      this.reloadSettings();
+      this.postSkillsList();
+      this.postSettingsPayload();
+      return { ok: true };
+    }
+    if (src === "global") {
+      this.persistUiSettings({ skillsGlobalEnabled: enabled !== false });
+      this.reloadSettings();
+      this.postSkillsList();
+      this.postSettingsPayload();
+      return { ok: true };
+    }
+    if (src === "extra") {
+      const dir = path.resolve(String(rawPath || "").trim());
+      if (!dir) {
+        return { ok: false };
+      }
+      const disabled = [...getConfig().skills.disabledExtraDirectories];
+      const next = enabled
+        ? disabled.filter((p) => path.resolve(String(p || "")) !== dir)
+        : disabled.some((p) => path.resolve(String(p || "")) === dir)
+          ? disabled
+          : [...disabled, dir];
+      this.persistUiSettings({ skillsDisabledExtraDirectories: next });
+      this.reloadSettings();
+      this.postSkillsList();
+      this.postSettingsPayload();
+      return { ok: true };
+    }
+    return { ok: false };
+  }
+
   private handleSkillsAddDirectory(rawPath: string): unknown {
     const dir = String(rawPath || "").trim();
     if (!dir) {
@@ -2102,7 +2151,13 @@ export class HeadlessPanelHost {
     const extra = getConfig().skills.extraDirectories.filter(
       (p) => path.resolve(String(p || "")) !== normalized
     );
-    this.persistUiSettings({ skillsExtraDirectories: extra });
+    const disabledExtra = getConfig().skills.disabledExtraDirectories.filter(
+      (p) => path.resolve(String(p || "")) !== normalized
+    );
+    this.persistUiSettings({
+      skillsExtraDirectories: extra,
+      skillsDisabledExtraDirectories: disabledExtra,
+    });
     this.reloadSettings();
     this.postSkillsList();
     this.postSettingsPayload();

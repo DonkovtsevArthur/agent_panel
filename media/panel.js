@@ -110,17 +110,19 @@
       mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
       skillsSection: "Skills",
       skillsNote:
-        "On-demand instruction packs (SKILL.md). Harbor scans .harbor/skills in the workspace and ~/.harbor/skills, plus folders you add below.",
+        "Skills are SKILL.md packs that load when relevant. Put them in the project or global folders listed below.",
       skillsEnabled: "Enable skills",
       skillsRefresh: "Refresh",
       skillsAddFolder: "Add folder",
-      skillsOpenHarbor: "Open Harbor folder",
+      skillsOpenHarbor: "Open workspace folder",
+      skillsOpenGlobal: "Open global folder",
       skillsListTitle: "Installed skills",
-      skillsFoldersTitle: "Folders",
-      skillsEmpty: "No skills found yet. Add a SKILL.md under a Harbor skills folder.",
-      skillsSourceWorkspace: "Workspace",
-      skillsSourceGlobal: "Global",
-      skillsSourceExtra: "Extra",
+      skillsFoldersTitle: "Where Harbor looks",
+      skillsFoldersDisabledHint: "A disabled folder is not sent to the model.",
+      skillsEmpty: "",
+      skillsSourceWorkspace: "This workspace",
+      skillsSourceGlobal: "All workspaces",
+      skillsSourceExtra: "Extra folder",
       skillsOpen: "Open",
       skillsRemoveFolder: "Remove",
       skillsBuiltinFolder: "Built-in",
@@ -548,18 +550,19 @@
         "Управление MCP-подключениями Harbor Agents (Figma и другие).",
       skillsSection: "Skills",
       skillsNote:
-        "Инструкции по требованию (SKILL.md). Harbor смотрит .harbor/skills в проекте и ~/.harbor/skills, плюс папки, которые вы добавите ниже.",
+        "Skills — пакеты SKILL.md, подключаются когда нужны. Кладите их в папки проекта или глобальную — список ниже.",
       skillsEnabled: "Включить skills",
       skillsRefresh: "Обновить",
       skillsAddFolder: "Добавить папку",
-      skillsOpenHarbor: "Открыть папку Harbor",
+      skillsOpenHarbor: "Папка проекта",
+      skillsOpenGlobal: "Глобальная папка",
       skillsListTitle: "Установленные skills",
-      skillsFoldersTitle: "Папки",
-      skillsEmpty:
-        "Пока нет skills. Положите SKILL.md в папку Harbor skills.",
-      skillsSourceWorkspace: "Проект",
-      skillsSourceGlobal: "Глобально",
-      skillsSourceExtra: "Доп.",
+      skillsFoldersTitle: "Где Harbor ищет",
+      skillsFoldersDisabledHint: "Выключенная папка не отдаётся модели.",
+      skillsEmpty: "",
+      skillsSourceWorkspace: "Этот проект",
+      skillsSourceGlobal: "Все проекты",
+      skillsSourceExtra: "Доп. папка",
       skillsOpen: "Открыть",
       skillsRemoveFolder: "Убрать",
       skillsBuiltinFolder: "Встроенная",
@@ -1257,13 +1260,7 @@
   const mcpCustomUrlLabel = document.getElementById("mcpCustomUrlLabel");
   const mcpCustomTokenLabel = document.getElementById("mcpCustomTokenLabel");
   let mcpServersCache = [];
-  const settingsSkillsEnabled = document.getElementById("settingsSkillsEnabled");
   const skillsRefreshBtn = document.getElementById("skillsRefreshBtn");
-  const skillsAddFolderBtn = document.getElementById("skillsAddFolderBtn");
-  const skillsOpenHarborBtn = document.getElementById("skillsOpenHarborBtn");
-  const skillsList = document.getElementById("skillsList");
-  const skillsEmpty = document.getElementById("skillsEmpty");
-  const skillsListCount = document.getElementById("skillsListCount");
   const skillsFoldersList = document.getElementById("skillsFoldersList");
   let skillsCache = { enabled: true, directories: [], skills: [] };
   const settingsFigmaEnabled = null;
@@ -1895,18 +1892,9 @@
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     const settingsSkillsNote = document.getElementById("settingsSkillsNote");
     if (settingsSkillsNote) settingsSkillsNote.textContent = t("skillsNote");
-    const settingsSkillsEnabledLabel = document.getElementById(
-      "settingsSkillsEnabledLabel"
-    );
-    if (settingsSkillsEnabledLabel) {
-      settingsSkillsEnabledLabel.textContent = t("skillsEnabled");
-    }
     setText("skillsRefreshLabel", "skillsRefresh");
-    setText("skillsAddFolderLabel", "skillsAddFolder");
-    setText("skillsOpenHarborLabel", "skillsOpenHarbor");
-    setText("skillsListTitle", "skillsListTitle");
     setText("skillsFoldersTitle", "skillsFoldersTitle");
-    if (skillsEmpty) skillsEmpty.textContent = t("skillsEmpty");
+    setText("skillsFoldersDisabledHint", "skillsFoldersDisabledHint");
     const settingsBrowserNote = document.getElementById("settingsBrowserNote");
     if (settingsBrowserNote) {
       settingsBrowserNote.textContent = t("browserAgentNote");
@@ -8934,93 +8922,80 @@
   }
 
   function renderSkillsSettings() {
-    const skills = Array.isArray(skillsCache.skills) ? skillsCache.skills : [];
     const directories = Array.isArray(skillsCache.directories)
       ? skillsCache.directories
       : [];
-    if (settingsSkillsEnabled) {
-      settingsSkillsEnabled.checked = skillsCache.enabled !== false;
-    }
-    if (skillsListCount) {
-      skillsListCount.textContent = String(skills.length);
-    }
-    if (skillsEmpty) {
-      skillsEmpty.hidden = skills.length > 0;
-    }
-    if (skillsList) {
-      skillsList.innerHTML = "";
-      for (const skill of skills) {
-        const card = document.createElement("div");
-        card.className = "skills-card";
-        card.dataset.skillName = skill.name || "";
-        const head = document.createElement("div");
-        head.className = "skills-card-head";
-        const title = document.createElement("div");
-        title.className = "skills-card-title";
-        title.textContent = skill.name || "";
-        const badge = document.createElement("span");
-        badge.className = "skills-badge";
-        badge.textContent = skillSourceLabel(skill.source);
-        head.appendChild(title);
-        head.appendChild(badge);
-        const desc = document.createElement("p");
-        desc.className = "skills-card-desc";
-        desc.textContent = skill.description || "";
-        const actions = document.createElement("div");
-        actions.className = "skills-card-actions";
-        const toggleLabel = document.createElement("label");
-        toggleLabel.className = "skills-toggle";
-        const toggle = document.createElement("input");
-        toggle.type = "checkbox";
-        toggle.checked = skill.disabled !== true;
-        toggle.setAttribute("data-skills-toggle", skill.name || "");
-        toggleLabel.appendChild(toggle);
-        const openBtn = document.createElement("button");
-        openBtn.type = "button";
-        openBtn.className = "text-btn";
-        openBtn.setAttribute("data-skills-open", skill.skillMdPath || skill.dirPath || "");
-        openBtn.textContent = t("skillsOpen");
-        actions.appendChild(toggleLabel);
-        actions.appendChild(openBtn);
-        card.appendChild(head);
-        if (skill.description) {
-          card.appendChild(desc);
-        }
-        card.appendChild(actions);
-        skillsList.appendChild(card);
-      }
-    }
     if (skillsFoldersList) {
       skillsFoldersList.innerHTML = "";
       for (const dir of directories) {
+        const source = dir.source || (dir.removable ? "extra" : "workspace");
+        const enabled = dir.enabled !== false;
+        const displayPath = dir.displayPath || dir.path || "";
+        const absPath = dir.path || "";
         const row = document.createElement("div");
-        row.className = "skills-folder-row";
+        row.className =
+          "skills-folder-row" + (enabled ? "" : " skills-folder-row--off");
+        row.dataset.source = source;
+        row.dataset.path = absPath;
+
+        const titles = document.createElement("div");
+        titles.className = "skills-folder-titles";
+        const title = document.createElement("div");
+        title.className = "skills-folder-title";
+        title.textContent = skillSourceLabel(source);
         const pathEl = document.createElement("code");
         pathEl.className = "skills-folder-path";
-        pathEl.textContent = dir.path || "";
-        const meta = document.createElement("span");
-        meta.className = "skills-badge";
-        meta.textContent = dir.removable
-          ? skillSourceLabel(dir.source)
-          : t("skillsBuiltinFolder");
+        pathEl.textContent = displayPath;
+        pathEl.title = absPath || displayPath;
+        titles.appendChild(title);
+        titles.appendChild(pathEl);
+
         const actions = document.createElement("div");
-        actions.className = "skills-card-actions";
+        actions.className = "skills-folder-actions";
+
         const openBtn = document.createElement("button");
         openBtn.type = "button";
-        openBtn.className = "text-btn";
-        openBtn.setAttribute("data-skills-open", dir.path || "");
-        openBtn.textContent = t("skillsOpen");
+        openBtn.className = "icon-btn";
+        openBtn.setAttribute("data-skills-open", absPath);
+        openBtn.title = t("skillsOpen");
+        openBtn.setAttribute("aria-label", t("skillsOpen"));
+        const openIcon = document.createElement("span");
+        openIcon.className = "material-symbols-outlined";
+        openIcon.setAttribute("aria-hidden", "true");
+        openIcon.textContent = "folder_open";
+        openBtn.appendChild(openIcon);
         actions.appendChild(openBtn);
+
         if (dir.removable) {
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
-          removeBtn.className = "text-btn";
-          removeBtn.setAttribute("data-skills-remove-dir", dir.path || "");
-          removeBtn.textContent = t("skillsRemoveFolder");
+          removeBtn.className = "icon-btn";
+          removeBtn.setAttribute("data-skills-remove-dir", absPath);
+          removeBtn.title = t("skillsRemoveFolder");
+          removeBtn.setAttribute("aria-label", t("skillsRemoveFolder"));
+          const removeIcon = document.createElement("span");
+          removeIcon.className = "material-symbols-outlined";
+          removeIcon.setAttribute("aria-hidden", "true");
+          removeIcon.textContent = "delete";
+          removeBtn.appendChild(removeIcon);
           actions.appendChild(removeBtn);
         }
-        row.appendChild(pathEl);
-        row.appendChild(meta);
+
+        const toggleLabel = document.createElement("label");
+        toggleLabel.className = "mcp-switch";
+        toggleLabel.title = t("skillsEnabled");
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.checked = enabled;
+        toggle.setAttribute("data-skills-source-toggle", source);
+        toggle.setAttribute("data-skills-source-path", absPath);
+        const track = document.createElement("span");
+        track.className = "mcp-switch-track";
+        toggleLabel.appendChild(toggle);
+        toggleLabel.appendChild(track);
+        actions.appendChild(toggleLabel);
+
+        row.appendChild(titles);
         row.appendChild(actions);
         skillsFoldersList.appendChild(row);
       }
@@ -9446,9 +9421,6 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
-    if (settingsSkillsEnabled) {
-      settingsSkillsEnabled.checked = settings.skillsEnabled !== false;
-    }
     if (
       Array.isArray(settings.skillsExtraDirectories) ||
       Array.isArray(settings.skillsDisabled)
@@ -9618,9 +9590,7 @@
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
         : true,
-      skillsEnabled: settingsSkillsEnabled
-        ? settingsSkillsEnabled.checked
-        : true,
+      skillsEnabled: skillsCache.enabled !== false,
       skillsExtraDirectories: Array.isArray(skillsCache.directories)
         ? skillsCache.directories
             .filter((d) => d && d.removable)
@@ -13638,65 +13608,12 @@
       ) {
         persistSettingsNow();
       }
-      if (target.id === "settingsSkillsEnabled") {
-        host.postMessage({
-          type: "skillsSetMasterEnabled",
-          enabled: settingsSkillsEnabled
-            ? settingsSkillsEnabled.checked
-            : true,
-        });
-      }
     });
   }
 
   if (skillsRefreshBtn) {
     skillsRefreshBtn.addEventListener("click", () => {
       host.postMessage({ type: "skillsRefreshList" });
-    });
-  }
-  if (skillsAddFolderBtn) {
-    skillsAddFolderBtn.addEventListener("click", () => {
-      host.postMessage({ type: "skillsPickDirectory" });
-    });
-  }
-  if (skillsOpenHarborBtn) {
-    skillsOpenHarborBtn.addEventListener("click", () => {
-      const workspaceDir = (skillsCache.directories || []).find(
-        (d) => d && d.source === "workspace"
-      );
-      const path =
-        (workspaceDir && workspaceDir.path) ||
-        (skillsCache.directories &&
-          skillsCache.directories[0] &&
-          skillsCache.directories[0].path) ||
-        "";
-      if (path) {
-        host.postMessage({ type: "skillsOpenPath", path });
-      }
-    });
-  }
-  if (skillsList) {
-    skillsList.addEventListener("change", (event) => {
-      const toggle = event.target.closest("[data-skills-toggle]");
-      if (!toggle) {
-        return;
-      }
-      const name = toggle.getAttribute("data-skills-toggle") || "";
-      host.postMessage({
-        type: "skillsSetEnabled",
-        name,
-        enabled: toggle.checked === true,
-      });
-    });
-    skillsList.addEventListener("click", (event) => {
-      const openBtn = event.target.closest("[data-skills-open]");
-      if (!openBtn) {
-        return;
-      }
-      const path = openBtn.getAttribute("data-skills-open") || "";
-      if (path) {
-        host.postMessage({ type: "skillsOpenPath", path });
-      }
     });
   }
   if (skillsFoldersList) {
@@ -13716,6 +13633,20 @@
           host.postMessage({ type: "skillsRemoveDirectory", path });
         }
       }
+    });
+    skillsFoldersList.addEventListener("change", (event) => {
+      const toggle = event.target.closest("[data-skills-source-toggle]");
+      if (!toggle) {
+        return;
+      }
+      const source = toggle.getAttribute("data-skills-source-toggle") || "";
+      const path = toggle.getAttribute("data-skills-source-path") || "";
+      host.postMessage({
+        type: "skillsSetSourceEnabled",
+        source,
+        path,
+        enabled: toggle.checked === true,
+      });
     });
   }
 

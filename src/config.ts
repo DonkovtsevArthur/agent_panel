@@ -177,8 +177,14 @@ export interface AgentPanelConfig {
    */
   skills: {
     enabled: boolean;
+    /** Scan `<workspace>/.harbor/skills` */
+    workspaceEnabled: boolean;
+    /** Scan `~/.harbor/skills` */
+    globalEnabled: boolean;
     /** Absolute paths added in Settings → Skills. */
     extraDirectories: string[];
+    /** Extra directories toggled off in Settings. */
+    disabledExtraDirectories: string[];
     /** Skill names (frontmatter name or dirname) excluded from the tool. */
     disabled: string[];
   };
@@ -567,6 +573,13 @@ export function getConfig(): AgentPanelConfig {
             .filter(Boolean)
             .filter((p, i, all) => all.indexOf(p) === i)
         : [];
+      const disabledExtraRaw = cfg.get<unknown>("skills.disabledExtraDirectories");
+      const disabledExtraDirectories = Array.isArray(disabledExtraRaw)
+        ? disabledExtraRaw
+            .map((p) => String(p || "").trim())
+            .filter(Boolean)
+            .filter((p, i, all) => all.indexOf(p) === i)
+        : [];
       const disabledRaw = cfg.get<unknown>("skills.disabled");
       const disabled = Array.isArray(disabledRaw)
         ? disabledRaw
@@ -576,7 +589,10 @@ export function getConfig(): AgentPanelConfig {
         : [];
       return {
         enabled: cfg.get<boolean>("skills.enabled") !== false,
+        workspaceEnabled: cfg.get<boolean>("skills.workspaceEnabled") !== false,
+        globalEnabled: cfg.get<boolean>("skills.globalEnabled") !== false,
         extraDirectories,
+        disabledExtraDirectories,
         disabled,
       };
     })(),

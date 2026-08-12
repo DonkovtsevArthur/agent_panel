@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.85",
+  "version": "1.1.93",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -602,6 +602,16 @@
           "default": true,
           "description": "%config.skills.enabled.description%"
         },
+        "agentPanel.skills.workspaceEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.workspaceEnabled.description%"
+        },
+        "agentPanel.skills.globalEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.globalEnabled.description%"
+        },
         "agentPanel.skills.extraDirectories": {
           "type": "array",
           "items": {
@@ -609,6 +619,14 @@
           },
           "default": [],
           "description": "%config.skills.extraDirectories.description%"
+        },
+        "agentPanel.skills.disabledExtraDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.disabledExtraDirectories.description%"
         },
         "agentPanel.skills.disabled": {
           "type": "array",

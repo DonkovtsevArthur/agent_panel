@@ -3578,11 +3578,10 @@ html[data-surface="settings"] .settings-layout {
 .skills-folders-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
-.skills-card,
-.skills-folder-row {
+.skills-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3593,9 +3592,79 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .skills-folder-row {
-  flex-direction: row;
-  flex-wrap: wrap;
+  display: flex;
   align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--vscode-editor-background, transparent);
+  min-width: 0;
+}
+
+.skills-folder-row--off {
+  opacity: 0.62;
+}
+
+.skills-folder-titles {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skills-folder-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.skills-folder-path {
+  display: block;
+  font-size: 11px;
+  opacity: 0.72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  font-family: var(
+    --vscode-editor-font-family,
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace
+  );
+}
+
+.skills-folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.skills-folders-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  opacity: 0.7;
+  line-height: 1.35;
+}
+
+.skills-group-label {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.75;
+  text-transform: none;
 }
 
 .skills-card-head {
@@ -3621,27 +3690,12 @@ html[data-surface="settings"] .settings-layout {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 
 .skills-toggle {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.skills-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
-  opacity: 0.85;
-}
-
-.skills-folder-path {
-  flex: 1 1 180px;
-  font-size: 11px;
-  word-break: break-all;
 }
 
 .skills-empty {

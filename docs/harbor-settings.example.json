@@ -24,7 +24,10 @@
   "autoCompact": { "enabled": true },
   "skills": {
     "enabled": true,
+    "workspaceEnabled": true,
+    "globalEnabled": true,
     "extraDirectories": [],
+    "disabledExtraDirectories": [],
     "disabled": []
   }
 }

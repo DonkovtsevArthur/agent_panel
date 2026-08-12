@@ -142,6 +142,12 @@ export type WebviewToHost =
   | { type: "skillsRefreshList" }
   | { type: "skillsSetMasterEnabled"; enabled: boolean }
   | { type: "skillsSetEnabled"; name: string; enabled: boolean }
+  | {
+      type: "skillsSetSourceEnabled";
+      source: "workspace" | "global" | "extra";
+      enabled: boolean;
+      path?: string;
+    }
   | { type: "skillsAddDirectory"; path: string }
   | { type: "skillsRemoveDirectory"; path: string }
   | { type: "skillsPickDirectory" }
