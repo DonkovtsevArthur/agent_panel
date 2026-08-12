@@ -28,6 +28,10 @@ import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiClient";
 import type { MessageAttachment } from "./attachments";
 import { attachmentPreviewDataUrl } from "./attachments";
+import {
+  enabledSkillNames,
+  resolveSkillDirectories,
+} from "./harborSkills";
 import type {
   AgentRunCallbacks,
 } from "./agentLoop";
@@ -208,6 +212,18 @@ type ClineBundle = {
   createToolPoliciesWithPreset: (
     preset: "default" | "yolo"
   ) => Record<string, unknown>;
+  createUserInstructionConfigService: (options: {
+    skills?: {
+      directories?: string[];
+      workspacePath?: string;
+      includePluginSkills?: boolean;
+    };
+    rules?: { directories?: string[]; workspacePath?: string };
+    workflows?: { directories?: string[]; workspacePath?: string };
+  }) => {
+    start: () => Promise<void>;
+    hasConfiguredSkills: (allowed?: ReadonlyArray<string>) => boolean;
+  };
   getClineDefaultSystemPrompt: (options: {
     /** Host-specific rules injected into {{CLINE_RULES}} (keeps the base prompt). */
     rules?: string;
@@ -1350,6 +1366,33 @@ export async function runClineAgentTurn(options: {
   // output caps against the model's actual limits instead of a blind default.
   const modelInfoData = buildClineModelInfo(options.model);
 
+  const skillsConfig = config.skills;
+  const hasSkillsFactory =
+    typeof bundle.createUserInstructionConfigService === "function";
+  // Without the factory we cannot pin directories to Harbor roots — keep skills
+  // off rather than falling back to Cline's .agents/.cline auto-scan.
+  const skillsMasterEnabled =
+    skillsConfig.enabled !== false && hasSkillsFactory;
+  const skillDirs = resolveSkillDirectories(cwd, skillsConfig);
+  const skillAllowlist = skillsMasterEnabled
+    ? enabledSkillNames(cwd, skillsConfig)
+    : [];
+  // Keep rules/workflows/plugins; drop skills when master toggle is off so
+  // Cline does not register use_skill / scan default .agents/.cline paths.
+  const configExtensions = skillsMasterEnabled
+    ? (["rules", "skills", "workflows", "plugins"] as const)
+    : (["rules", "workflows", "plugins"] as const);
+  const userInstructionService = hasSkillsFactory
+    ? bundle.createUserInstructionConfigService({
+        skills: {
+          directories: skillDirs,
+          includePluginSkills: false,
+        },
+        rules: { workspacePath: cwd },
+        workflows: { workspacePath: cwd },
+      })
+    : undefined;
+
   try {
     const startResult = await core.start({
       source: "vscode",
@@ -1357,6 +1400,18 @@ export async function runClineAgentTurn(options: {
       prompt: userPrompt,
       ...(userImages.length ? { userImages } : {}),
       ...(initialMessages.length ? { initialMessages } : {}),
+      ...(userInstructionService
+        ? {
+            localRuntime: {
+              userInstructionService,
+              configExtensions: [...configExtensions],
+            },
+          }
+        : {
+            localRuntime: {
+              configExtensions: [...configExtensions],
+            },
+          }),
       config: {
         sessionId,
         providerId: "openai-compatible",
@@ -1385,6 +1440,11 @@ export async function runClineAgentTurn(options: {
         // Iteration budget: leave unset so Cline treats it as unlimited
         // (Harbor maxToolRounds no longer caps the turn).
         systemPrompt: baseSystemPrompt,
+        ...(skillsMasterEnabled && skillAllowlist.length
+          ? { skills: skillAllowlist }
+          : skillsMasterEnabled
+            ? { skills: [] as string[] }
+            : {}),
         ...reasoningOptions,
         ...modelInfoData,
         // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare

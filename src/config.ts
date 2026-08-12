@@ -171,6 +171,18 @@ export interface AgentPanelConfig {
     enabled: boolean;
   };
   /**
+   * Agent Skills (SKILL.md). Discovery is Harbor-only:
+   * `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus extraDirectories.
+   * Does not auto-scan `.agents` / `.cline` / `.cursor` skill trees.
+   */
+  skills: {
+    enabled: boolean;
+    /** Absolute paths added in Settings → Skills. */
+    extraDirectories: string[];
+    /** Skill names (frontmatter name or dirname) excluded from the tool. */
+    disabled: string[];
+  };
+  /**
    * Inline Tab autocomplete (ghost text). Uses Harbor providers via
    * openaiClient — not a separate TabCoder profile system.
    */
@@ -547,6 +559,27 @@ export function getConfig(): AgentPanelConfig {
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
     },
+    skills: (() => {
+      const extraRaw = cfg.get<unknown>("skills.extraDirectories");
+      const extraDirectories = Array.isArray(extraRaw)
+        ? extraRaw
+            .map((p) => String(p || "").trim())
+            .filter(Boolean)
+            .filter((p, i, all) => all.indexOf(p) === i)
+        : [];
+      const disabledRaw = cfg.get<unknown>("skills.disabled");
+      const disabled = Array.isArray(disabledRaw)
+        ? disabledRaw
+            .map((n) => String(n || "").trim())
+            .filter(Boolean)
+            .filter((n, i, all) => all.indexOf(n) === i)
+        : [];
+      return {
+        enabled: cfg.get<boolean>("skills.enabled") !== false,
+        extraDirectories,
+        disabled,
+      };
+    })(),
     tabAutocomplete: (() => {
       const rawAgg = String(
         cfg.get<string>("tabAutocomplete.aggressiveness") || "medium"

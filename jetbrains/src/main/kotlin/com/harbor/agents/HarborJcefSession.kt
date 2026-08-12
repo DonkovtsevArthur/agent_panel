@@ -53,6 +53,7 @@ class HarborJcefSession(
     Disposer.register(this, hostBridge)
     parent.add(browser.component, BorderLayout.CENTER)
     HarborJcefFocus.install(browser)
+    HarborJcefChrome.install(browser)
     HarborFileDrop.install(
       browser.component,
       onAttachments = { attachments ->

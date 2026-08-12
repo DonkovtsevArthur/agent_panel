@@ -109,6 +109,24 @@ $theme
     html[data-harbor-host="jetbrains"] #harborSettingsChrome .icon-btn:hover {
       background: var(--vscode-toolbar-hoverBackground);
     }
+    html[data-harbor-host="jetbrains"] #harborJcefTip {
+      position: fixed;
+      z-index: 2147483646;
+      max-width: min(280px, calc(100vw - 16px));
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+      background: var(--vscode-editorWidget-background, var(--vscode-editor-background, #2b2b2b));
+      color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ccc));
+      font: 12px/1.35 var(--vscode-font-family, system-ui, sans-serif);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    html[data-harbor-host="jetbrains"] #harborJcefTip[hidden] {
+      display: none !important;
+    }
   </style>
 </head>
 <body>

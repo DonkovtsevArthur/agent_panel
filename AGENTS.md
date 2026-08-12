@@ -27,6 +27,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) — used by commit utility path |
+| Agent Skills | `src/harborSkills.ts` + Settings → Skills; dirs `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus `agentPanel.skills.extraDirectories`. No auto-scan of `.agents` / `.cline` / `.cursor` skill trees. Runtime: Cline `skills` tool via `clineRuntime` `localRuntime.userInstructionService`. |
 | MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
 | Webview UI | `media/panel.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
 | Host protocol (shared) | `packages/harbor-host-protocol/` (+ `src/hostProtocol.ts` for VS Code) |

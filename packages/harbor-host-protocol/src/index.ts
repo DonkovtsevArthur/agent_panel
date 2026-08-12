@@ -139,6 +139,13 @@ export type WebviewToHost =
   | { type: "mcpDeleteServer"; id: string }
   | { type: "mcpSetEnabled"; id: string; enabled: boolean }
   | { type: "mcpConnectServer"; id: string }
+  | { type: "skillsRefreshList" }
+  | { type: "skillsSetMasterEnabled"; enabled: boolean }
+  | { type: "skillsSetEnabled"; name: string; enabled: boolean }
+  | { type: "skillsAddDirectory"; path: string }
+  | { type: "skillsRemoveDirectory"; path: string }
+  | { type: "skillsPickDirectory" }
+  | { type: "skillsOpenPath"; path: string }
   | {
       type: "listProviderModels";
       requestId: string;
@@ -173,6 +180,7 @@ export type HostToWebview =
   | { type: "modelsUpdated"; [key: string]: unknown }
   | { type: "modesUpdated"; [key: string]: unknown }
   | { type: "mcpServers"; [key: string]: unknown }
+  | { type: "skillsList"; [key: string]: unknown }
   | { type: "figmaStatus"; [key: string]: unknown }
   | { type: "figmaNeedsConnect"; [key: string]: unknown }
   | { type: "attachmentsAdded"; [key: string]: unknown }

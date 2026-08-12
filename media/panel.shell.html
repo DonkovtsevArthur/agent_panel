@@ -151,6 +151,10 @@
           <span class="material-symbols-outlined" aria-hidden="true">electrical_services</span>
           <span class="settings-nav-label" data-i18n-nav="mcpServers">MCP Servers</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="skills">
+          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+          <span class="settings-nav-label" data-i18n-nav="skillsSection">Skills</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="browser">
           <span class="material-symbols-outlined" aria-hidden="true">web</span>
           <span class="settings-nav-label" data-i18n-nav="browserAgent">Browser agent</span>
@@ -257,6 +261,43 @@
             <div id="mcpServersList" class="mcp-servers-list"></div>
             <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
           </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="skills" hidden>
+          <h3 class="settings-section-title" id="settingsSkillsTitle">Skills</h3>
+          <p class="settings-section-note" id="settingsSkillsNote">
+            On-demand instruction packs (SKILL.md). Harbor scans
+            <code>.harbor/skills</code> in the workspace and
+            <code>~/.harbor/skills</code>, plus folders you add below.
+          </p>
+          <label class="settings-field settings-check">
+            <input id="settingsSkillsEnabled" type="checkbox" checked />
+            <span class="settings-label" id="settingsSkillsEnabledLabel">Enable skills</span>
+          </label>
+          <div class="skills-toolbar">
+            <button type="button" class="text-btn" id="skillsRefreshBtn">
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+              <span id="skillsRefreshLabel">Refresh</span>
+            </button>
+            <button type="button" class="text-btn" id="skillsAddFolderBtn">
+              <span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span>
+              <span id="skillsAddFolderLabel">Add folder</span>
+            </button>
+            <button type="button" class="text-btn" id="skillsOpenHarborBtn">
+              <span class="material-symbols-outlined" aria-hidden="true">folder_open</span>
+              <span id="skillsOpenHarborLabel">Open Harbor folder</span>
+            </button>
+          </div>
+          <div class="skills-section-head">
+            <h4 class="skills-section-title" id="skillsListTitle">Installed skills</h4>
+            <span class="skills-section-count" id="skillsListCount">0</span>
+          </div>
+          <div id="skillsList" class="skills-list"></div>
+          <div id="skillsEmpty" class="skills-empty" hidden>No skills found yet.</div>
+          <div class="skills-section-head">
+            <h4 class="skills-section-title" id="skillsFoldersTitle">Folders</h4>
+          </div>
+          <div id="skillsFoldersList" class="skills-folders-list"></div>
         </section>
 
         <section class="settings-panel" data-settings-panel="browser" hidden>

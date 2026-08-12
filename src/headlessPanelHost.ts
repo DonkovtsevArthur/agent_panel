@@ -15,6 +15,12 @@ import {
   resolveProviderProbeUrl,
 } from "./config";
 import {
+  buildSkillsListPayload,
+  ensureHarborSkillRoots,
+  globalHarborSkillsDir,
+  workspaceHarborSkillsDir,
+} from "./harborSkills";
+import {
   AgentsStoreV2,
   UiMessage,
   archiveAgentInStore,
@@ -385,6 +391,7 @@ export class HeadlessPanelHost {
       }
       case "showSettings":
         this.postSettingsPayload();
+        this.postSkillsList();
         this.post({ type: "showSettings" });
         return { ok: true };
       case "closeSettings":
@@ -413,6 +420,25 @@ export class HeadlessPanelHost {
         return this.handleMcpUpsert(
           (msg.server || {}) as Record<string, unknown>
         );
+      case "skillsRefreshList":
+        this.postSkillsList();
+        return { ok: true };
+      case "skillsSetMasterEnabled":
+        return this.handleSkillsSetMasterEnabled(Boolean(msg.enabled));
+      case "skillsSetEnabled":
+        return this.handleSkillsSetEnabled(
+          String(msg.name || ""),
+          Boolean(msg.enabled)
+        );
+      case "skillsAddDirectory":
+        return this.handleSkillsAddDirectory(String(msg.path || ""));
+      case "skillsRemoveDirectory":
+        return this.handleSkillsRemoveDirectory(String(msg.path || ""));
+      case "skillsPickDirectory":
+        // Folder picker is IDE-native (VS Code dialog / JetBrains FileChooser).
+        return { ok: true, deferred: true, type: msg.type };
+      case "skillsOpenPath":
+        return { ok: true, deferred: true, type: msg.type };
       default:
         return { ok: true, deferred: true, type: msg.type };
     }
@@ -472,6 +498,9 @@ export class HeadlessPanelHost {
       subagentsEnabled: config.subagents.enabled,
       parallelToolCallsEnabled: config.parallelToolCalls.enabled,
       autoCompactEnabled: config.autoCompact.enabled,
+      skillsEnabled: config.skills.enabled,
+      skillsExtraDirectories: config.skills.extraDirectories,
+      skillsDisabled: config.skills.disabled,
       tabAutocompleteEnabled: config.tabAutocomplete.enabled,
       tabAutocompleteModelId: config.tabAutocomplete.modelId,
       tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
@@ -2000,6 +2029,84 @@ export class HeadlessPanelHost {
       type: "mcpServers",
       servers: list,
     });
+  }
+
+  private postSkillsList(): void {
+    const cwd = this.opts.workspaceRoot || process.cwd();
+    ensureHarborSkillRoots(cwd);
+    const config = getConfig().skills;
+    this.post({
+      type: "skillsList",
+      ...buildSkillsListPayload(cwd, config),
+    });
+  }
+
+  private handleSkillsSetMasterEnabled(enabled: boolean): unknown {
+    this.persistUiSettings({ skillsEnabled: enabled !== false });
+    this.reloadSettings();
+    this.postSkillsList();
+    this.postSettingsPayload();
+    return { ok: true };
+  }
+
+  private handleSkillsSetEnabled(name: string, enabled: boolean): unknown {
+    const skillName = String(name || "").trim();
+    if (!skillName) {
+      return { ok: false };
+    }
+    const disabled = [...getConfig().skills.disabled];
+    const lower = skillName.toLowerCase();
+    const next = enabled
+      ? disabled.filter((n) => n.toLowerCase() !== lower)
+      : disabled.some((n) => n.toLowerCase() === lower)
+        ? disabled
+        : [...disabled, skillName];
+    this.persistUiSettings({ skillsDisabled: next });
+    this.reloadSettings();
+    this.postSkillsList();
+    return { ok: true };
+  }
+
+  private handleSkillsAddDirectory(rawPath: string): unknown {
+    const dir = String(rawPath || "").trim();
+    if (!dir) {
+      return { ok: false };
+    }
+    const cwd = this.opts.workspaceRoot || process.cwd();
+    const normalized = path.resolve(dir);
+    const builtins = new Set([
+      path.resolve(workspaceHarborSkillsDir(cwd)),
+      path.resolve(globalHarborSkillsDir()),
+    ]);
+    if (builtins.has(normalized)) {
+      this.postSkillsList();
+      return { ok: true };
+    }
+    const extra = [...getConfig().skills.extraDirectories];
+    if (!extra.some((p) => path.resolve(String(p || "")) === normalized)) {
+      extra.push(normalized);
+    }
+    this.persistUiSettings({ skillsExtraDirectories: extra });
+    this.reloadSettings();
+    this.postSkillsList();
+    this.postSettingsPayload();
+    return { ok: true };
+  }
+
+  private handleSkillsRemoveDirectory(rawPath: string): unknown {
+    const dir = String(rawPath || "").trim();
+    if (!dir) {
+      return { ok: false };
+    }
+    const normalized = path.resolve(dir);
+    const extra = getConfig().skills.extraDirectories.filter(
+      (p) => path.resolve(String(p || "")) !== normalized
+    );
+    this.persistUiSettings({ skillsExtraDirectories: extra });
+    this.reloadSettings();
+    this.postSkillsList();
+    this.postSettingsPayload();
+    return { ok: true };
   }
 
   private async refreshFigmaStatus(): Promise<unknown> {

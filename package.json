@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.83",
+  "version": "1.1.85",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -596,6 +596,27 @@
           "type": "boolean",
           "default": true,
           "description": "%config.autoCompact.enabled.description%"
+        },
+        "agentPanel.skills.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.enabled.description%"
+        },
+        "agentPanel.skills.extraDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.extraDirectories.description%"
+        },
+        "agentPanel.skills.disabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.disabled.description%"
         },
         "agentPanel.tabAutocomplete.enabled": {
           "type": "boolean",

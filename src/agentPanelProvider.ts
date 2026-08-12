@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "path";
 import {
   IncomingAttachment,
   MessageAttachment,
@@ -51,6 +52,12 @@ import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
+import {
+  buildSkillsListPayload,
+  ensureHarborSkillRoots,
+  globalHarborSkillsDir,
+  workspaceHarborSkillsDir,
+} from "./harborSkills";
 import {
   modeThinkingLabel,
   parseCustomModes,
@@ -134,6 +141,9 @@ type SettingsPayload = {
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
+  skillsEnabled?: boolean;
+  skillsExtraDirectories?: string[];
+  skillsDisabled?: string[];
   tabAutocompleteEnabled?: boolean;
   tabAutocompleteModelId?: string;
   tabAutocompleteAggressiveness?: string;
@@ -263,6 +273,13 @@ type WebviewToHost =
   | { type: "mcpDeleteServer"; id: string }
   | { type: "mcpSetEnabled"; id: string; enabled: boolean }
   | { type: "mcpConnectServer"; id: string }
+  | { type: "skillsRefreshList" }
+  | { type: "skillsSetMasterEnabled"; enabled: boolean }
+  | { type: "skillsSetEnabled"; name: string; enabled: boolean }
+  | { type: "skillsAddDirectory"; path: string }
+  | { type: "skillsRemoveDirectory"; path: string }
+  | { type: "skillsPickDirectory" }
+  | { type: "skillsOpenPath"; path: string }
   | {
       type: "listProviderModels";
       requestId: string;
@@ -650,6 +667,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.settingsPanel.title = title;
       this.settingsPanel.reveal(vscode.ViewColumn.Active);
       this.postSettings();
+      this.postSkillsList();
       this.settingsPanel.webview.postMessage({
         type: "showSettings",
         openMcp: this.pendingSettingsOpenMcp,
@@ -1880,6 +1898,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "ready":
         if (message.surface === "settings") {
           this.postSettings();
+          this.postSkillsList();
           this.settingsPanel?.webview.postMessage({
             type: "showSettings",
             openMcp: this.pendingSettingsOpenMcp,
@@ -2025,6 +2044,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "mcpConnectServer":
         await this.handleMcpConnect(message.id);
+        break;
+      case "skillsRefreshList":
+        this.postSkillsList();
+        break;
+      case "skillsSetMasterEnabled":
+        await this.handleSkillsSetMasterEnabled(Boolean(message.enabled));
+        break;
+      case "skillsSetEnabled":
+        await this.handleSkillsSetEnabled(
+          String(message.name || ""),
+          Boolean(message.enabled)
+        );
+        break;
+      case "skillsAddDirectory":
+        await this.handleSkillsAddDirectory(String(message.path || ""));
+        break;
+      case "skillsRemoveDirectory":
+        await this.handleSkillsRemoveDirectory(String(message.path || ""));
+        break;
+      case "skillsPickDirectory":
+        await this.handleSkillsPickDirectory();
+        break;
+      case "skillsOpenPath":
+        await this.handleSkillsOpenPath(String(message.path || ""));
         break;
       case "listProviderModels":
         await this.handleListProviderModels(message);
@@ -4177,6 +4220,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         subagentsEnabled: config.subagents.enabled,
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
+        skillsEnabled: config.skills.enabled,
+        skillsExtraDirectories: config.skills.extraDirectories,
+        skillsDisabled: config.skills.disabled,
         tabAutocompleteEnabled: config.tabAutocomplete.enabled,
         tabAutocompleteModelId: config.tabAutocomplete.modelId,
         tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
@@ -4236,6 +4282,137 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "mcpServers",
       servers: list,
     });
+  }
+
+  private workspaceCwdForSkills(): string {
+    return (
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd()
+    );
+  }
+
+  private postSkillsList(): void {
+    const cwd = this.workspaceCwdForSkills();
+    ensureHarborSkillRoots(cwd);
+    const config = getConfig().skills;
+    const payload = buildSkillsListPayload(cwd, config);
+    const msg = { type: "skillsList" as const, ...payload };
+    this.settingsPanel?.webview.postMessage(msg);
+    this.view?.webview.postMessage(msg);
+  }
+
+  private async updateSkillsConfig(
+    patch: Partial<{
+      enabled: boolean;
+      extraDirectories: string[];
+      disabled: string[];
+    }>
+  ): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration("agentPanel");
+    const target = vscode.ConfigurationTarget.Global;
+    if (patch.enabled !== undefined) {
+      await cfg.update("skills.enabled", patch.enabled !== false, target);
+    }
+    if (patch.extraDirectories) {
+      await cfg.update(
+        "skills.extraDirectories",
+        patch.extraDirectories,
+        target
+      );
+    }
+    if (patch.disabled) {
+      await cfg.update("skills.disabled", patch.disabled, target);
+    }
+    this.postSkillsList();
+    this.postSettings();
+  }
+
+  private async handleSkillsSetMasterEnabled(enabled: boolean): Promise<void> {
+    await this.updateSkillsConfig({ enabled });
+  }
+
+  private async handleSkillsSetEnabled(
+    name: string,
+    enabled: boolean
+  ): Promise<void> {
+    const skillName = String(name || "").trim();
+    if (!skillName) {
+      return;
+    }
+    const disabled = [...getConfig().skills.disabled];
+    const lower = skillName.toLowerCase();
+    const next = enabled
+      ? disabled.filter((n) => n.toLowerCase() !== lower)
+      : disabled.some((n) => n.toLowerCase() === lower)
+        ? disabled
+        : [...disabled, skillName];
+    await this.updateSkillsConfig({ disabled: next });
+  }
+
+  private async handleSkillsAddDirectory(rawPath: string): Promise<void> {
+    const dir = String(rawPath || "").trim();
+    if (!dir) {
+      return;
+    }
+    const cwd = this.workspaceCwdForSkills();
+    const normalized = path.resolve(dir);
+    const builtins = new Set([
+      path.resolve(workspaceHarborSkillsDir(cwd)),
+      path.resolve(globalHarborSkillsDir()),
+    ]);
+    if (builtins.has(normalized)) {
+      this.postSkillsList();
+      return;
+    }
+    const extra = [...getConfig().skills.extraDirectories];
+    if (!extra.some((p) => path.resolve(String(p || "")) === normalized)) {
+      extra.push(normalized);
+    }
+    await this.updateSkillsConfig({ extraDirectories: extra });
+  }
+
+  private async handleSkillsRemoveDirectory(rawPath: string): Promise<void> {
+    const dir = String(rawPath || "").trim();
+    if (!dir) {
+      return;
+    }
+    const normalized = path.resolve(dir);
+    const extra = getConfig().skills.extraDirectories.filter(
+      (p) => path.resolve(String(p || "")) !== normalized
+    );
+    await this.updateSkillsConfig({ extraDirectories: extra });
+  }
+
+  private async handleSkillsPickDirectory(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Add skills folder",
+    });
+    const fsPath = picked?.[0]?.fsPath;
+    if (fsPath) {
+      await this.handleSkillsAddDirectory(fsPath);
+    }
+  }
+
+  private async handleSkillsOpenPath(rawPath: string): Promise<void> {
+    const target = String(rawPath || "").trim();
+    if (!target) {
+      return;
+    }
+    try {
+      const uri = vscode.Uri.file(target);
+      const stat = await vscode.workspace.fs.stat(uri);
+      if (stat.type & vscode.FileType.Directory) {
+        await vscode.commands.executeCommand("revealInExplorer", uri);
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { preview: true });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      void vscode.window.showWarningMessage(text);
+    }
   }
 
   private async handleMcpUpsert(raw: {
@@ -4606,6 +4783,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       raw.autoCompactEnabled !== false,
       target
     );
+    await cfg.update("skills.enabled", raw.skillsEnabled !== false, target);
+    const skillsExtra = Array.isArray(raw.skillsExtraDirectories)
+      ? raw.skillsExtraDirectories
+          .map((p) => String(p || "").trim())
+          .filter(Boolean)
+          .filter((p, i, all) => all.indexOf(p) === i)
+      : getConfig().skills.extraDirectories;
+    await cfg.update("skills.extraDirectories", skillsExtra, target);
+    const skillsDisabled = Array.isArray(raw.skillsDisabled)
+      ? raw.skillsDisabled
+          .map((n) => String(n || "").trim())
+          .filter(Boolean)
+          .filter((n, i, all) => all.indexOf(n) === i)
+      : getConfig().skills.disabled;
+    await cfg.update("skills.disabled", skillsDisabled, target);
     await cfg.update(
       "tabAutocomplete.enabled",
       raw.tabAutocompleteEnabled === true,

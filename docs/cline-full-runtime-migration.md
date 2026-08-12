@@ -54,6 +54,7 @@ Cline владеет: что можно в Ask/Plan/Agent и как исполн
 1. History restore с image parts (не только текст).
 2. MCP: либо оставить Harbor bridge как host-provided tools, либо их MCP loader + наши credentials.
 3. Rules: Harbor `AGENTS.md` / `.cursor/rules` → через Cline user-instructions extension или наш prepareTurn.
+3b. **Skills (сделано):** Harbor-only dirs (`.harbor/skills`, `~/.harbor/skills` + Settings extra) → Cline `createUserInstructionConfigService` / `skills` tool; Settings → Skills UI. Без автоскана `.agents`/`.cline`/`.cursor`.
 4. Долгоживущая Cline-сессия, привязанная к id чата Harbor (сейчас — новая сессия на каждый ход).
 
 ### Phase 4 — опционально

@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "0.1.55"
+version = "0.1.59"
 
 repositories {
     mavenCentral()
@@ -68,17 +68,17 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>0.1.58</b>
+            <ul>
+              <li>Курсор pointer и tooltip в WebStorm (JCEF OSR): in-page tip + re-assert cursor</li>
+            </ul>
+            <b>0.1.56</b>
+            <ul>
+              <li>Кастомный цвет режима на кубике-спиннере в списке агентов</li>
+            </ul>
             <b>0.1.55</b>
             <ul>
               <li>Клик по чату в списке с первого раза (JCEF OSR pointerdown + focus)</li>
-            </ul>
-            <b>0.1.54</b>
-            <ul>
-              <li>Фикс пропадания сообщений пользователя при быстром переключении чатов (JCEF)</li>
-            </ul>
-            <b>0.1.53</b>
-            <ul>
-              <li>Фикс кнопки «отправить» при редактировании сообщения пользователя (JCEF)</li>
             </ul>
             """.trimIndent()
         )
