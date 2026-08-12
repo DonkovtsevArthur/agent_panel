@@ -330,6 +330,18 @@
       edit: "Edit",
       newMode: "New Mode",
       enterModeName: "Enter a mode name",
+      modeDescription: "Description",
+      modeTools: "Tools",
+      modeToolsAgent: "Agent — read and edit",
+      modeToolsReadonly: "Read only",
+      modePrompt: "Mode prompt",
+      modePromptPlaceholder: "Instructions for this mode...",
+      modeNamePlaceholder: "e.g. Review",
+      modeDescriptionPlaceholder: "Short tooltip text",
+      modeColor: "Color",
+      modeColorNone: "None",
+      modeColorCustom: "Custom",
+      modeColorHint: "Composer border and user messages in this mode.",
       archiveEmpty: "Archive is empty.",
       restore: "Restore",
       delete: "Delete",
@@ -742,6 +754,18 @@
       edit: "Изменить",
       newMode: "Новый режим",
       enterModeName: "Укажите название режима",
+      modeDescription: "Описание",
+      modeTools: "Инструменты",
+      modeToolsAgent: "Agent — чтение и правки",
+      modeToolsReadonly: "Только чтение",
+      modePrompt: "Промпт режима",
+      modePromptPlaceholder: "Инструкции для этого режима…",
+      modeNamePlaceholder: "например, Review",
+      modeDescriptionPlaceholder: "Краткий текст подсказки",
+      modeColor: "Цвет",
+      modeColorNone: "Без цвета",
+      modeColorCustom: "Свой",
+      modeColorHint: "Обводка композера и сообщений пользователя в этом режиме.",
       archiveEmpty: "Архив пуст.",
       restore: "Восстановить",
       delete: "Удалить",
@@ -1194,6 +1218,8 @@
   const modeEditDescription = document.getElementById("modeEditDescription");
   const modeEditTools = document.getElementById("modeEditTools");
   const modeEditPrompt = document.getElementById("modeEditPrompt");
+  const modeEditColor = document.getElementById("modeEditColor");
+  const modeEditColorRow = document.getElementById("modeEditColorRow");
   const modeEditCloseBtn = document.getElementById("modeEditCloseBtn");
   const modeEditCancelBtn = document.getElementById("modeEditCancelBtn");
   const modeEditDoneBtn = document.getElementById("modeEditDoneBtn");
@@ -1524,6 +1550,7 @@
     if (settingsModesNote) settingsModesNote.textContent = t("modesNote");
     const addModeBtnEl = document.getElementById("addModeBtn");
     if (addModeBtnEl) addModeBtnEl.textContent = t("addModeShort");
+    applyModeEditModalStrings();
     const settingsLanguageLabel = document.getElementById(
       "settingsLanguageLabel"
     );
@@ -2644,6 +2671,311 @@
       }
     });
   }
+
+  /**
+   * OSR JCEF: native <select> gets :focus but the OS popup never appears.
+   * Replace open with an in-page listbox (JetBrains host only).
+   *
+   * Important: do not rely on `click` after `pointerdown.preventDefault` —
+   * OSR often never synthesizes click. Select on pointerdown instead.
+   */
+  function installHarborSelectPolyfill() {
+    if (!harborHostAvailable()) {
+      return;
+    }
+    let menuEl = null;
+    let activeSelect = null;
+    let pointerHandled = false;
+
+    function closeHarborSelectMenu() {
+      if (menuEl) {
+        menuEl.remove();
+        menuEl = null;
+      }
+      if (activeSelect) {
+        activeSelect.classList.remove("harbor-select-open");
+      }
+      activeSelect = null;
+    }
+
+    function applyOption(select, value) {
+      if (!select) {
+        return;
+      }
+      const previous = select.value;
+      const wanted = value == null ? "" : String(value);
+      let matched = false;
+      for (let i = 0; i < select.options.length; i++) {
+        const opt = select.options[i];
+        const isMatch = String(opt.value) === wanted;
+        opt.selected = isMatch;
+        if (isMatch) {
+          select.selectedIndex = i;
+          matched = true;
+        }
+      }
+      if (!matched) {
+        select.value = wanted;
+      }
+      // OSR sometimes keeps stale label until a forced reflow.
+      select.blur();
+      try {
+        select.focus({ preventScroll: true });
+      } catch {
+        select.focus();
+      }
+      if (select.value !== previous || wanted !== previous) {
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+
+    function openHarborSelectMenu(select) {
+      closeHarborSelectMenu();
+      if (!select || select.disabled) {
+        return;
+      }
+      activeSelect = select;
+      select.classList.add("harbor-select-open");
+      try {
+        select.focus({ preventScroll: true });
+      } catch {
+        select.focus();
+      }
+
+      menuEl = document.createElement("div");
+      menuEl.className = "harbor-select-menu";
+      menuEl.setAttribute("role", "listbox");
+
+      const options = Array.from(select.options || []);
+      for (const opt of options) {
+        if (opt.disabled && opt.hidden) {
+          continue;
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "harbor-select-option";
+        btn.setAttribute("role", "option");
+        // data-value is unreliable for "" — keep explicit attribute.
+        btn.setAttribute("data-harbor-value", opt.value);
+        btn.dataset.value = opt.value;
+        if (opt.selected || opt.value === select.value) {
+          btn.classList.add("is-selected");
+          btn.setAttribute("aria-selected", "true");
+        }
+        btn.textContent = opt.label || opt.textContent || opt.value || "";
+        menuEl.appendChild(btn);
+      }
+
+      document.body.appendChild(menuEl);
+      const rect = select.getBoundingClientRect();
+      const maxH = Math.min(280, Math.max(120, window.innerHeight - 24));
+      menuEl.style.maxHeight = `${maxH}px`;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+      const width = Math.max(rect.width, 180);
+      menuEl.style.minWidth = `${Math.min(width, window.innerWidth - 16)}px`;
+      menuEl.style.left = `${Math.max(
+        8,
+        Math.min(rect.left, window.innerWidth - width - 8)
+      )}px`;
+      if (openUp) {
+        menuEl.classList.add("opens-up");
+        menuEl.style.bottom = `${Math.max(
+          8,
+          window.innerHeight - rect.top + 4
+        )}px`;
+        menuEl.style.top = "auto";
+      } else {
+        menuEl.style.top = `${Math.min(
+          rect.bottom + 4,
+          window.innerHeight - 40
+        )}px`;
+        menuEl.style.bottom = "auto";
+      }
+      forceHarborUiRepaint();
+    }
+
+    const onPointer = (event) => {
+      const target = event.target;
+      if (!target || !target.closest) {
+        return;
+      }
+
+      // Pick option first (capture phase) — don't wait for click.
+      const option = target.closest(".harbor-select-option");
+      if (option && menuEl && menuEl.contains(option)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const select = activeSelect;
+        const value =
+          option.getAttribute("data-harbor-value") != null
+            ? option.getAttribute("data-harbor-value")
+            : option.dataset.value !== undefined
+              ? option.dataset.value
+              : "";
+        applyOption(select, value);
+        closeHarborSelectMenu();
+        forceHarborUiRepaint();
+        return;
+      }
+
+      if (menuEl && menuEl.contains(target)) {
+        // Scrollbar / padding inside menu — keep open.
+        event.stopPropagation();
+        return;
+      }
+
+      const pathSelect = target.closest("select");
+      if (pathSelect) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeSelect === pathSelect && menuEl) {
+          closeHarborSelectMenu();
+        } else {
+          openHarborSelectMenu(pathSelect);
+        }
+        return;
+      }
+
+      if (menuEl) {
+        closeHarborSelectMenu();
+      }
+    };
+
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        pointerHandled = true;
+        onPointer(event);
+        setTimeout(() => {
+          pointerHandled = false;
+        }, 0);
+      },
+      true
+    );
+    document.addEventListener(
+      "mousedown",
+      (event) => {
+        if (pointerHandled) {
+          return;
+        }
+        onPointer(event);
+      },
+      true
+    );
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape" && menuEl) {
+          closeHarborSelectMenu();
+          return;
+        }
+        const el = document.activeElement;
+        if (
+          el &&
+          el.tagName === "SELECT" &&
+          (event.key === "Enter" ||
+            event.key === " " ||
+            event.key === "ArrowDown")
+        ) {
+          event.preventDefault();
+          openHarborSelectMenu(el);
+        }
+      },
+      true
+    );
+    window.addEventListener("resize", closeHarborSelectMenu);
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (!menuEl) {
+          return;
+        }
+        if (event.target === menuEl || menuEl.contains(event.target)) {
+          return;
+        }
+        closeHarborSelectMenu();
+      },
+      true
+    );
+  }
+
+  installHarborSelectPolyfill();
+
+  /**
+   * OSR often drops the synthesized `click` after pointerup on icon/primary
+   * controls (edit-resend, send, regenerate). Retry via el.click() if needed.
+   */
+  function installHarborClickPolyfill() {
+    if (!harborHostAvailable()) {
+      return;
+    }
+    const SELECTOR =
+      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .composer-plan-build";
+    let downEl = null;
+    let clickSeen = false;
+
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        const el =
+          event.target && event.target.closest
+            ? event.target.closest(SELECTOR)
+            : null;
+        downEl = el && !el.disabled ? el : null;
+        clickSeen = false;
+      },
+      true
+    );
+
+    document.addEventListener(
+      "click",
+      () => {
+        if (downEl) {
+          clickSeen = true;
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      "pointerup",
+      (event) => {
+        if (event.button !== 0 || !downEl) {
+          downEl = null;
+          return;
+        }
+        const start = downEl;
+        downEl = null;
+        const el =
+          event.target && event.target.closest
+            ? event.target.closest(SELECTOR)
+            : null;
+        if (!el || (el !== start && !start.contains(el) && !el.contains(start))) {
+          return;
+        }
+        window.setTimeout(() => {
+          if (clickSeen) {
+            return;
+          }
+          try {
+            el.click();
+          } catch {
+            /* ignore */
+          }
+          forceHarborUiRepaint();
+        }, 40);
+      },
+      true
+    );
+  }
+
+  installHarborClickPolyfill();
 
   function renderAttachPreview() {
     if (!attachPreviewEl) {
@@ -4097,7 +4429,13 @@
       label.textContent = modeDisplayName(editingModeId);
     }
     if (picker) {
-      picker.dataset.mode = editingModeId;
+      applyModeAccentToElement(picker, editingModeId);
+    }
+    const editComposer = messagesEl
+      ? messagesEl.querySelector(".msg-edit-composer")
+      : null;
+    if (editComposer) {
+      applyModeAccentToElement(editComposer, editingModeId);
     }
     closeEditModeMenu();
   }
@@ -8806,6 +9144,9 @@
         if (m.placeholder) {
           row.placeholder = m.placeholder;
         }
+        if (m.color) {
+          row.color = m.color;
+        }
         if (m.enabled === false) {
           row.enabled = false;
         }
@@ -8911,6 +9252,7 @@
       description: m.description || "",
       tools: m.tools === "readonly" ? "readonly" : "agent",
       prompt: m.prompt || "",
+      color: normalizeModeColorUi(m.color) || "",
       placeholder: m.placeholder || "",
       enabled: m.enabled !== false,
       builtin: Boolean(m.builtin) || ["agent", "plan", "ask"].includes(m.id),
@@ -8990,10 +9332,166 @@
     modeEditSource = "settings";
   }
 
+  const MODE_ACCENT_DEFAULTS = {
+    plan: "#a67c00",
+    ask: "#2d6a4f",
+  };
+
+  function normalizeModeColorUi(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "";
+    }
+    const match = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!match) {
+      return "";
+    }
+    const hex = match[1];
+    if (hex.length === 3) {
+      const [a, b, c] = hex.split("");
+      return `#${a}${a}${b}${b}${c}${c}`.toLowerCase();
+    }
+    return `#${hex}`.toLowerCase();
+  }
+
+  function resolveModeAccent(modeId) {
+    const id = String(modeId || "").trim();
+    if (!id) {
+      return "";
+    }
+    const modes = chatModes.length
+      ? chatModes
+      : settingsModes.length
+        ? settingsModes
+        : DEFAULT_CHAT_MODES;
+    const mode = modes.find((m) => m.id === id);
+    const custom = normalizeModeColorUi(mode?.color);
+    if (custom) {
+      return custom;
+    }
+    return MODE_ACCENT_DEFAULTS[id] || "";
+  }
+
+  function applyModeAccentToElement(el, modeId) {
+    if (!el) {
+      return;
+    }
+    const id = String(modeId || "").trim();
+    if (id) {
+      el.dataset.mode = id;
+    } else {
+      delete el.dataset.mode;
+    }
+    const accent = resolveModeAccent(id);
+    if (accent) {
+      el.style.setProperty("--mode-accent", accent);
+      el.classList.add("has-mode-accent");
+    } else {
+      el.style.removeProperty("--mode-accent");
+      el.classList.remove("has-mode-accent");
+    }
+  }
+
+  function getModeEditColor() {
+    if (!modeEditColorRow) {
+      return "";
+    }
+    const active = modeEditColorRow.querySelector(
+      ".mode-color-swatch.is-active"
+    );
+    if (active) {
+      return normalizeModeColorUi(active.getAttribute("data-color"));
+    }
+    if (modeEditColorRow.dataset.customActive === "1" && modeEditColor) {
+      return normalizeModeColorUi(modeEditColor.value);
+    }
+    return "";
+  }
+
+  function setModeEditColor(value) {
+    const color = normalizeModeColorUi(value);
+    if (!modeEditColorRow) {
+      return;
+    }
+    modeEditColorRow.dataset.customActive = "";
+    modeEditColorRow.querySelectorAll(".mode-color-swatch").forEach((btn) => {
+      const swatch = normalizeModeColorUi(btn.getAttribute("data-color"));
+      const isNone = btn.classList.contains("is-none");
+      btn.classList.toggle("is-active", color ? swatch === color : isNone);
+    });
+    if (color && modeEditColor) {
+      modeEditColor.value = color;
+      const matched = [...modeEditColorRow.querySelectorAll(".mode-color-swatch")].some(
+        (btn) =>
+          !btn.classList.contains("is-none") &&
+          normalizeModeColorUi(btn.getAttribute("data-color")) === color
+      );
+      if (!matched) {
+        modeEditColorRow.dataset.customActive = "1";
+        modeEditColorRow
+          .querySelectorAll(".mode-color-swatch")
+          .forEach((btn) => btn.classList.remove("is-active"));
+      }
+    }
+  }
+
+  function applyModeEditModalStrings() {
+    const nameLabel = document.getElementById("modeEditNameLabel");
+    if (nameLabel) nameLabel.textContent = t("name");
+    const descLabel = document.getElementById("modeEditDescriptionLabel");
+    if (descLabel) descLabel.textContent = t("modeDescription");
+    const toolsLabel = document.getElementById("modeEditToolsLabel");
+    if (toolsLabel) toolsLabel.textContent = t("modeTools");
+    const promptLabel = document.getElementById("modeEditPromptLabel");
+    if (promptLabel) promptLabel.textContent = t("modePrompt");
+    const colorLabel = document.getElementById("modeEditColorLabel");
+    if (colorLabel) colorLabel.textContent = t("modeColor");
+    const colorHint = document.getElementById("modeEditColorHint");
+    if (colorHint) colorHint.textContent = t("modeColorHint");
+    if (modeEditLabel) {
+      modeEditLabel.placeholder = t("modeNamePlaceholder");
+    }
+    if (modeEditDescription) {
+      modeEditDescription.placeholder = t("modeDescriptionPlaceholder");
+    }
+    if (modeEditPrompt) {
+      modeEditPrompt.placeholder = t("modePromptPlaceholder");
+    }
+    if (modeEditTools) {
+      const agentOpt = modeEditTools.querySelector('option[value="agent"]');
+      const roOpt = modeEditTools.querySelector('option[value="readonly"]');
+      if (agentOpt) agentOpt.textContent = t("modeToolsAgent");
+      if (roOpt) roOpt.textContent = t("modeToolsReadonly");
+    }
+    if (modeEditColorRow) {
+      const noneBtn = modeEditColorRow.querySelector(
+        ".mode-color-swatch.is-none"
+      );
+      if (noneBtn) {
+        noneBtn.title = t("modeColorNone");
+        noneBtn.setAttribute("aria-label", t("modeColorNone"));
+      }
+      const custom = modeEditColorRow.querySelector(".mode-color-custom");
+      if (custom) {
+        custom.title = t("modeColorCustom");
+      }
+      if (modeEditColor) {
+        modeEditColor.setAttribute("aria-label", t("modeColorCustom"));
+      }
+    }
+    if (modeEditCancelBtn) modeEditCancelBtn.textContent = t("cancel");
+    if (modeEditDoneBtn) modeEditDoneBtn.textContent = t("done");
+    if (modeEditCloseBtn) {
+      modeEditCloseBtn.title = t("close");
+      modeEditCloseBtn.setAttribute("aria-label", t("close"));
+    }
+  }
+
   function openModeEditModal(index, source) {
     if (!modeEditModal) {
       return;
     }
+    applyModeEditModalStrings();
     modeEditSource = source || "settings";
     modeEditIndex = Number.isInteger(index) ? index : -1;
     const existing =
@@ -9014,6 +9512,7 @@
     if (modeEditPrompt) {
       modeEditPrompt.value = existing ? existing.prompt || "" : "";
     }
+    setModeEditColor(existing?.color || "");
     modeEditModal.hidden = false;
     if (modeEditLabel) {
       modeEditLabel.focus();
@@ -9034,6 +9533,7 @@
         ? "readonly"
         : "agent";
     const prompt = modeEditPrompt ? modeEditPrompt.value.trim() : "";
+    const color = getModeEditColor();
     const existing =
       modeEditIndex >= 0 ? settingsModes[modeEditIndex] : null;
     let id = existing && existing.id ? existing.id : slugifyModeId(label);
@@ -9054,6 +9554,7 @@
       description,
       tools,
       prompt,
+      color,
       enabled: true,
       builtin: isBuiltin,
       overridden: true,
@@ -9077,6 +9578,8 @@
     persistModesNow();
     if (modeEditSource === "composer" && typeof setAgentMode === "function") {
       setAgentMode(id, { focus: true });
+    } else if (typeof setAgentMode === "function" && agentMode === id) {
+      setAgentMode(id, { close: false, notify: false });
     }
   }
 
@@ -10919,8 +11422,8 @@
         typeof index === "number"
           ? String(uiMessagesCache[index]?.mode || "").trim()
           : "";
-      if (cachedMode === "plan" || cachedMode === "ask") {
-        el.dataset.mode = cachedMode;
+      if (cachedMode) {
+        applyModeAccentToElement(el, cachedMode);
       }
     }
 
@@ -10979,6 +11482,14 @@
           `</div>` +
           `</div>` +
           `</div>`;
+        const editModePicker = body.querySelector(".msg-edit-mode-picker");
+        if (editModePicker) {
+          applyModeAccentToElement(editModePicker, editModeId);
+        }
+        const editComposer = body.querySelector(".msg-edit-composer");
+        if (editComposer) {
+          applyModeAccentToElement(editComposer, editModeId);
+        }
         const input = body.querySelector(".msg-edit-input");
         if (input) {
           input.value = editingUserText;
@@ -11326,6 +11837,7 @@
       btn.className =
         "model-option" + (mode.id === agentMode ? " is-active" : "");
       btn.dataset.mode = mode.id;
+      applyModeAccentToElement(btn, mode.id);
       btn.setAttribute("role", "option");
       const text = document.createElement("span");
       text.className = "mode-option-text";
@@ -11423,10 +11935,10 @@
       host.setState(state);
     }
     if (modePicker) {
-      modePicker.dataset.mode = agentMode;
+      applyModeAccentToElement(modePicker, agentMode);
     }
     if (composerEl) {
-      composerEl.dataset.mode = agentMode;
+      applyModeAccentToElement(composerEl, agentMode);
     }
     if (modeLabel) {
       modeLabel.textContent = meta.label || meta.id;
@@ -12692,6 +13204,30 @@
   }
   if (modeEditCloseBtn) {
     modeEditCloseBtn.addEventListener("click", () => closeModeEditModal());
+  }
+  if (modeEditColorRow) {
+    modeEditColorRow.addEventListener("click", (event) => {
+      const swatch =
+        event.target instanceof Element
+          ? event.target.closest(".mode-color-swatch")
+          : null;
+      if (swatch && modeEditColorRow.contains(swatch)) {
+        event.preventDefault();
+        setModeEditColor(swatch.getAttribute("data-color") || "");
+      }
+    });
+  }
+  if (modeEditColor) {
+    modeEditColor.addEventListener("input", () => {
+      const color = normalizeModeColorUi(modeEditColor.value);
+      if (!modeEditColorRow || !color) {
+        return;
+      }
+      modeEditColorRow.dataset.customActive = "1";
+      modeEditColorRow
+        .querySelectorAll(".mode-color-swatch")
+        .forEach((btn) => btn.classList.remove("is-active"));
+    });
   }
   if (modeEditModal) {
     modeEditModal.addEventListener("click", (event) => {

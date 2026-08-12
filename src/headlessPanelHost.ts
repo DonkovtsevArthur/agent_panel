@@ -55,6 +55,10 @@ import {
   ensureProposedPlanWrapper,
   looksLikeImplementationPlan,
 } from "./planImplement";
+import { getMcpManager } from "./mcpBundle";
+import { parseArgsInput, parseEnvLines } from "./mcpBundle";
+import type { FigmaStatusPayload } from "./mcpBundle";
+import type { McpServerRuntimeStatus } from "./mcpBundle";
 
 type ProviderConnState = "unknown" | "connecting" | "connected" | "error";
 type ChatRunState = "running" | "success" | "error";
@@ -117,6 +121,7 @@ export class HeadlessPanelHost {
   private abort?: AbortController;
   private readonly opts: HeadlessPanelOptions;
   private readonly providerConnStatuses = new Map<string, ProviderConnStatus>();
+  private lastTurnModel = "";
   private readonly providerProbePromises = new Map<
     string,
     Promise<ProviderConnStatus>
@@ -147,6 +152,8 @@ export class HeadlessPanelHost {
     HarborHeadless.install({
       workspaceRoot: this.opts.workspaceRoot,
       settings,
+      settingsPath: this.opts.settingsPath,
+      storageDir: path.dirname(this.opts.settingsPath),
     });
     // Cline uses global fetch — mirror Advanced → Validate TLS.
     applyHarborTlsPolicy(getConfig().rejectUnauthorized);
@@ -234,6 +241,20 @@ export class HeadlessPanelHost {
           attachments?: unknown;
           hideUser?: unknown;
         });
+      case "editUserMessage":
+        return this.onEditUserMessage(msg as {
+          index?: unknown;
+          text?: unknown;
+          model?: unknown;
+          agentMode?: unknown;
+          reasoningEffort?: unknown;
+          attachments?: unknown;
+        });
+      case "regenerate":
+        return this.onRegenerate(msg as {
+          agentMode?: unknown;
+          reasoningEffort?: unknown;
+        });
       case "stop":
         this.abort?.abort();
         this.abort = undefined;
@@ -307,8 +328,14 @@ export class HeadlessPanelHost {
         const settings = (msg.settings || {}) as Record<string, unknown>;
         this.persistUiSettings(settings);
         this.reloadSettings();
+        const mcp = getMcpManager();
+        if (mcp && typeof settings.figmaEnabled === "boolean") {
+          void mcp.setEnabled(settings.figmaEnabled === true);
+        }
         this.providerConnStatuses.clear();
         this.postSettingsPayload();
+        this.postFigmaStatus();
+        this.postMcpServersList();
         this.post({
           type: "modelsUpdated",
           models: this.modelsForUi(),
@@ -340,14 +367,29 @@ export class HeadlessPanelHost {
       case "closeSettings":
         return { ok: true };
       case "figmaRefreshStatus":
-        this.post({
-          type: "figmaStatus",
-          status: { state: "disconnected", enabled: false },
-        });
-        return { ok: true };
+        return this.refreshFigmaStatus();
+      case "figmaConnect":
+        return this.handleFigmaConnect();
+      case "figmaDisconnect":
+        return this.handleFigmaDisconnect();
+      case "figmaConnectPat":
+        return this.handleFigmaConnectPat(String(msg.token || ""));
       case "mcpRefreshList":
-        this.post({ type: "mcpServers", servers: [] });
+        this.postMcpServersList();
         return { ok: true };
+      case "mcpSetEnabled":
+        return this.handleMcpSetEnabled(
+          String(msg.id || ""),
+          Boolean(msg.enabled)
+        );
+      case "mcpConnectServer":
+        return this.handleMcpConnect(String(msg.id || ""));
+      case "mcpDeleteServer":
+        return this.handleMcpDelete(String(msg.id || ""));
+      case "mcpUpsertServer":
+        return this.handleMcpUpsert(
+          (msg.server || {}) as Record<string, unknown>
+        );
       default:
         return { ok: true, deferred: true, type: msg.type };
     }
@@ -422,7 +464,7 @@ export class HeadlessPanelHost {
       commitMessageScope: config.commitMessage.scope,
       workspaceName: path.basename(this.opts.workspaceRoot),
       figmaEnabled: config.figma.enabled,
-      figma: { state: "disconnected", enabled: config.figma.enabled },
+      figma: this.getFigmaStatusPayload(),
       autoglmEnabled: config.autoglm.enabled,
       autoglmBinaryPath: config.autoglm.binaryPath,
       autoglmBrowser: config.autoglm.browser,
@@ -746,11 +788,8 @@ export class HeadlessPanelHost {
     if (surface === "settings") {
       this.postSettingsPayload();
       this.post({ type: "showSettings" });
-      this.post({
-        type: "figmaStatus",
-        status: { state: "disconnected", enabled: getConfig().figma.enabled },
-      });
-      this.post({ type: "mcpServers", servers: [] });
+      this.postFigmaStatus();
+      this.postMcpServersList();
       return { ok: true };
     }
 
@@ -770,7 +809,7 @@ export class HeadlessPanelHost {
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: this.uiMessages,
       busy,
-      canRegenerate: this.history.length > 0,
+      canRegenerate: Boolean(this.getRegenerateState()),
       screen: this.store.screen || "chat",
       ...meta,
       contextUsed: this.contextTokens,
@@ -781,6 +820,8 @@ export class HeadlessPanelHost {
     });
     this.postAgentsList();
     this.postSettingsPayload();
+    this.postFigmaStatus();
+    this.postMcpServersList();
     this.post({
       type: "showChat",
       models,
@@ -789,7 +830,7 @@ export class HeadlessPanelHost {
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: this.uiMessages,
       busy,
-      canRegenerate: this.history.length > 0,
+      canRegenerate: Boolean(this.getRegenerateState()),
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
@@ -1348,6 +1389,241 @@ export class HeadlessPanelHost {
     return { ok: true };
   }
 
+  private historyContentText(content: ChatMessage["content"] | undefined): string {
+    if (!content) {
+      return "";
+    }
+    if (typeof content === "string") {
+      return content;
+    }
+    if (!Array.isArray(content)) {
+      return "";
+    }
+    return content
+      .map((part) =>
+        part && typeof part === "object" && (part as { type?: string }).type === "text"
+          ? String((part as { text?: string }).text || "")
+          : "[image]"
+      )
+      .join("\n")
+      .trim();
+  }
+
+  private getRegenerateState():
+    | {
+        userText: string;
+        attachments: MessageAttachment[];
+        model: string;
+        history: ChatMessage[];
+        uiMessages: UiMessage[];
+      }
+    | undefined {
+    const model = (this.lastTurnModel || this.selectedModel || "").trim();
+    if (!model || this.history.length < 2) {
+      return undefined;
+    }
+    const lastAssistant = this.history[this.history.length - 1];
+    const lastUser = this.history[this.history.length - 2];
+    const lastUserText = this.historyContentText(lastUser?.content);
+    const lastAssistantText = this.historyContentText(lastAssistant?.content);
+    if (
+      lastUser?.role !== "user" ||
+      !lastUserText ||
+      lastAssistant?.role !== "assistant" ||
+      !lastAssistantText
+    ) {
+      return undefined;
+    }
+    let assistantIndex = -1;
+    for (let i = this.uiMessages.length - 1; i >= 0; i--) {
+      const msg = this.uiMessages[i];
+      if (msg.role === "assistant" && String(msg.text || "").trim()) {
+        assistantIndex = i;
+        break;
+      }
+    }
+    if (assistantIndex < 0) {
+      return undefined;
+    }
+    for (let i = assistantIndex + 1; i < this.uiMessages.length; i++) {
+      const msg = this.uiMessages[i];
+      if (
+        msg.role === "user" &&
+        (String(msg.text || "").trim() || msg.attachments?.length)
+      ) {
+        return undefined;
+      }
+    }
+    let userIndex = -1;
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      const msg = this.uiMessages[i];
+      if (
+        msg.role === "user" &&
+        (String(msg.text || "").trim() || msg.attachments?.length)
+      ) {
+        userIndex = i;
+        break;
+      }
+    }
+    if (userIndex < 0) {
+      return undefined;
+    }
+    const uiUser = this.uiMessages[userIndex];
+    const attachments = (uiUser.attachments || []) as MessageAttachment[];
+    const userText =
+      String(uiUser.text || "").trim() ||
+      lastUserText
+        .replace(/\n?\[image: [^\]]+\]/g, "")
+        .replace(/\n?\[file: [^\]]+\]/g, "")
+        .trim();
+    return {
+      userText,
+      attachments,
+      model,
+      history: this.history.slice(0, -2),
+      uiMessages: this.uiMessages.slice(0, userIndex + 1),
+    };
+  }
+
+  private postRegenerateState(): void {
+    this.post({
+      type: "regenerateState",
+      canRegenerate: Boolean(this.getRegenerateState()),
+      selectedModel: this.selectedModel,
+    });
+  }
+
+  private async onEditUserMessage(msg: {
+    index?: unknown;
+    text?: unknown;
+    model?: unknown;
+    agentMode?: unknown;
+    reasoningEffort?: unknown;
+    attachments?: unknown;
+  }): Promise<unknown> {
+    const index = Number(msg.index);
+    const nextText = String(msg.text || "").trim();
+    const target = this.uiMessages[index];
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      !target ||
+      target.role !== "user"
+    ) {
+      this.postRegenerateState();
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: "bad index" };
+    }
+
+    const attachments = Array.isArray(msg.attachments)
+      ? (msg.attachments as MessageAttachment[])
+      : target.attachments || [];
+    if (!nextText && !attachments.length) {
+      this.postRegenerateState();
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: "empty" };
+    }
+
+    let userOrdinal = 0;
+    for (let i = 0; i < index; i++) {
+      if (this.uiMessages[i]?.role === "user") {
+        userOrdinal += 1;
+      }
+    }
+
+    this.abort?.abort();
+    this.abort = undefined;
+
+    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
+    const model =
+      String(msg.model || "").trim() ||
+      this.selectedModel ||
+      getConfig().defaultModel;
+    this.selectedModel = model;
+    this.selectedMode = agentMode;
+    this.history = this.history.slice(0, Math.max(0, userOrdinal * 2));
+    this.uiMessages = this.uiMessages.slice(0, index);
+    const uiMsg: UiMessage = {
+      role: "user",
+      text: nextText,
+      mode: agentMode,
+    };
+    if (attachments.length) {
+      uiMsg.attachments = attachments;
+    }
+    this.uiMessages.push(uiMsg);
+    this.lastTurnModel = "";
+    this.contextTokens = 0;
+    if (this.store.activeChatId) {
+      touchChat(this.store, this.store.activeChatId, {
+        history: this.history,
+        uiMessages: this.uiMessages,
+        selectedModel: model,
+        selectedMode: agentMode,
+        contextTokens: 0,
+      });
+      this.persist();
+    }
+    this.post({
+      type: "messagesReplaced",
+      uiMessages: this.uiMessages,
+      selectedModel: this.selectedModel,
+      canRegenerate: false,
+      chatId: this.store.activeChatId,
+    });
+    return this.onSend({
+      text: nextText,
+      model,
+      agentMode,
+      reasoningEffort: msg.reasoningEffort,
+      attachments,
+      hideUser: true,
+    });
+  }
+
+  private async onRegenerate(msg: {
+    agentMode?: unknown;
+    reasoningEffort?: unknown;
+  }): Promise<unknown> {
+    const state = this.getRegenerateState();
+    if (!state) {
+      this.postRegenerateState();
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: "cannot regenerate" };
+    }
+    this.abort?.abort();
+    this.abort = undefined;
+    this.history = state.history;
+    this.uiMessages = state.uiMessages;
+    this.selectedModel = state.model;
+    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
+    this.selectedMode = agentMode;
+    if (this.store.activeChatId) {
+      touchChat(this.store, this.store.activeChatId, {
+        history: this.history,
+        uiMessages: this.uiMessages,
+        selectedModel: this.selectedModel,
+        selectedMode: agentMode,
+      });
+      this.persist();
+    }
+    this.post({
+      type: "messagesReplaced",
+      uiMessages: this.uiMessages,
+      selectedModel: this.selectedModel,
+      canRegenerate: false,
+      chatId: this.store.activeChatId,
+    });
+    return this.onSend({
+      text: state.userText,
+      model: state.model,
+      agentMode,
+      reasoningEffort: msg.reasoningEffort,
+      attachments: state.attachments,
+      hideUser: true,
+    });
+  }
+
   private async onSend(msg: {
     text?: unknown;
     model?: unknown;
@@ -1491,6 +1767,7 @@ export class HeadlessPanelHost {
                 ? ensureProposedPlanWrapper(raw)
                 : raw;
             assistantText = displayText;
+            this.lastTurnModel = model;
             runUiMessages = [
               ...runUiMessages,
               {
@@ -1505,6 +1782,7 @@ export class HeadlessPanelHost {
               text: displayText,
               reasoning: meta?.reasoning,
             });
+            this.postRegenerateState();
           },
           onReasoning: (r) => {
             postToRun({
@@ -1603,6 +1881,169 @@ export class HeadlessPanelHost {
     } finally {
       this.abort = undefined;
       postToRun({ type: "idle" });
+    }
+  }
+
+  private getFigmaStatusPayload(): FigmaStatusPayload {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return {
+        state: "disconnected",
+        enabled: getConfig().figma.enabled,
+      };
+    }
+    return mcp.getStatus();
+  }
+
+  private postFigmaStatus(status?: FigmaStatusPayload): void {
+    const payload = status || this.getFigmaStatusPayload();
+    this.post({
+      type: "figmaStatus",
+      status: payload,
+    });
+    this.postMcpServersList();
+  }
+
+  private postMcpServersList(servers?: McpServerRuntimeStatus[]): void {
+    const mcp = getMcpManager();
+    const list = servers || mcp?.listServerStatuses() || [];
+    this.post({
+      type: "mcpServers",
+      servers: list,
+    });
+  }
+
+  private async refreshFigmaStatus(): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (mcp) {
+      await mcp.refreshSecretFlags();
+      await mcp.tryQuietReconnect();
+    }
+    this.postFigmaStatus();
+    return { ok: true };
+  }
+
+  private async handleFigmaConnect(): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      this.postFigmaStatus({
+        state: "error",
+        enabled: getConfig().figma.enabled,
+        message: "MCP manager is not available",
+        showPatFallback: true,
+      });
+      return { ok: false };
+    }
+    // Post connecting immediately so UI updates while OAuth/browser opens.
+    this.postFigmaStatus({
+      ...mcp.getStatus(),
+      state: "connecting",
+      mode: "remote",
+      message: "Opening Figma authorization…",
+    });
+    const status = await mcp.connectRemoteInteractive();
+    this.postFigmaStatus(status);
+    return { ok: status.state === "connected", status };
+  }
+
+  private async handleFigmaDisconnect(): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return { ok: false };
+    }
+    const status = await mcp.disconnect();
+    this.postFigmaStatus(status);
+    return { ok: true, status };
+  }
+
+  private async handleFigmaConnectPat(token: string): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      this.postFigmaStatus({
+        state: "error",
+        enabled: true,
+        message: "MCP manager is not available",
+        showPatFallback: true,
+      });
+      return { ok: false };
+    }
+    this.postFigmaStatus({
+      ...mcp.getStatus(),
+      state: "connecting",
+      mode: "pat",
+      message: "Starting local Figma MCP…",
+      showPatFallback: true,
+    });
+    const status = await mcp.connectWithPat(token);
+    this.postFigmaStatus(status);
+    return { ok: status.state === "connected", status };
+  }
+
+  private async handleMcpSetEnabled(
+    id: string,
+    enabled: boolean
+  ): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return { ok: false };
+    }
+    await mcp.setCustomEnabled(id, enabled);
+    this.postMcpServersList();
+    this.postFigmaStatus();
+    return { ok: true };
+  }
+
+  private async handleMcpConnect(id: string): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return { ok: false };
+    }
+    if (id === "figma") {
+      return this.handleFigmaConnect();
+    }
+    const status = await mcp.connectCustom(id);
+    this.postMcpServersList();
+    return { ok: status.state === "connected", status };
+  }
+
+  private async handleMcpDelete(id: string): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return { ok: false };
+    }
+    await mcp.deleteCustomServer(id);
+    this.postMcpServersList();
+    this.postFigmaStatus();
+    return { ok: true };
+  }
+
+  private async handleMcpUpsert(
+    raw: Record<string, unknown>
+  ): Promise<unknown> {
+    const mcp = getMcpManager();
+    if (!mcp) {
+      return { ok: false };
+    }
+    try {
+      const status = await mcp.upsertCustomServer({
+        id: typeof raw.id === "string" ? raw.id : undefined,
+        name: String(raw.name || ""),
+        transport: raw.transport === "http" ? "http" : "stdio",
+        command: typeof raw.command === "string" ? raw.command : undefined,
+        args: parseArgsInput(String(raw.argsText || "")),
+        env: parseEnvLines(String(raw.envText || "")),
+        cwd: typeof raw.cwd === "string" ? raw.cwd : undefined,
+        url: typeof raw.url === "string" ? raw.url : undefined,
+        bearerToken:
+          typeof raw.bearerToken === "string" ? raw.bearerToken : undefined,
+        enabled: raw.enabled !== false,
+        connect: raw.connect !== false,
+      });
+      this.postMcpServersList();
+      return { ok: status.state === "connected", status };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
     }
   }
 }

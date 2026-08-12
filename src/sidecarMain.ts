@@ -20,6 +20,8 @@ import {
 } from "./headlessPanelHost";
 import { HarborHeadless } from "./vscodeHeadlessStub";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
+import { initMcpManager } from "./mcpBundle";
+import type * as vscode from "vscode";
 
 function writeNotification(method: string, params: unknown): void {
   process.stdout.write(
@@ -61,9 +63,24 @@ function main(): void {
     process.env.HARBOR_SETTINGS_PATH || paths.settingsPath;
   const settings = readSettingsFile(settingsPath);
 
-  HarborHeadless.install({ workspaceRoot, settings });
+  HarborHeadless.install({
+    workspaceRoot,
+    settings,
+    settingsPath,
+    storageDir: path.dirname(settingsPath),
+  });
+  HarborHeadless.setOpenExternalHook(async (url) => {
+    writeNotification("host.openExternal", { url });
+  });
   // Before Cline/undici touch the network — honor Advanced → Validate TLS.
   applyHarborTlsPolicy(rejectUnauthorizedFromSettings(settings));
+
+  const mcp = initMcpManager(
+    HarborHeadless.getExtensionContext() as unknown as vscode.ExtensionContext
+  );
+  void mcp.refreshSecretFlags().then(() => {
+    void mcp.tryQuietReconnect();
+  });
 
   const ports: HarborHostPorts = {
     secrets: createMemorySecrets(),

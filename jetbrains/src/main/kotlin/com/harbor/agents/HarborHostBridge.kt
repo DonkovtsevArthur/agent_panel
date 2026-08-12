@@ -66,6 +66,21 @@ class HarborHostBridge(
     removeListener = sidecar.addNotificationListener { method, params ->
       when (method) {
         "hostToWebview" -> postToWebview(gson.toJson(params))
+        "host.openExternal" -> {
+          var url = params?.get("url")?.asString?.trim().orEmpty()
+          if (url.startsWith("file://https://", ignoreCase = true) ||
+            url.startsWith("file://http://", ignoreCase = true)
+          ) {
+            url = url.replaceFirst(Regex("^file:/+", RegexOption.IGNORE_CASE), "")
+          }
+          if (url.startsWith("http://", ignoreCase = true) ||
+            url.startsWith("https://", ignoreCase = true)
+          ) {
+            ApplicationManager.getApplication().invokeLater {
+              BrowserUtil.browse(url)
+            }
+          }
+        }
         "vfs.refresh" -> {
           val paths = params?.getAsJsonArray("paths")?.mapNotNull { it.asString } ?: emptyList()
           vfsRefresh.refresh(paths)
@@ -460,19 +475,6 @@ class HarborHostBridge(
             HarborSettings.close(project)
           }
         }
-      }
-      "figmaConnectPat" -> {
-        val token = obj.get("token")?.asString ?: return
-        HarborSecrets.set(HarborSecrets.figmaPatKey(project), token, project)
-        postToWebview("""{"type":"figmaStatus","connected":true}""")
-      }
-      "figmaDisconnect" -> {
-        HarborSecrets.delete(HarborSecrets.figmaPatKey(project), project)
-        postToWebview("""{"type":"figmaStatus","connected":false}""")
-      }
-      "figmaRefreshStatus" -> {
-        val connected = !HarborSecrets.get(HarborSecrets.figmaPatKey(project), project).isNullOrBlank()
-        postToWebview("""{"type":"figmaStatus","connected":$connected}""")
       }
       "commitAndPush" -> {
         sidecar.request("commit.andPush", obj) { result ->
