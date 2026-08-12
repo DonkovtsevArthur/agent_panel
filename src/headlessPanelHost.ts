@@ -1,0 +1,1619 @@
+/**
+ * Headless Harbor panel host for the JetBrains sidecar.
+ * Owns AgentsStoreV2 + agent turns; emits HostToWebview-shaped events.
+ */
+import * as fs from "fs";
+import * as path from "path";
+import { runAgentTurn } from "./agentLoop";
+import {
+  getConfig,
+  getContextWindow,
+  getEnabledModels,
+  getModeById,
+  getResolvedModes,
+  resolveModelEndpoint,
+  resolveProviderProbeUrl,
+} from "./config";
+import {
+  AgentsStoreV2,
+  UiMessage,
+  archiveAgentInStore,
+  branchChatFromMessage,
+  buildAgentsList,
+  buildArchiveList,
+  buildBranchesList,
+  createDefaultStore,
+  createEmptyAgent,
+  deleteAgentBranch,
+  deleteAgentFromStore,
+  deleteAllArchivedAgentsFromStore,
+  ensureActiveVisible,
+  findAgentByChatId,
+  formatListTime,
+  getActiveChat,
+  getAgentChatIds,
+  getAgentDisplayName,
+  restoreAgentInStore,
+  switchAgentBranch,
+  touchChat,
+} from "./sessionStore";
+import {
+  getOpenAICompatibleClient,
+  type ChatMessage,
+} from "./openaiClient";
+import type { ChatSession } from "./sessionStore";
+import { HarborHeadless } from "./vscodeHeadlessStub";
+import type { MessageAttachment } from "./attachments";
+import { resolveUiLanguage } from "./i18n";
+import { applyHarborTlsPolicy } from "./tlsPolicy";
+import type { FileEditStat } from "./diffStats";
+import { hasUncommittedChanges } from "./gitStatus";
+import { toRepoRelativePath } from "./repoPaths";
+import { resolveRemainingReviewFiles } from "./turnFileChanges";
+import { discardPaths } from "./discardPaths";
+import {
+  ensureProposedPlanWrapper,
+  looksLikeImplementationPlan,
+} from "./planImplement";
+
+type ProviderConnState = "unknown" | "connecting" | "connected" | "error";
+type ChatRunState = "running" | "success" | "error";
+
+interface ProviderConnStatus {
+  providerId: string;
+  providerName: string;
+  state: ProviderConnState;
+  message?: string;
+  modelCount?: number;
+  updatedAt: number;
+}
+
+const PROVIDER_PROBE_TTL_MS = 90_000;
+const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
+
+export type HeadlessEmit = (message: Record<string, unknown>) => void;
+
+export interface HeadlessPanelOptions {
+  workspaceRoot: string;
+  sessionPath: string;
+  settingsPath: string;
+  emit: HeadlessEmit;
+  /** Notify IDE to refresh VFS after edits */
+  onVfsRefresh?: (paths: string[]) => void;
+}
+
+function readJsonFile(filePath: string): unknown | undefined {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeJsonFile(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), "utf8");
+  fs.renameSync(tmp, filePath);
+}
+
+function isStoreV2(raw: unknown): raw is AgentsStoreV2 {
+  return (
+    !!raw &&
+    typeof raw === "object" &&
+    (raw as AgentsStoreV2).version === 2 &&
+    Array.isArray((raw as AgentsStoreV2).agents)
+  );
+}
+
+export class HeadlessPanelHost {
+  private store: AgentsStoreV2;
+  private history: ChatMessage[] = [];
+  private uiMessages: UiMessage[] = [];
+  private selectedModel = "";
+  private selectedMode = "agent";
+  private selectedReasoningEffort = "";
+  private contextTokens = 0;
+  private abort?: AbortController;
+  private readonly opts: HeadlessPanelOptions;
+  private readonly providerConnStatuses = new Map<string, ProviderConnStatus>();
+  private readonly providerProbePromises = new Map<
+    string,
+    Promise<ProviderConnStatus>
+  >();
+  /** Per-chat run indicator for the agents rail loader (cube). */
+  private readonly chatRunState = new Map<string, ChatRunState>();
+
+  constructor(opts: HeadlessPanelOptions) {
+    this.opts = opts;
+    this.reloadSettings();
+    const loaded = readJsonFile(opts.sessionPath);
+    if (isStoreV2(loaded)) {
+      this.store = loaded;
+      ensureActiveVisible(this.store);
+    } else {
+      const cfg = getConfig();
+      this.store = createDefaultStore(cfg.defaultModel || "");
+    }
+    this.hydrateFromActiveChat();
+  }
+
+  private reloadSettings(): void {
+    const raw = readJsonFile(this.opts.settingsPath);
+    const settings =
+      raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
+    HarborHeadless.install({
+      workspaceRoot: this.opts.workspaceRoot,
+      settings,
+    });
+    // Cline uses global fetch — mirror Advanced → Validate TLS.
+    applyHarborTlsPolicy(getConfig().rejectUnauthorized);
+  }
+
+  private hydrateFromActiveChat(): void {
+    const chat = getActiveChat(this.store);
+    const cfg = getConfig();
+    this.selectedModel =
+      chat?.selectedModel || cfg.defaultModel || cfg.models[0]?.id || "";
+    this.selectedMode = chat?.selectedMode || "agent";
+    this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
+    this.history = Array.isArray(chat?.history)
+      ? (chat!.history as ChatMessage[])
+      : [];
+    this.uiMessages = Array.isArray(chat?.uiMessages)
+      ? chat!.uiMessages
+      : [];
+    this.contextTokens = 0;
+  }
+
+  private persist(): void {
+    writeJsonFile(this.opts.sessionPath, this.store);
+  }
+
+  private post(message: Record<string, unknown>): void {
+    this.opts.emit(message);
+  }
+
+  private serializeModes() {
+    return getResolvedModes()
+      .filter((m) => m.enabled !== false)
+      .map((m) => ({
+        id: m.id,
+        label: m.label,
+        description: m.description,
+        tools: m.tools,
+        builtin: !!m.builtin,
+        placeholder: m.placeholder,
+      }));
+  }
+
+  private modelsForUi() {
+    return getEnabledModels().map((m) => ({
+      id: m.id,
+      label: m.label || m.id,
+      providerId: m.providerId,
+      supportsVision: m.supportsVision,
+      supportsReasoningEffort: m.supportsReasoningEffort,
+      reasoningEffortDefault: m.reasoningEffortDefault,
+      favorite: m.favorite,
+    }));
+  }
+
+  private agentMeta() {
+    const agent = this.store.agents.find(
+      (a) => a.id === this.store.activeAgentId
+    );
+    const name = agent
+      ? getAgentDisplayName(agent, getActiveChat(this.store))
+      : "Agent";
+    const branches = agent ? buildBranchesList(this.store, agent.id) : [];
+    return {
+      agentId: agent?.id || "",
+      agentName: name,
+      chatTitle: name,
+      chatId: this.store.activeChatId || "",
+      branches,
+    };
+  }
+
+  async handleWebviewMessage(msg: {
+    type: string;
+    [key: string]: unknown;
+  }): Promise<unknown> {
+    switch (msg.type) {
+      case "ready":
+        return this.onReady(String(msg.surface || "panel"));
+      case "send":
+        return this.onSend(msg as {
+          text?: unknown;
+          model?: unknown;
+          agentMode?: unknown;
+          reasoningEffort?: unknown;
+          attachments?: unknown;
+          hideUser?: unknown;
+        });
+      case "stop":
+        this.abort?.abort();
+        this.abort = undefined;
+        if (this.store.activeChatId) {
+          this.setRunStateForChat(this.store.activeChatId);
+        }
+        this.post({ type: "stopped" });
+        this.post({ type: "idle", chatId: this.store.activeChatId });
+        return { ok: true };
+      case "newChat":
+      case "newAgent":
+        return this.onNewAgent();
+      case "openAgent":
+        return this.onOpenAgent(String(msg.agentId || ""));
+      case "showAgents":
+        this.postAgentsList();
+        this.post({ type: "showAgents" });
+        return { ok: true };
+      case "showArchive":
+        this.store.screen = "archive";
+        this.postArchiveList();
+        this.post({ type: "showArchive" });
+        return { ok: true };
+      case "archiveAgent":
+        return this.onArchiveAgent(String(msg.agentId || ""));
+      case "restoreAgent":
+        return this.onRestoreAgent(String(msg.agentId || ""));
+      case "deleteAgent":
+        return this.onDeleteAgent(String(msg.agentId || ""));
+      case "deleteAllArchived":
+        return this.onDeleteAllArchived();
+      case "deleteBranch":
+        return this.onDeleteBranch(String(msg.chatId || ""));
+      case "branchFromMessage":
+        return this.onBranchFromMessage(Number(msg.messageIndex));
+      case "switchBranch":
+        return this.onSwitchBranch(String(msg.chatId || ""));
+      case "discardChanges":
+        return this.onDiscardChanges(
+          Array.isArray(msg.paths) ? (msg.paths as unknown[]) : []
+        );
+      case "modelChanged":
+        this.selectedModel = String(msg.model || "").trim();
+        if (this.store.activeChatId) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedModel: this.selectedModel,
+          });
+          this.persist();
+        }
+        this.ensureProviderProbe(this.selectedModel);
+        return { ok: true };
+      case "modeChanged":
+        this.selectedMode = String(msg.mode || "agent").trim() || "agent";
+        if (this.store.activeChatId) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedMode: this.selectedMode,
+          });
+          this.persist();
+        }
+        return { ok: true };
+      case "reasoningEffortChanged":
+        this.selectedReasoningEffort = String(msg.reasoningEffort || "");
+        if (this.store.activeChatId) {
+          touchChat(this.store, this.store.activeChatId, {
+            selectedReasoningEffort: this.selectedReasoningEffort,
+          } as Partial<ChatSession>);
+          this.persist();
+        }
+        return { ok: true };
+      case "saveSettings": {
+        const settings = (msg.settings || {}) as Record<string, unknown>;
+        this.persistUiSettings(settings);
+        this.reloadSettings();
+        this.providerConnStatuses.clear();
+        this.postSettingsPayload();
+        this.post({
+          type: "modelsUpdated",
+          models: this.modelsForUi(),
+          selectedModel: this.selectedModel,
+        });
+        this.post({ type: "modesUpdated", modes: this.serializeModes() });
+        this.ensureAllProvidersProbed(true);
+        return { ok: true };
+      }
+      case "listProviderModels":
+        return this.handleListProviderModels(msg as {
+          requestId?: unknown;
+          providerId?: unknown;
+          baseUrl?: unknown;
+          apiKey?: unknown;
+          rejectUnauthorized?: unknown;
+        });
+      case "saveModes": {
+        const modes = msg.modes;
+        this.persistUiSettings({ modes });
+        this.reloadSettings();
+        this.post({ type: "modesUpdated", modes: this.serializeModes() });
+        return { ok: true };
+      }
+      case "showSettings":
+        this.postSettingsPayload();
+        this.post({ type: "showSettings" });
+        return { ok: true };
+      case "closeSettings":
+        return { ok: true };
+      case "figmaRefreshStatus":
+        this.post({
+          type: "figmaStatus",
+          status: { state: "disconnected", enabled: false },
+        });
+        return { ok: true };
+      case "mcpRefreshList":
+        this.post({ type: "mcpServers", servers: [] });
+        return { ok: true };
+      default:
+        return { ok: true, deferred: true, type: msg.type };
+    }
+  }
+
+  /** Map VS Code settings UI payload → `.idea/harbor/settings.json`. */
+  private persistUiSettings(settings: Record<string, unknown>): void {
+    const existing =
+      (readJsonFile(this.opts.settingsPath) as Record<string, unknown>) || {};
+    const agentPanel: Record<string, unknown> = {
+      ...((existing.agentPanel as object) || {}),
+      ...settings,
+    };
+    // Flatten common keys for headless getConfiguration("agentPanel")
+    const next: Record<string, unknown> = {
+      ...existing,
+      ...settings,
+      agentPanel,
+    };
+    writeJsonFile(this.opts.settingsPath, next);
+  }
+
+  private buildSettingsPayload(): Record<string, unknown> {
+    const config = getConfig();
+    return {
+      providers: config.providers.map((p) => ({
+        id: p.id,
+        name: p.name || "",
+        baseUrl: p.baseUrl,
+        apiKey: p.apiKey || "",
+        statusUrl: p.statusUrl || "",
+      })),
+      models: config.models.map((m) => ({
+        id: m.id,
+        label: m.label || "",
+        providerId: m.providerId || "",
+        contextWindow: m.contextWindow || undefined,
+        maxOutputTokens: m.maxOutputTokens || undefined,
+        enabled: m.enabled !== false,
+        favorite: m.favorite === true,
+        supportsVision: m.supportsVision,
+        ...(m.reasoningEffort ? { reasoningEffort: m.reasoningEffort } : {}),
+      })),
+      defaultModel: config.defaultModel,
+      language: config.language,
+      defaultContextWindow: config.defaultContextWindow,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      rejectUnauthorized: config.rejectUnauthorized,
+      caBundlePath: config.caBundlePath,
+      systemPrompt: config.systemPrompt,
+      maxToolRounds: config.maxToolRounds,
+      maxTokens: config.maxTokens,
+      maxResponseChars: config.maxResponseChars,
+      soundNotificationsEnabled: config.soundNotifications.enabled,
+      subagentsEnabled: config.subagents.enabled,
+      parallelToolCallsEnabled: config.parallelToolCalls.enabled,
+      autoCompactEnabled: config.autoCompact.enabled,
+      tabAutocompleteEnabled: config.tabAutocomplete.enabled,
+      tabAutocompleteModelId: config.tabAutocomplete.modelId,
+      tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
+      tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
+      tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
+      tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
+      tabAutocompleteShowMode: config.tabAutocomplete.showMode,
+      tabAutocompleteFim: config.tabAutocomplete.fim,
+      selectionHintsEnabled: config.selectionHints.enabled,
+      modes: this.serializeModes(),
+      commitMessagePrompt: config.commitMessage.prompt,
+      commitMessageLanguage: config.commitMessage.language,
+      commitMessageModelId: config.commitMessage.modelId,
+      commitMessageScope: config.commitMessage.scope,
+      workspaceName: path.basename(this.opts.workspaceRoot),
+      figmaEnabled: config.figma.enabled,
+      figma: { state: "disconnected", enabled: config.figma.enabled },
+      autoglmEnabled: config.autoglm.enabled,
+      autoglmBinaryPath: config.autoglm.binaryPath,
+      autoglmBrowser: config.autoglm.browser,
+      autoglmAutoApprove: config.autoglm.autoApprove,
+      providerConnStatuses: this.getProviderConnStatusesPayload(),
+    };
+  }
+
+  private getProviderConnStatusesPayload(): ProviderConnStatus[] {
+    return getConfig().providers.map((p) => {
+      const existing = this.providerConnStatuses.get(p.id);
+      if (existing) {
+        return { ...existing };
+      }
+      return {
+        providerId: p.id,
+        providerName: p.name || p.id,
+        state: "unknown" as const,
+        updatedAt: 0,
+      };
+    });
+  }
+
+  private getProviderConnStatusForModel(modelId: string): ProviderConnStatus {
+    const endpoint = resolveModelEndpoint(modelId || this.selectedModel);
+    const providerId = endpoint.providerId || "";
+    if (!providerId) {
+      return {
+        providerId: "",
+        providerName: endpoint.providerName || "",
+        state: "error",
+        message: "No provider configured",
+        updatedAt: Date.now(),
+      };
+    }
+    const existing = this.providerConnStatuses.get(providerId);
+    if (existing) {
+      return { ...existing };
+    }
+    return {
+      providerId,
+      providerName: endpoint.providerName || providerId,
+      state: "unknown",
+      updatedAt: 0,
+    };
+  }
+
+  private isProviderStatusFresh(
+    status: ProviderConnStatus | undefined
+  ): boolean {
+    if (!status || status.state === "unknown" || status.state === "connecting") {
+      return false;
+    }
+    return Date.now() - status.updatedAt < PROVIDER_PROBE_TTL_MS;
+  }
+
+  private postProviderConnStatus(status: ProviderConnStatus): void {
+    this.post({ type: "providerConnStatus", status });
+  }
+
+  private setProviderConnStatus(status: ProviderConnStatus): void {
+    if (!status.providerId) {
+      this.postProviderConnStatus(status);
+      return;
+    }
+    this.providerConnStatuses.set(status.providerId, status);
+    this.postProviderConnStatus(status);
+  }
+
+  private ensureAllProvidersProbed(force = false): void {
+    for (const provider of getConfig().providers) {
+      const current = this.providerConnStatuses.get(provider.id);
+      if (!force && this.isProviderStatusFresh(current)) {
+        this.postProviderConnStatus(current!);
+        continue;
+      }
+      void this.probeProvider(provider.id, { force, silent: Boolean(force) });
+    }
+  }
+
+  private ensureProviderProbe(modelId?: string, force = false): void {
+    const endpoint = resolveModelEndpoint(modelId || this.selectedModel);
+    const providerId = endpoint.providerId || "";
+    if (!providerId) {
+      this.postProviderConnStatus({
+        providerId: "",
+        providerName: endpoint.providerName || "",
+        state: "error",
+        message: "No provider configured",
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+    const current = this.providerConnStatuses.get(providerId);
+    if (!force && this.isProviderStatusFresh(current)) {
+      this.postProviderConnStatus(current!);
+      return;
+    }
+    void this.probeProvider(providerId, { force });
+  }
+
+  private async probeProvider(
+    providerId: string,
+    options?: { force?: boolean; silent?: boolean }
+  ): Promise<ProviderConnStatus | undefined> {
+    const force = Boolean(options?.force);
+    const silent = Boolean(options?.silent);
+    if (!providerId) {
+      return undefined;
+    }
+    const config = getConfig();
+    applyHarborTlsPolicy(config.rejectUnauthorized);
+    const provider = config.providers.find((p) => p.id === providerId);
+    const endpoint = provider
+      ? {
+          baseUrl: provider.baseUrl,
+          apiKey: provider.apiKey || "",
+          providerId: provider.id,
+          providerName: provider.name || provider.id,
+          statusUrl: provider.statusUrl,
+        }
+      : resolveModelEndpoint(this.selectedModel);
+
+    const existing = this.providerConnStatuses.get(providerId);
+    if (!force && this.isProviderStatusFresh(existing)) {
+      return existing!;
+    }
+
+    const inFlight = this.providerProbePromises.get(providerId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    if (!silent || !existing || existing.state === "unknown") {
+      this.setProviderConnStatus({
+        providerId,
+        providerName: endpoint.providerName || providerId,
+        state: "connecting",
+        updatedAt: Date.now(),
+      });
+    }
+
+    const promise = (async (): Promise<ProviderConnStatus> => {
+      const probeUrl = resolveProviderProbeUrl({
+        baseUrl: endpoint.baseUrl,
+        statusUrl: endpoint.statusUrl,
+      });
+      if (!probeUrl) {
+        const status: ProviderConnStatus = {
+          providerId,
+          providerName: endpoint.providerName || providerId,
+          state: "error",
+          message: "No base URL",
+          updatedAt: Date.now(),
+        };
+        this.setProviderConnStatus(status);
+        return status;
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        PROVIDER_PROBE_TIMEOUT_MS
+      );
+      try {
+        const client = getOpenAICompatibleClient(
+          endpoint.baseUrl || probeUrl,
+          endpoint.apiKey,
+          {
+            rejectUnauthorized: config.rejectUnauthorized,
+            caBundlePath: config.caBundlePath,
+          }
+        );
+        const defaultModelsUrl = endpoint.baseUrl
+          ? resolveProviderProbeUrl({ baseUrl: endpoint.baseUrl })
+          : "";
+        if (probeUrl === defaultModelsUrl) {
+          const models = await client.listModels(controller.signal);
+          const status: ProviderConnStatus = {
+            providerId,
+            providerName: endpoint.providerName || providerId,
+            state: "connected",
+            modelCount: models.length,
+            updatedAt: Date.now(),
+          };
+          this.setProviderConnStatus(status);
+          return status;
+        }
+        await client.probeGet(probeUrl, controller.signal);
+        const status: ProviderConnStatus = {
+          providerId,
+          providerName: endpoint.providerName || providerId,
+          state: "connected",
+          updatedAt: Date.now(),
+        };
+        this.setProviderConnStatus(status);
+        return status;
+      } catch (error) {
+        const aborted =
+          controller.signal.aborted ||
+          (error instanceof Error &&
+            (error.message === "aborted" || /abort/i.test(error.message)));
+        const raw = error instanceof Error ? error.message : String(error);
+        const status: ProviderConnStatus = {
+          providerId,
+          providerName: endpoint.providerName || providerId,
+          state: "error",
+          message: (aborted ? "Timeout" : raw).slice(0, 160),
+          updatedAt: Date.now(),
+        };
+        this.setProviderConnStatus(status);
+        return status;
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+
+    this.providerProbePromises.set(providerId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.providerProbePromises.delete(providerId);
+    }
+  }
+
+  private async handleListProviderModels(msg: {
+    requestId?: unknown;
+    providerId?: unknown;
+    baseUrl?: unknown;
+    apiKey?: unknown;
+    rejectUnauthorized?: unknown;
+  }): Promise<unknown> {
+    const requestId = String(msg.requestId || "");
+    const providerId = String(msg.providerId || "").trim();
+    const config = getConfig();
+    applyHarborTlsPolicy(config.rejectUnauthorized);
+    const saved = config.providers.find((p) => p.id === providerId);
+    const baseUrl = String(msg.baseUrl || saved?.baseUrl || "")
+      .trim()
+      .replace(/\/$/, "");
+    const apiKey =
+      typeof msg.apiKey === "string" ? msg.apiKey : saved?.apiKey || "";
+    const rejectUnauthorized =
+      typeof msg.rejectUnauthorized === "boolean"
+        ? msg.rejectUnauthorized
+        : config.rejectUnauthorized;
+
+    const reply = (payload: { models?: string[]; error?: string }) => {
+      this.post({
+        type: "providerModelsListed",
+        requestId,
+        providerId,
+        models: payload.models || [],
+        error: payload.error,
+      });
+    };
+
+    if (!providerId) {
+      reply({ error: "No provider id" });
+      return { ok: false };
+    }
+    if (!baseUrl) {
+      reply({ error: "No base URL" });
+      return { ok: false };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      PROVIDER_PROBE_TIMEOUT_MS
+    );
+    try {
+      const client = getOpenAICompatibleClient(baseUrl, apiKey, {
+        rejectUnauthorized,
+        caBundlePath: config.caBundlePath,
+      });
+      const models = await client.listModels(controller.signal);
+      const unique = Array.from(
+        new Set(models.map((id) => String(id || "").trim()).filter(Boolean))
+      ).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
+      );
+      reply({ models: unique });
+      return { ok: true };
+    } catch (error) {
+      const aborted =
+        controller.signal.aborted ||
+        (error instanceof Error &&
+          (error.message === "aborted" || /abort/i.test(error.message)));
+      const raw = error instanceof Error ? error.message : String(error);
+      reply({ error: (aborted ? "Timeout" : raw).slice(0, 240) });
+      return { ok: false, error: raw };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private postSettingsPayload(): void {
+    this.post({
+      type: "settings",
+      settings: this.buildSettingsPayload(),
+    });
+  }
+
+  private readySeq = 0;
+  private lastReadyAt = 0;
+
+  private async onReady(surface: string): Promise<unknown> {
+    // JetBrains JCEF may emit ready several times (load + host timer + panel retry).
+    const now = Date.now();
+    if (now - this.lastReadyAt < 1500 && surface !== "settings") {
+      return { ok: true, deduped: true };
+    }
+    this.lastReadyAt = now;
+    const seq = ++this.readySeq;
+    await new Promise((r) => setTimeout(r, 30));
+    if (seq !== this.readySeq) {
+      return { ok: true, deduped: true };
+    }
+    this.reloadSettings();
+    if (surface === "settings") {
+      this.postSettingsPayload();
+      this.post({ type: "showSettings" });
+      this.post({
+        type: "figmaStatus",
+        status: { state: "disconnected", enabled: getConfig().figma.enabled },
+      });
+      this.post({ type: "mcpServers", servers: [] });
+      return { ok: true };
+    }
+
+    this.acknowledgeViewedChatRunState(this.store.activeChatId);
+    const models = this.modelsForUi();
+    if (!this.selectedModel && models[0]) {
+      this.selectedModel = models[0].id;
+    }
+    const meta = this.agentMeta();
+    const busy =
+      this.chatRunState.get(this.store.activeChatId || "") === "running";
+    this.post({
+      type: "init",
+      models,
+      selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
+      selectedReasoningEffort: this.selectedReasoningEffort,
+      uiMessages: this.uiMessages,
+      busy,
+      canRegenerate: this.history.length > 0,
+      screen: this.store.screen || "chat",
+      ...meta,
+      contextUsed: this.contextTokens,
+      contextMax: getContextWindow(this.selectedModel),
+      modes: this.serializeModes(),
+      harborHost: "jetbrains",
+      providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+    });
+    this.postAgentsList();
+    this.postSettingsPayload();
+    this.post({
+      type: "showChat",
+      models,
+      selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
+      selectedReasoningEffort: this.selectedReasoningEffort,
+      uiMessages: this.uiMessages,
+      busy,
+      canRegenerate: this.history.length > 0,
+      ...meta,
+      contextUsed: this.contextTokens,
+      contextMax: getContextWindow(this.selectedModel),
+      status: null,
+      providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+    });
+    this.ensureAllProvidersProbed();
+    this.scheduleScmRefresh([200, 800]);
+    return { ok: true };
+  }
+
+  private modelLabel(modelId: string): string {
+    const id = String(modelId || "").trim();
+    if (!id) {
+      return "—";
+    }
+    const row = getConfig().models.find((m) => m.id === id);
+    return String(row?.label || id).trim() || id;
+  }
+
+  private isViewingChat(chatId: string | undefined): boolean {
+    return Boolean(chatId) && this.store.activeChatId === chatId;
+  }
+
+  private setRunStateForChat(
+    chatId: string,
+    state?: ChatRunState
+  ): void {
+    if (!findAgentByChatId(this.store, chatId)) {
+      return;
+    }
+    if (state === "running" || (state && !this.isViewingChat(chatId))) {
+      this.chatRunState.set(chatId, state);
+    } else {
+      this.chatRunState.delete(chatId);
+    }
+    this.postAgentsList();
+  }
+
+  private acknowledgeViewedChatRunState(chatId: string | undefined): boolean {
+    if (!chatId || this.chatRunState.get(chatId) === "running") {
+      return false;
+    }
+    return this.chatRunState.delete(chatId);
+  }
+
+  private runStateForAgent(agentId: string): ChatRunState | "" {
+    const agent = this.store.agents.find((item) => item.id === agentId);
+    if (!agent) {
+      return "";
+    }
+    const states = getAgentChatIds(agent)
+      .map((id) => this.chatRunState.get(id))
+      .filter((state): state is ChatRunState => Boolean(state));
+    if (states.includes("running")) {
+      return "running";
+    }
+    if (states.includes("error")) {
+      return "error";
+    }
+    return states.includes("success") ? "success" : "";
+  }
+
+  private runModeForAgent(agentId: string): string {
+    const agent = this.store.agents.find((item) => item.id === agentId);
+    if (!agent) {
+      return "";
+    }
+    for (const chatId of getAgentChatIds(agent)) {
+      if (this.chatRunState.get(chatId) !== "running") {
+        continue;
+      }
+      return getModeById(this.store.chats[chatId]?.selectedMode).id;
+    }
+    return "";
+  }
+
+  private postAgentsList(): void {
+    const lang = resolveUiLanguage(getConfig().language);
+    const agents = buildAgentsList(this.store).map((a) => ({
+      id: a.id,
+      name: a.name,
+      model: this.modelLabel(a.model) || a.model || "—",
+      preview: a.preview,
+      time: formatListTime(a.updatedAt, lang),
+      active: a.active,
+      empty: a.empty,
+      runState: this.runStateForAgent(a.id),
+      runMode: this.runModeForAgent(a.id),
+    }));
+    this.post({
+      type: "agentsList",
+      agents,
+      activeAgentId: this.store.activeAgentId,
+      screen: this.store.screen || "chat",
+    });
+  }
+
+  private postArchiveList(): void {
+    const lang = resolveUiLanguage(getConfig().language);
+    const agents = buildArchiveList(this.store).map((a) => ({
+      id: a.id,
+      name: a.name,
+      preview: a.preview,
+      archivedAt: a.archivedAt,
+      time: formatListTime(a.archivedAt, lang),
+    }));
+    this.post({
+      type: "archiveList",
+      agents,
+    });
+  }
+
+  private async afterStoreMutation(opts?: {
+    preferArchive?: boolean;
+    showAgentsRail?: boolean;
+  }): Promise<void> {
+    ensureActiveVisible(this.store);
+    this.hydrateFromActiveChat();
+    this.persist();
+    this.postAgentsList();
+    if (opts?.preferArchive || this.store.screen === "archive") {
+      this.store.screen = "archive";
+      this.postArchiveList();
+      this.post({ type: "showArchive" });
+      return;
+    }
+    this.store.screen = "chat";
+    // Bypass ready debounce so list/chat refresh after delete/archive.
+    this.lastReadyAt = 0;
+    await this.onReady("panel");
+    if (opts?.showAgentsRail) {
+      this.post({ type: "showAgents" });
+    }
+  }
+
+  private async onArchiveAgent(agentId: string): Promise<unknown> {
+    if (!agentId || !archiveAgentInStore(this.store, agentId)) {
+      return { ok: false };
+    }
+    await this.afterStoreMutation({ showAgentsRail: true });
+    return { ok: true };
+  }
+
+  private async onRestoreAgent(agentId: string): Promise<unknown> {
+    if (!agentId || !restoreAgentInStore(this.store, agentId)) {
+      return { ok: false };
+    }
+    this.store.screen = "archive";
+    this.persist();
+    this.postArchiveList();
+    this.postAgentsList();
+    this.post({ type: "showArchive" });
+    return { ok: true };
+  }
+
+  private async onDeleteAgent(agentId: string): Promise<unknown> {
+    if (!agentId) {
+      return { ok: false };
+    }
+    const preferArchive = this.store.screen === "archive";
+    if (!deleteAgentFromStore(this.store, agentId)) {
+      return { ok: false };
+    }
+    await this.afterStoreMutation({
+      preferArchive,
+      showAgentsRail: !preferArchive,
+    });
+    return { ok: true };
+  }
+
+  private async onDeleteAllArchived(): Promise<unknown> {
+    const n = deleteAllArchivedAgentsFromStore(this.store);
+    if (!n) {
+      return { ok: true, deleted: 0 };
+    }
+    this.store.screen = "archive";
+    ensureActiveVisible(this.store);
+    this.hydrateFromActiveChat();
+    this.persist();
+    this.postAgentsList();
+    this.postArchiveList();
+    this.post({ type: "showArchive" });
+    return { ok: true, deleted: n };
+  }
+
+  private async onDeleteBranch(chatId: string): Promise<unknown> {
+    const agentId = this.store.activeAgentId;
+    if (!agentId || !chatId) {
+      return { ok: false };
+    }
+    if (!deleteAgentBranch(this.store, agentId, chatId)) {
+      return { ok: false };
+    }
+    this.hydrateFromActiveChat();
+    this.persist();
+    this.lastReadyAt = 0;
+    await this.onReady("panel");
+    return { ok: true };
+  }
+
+  private async onBranchFromMessage(messageIndex: number): Promise<unknown> {
+    const agentId = this.store.activeAgentId;
+    const fromChatId = this.store.activeChatId;
+    if (!agentId || !fromChatId || !Number.isInteger(messageIndex)) {
+      return { ok: false, error: "invalid" };
+    }
+    this.flushActiveChatToStore();
+    const source = this.store.chats[fromChatId];
+    const created = branchChatFromMessage(
+      this.store,
+      agentId,
+      fromChatId,
+      messageIndex,
+      this.history.length
+        ? this.history
+        : Array.isArray(source?.history)
+          ? source!.history
+          : [],
+      this.uiMessages.length
+        ? this.uiMessages
+        : Array.isArray(source?.uiMessages)
+          ? source!.uiMessages
+          : []
+    );
+    if (!created) {
+      return { ok: false, error: "cannot branch" };
+    }
+    this.store.screen = "chat";
+    this.hydrateFromActiveChat();
+    this.persist();
+    this.postAgentsList();
+    this.lastReadyAt = 0;
+    await this.onReady("panel");
+    return { ok: true, chatId: created.id };
+  }
+
+  private async onSwitchBranch(chatId: string): Promise<unknown> {
+    if (!chatId) {
+      return { ok: false };
+    }
+    if (chatId === this.store.activeChatId) {
+      return { ok: true };
+    }
+    this.flushActiveChatToStore();
+    if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
+      return { ok: false };
+    }
+    this.store.screen = "chat";
+    this.hydrateFromActiveChat();
+    this.persist();
+    if (this.acknowledgeViewedChatRunState(chatId)) {
+      this.postAgentsList();
+    }
+    this.lastReadyAt = 0;
+    await this.onReady("panel");
+    return { ok: true };
+  }
+
+  private mergeEdits(edits: FileEditStat[]): FileEditStat[] {
+    const map = new Map<string, FileEditStat>();
+    for (const edit of edits) {
+      const key = String(edit.path || "").trim();
+      if (!key) {
+        continue;
+      }
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, { ...edit, path: key });
+        continue;
+      }
+      map.set(key, {
+        path: key,
+        created: prev.created || edit.created,
+        added: prev.added + edit.added,
+        removed: prev.removed + edit.removed,
+      });
+    }
+    return [...map.values()].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  /**
+   * Same contract as VS Code publishReview: webview expects `{ files, showScm }`,
+   * not raw `edits`.
+   */
+  private async publishReview(
+    edits: FileEditStat[],
+    chatId: string,
+    runUiMessages: UiMessage[]
+  ): Promise<UiMessage[]> {
+    const folder = this.opts.workspaceRoot;
+    const unique = this.mergeEdits(edits)
+      .map((e) => ({
+        ...e,
+        path: folder ? toRepoRelativePath(e.path, folder) || e.path : e.path,
+      }))
+      .filter((e) => Boolean(e.path));
+    if (!unique.length) {
+      return runUiMessages;
+    }
+
+    // Prefer live git dirty set so a turn that wrote then reverted does not
+    // leave a permanent SCM strip (+N −M) with Commit/Discard.
+    let remaining: FileEditStat[] = [];
+    try {
+      remaining = await resolveRemainingReviewFiles(
+        unique.map((f) => f.path),
+        folder
+      );
+    } catch {
+      remaining = [];
+    }
+    const files = remaining.length ? remaining : unique;
+    let showScm = remaining.length > 0;
+    if (!showScm) {
+      try {
+        showScm = await hasUncommittedChanges(unique.map((f) => f.path));
+      } catch {
+        showScm = false;
+      }
+    }
+
+    const nextUi = [
+      ...runUiMessages,
+      {
+        role: "review" as const,
+        text: JSON.stringify({ files, showScm }),
+      },
+    ];
+    touchChat(this.store, chatId, {
+      uiMessages: nextUi,
+      lastAgentEditedPaths: files.map((f) => f.path),
+    });
+    this.persist();
+    if (this.store.activeChatId === chatId) {
+      this.uiMessages = nextUi;
+      this.post({
+        type: "review",
+        files,
+        showScm,
+        chatId,
+      });
+    }
+    this.scheduleScmRefresh([400, 1200]);
+    return nextUi;
+  }
+
+  private scheduleScmRefresh(delayMs: number | number[] = 400): void {
+    const delays = Array.isArray(delayMs) ? delayMs : [delayMs];
+    for (const ms of delays) {
+      setTimeout(() => {
+        void this.refreshReviewScmButtons();
+      }, Math.max(0, ms));
+    }
+  }
+
+  private async refreshReviewScmButtons(): Promise<void> {
+    if (this.store.screen && this.store.screen !== "chat") {
+      return;
+    }
+    const chatId = this.store.activeChatId;
+    if (!chatId || !this.store.chats[chatId]) {
+      return;
+    }
+
+    // Prefer live snapshot when viewing this chat.
+    let uiMessages =
+      this.store.activeChatId === chatId
+        ? [...this.uiMessages]
+        : [...(this.store.chats[chatId]?.uiMessages || [])];
+
+    const reviews: {
+      paths: string[];
+      showScm: boolean;
+      files: FileEditStat[];
+    }[] = [];
+    let changed = false;
+
+    for (let i = 0; i < uiMessages.length; i++) {
+      const msg = uiMessages[i];
+      if (msg.role !== "review") {
+        continue;
+      }
+      let parsed: { files: FileEditStat[]; showScm: boolean };
+      try {
+        const data = JSON.parse(String(msg.text || "")) as
+          | FileEditStat[]
+          | { files?: FileEditStat[]; showScm?: boolean };
+        if (Array.isArray(data)) {
+          parsed = { files: data, showScm: false };
+        } else {
+          parsed = {
+            files: Array.isArray(data.files) ? data.files : [],
+            showScm: Boolean(data.showScm),
+          };
+        }
+      } catch {
+        continue;
+      }
+      if (!parsed.files.length) {
+        continue;
+      }
+      const seedPaths = parsed.files.map((f) => f.path);
+      const remaining = await resolveRemainingReviewFiles(
+        seedPaths,
+        this.opts.workspaceRoot
+      );
+      const showScm = remaining.length > 0;
+      const files = showScm ? remaining : parsed.files;
+      reviews.push({
+        paths: files.map((f) => f.path),
+        showScm,
+        files,
+      });
+
+      const sameFiles =
+        files.length === parsed.files.length &&
+        files.every((f, idx) => {
+          const prev = parsed.files[idx];
+          return (
+            prev &&
+            prev.path === f.path &&
+            Number(prev.added) === Number(f.added) &&
+            Number(prev.removed) === Number(f.removed)
+          );
+        });
+      if (parsed.showScm !== showScm || !sameFiles) {
+        changed = true;
+        uiMessages[i] = {
+          ...msg,
+          text: JSON.stringify({ files, showScm }),
+        };
+      }
+    }
+
+    if (changed) {
+      touchChat(this.store, chatId, {
+        uiMessages: uiMessages.slice(-200),
+      });
+      this.persist();
+      if (this.store.activeChatId === chatId) {
+        this.uiMessages = uiMessages;
+      }
+    }
+
+    if (reviews.length > 0) {
+      this.post({ type: "scmButtons", reviews, chatId });
+    } else {
+      // Explicitly clear composer SCM strip when no review cards remain dirty.
+      this.post({ type: "scmButtons", reviews: [], chatId });
+    }
+  }
+
+  private async onDiscardChanges(rawPaths: unknown[]): Promise<unknown> {
+    const chatId = this.store.activeChatId;
+    if (!chatId || this.abort) {
+      this.post({ type: "discardCancelled", chatId });
+      this.post({ type: "idle", chatId });
+      return { ok: false, error: "busy" };
+    }
+    const paths = rawPaths.map((p) => String(p || "").trim()).filter(Boolean);
+    if (!paths.length) {
+      this.post({ type: "discardCancelled", chatId });
+      this.post({ type: "idle", chatId });
+      return { ok: false, error: "no paths" };
+    }
+    this.post({ type: "discardStarted", chatId });
+    try {
+      const remaining = await resolveRemainingReviewFiles(
+        paths,
+        this.opts.workspaceRoot
+      );
+      const targets = [
+        ...new Set([
+          ...(remaining.length ? remaining.map((f) => f.path) : []),
+          ...paths,
+        ]),
+      ];
+      const chat = this.store.chats[chatId];
+      const fallbackPaths = Array.isArray(chat?.lastAgentEditedPaths)
+        ? chat.lastAgentEditedPaths
+        : [];
+      const result = await discardPaths(targets, { fallbackPaths });
+      if (result.ok) {
+        touchChat(this.store, chatId, { lastAgentEditedPaths: [] });
+        this.persist();
+      }
+      this.post({
+        type: "assistantDone",
+        text: result.answer,
+        chatId,
+      });
+      this.opts.onVfsRefresh?.(targets);
+      await this.refreshReviewScmButtons();
+      this.post({ type: "idle", chatId });
+      return { ok: result.ok, answer: result.answer };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.post({
+        type: "append",
+        role: "error",
+        text: message,
+        chatId,
+      });
+      this.post({ type: "idle", chatId });
+      return { ok: false, error: message };
+    }
+  }
+
+  private flushActiveChatToStore(): void {
+    const chatId = this.store.activeChatId;
+    if (!chatId || !this.store.chats[chatId]) {
+      return;
+    }
+    touchChat(this.store, chatId, {
+      history: this.history,
+      uiMessages: this.uiMessages,
+      selectedModel: this.selectedModel,
+      selectedMode: this.selectedMode,
+      selectedReasoningEffort: this.selectedReasoningEffort,
+      contextTokens: this.contextTokens,
+    } as Partial<ChatSession>);
+    this.persist();
+  }
+
+  private async onNewAgent(): Promise<unknown> {
+    this.flushActiveChatToStore();
+    const { agent, chat } = createEmptyAgent(this.selectedModel);
+    this.store.agents.unshift(agent);
+    this.store.chats[chat.id] = chat;
+    this.store.activeAgentId = agent.id;
+    this.store.activeChatId = chat.id;
+    this.store.screen = "chat";
+    this.hydrateFromActiveChat();
+    this.persist();
+    this.postAgentsList();
+    await this.onReady("panel");
+    return { ok: true };
+  }
+
+  private async onOpenAgent(agentId: string): Promise<unknown> {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (!agent) {
+      return { ok: false, error: "agent not found" };
+    }
+    this.flushActiveChatToStore();
+    this.store.activeAgentId = agent.id;
+    this.store.activeChatId = agent.chatId;
+    this.store.screen = "chat";
+    this.hydrateFromActiveChat();
+    this.persist();
+    if (this.acknowledgeViewedChatRunState(agent.chatId)) {
+      this.postAgentsList();
+    }
+    await this.onReady("panel");
+    return { ok: true };
+  }
+
+  private async onSend(msg: {
+    text?: unknown;
+    model?: unknown;
+    agentMode?: unknown;
+    reasoningEffort?: unknown;
+    attachments?: unknown;
+    hideUser?: unknown;
+  }): Promise<unknown> {
+    const text = String(msg.text || "").trim();
+    if (!text) {
+      return { ok: false, error: "empty" };
+    }
+    if (this.abort) {
+      return { ok: false, error: "busy" };
+    }
+
+    const runChatId = this.store.activeChatId;
+    if (!runChatId || !this.store.chats[runChatId]) {
+      return { ok: false, error: "no chat" };
+    }
+
+    const model =
+      String(msg.model || "").trim() ||
+      this.selectedModel ||
+      getConfig().defaultModel;
+    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
+    const reasoningEffort = String(
+      msg.reasoningEffort || this.selectedReasoningEffort || ""
+    );
+    this.selectedModel = model;
+    this.selectedMode = agentMode;
+
+    let runHistory = this.history;
+    let runUiMessages = [...this.uiMessages];
+    let runContextTokens = this.contextTokens;
+
+    const syncRunChat = (): void => {
+      const chat = this.store.chats[runChatId];
+      if (!chat) {
+        return;
+      }
+      touchChat(this.store, runChatId, {
+        history: runHistory,
+        uiMessages: runUiMessages,
+        selectedModel: model,
+        selectedMode: agentMode,
+        contextTokens: runContextTokens,
+      });
+      this.persist();
+      // Keep live snapshot only while this chat is still open.
+      if (this.store.activeChatId === runChatId) {
+        this.history = runHistory;
+        this.uiMessages = runUiMessages;
+        this.contextTokens = runContextTokens;
+      }
+    };
+
+    const postToRun = (message: Record<string, unknown>): void => {
+      this.post({ ...message, chatId: runChatId });
+    };
+
+    if (!msg.hideUser) {
+      const userUi: UiMessage = {
+        role: "user",
+        text,
+        mode: agentMode,
+      };
+      const attachments = Array.isArray(msg.attachments)
+        ? (msg.attachments as MessageAttachment[])
+        : [];
+      if (attachments.length) {
+        userUi.attachments = attachments;
+      }
+      // Persist immediately (webview already showed the bubble). Otherwise
+      // switching chats before the turn finishes drops the user message.
+      runUiMessages = [...runUiMessages, userUi];
+      syncRunChat();
+    }
+
+    const ac = new AbortController();
+    this.abort = ac;
+    const editedPaths: string[] = [];
+    let assistantText = "";
+    this.setRunStateForChat(runChatId, "running");
+
+    try {
+      runHistory = await runAgentTurn({
+        model,
+        history: runHistory,
+        userText: text,
+        attachments: Array.isArray(msg.attachments)
+          ? (msg.attachments as MessageAttachment[])
+          : undefined,
+        signal: ac.signal,
+        agentMode,
+        reasoningEffort: reasoningEffort || undefined,
+        lastAgentEditedPaths:
+          this.store.chats[runChatId]?.lastAgentEditedPaths || [],
+        callbacks: {
+          onPhase: (phase, detail) => {
+            postToRun({
+              type: "status",
+              phase,
+              text: detail || phase,
+            });
+          },
+          onTool: (t) => {
+            postToRun({
+              type: "append",
+              role: "tool",
+              text: t,
+            });
+          },
+          onStep: (event) => {
+            postToRun({
+              type: "step",
+              ...event,
+            } as Record<string, unknown>);
+          },
+          onFileEdit: (edit) => {
+            if (edit.path) {
+              editedPaths.push(edit.path);
+            }
+          },
+          onAssistantDelta: (delta) => {
+            assistantText += delta;
+            postToRun({
+              type: "assistantDelta",
+              text: delta,
+            });
+          },
+          onAssistantStreamClear: () => {
+            assistantText = "";
+            postToRun({ type: "assistantStreamClear" });
+          },
+          onAssistant: (full, meta) => {
+            const raw = full || assistantText;
+            // Plan card / Build chip: same wrap as VS Code agentPanelProvider.
+            const displayText =
+              agentMode === "plan" || looksLikeImplementationPlan(raw)
+                ? ensureProposedPlanWrapper(raw)
+                : raw;
+            assistantText = displayText;
+            runUiMessages = [
+              ...runUiMessages,
+              {
+                role: "assistant",
+                text: displayText,
+                reasoning: meta?.reasoning,
+              },
+            ];
+            syncRunChat();
+            postToRun({
+              type: "assistantDone",
+              text: displayText,
+              reasoning: meta?.reasoning,
+            });
+          },
+          onReasoning: (r) => {
+            postToRun({
+              type: "reasoning",
+              text: r,
+            });
+          },
+          onReview: async (edits) => {
+            const reviewEdits =
+              edits && edits.length
+                ? edits
+                : [...new Set(editedPaths)]
+                    .filter(Boolean)
+                    .map((p) => ({
+                      path: p,
+                      added: 0,
+                      removed: 0,
+                      created: false,
+                    }));
+            runUiMessages = await this.publishReview(
+              reviewEdits,
+              runChatId,
+              runUiMessages
+            );
+            for (const e of reviewEdits) {
+              if (e.path) {
+                editedPaths.push(e.path);
+              }
+            }
+            this.opts.onVfsRefresh?.(
+              [...new Set(editedPaths.map(String).filter(Boolean))]
+            );
+          },
+          onUsage: (usage) => {
+            runContextTokens = usage.used;
+            postToRun({
+              type: "contextUsage",
+              ...usage,
+            });
+          },
+          onFigmaNeedsConnect: () => {
+            this.post({ type: "figmaNeedsConnect" });
+          },
+        },
+      });
+
+      touchChat(this.store, runChatId, {
+        history: runHistory,
+        uiMessages: runUiMessages,
+        selectedModel: model,
+        selectedMode: agentMode,
+        lastAgentEditedPaths: editedPaths.length
+          ? [...new Set(editedPaths)]
+          : this.store.chats[runChatId]?.lastAgentEditedPaths,
+        contextTokens: runContextTokens,
+      });
+      this.persist();
+      if (this.store.activeChatId === runChatId) {
+        this.history = runHistory;
+        this.uiMessages = runUiMessages;
+        this.contextTokens = runContextTokens;
+      }
+      this.setRunStateForChat(runChatId, "success");
+      postToRun({ type: "runFinished", outcome: "success" });
+      this.scheduleScmRefresh([500, 1500]);
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const aborted =
+        ac.signal.aborted ||
+        /abort/i.test(message) ||
+        message === "aborted";
+      runUiMessages = [...runUiMessages, { role: "error", text: message }];
+      postToRun({
+        type: "runFailed",
+        message,
+      });
+      touchChat(this.store, runChatId, {
+        history: runHistory,
+        uiMessages: runUiMessages,
+        contextTokens: runContextTokens,
+      });
+      this.persist();
+      if (this.store.activeChatId === runChatId) {
+        this.history = runHistory;
+        this.uiMessages = runUiMessages;
+        this.contextTokens = runContextTokens;
+      }
+      if (aborted) {
+        this.setRunStateForChat(runChatId);
+      } else {
+        this.setRunStateForChat(runChatId, "error");
+      }
+      this.scheduleScmRefresh(500);
+      return { ok: false, error: message };
+    } finally {
+      this.abort = undefined;
+      postToRun({ type: "idle" });
+    }
+  }
+}
+
+export function defaultHarborPaths(workspaceRoot: string): {
+  sessionPath: string;
+  settingsPath: string;
+} {
+  const dir = path.join(workspaceRoot, ".idea", "harbor");
+  return {
+    sessionPath: path.join(dir, "session.v2.json"),
+    settingsPath: path.join(dir, "settings.json"),
+  };
+}

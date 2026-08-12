@@ -28,16 +28,24 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Commit + push from review tags | `src/commitAndPush.ts` |
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) — used by commit utility path |
 | MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
-| Webview UI | `media/panel.js`, `media/panel.css` |
+| Webview UI | `media/panel.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
+| Host protocol (shared) | `packages/harbor-host-protocol/` (+ `src/hostProtocol.ts` for VS Code) |
+| Harbor core / sidecar | `packages/harbor-core/` → `out/harborSidecar.js` (`npm run build:sidecar`) |
+| JetBrains / WebStorm plugin | `jetbrains/` — JCEF Tool Window + Kotlin host; see `docs/jetbrains-port.md` |
+| VS Code in-process core | `src/harborCoreInProcess.ts` (no sidecar process) |
 | Unit tests | `tests/*.test.js` (Node test runner against `out/`) |
 
 ## Commands agents should know
 
 ```bash
-npm run compile          # tsc + MCP bundle + Cline CJS bundle → out/
+npm run compile          # tsc + MCP + Cline + (optional) sidecar bundles → out/
+npm run build:sidecar    # Node sidecar for JetBrains only
+npm run build:core       # packages/harbor-host-protocol + harbor-core
 npm test                 # compile + node --test tests/*.test.js
 npm run lint             # tsc --noEmit
 ```
+
+JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Shared logic belongs in `packages/harbor-core` / protocol; IDE shells stay thin. **VS Code regression gate** is required before merging shared changes (checklist in `docs/jetbrains-port.md`).
 
 After panel UI/logic changes: bump `version` in `package.json`, package with vsce, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
 
@@ -77,7 +85,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 
 ## What agents MAY change in this repo
 
-- Feature / bugfix code under `src/`, `media/`, `tests/` related to the user’s task.
+- Feature / bugfix code under `src/`, `media/`, `tests/`, `packages/`, `jetbrains/` related to the user’s task.
 - `package.json` `version` when packaging a VSIX for the user.
 - `AGENTS.md` and `.cursor/rules/*.mdc` when documenting real product/runtime rules.
 - `package.nls*.json` / UI copy when the task is about wording (still no Cursor branding).

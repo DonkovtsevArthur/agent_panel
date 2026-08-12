@@ -5,11 +5,13 @@ import { startEditorContextTracking } from "./editorContext";
 import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
 import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
+import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
 import { startTabAutocomplete } from "./tabAutocomplete";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
+  applyHarborTlsPolicy();
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);

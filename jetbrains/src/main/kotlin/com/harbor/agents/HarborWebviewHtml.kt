@@ -1,0 +1,212 @@
+package com.harbor.agents
+
+import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.io.FileUtil
+import java.io.File
+import java.nio.charset.StandardCharsets
+
+/**
+ * Materializes the **same** VS Code panel assets (`media/panel.js/css/shell` + fonts)
+ * into a directory served by [HarborUiServer].
+ *
+ * No base64 fonts, no multi-MB loadHTML — identical file layout to the VS Code webview.
+ */
+object HarborWebviewHtml {
+  private val log = Logger.getInstance(HarborWebviewHtml::class.java)
+
+  /**
+   * Writes `index.html` + copies `panel.css`, `panel.js`, `marked.js`, fonts, shell
+   * into [outDir]. Returns the directory.
+   */
+  fun materialize(project: Project, outDir: File, surface: String = "panel"): File {
+    outDir.mkdirs()
+    val mediaRoot = resolveMediaRoot()
+    copyAsset(mediaRoot, "panel.css", File(outDir, "panel.css"))
+    copyAsset(mediaRoot, "panel.js", File(outDir, "panel.js"))
+    copyAsset(mediaRoot, "marked.js", File(outDir, "marked.js"))
+    copyAsset(mediaRoot, "panel.shell.html", File(outDir, "panel.shell.html"))
+    val fontsDir = File(outDir, "fonts")
+    fontsDir.mkdirs()
+    copyAsset(mediaRoot, "fonts/MaterialSymbolsOutlined-24-400.ttf", File(fontsDir, "MaterialSymbolsOutlined-24-400.ttf"))
+    copyAsset(mediaRoot, "fonts/JetBrainsMono-Regular.ttf", File(fontsDir, "JetBrainsMono-Regular.ttf"))
+
+    val shell = readText(File(outDir, "panel.shell.html")).ifBlank {
+      """<div id="workspaceShell" class="workspace-shell"><section id="chatScreen" class="screen chat-screen"><div id="messages"></div></section><section id="settingsScreen" class="screen" hidden></section></div>"""
+    }
+    val lang = if (java.util.Locale.getDefault().language.startsWith("ru")) "ru" else "en"
+    val surfaceAttr = if (surface == "settings") "settings" else "panel"
+    val pageTitle = if (surfaceAttr == "settings") "Settings — Harbor Agents" else "Harbor Agents"
+    val theme = HarborThemeCss.rootVariables()
+
+    val html = """
+<!DOCTYPE html>
+<html lang="$lang" data-surface="$surfaceAttr" data-harbor-host="jetbrains">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>$pageTitle</title>
+  <link rel="stylesheet" href="/panel.css" />
+  <style id="harbor-jb-theme">
+$theme
+  </style>
+  <style>
+    @font-face {
+      font-family: "Material Symbols Outlined";
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url("/fonts/MaterialSymbolsOutlined-24-400.ttf") format("truetype");
+    }
+    @font-face {
+      font-family: "JetBrains Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("/fonts/JetBrainsMono-Regular.ttf") format("truetype");
+    }
+    html, body { height: 100%; margin: 0; }
+    body { display: flex; flex-direction: column; min-height: 0; }
+    .screen[hidden] { display: none !important; }
+    .settings-modal[hidden],
+    .model-menu[hidden],
+    .composer-plus-menu[hidden],
+    .mention-menu[hidden] { display: none !important; pointer-events: none !important; }
+    html[data-harbor-host="jetbrains"][data-surface="settings"] #settingsScreen:not([hidden]) {
+      display: flex !important;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      height: 100%;
+      padding-top: 0 !important;
+      background: var(--vscode-editor-background) !important;
+      color: var(--vscode-foreground) !important;
+    }
+    html[data-harbor-host="jetbrains"] #harborSettingsChrome {
+      flex: 0 0 auto;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+      background: var(--vscode-editor-background);
+      color: var(--vscode-foreground);
+    }
+    html[data-harbor-host="jetbrains"] #harborSettingsChrome .icon-btn {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      padding: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+    }
+    html[data-harbor-host="jetbrains"] #harborSettingsChrome .icon-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground);
+    }
+  </style>
+</head>
+<body>
+$shell
+  <script>
+    (function () {
+      var state = null;
+      var queue = [];
+      var surface = document.documentElement.getAttribute('data-surface') || 'panel';
+      function deliver(msg) {
+        if (window.__harborPostToIde) {
+          window.__harborPostToIde(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        } else {
+          queue.push(msg);
+        }
+      }
+      window.__harborHost = {
+        postMessage: deliver,
+        getState: function () { return state; },
+        setState: function (s) { state = s; }
+      };
+      window.__harborFlushQueue = function () {
+        var q = queue.splice(0, queue.length);
+        q.forEach(function (msg) { deliver(msg); });
+      };
+      window.__harborSendReady = function () {
+        deliver({ type: 'ready', surface: surface });
+      };
+    })();
+  </script>
+  <script src="/marked.js"></script>
+  <script src="/panel.js"></script>
+</body>
+</html>
+    """.trimIndent()
+
+    File(outDir, "index.html").writeText(html, StandardCharsets.UTF_8)
+    log.info(
+      "Harbor UI materialized at ${outDir.absolutePath}/index.html " +
+        "(project=${project.name} css=${File(outDir, "panel.css").length()} " +
+        "js=${File(outDir, "panel.js").length()})"
+    )
+    return outDir
+  }
+
+  /** Kept for callers that still expect a string; prefer [materialize] + HTTP. */
+  fun buildInline(project: Project, surface: String = "panel"): String {
+    val dir = HarborUiServer.materializeRoot()
+    materialize(project, dir, surface)
+    return File(dir, "index.html").readText(StandardCharsets.UTF_8)
+  }
+
+  fun build(project: Project, surface: String = "panel"): String = buildInline(project, surface)
+
+  private fun resolveMediaRoot(): File? {
+    val candidates = listOf(
+      File(System.getProperty("user.dir"), "../media"),
+      File(System.getProperty("user.dir"), "media"),
+      File(System.getProperty("user.dir"), "../../media"),
+      pluginPath()?.resolve("harbor/media")?.toFile(),
+      pluginPath()?.resolve("media")?.toFile(),
+    )
+    for (c in candidates) {
+      if (c != null && File(c, "panel.js").exists()) {
+        return c.canonicalFile
+      }
+    }
+    return null
+  }
+
+  private fun pluginPath(): java.nio.file.Path? {
+    return try {
+      val id = PluginId.getId("com.harbor.agents")
+      val plugin = PluginManagerCore.getPlugin(id) ?: return null
+      plugin.pluginPath
+    } catch (_: Throwable) {
+      null
+    }
+  }
+
+  private fun copyAsset(mediaRoot: File?, name: String, dest: File) {
+    if (mediaRoot != null) {
+      val src = File(mediaRoot, name)
+      if (src.exists()) {
+        FileUtil.copy(src, dest)
+        return
+      }
+    }
+    val stream = HarborWebviewHtml::class.java.getResourceAsStream("/harbor/media/$name")
+      ?: HarborWebviewHtml::class.java.getResourceAsStream("/media/$name")
+    if (stream != null) {
+      stream.use { input -> dest.outputStream().use { input.copyTo(it) } }
+      return
+    }
+    log.warn("Missing Harbor asset: $name")
+  }
+
+  private fun readText(file: File): String {
+    return if (file.exists()) FileUtil.loadFile(file, StandardCharsets.UTF_8) else ""
+  }
+}

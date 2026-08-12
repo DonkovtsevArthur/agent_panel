@@ -45,6 +45,7 @@ import {
   HARBOR_CLINE_DISTINCT_ID,
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
+import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 
 type ClineMode = "act" | "plan";
 
@@ -916,6 +917,7 @@ function newSessionId(): string {
  */
 function buildHarborProviderConfig(): {
   providerId: string;
+  fetch: typeof fetch;
   options: {
     onResponseError: (response: {
       status: number;
@@ -925,6 +927,7 @@ function buildHarborProviderConfig(): {
 } {
   return {
     providerId: "openai-compatible",
+    fetch: harborFetch as typeof fetch,
     options: {
       onResponseError: async (response) => {
         if (response.status < 400) {
@@ -966,6 +969,8 @@ export async function runClineAgentTurn(options: {
   const { callbacks } = options;
   const bundle = loadClineBundle();
   const config = getConfig();
+  // Cline uses fetch — honor Advanced → Validate TLS (default off).
+  applyHarborTlsPolicy(config.rejectUnauthorized);
   const endpoint = resolveModelEndpoint(options.model);
   if (!endpoint.baseUrl) {
     throw new Error(
@@ -1366,6 +1371,9 @@ export async function runClineAgentTurn(options: {
         enableAgentTeams: true,
         disableMcpSettingsTools: true,
         maxParallelToolCalls,
+        // TLS: pass Harbor fetch so corporate self-signed proxies work when
+        // Advanced → Validate TLS is off (default).
+        fetch: harborFetch as typeof fetch,
         ...(enableAutoCompact
           ? {
               compaction: {

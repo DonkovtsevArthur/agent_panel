@@ -4,9 +4,16 @@ out/
 .DS_Store
 *.log
 .zcode/
+packages/*/dist/
+packages/*/node_modules/
+jetbrains/build/
+jetbrains/.gradle/
+jetbrains/out/
+jetbrains/.intellijPlatform/
 
 # Nested Cline lockfiles / build artifacts inside the fork
 vendor/cline/**/node_modules/
 vendor/cline/**/dist/
 vendor/cline/**/.turbo/
 vendor/cline/bun.lock
+.tmp-harbor-qa/

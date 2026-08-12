@@ -294,6 +294,8 @@ const PROVIDER_PROBE_POLL_MS = 15_000;
 
 export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
+  /** Shared with JetBrains JCEF via packages/harbor-host-protocol. */
+  public static readonly hostProtocolVersion = 1;
 
   private view?: vscode.WebviewView;
   private settingsPanel?: vscode.WebviewPanel;
@@ -3635,8 +3637,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async handleDiscardChanges(paths: string[]): Promise<void> {
     const runChatId = this.store.activeChatId;
     const lang = resolveUiLanguage(getConfig().language);
+    const postDiscardCancelled = (): void => {
+      this.view?.webview.postMessage({
+        type: "discardCancelled",
+        chatId: runChatId,
+      });
+    };
     if (!runChatId || !this.store.chats[runChatId]) {
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      postDiscardCancelled();
       return;
     }
     if (this.isChatRunning(runChatId)) {
@@ -3645,24 +3653,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           ? "Дождитесь завершения текущего ответа."
           : "Wait for the current response to finish."
       );
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      postDiscardCancelled();
       return;
     }
 
+    // One affirmative action; VS Code adds Cancel automatically for modal dialogs.
+    // A second custom "Keep" button made the dialog easy to dismiss by mistake.
     const confirmLabel = lang === "ru" ? "Отменить изменения" : "Discard changes";
-    const cancelLabel = lang === "ru" ? "Не сейчас" : "Keep changes";
     const confirm = await vscode.window.showWarningMessage(
       lang === "ru"
         ? "Отменить незакоммиченные изменения по файлам из этой правки? Действие необратимо."
         : "Discard uncommitted changes for the files from this edit? This cannot be undone.",
       { modal: true },
-      confirmLabel,
-      cancelLabel
+      confirmLabel
     );
     if (confirm !== confirmLabel) {
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
+      postDiscardCancelled();
       return;
     }
+
+    // Busy only after confirm — otherwise Cancel left the SCM strip stuck disabled
+    // when idle was dropped or raced with postInit(busy:false).
+    this.view?.webview.postMessage({
+      type: "discardStarted",
+      chatId: runChatId,
+    });
 
     const runRef = this.beginChatRun(runChatId);
     let runUiMessages = this.isViewingChat(runChatId)
@@ -3764,6 +3779,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (this.isViewingChat(runChatId)) {
         this.postRegenerateState();
       }
+      // Refresh immediately so the Отменить strip hides without waiting for git debounce.
+      await this.refreshReviewScmButtons();
       this.scheduleScmRefresh();
       if (this.isChatRunCurrent(runChatId, runRef)) {
         this.postRunFinished(runChatId, result.ok ? "success" : "error");
@@ -3965,9 +3982,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       void this.writeStoreOnly();
     }
 
-    if (reviews.length > 0) {
-      this.view.webview.postMessage({ type: "scmButtons", reviews });
-    }
+    // Always post — empty / all showScm:false must clear the composer strip.
+    this.view.webview.postMessage({ type: "scmButtons", reviews });
   }
 
   private serializeModesForUi(): Array<{

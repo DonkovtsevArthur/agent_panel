@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, list_agent]
+  pull_request:
+
+jobs:
+  vscode:
+    name: VS Code compile + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - run: node --test tests/*.test.js
+      - name: Sidecar smoke ping
+        run: |
+          node -e "
+          const { spawn } = require('child_process');
+          const p = spawn('node', ['out/harborSidecar.js'], { stdio: ['pipe', 'pipe', 'pipe'] });
+          let out = '';
+          p.stdout.on('data', d => {
+            out += d;
+            if (out.includes('\"ok\":true')) { p.kill(); process.exit(0); }
+          });
+          p.stderr.on('data', d => process.stderr.write(d));
+          setTimeout(() => {
+            p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) + '\n');
+          }, 200);
+          setTimeout(() => { console.error('sidecar ping timeout'); process.exit(1); }, 8000);
+          "
+
+  jetbrains:
+    name: JetBrains plugin compile
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - run: npm run build:sidecar
+      - name: Compile Kotlin plugin sources
+        working-directory: jetbrains
+        run: ./gradlew compileKotlin --no-daemon

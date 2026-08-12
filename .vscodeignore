@@ -20,3 +20,6 @@ tests/**
 AGENTS.md
 docs/**
 vendor/**
+packages/**
+jetbrains/**
+.tmp-harbor-qa/**
