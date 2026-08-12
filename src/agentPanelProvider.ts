@@ -800,10 +800,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!chatId || !this.store.chats[chatId]) {
       return;
     }
-    stripUiAttachmentPayloads(this.uiMessages);
-    for (const msg of this.history) {
-      if (msg.attachments?.length) {
-        msg.attachments = msg.attachments.map(stripAttachmentPayload);
+    // While a turn owns this chat, syncRunChat is the source of truth for
+    // history/uiMessages. Flushing this.uiMessages here can stomp the store
+    // with a stale or wrong-chat snapshot if the user switched mid-await.
+    const running = this.chatRuns.has(chatId);
+    if (!running) {
+      stripUiAttachmentPayloads(this.uiMessages);
+      for (const msg of this.history) {
+        if (msg.attachments?.length) {
+          msg.attachments = msg.attachments.map(stripAttachmentPayload);
+        }
       }
     }
     touchChat(this.store, chatId, {
@@ -813,9 +819,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? { selectedReasoningEffort: this.selectedReasoningEffort }
         : { selectedReasoningEffort: undefined }),
       lastTurnModel: this.lastTurnModel,
-      history: this.history,
-      uiMessages: this.uiMessages.slice(-200),
       contextTokens: this.contextTokens,
+      ...(running
+        ? {}
+        : {
+            history: this.history,
+            uiMessages: this.uiMessages.slice(-200),
+          }),
     });
   }
 
@@ -2732,11 +2742,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       attachments?: IncomingAttachment[] | MessageAttachment[];
       agentMode?: string;
       reasoningEffort?: string;
+      /** Pin turn to this chat when edit/regenerate races a chat switch. */
+      chatId?: string;
     }
   ): Promise<void> {
     const config = getConfig();
     const enabledModels = getEnabledModels();
-    const runChatId = this.store.activeChatId;
+    // Pin the chat id immediately — webview "send" and "openAgent" handlers can
+    // interleave across awaits, so activeChatId may change before we persist.
+    const runChatId = String(options?.chatId || this.store.activeChatId || "");
     if (!enabledModels.length) {
       this.pushUiToChat(
         runChatId,
@@ -2750,44 +2764,65 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    let attachments: MessageAttachment[] = [];
-    try {
-      attachments = await persistIncomingAttachments(
-        options?.attachments,
-        this.storageUri()
-      );
-    } catch (error) {
-      const messageText =
-        error instanceof Error ? error.message : String(error);
-      this.pushUiToChat(runChatId, "error", messageText);
+    const trimmed = String(text || "").trim();
+    const incomingAttachments = options?.attachments;
+    const hasIncomingAttachments = Boolean(
+      Array.isArray(incomingAttachments) && incomingAttachments.length
+    );
+    if (!trimmed && !hasIncomingAttachments) {
       this.view?.webview.postMessage({
         type: "idle",
         chatId: runChatId,
       });
+      return;
+    }
+    if (!runChatId || !this.store.chats[runChatId]) {
+      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
       return;
     }
 
-    const trimmed = String(text || "").trim();
-    if (!trimmed && !attachments.length) {
-      this.view?.webview.postMessage({
-        type: "idle",
-        chatId: runChatId,
-      });
-      return;
-    }
+    const sourceChat = this.store.chats[runChatId];
+    // Snapshot BEFORE any await. Reading this.history/uiMessages after a yield
+    // can pick up another chat after the user switches, and syncRunChat would
+    // then overwrite runChatId with the wrong transcript (user bubbles vanish).
+    let runHistory: ChatMessage[] = this.isActiveChat(runChatId)
+      ? this.history.slice()
+      : (sourceChat.history || []).slice();
+    let runUiMessages: UiMessage[] = this.isActiveChat(runChatId)
+      ? this.uiMessages.slice()
+      : (sourceChat.uiMessages || []).slice();
+    let runTransientStart = runUiMessages.length;
+    let runLastTurnModel = this.isActiveChat(runChatId)
+      ? this.lastTurnModel || ""
+      : sourceChat.lastTurnModel || "";
+    let runContextTokens = this.isActiveChat(runChatId)
+      ? this.contextTokens
+      : typeof sourceChat.contextTokens === "number" && sourceChat.contextTokens > 0
+        ? sourceChat.contextTokens
+        : 0;
 
     const requestedModel =
       (model && enabledModels.some((m) => m.id === model) ? model : "") ||
-      (this.selectedModel &&
+      (this.isActiveChat(runChatId) &&
+      this.selectedModel &&
       enabledModels.some((m) => m.id === this.selectedModel)
         ? this.selectedModel
+        : "") ||
+      (sourceChat.selectedModel &&
+      enabledModels.some((m) => m.id === sourceChat.selectedModel)
+        ? sourceChat.selectedModel
         : "") ||
       (config.defaultModel &&
       enabledModels.some((m) => m.id === config.defaultModel)
         ? config.defaultModel
         : "") ||
       enabledModels[0].id;
-    const selectedMode = getModeById(options?.agentMode ?? this.selectedMode);
+    const selectedMode = getModeById(
+      options?.agentMode ??
+        (this.isActiveChat(runChatId)
+          ? this.selectedMode
+          : sourceChat.selectedMode)
+    );
     // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask.
     const modeForRun = selectedMode;
     // Картинки: пиксели уходят в Cline как image parts; vision/placeholder —
@@ -2795,29 +2830,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const chosen = requestedModel;
     const reasoningEffortForRun = this.resolveReasoningEffortForModel(
       chosen,
-      options?.reasoningEffort
+      options?.reasoningEffort ??
+        (this.isActiveChat(runChatId)
+          ? this.selectedReasoningEffort
+          : sourceChat.selectedReasoningEffort)
     );
-    this.selectedMode = modeForRun.id;
-    if (reasoningEffortForRun) {
-      this.selectedReasoningEffort = reasoningEffortForRun;
+    if (this.isActiveChat(runChatId)) {
+      this.selectedMode = modeForRun.id;
+      if (reasoningEffortForRun) {
+        this.selectedReasoningEffort = reasoningEffortForRun;
+      }
+      this.selectedModel = chosen;
     }
-    if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
-      touchChat(this.store, this.store.activeChatId, {
-        selectedMode: this.selectedMode,
-        ...(reasoningEffortForRun
-          ? { selectedReasoningEffort: reasoningEffortForRun }
-          : {}),
-      });
-    }
-    if (!runChatId || !this.store.chats[runChatId]) {
-      this.view?.webview.postMessage({ type: "idle", chatId: runChatId });
-      return;
-    }
-    let runHistory = this.history;
-    let runUiMessages = this.uiMessages;
-    let runTransientStart = runUiMessages.length;
-    let runLastTurnModel = this.lastTurnModel || "";
-    let runContextTokens = this.contextTokens;
+
+    // Own the chat run before any await so persistActiveChat won't stomp
+    // uiMessages with a wrong-chat snapshot while attachments are writing.
+    const runRef = this.beginChatRun(runChatId);
+    const currentRun = runRef.controller;
+    touchChat(this.store, runChatId, {
+      selectedMode: modeForRun.id,
+      ...(reasoningEffortForRun
+        ? { selectedReasoningEffort: reasoningEffortForRun }
+        : {}),
+    });
     const syncRunChat = (): void => {
       if (!this.isChatRunCurrent(runChatId, runRef)) {
         return;
@@ -2856,12 +2891,59 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({ ...message, chatId: runChatId });
       }
     };
-    this.selectedModel = chosen;
-    void this.saveSession();
+
+    // Persist the user bubble immediately (webview already showed it). Otherwise
+    // switching chats across the attachments await drops the message.
+    if (options?.appendUser !== false) {
+      const uiMsg: UiMessage = {
+        role: "user",
+        text: trimmed,
+        mode: modeForRun.id,
+      };
+      runUiMessages.push(uiMsg);
+      syncRunChat();
+    }
+
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await persistIncomingAttachments(
+        incomingAttachments,
+        this.storageUri()
+      );
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.finishChatRun(runChatId, runRef);
+      this.pushUiToChat(runChatId, "error", messageText);
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: runChatId,
+      });
+      return;
+    }
+
+    if (!trimmed && !attachments.length) {
+      this.finishChatRun(runChatId, runRef);
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: runChatId,
+      });
+      return;
+    }
+
+    if (options?.appendUser !== false && attachments.length) {
+      const last = runUiMessages[runUiMessages.length - 1];
+      if (last?.role === "user") {
+        last.attachments = attachments.map(stripAttachmentPayload);
+        syncRunChat();
+      }
+    }
+
     this.ensureProviderProbe(chosen);
 
     const endpoint = resolveModelEndpoint(chosen);
     if (!endpoint.baseUrl) {
+      this.finishChatRun(runChatId, runRef);
       this.pushUiToChat(
         runChatId,
         "error",
@@ -2871,23 +2953,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Start run tracking before we touch UI/store for this run.
-    // Otherwise early syncRunChat() calls could run in TDZ of runRef.
-    const runRef = this.beginChatRun(runChatId);
-    const currentRun = runRef.controller;
-
-    if (options?.appendUser !== false) {
-      const uiMsg: UiMessage = {
-        role: "user",
-        text: trimmed,
-        mode: modeForRun.id,
-      };
-      if (attachments.length) {
-        uiMsg.attachments = attachments.map(stripAttachmentPayload);
-      }
-      runUiMessages.push(uiMsg);
-      syncRunChat();
-    }
     // Tool-статусы этого запуска временные до успешного финала.
     runTransientStart = runUiMessages.length;
 
@@ -3387,25 +3452,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     agentMode = "agent",
     reasoningEffort?: string
   ): Promise<void> {
+    const runChatId = this.store.activeChatId;
     const state = this.getRegenerateState();
-    if (!state) {
+    if (!state || !runChatId) {
       this.postRegenerateState();
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
 
-    this.abortChatRun(this.store.activeChatId);
+    this.abortChatRun(runChatId);
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
     this.saveSession();
     this.view?.webview.postMessage({
       type: "messagesReplaced",
-      uiMessages: await this.enrichUiMessages(this.uiMessages),
-      selectedModel: this.selectedModel,
+      uiMessages: await this.enrichUiMessages(state.uiMessages),
+      selectedModel: state.model,
       canRegenerate: false,
     });
     await this.handleSend(state.userText, state.model, {
@@ -3413,6 +3479,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       attachments: state.attachments,
       agentMode,
       reasoningEffort,
+      chatId: runChatId,
     });
   }
 
@@ -3424,8 +3491,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     agentMode = "agent",
     reasoningEffort?: string
   ): Promise<void> {
+    const runChatId = this.store.activeChatId;
     const nextText = text.trim();
-    const target = this.uiMessages[index];
+    if (!runChatId || !this.store.chats[runChatId]) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({
+        type: "idle",
+        chatId: runChatId,
+      });
+      return;
+    }
+
+    const baseUi = this.isActiveChat(runChatId)
+      ? this.uiMessages.slice()
+      : (this.store.chats[runChatId].uiMessages || []).slice();
+    const baseHistory = this.isActiveChat(runChatId)
+      ? this.history.slice()
+      : (this.store.chats[runChatId].history || []).slice();
+    const target = baseUi[index];
     if (
       !Number.isInteger(index) ||
       index < 0 ||
@@ -3435,10 +3518,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.postRegenerateState();
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
+
+    const existingAttachments = Array.isArray(target.attachments)
+      ? target.attachments.map(stripAttachmentPayload)
+      : [];
 
     let attachments: MessageAttachment[] = [];
     try {
@@ -3447,16 +3534,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           incomingAttachments,
           this.storageUri()
         );
-      } else if (target.attachments?.length) {
-        attachments = target.attachments.map(stripAttachmentPayload);
+      } else if (existingAttachments.length) {
+        attachments = existingAttachments;
       }
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : String(error);
-      this.pushUiToChat(this.store.activeChatId, "error", messageText);
+      this.pushUiToChat(runChatId, "error", messageText);
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
@@ -3465,21 +3552,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.postRegenerateState();
       this.view?.webview.postMessage({
         type: "idle",
-        chatId: this.store.activeChatId,
+        chatId: runChatId,
       });
       return;
     }
 
     let userOrdinal = 0;
     for (let i = 0; i < index; i++) {
-      if (this.uiMessages[i]?.role === "user") {
+      if (baseUi[i]?.role === "user") {
         userOrdinal += 1;
       }
     }
 
-    this.abortChatRun(this.store.activeChatId);
-    this.history = this.history.slice(0, Math.max(0, userOrdinal * 2));
-    this.uiMessages = this.uiMessages.slice(0, index);
+    this.abortChatRun(runChatId);
+    const nextHistory = baseHistory.slice(0, Math.max(0, userOrdinal * 2));
     const uiMsg: UiMessage = {
       role: "user",
       text: nextText,
@@ -3488,21 +3574,36 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (attachments.length) {
       uiMsg.attachments = attachments.map(stripAttachmentPayload);
     }
-    this.uiMessages.push(uiMsg);
-    this.lastTurnModel = "";
-    this.contextTokens = 0;
-    this.saveSession();
-    this.view?.webview.postMessage({
-      type: "messagesReplaced",
-      uiMessages: await this.enrichUiMessages(this.uiMessages),
-      selectedModel: this.selectedModel,
-      canRegenerate: false,
+    const nextUi = [...baseUi.slice(0, index), uiMsg];
+    touchChat(this.store, runChatId, {
+      history: nextHistory,
+      uiMessages: nextUi.slice(-200),
+      lastTurnModel: "",
+      contextTokens: 0,
+      selectedModel: model || this.store.chats[runChatId]?.selectedModel,
     });
+    if (this.isActiveChat(runChatId)) {
+      this.history = nextHistory;
+      this.uiMessages = nextUi;
+      this.lastTurnModel = "";
+      this.contextTokens = 0;
+      if (model) {
+        this.selectedModel = model;
+      }
+      this.view?.webview.postMessage({
+        type: "messagesReplaced",
+        uiMessages: await this.enrichUiMessages(nextUi),
+        selectedModel: this.selectedModel,
+        canRegenerate: false,
+      });
+    }
+    void this.writeStoreOnly();
     await this.handleSend(nextText, model, {
       appendUser: false,
       attachments,
       agentMode,
       reasoningEffort,
+      chatId: runChatId,
     });
   }
 
@@ -3992,6 +4093,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     description: string;
     tools: AgentModeDef["tools"];
     prompt: string;
+    color: string;
     enabled: boolean;
     builtin: boolean;
     overridden: boolean;
@@ -4004,6 +4106,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       description: m.description || "",
       tools: m.tools,
       prompt: m.prompt || "",
+      color: m.color || "",
       enabled: m.enabled !== false,
       builtin: Boolean(m.builtin),
       overridden: storedIds.has(m.id),
@@ -4060,6 +4163,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         })),
         defaultModel: config.defaultModel,
         language: config.language,
+        resolvedLanguage: resolveUiLanguage(config.language),
         defaultContextWindow: config.defaultContextWindow,
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
@@ -4684,6 +4788,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (m.placeholder) {
           row.placeholder = m.placeholder;
         }
+        if (m.color) {
+          row.color = m.color;
+        }
         if (m.enabled === false) {
           row.enabled = false;
         }
@@ -5153,6 +5260,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
           </label>
           <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
+          <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
           <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
           <label class="settings-field settings-check">
             <input id="settingsTabAutocompleteEnabled" type="checkbox" />
@@ -5205,6 +5313,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </label>
           <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
+          </div>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
@@ -5477,22 +5586,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       </div>
       <div class="settings-modal-body">
         <label class="settings-field">
-          <span class="settings-label">Name</span>
+          <span class="settings-label" id="modeEditNameLabel">Name</span>
           <input id="modeEditLabel" class="settings-input" type="text" placeholder="e.g. Review" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Description</span>
+          <span class="settings-label" id="modeEditDescriptionLabel">Description</span>
           <input id="modeEditDescription" class="settings-input" type="text" placeholder="Short tooltip text" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Tools</span>
+          <span class="settings-label" id="modeEditToolsLabel">Tools</span>
           <select id="modeEditTools" class="settings-input">
             <option value="agent">Agent — read and edit</option>
             <option value="readonly">Read only</option>
           </select>
         </label>
+        <div class="settings-field">
+          <span class="settings-label" id="modeEditColorLabel">Color</span>
+          <div class="mode-color-row" id="modeEditColorRow" role="group" aria-labelledby="modeEditColorLabel">
+            <button type="button" class="mode-color-swatch is-none is-active" data-color="" title="None" aria-label="None"></button>
+            <button type="button" class="mode-color-swatch" data-color="#a67c00" title="#a67c00" aria-label="#a67c00"></button>
+            <button type="button" class="mode-color-swatch" data-color="#2d6a4f" title="#2d6a4f" aria-label="#2d6a4f"></button>
+            <button type="button" class="mode-color-swatch" data-color="#0e639c" title="#0e639c" aria-label="#0e639c"></button>
+            <button type="button" class="mode-color-swatch" data-color="#7c3aed" title="#7c3aed" aria-label="#7c3aed"></button>
+            <button type="button" class="mode-color-swatch" data-color="#be185d" title="#be185d" aria-label="#be185d"></button>
+            <button type="button" class="mode-color-swatch" data-color="#c2410c" title="#c2410c" aria-label="#c2410c"></button>
+            <button type="button" class="mode-color-swatch" data-color="#0f766e" title="#0f766e" aria-label="#0f766e"></button>
+            <label class="mode-color-custom" title="Custom">
+              <input id="modeEditColor" type="color" value="#0e639c" aria-label="Custom color" />
+            </label>
+          </div>
+          <p class="settings-hint" id="modeEditColorHint">Composer border and user messages in this mode.</p>
+        </div>
         <label class="settings-field">
-          <span class="settings-label">Mode prompt</span>
+          <span class="settings-label" id="modeEditPromptLabel">Mode prompt</span>
           <textarea id="modeEditPrompt" class="settings-input settings-textarea" rows="6" placeholder="Instructions for this mode..."></textarea>
         </label>
       </div>

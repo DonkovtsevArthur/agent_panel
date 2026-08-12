@@ -8,6 +8,7 @@ import javax.swing.JComponent
 /**
  * On macOS, platform JBCef only auto-focuses the browser on mouse press for Windows.
  * Without focus, keyboard can still move :focus rings (Tab) while clicks look "dead".
+ * Also focus on mouse enter so the first click is not eaten by focus steal.
  */
 object HarborJcefFocus {
   fun install(browser: JBCefBrowser) {
@@ -21,6 +22,12 @@ object HarborJcefFocus {
       override fun mousePressed(e: MouseEvent) {
         focusNow()
         (e.component as? JComponent)?.requestFocusInWindow()
+      }
+
+      override fun mouseEntered(e: MouseEvent) {
+        // Prefocus before the user clicks a chat row — otherwise the first
+        // press only focuses JBCef and the DOM never sees a click.
+        focusNow()
       }
     }
     try {

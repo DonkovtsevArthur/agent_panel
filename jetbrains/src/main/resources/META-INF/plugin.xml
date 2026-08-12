@@ -4,24 +4,56 @@
   <vendor email="donkovtsev.arthur@gmail.com" url="https://github.com/DonkovtsevArthur/agent_panel">Harbor Agents</vendor>
 
   <description><![CDATA[
-    Harbor Agents sidebar for WebStorm / IntelliJ.
-    Chat (Agent / Plan / Ask), providers, MCP, commit-from-review.
-    Shares UI (<code>media/panel.js</code>) and Node sidecar with the VS Code extension.
-    Requires the bundled <b>Web Browser (JCEF)</b> plugin.
+    <p><b>Harbor Agents</b> (Гавань агентов) — локальная панель AI-агента для WebStorm / IntelliJ.
+    Подключаете свой OpenAI-compatible API: чаты и настройки остаются на вашей машине, без облака Harbor.</p>
+
+    <h3>Возможности</h3>
+    <ul>
+      <li><b>Режимы Agent / Plan / Ask</b> — правки и терминал, план без правок, вопросы по коду</li>
+      <li><b>Свой провайдер</b> — OpenAI, Azure, корпоративные gateway, локальные модели</li>
+      <li><b>Инструменты</b> — поиск по проекту, чтение и правка файлов, команды в терминале</li>
+      <li><b>Контекст из IDE</b> — добавить выделение или файл в чат (контекстное меню и хоткеи)</li>
+      <li><b>MCP</b> — Figma и свои серверы (stdio / HTTP)</li>
+      <li><b>Review и Git</b> — карточки diff, генерация commit message, commit &amp; push из панели</li>
+      <li><b>Сессии локально</b> — чаты хранятся в проекте (<code>.idea/harbor</code>)</li>
+    </ul>
+
+    <h3>Быстрый старт</h3>
+    <ol>
+      <li>Откройте tool window <b>Harbor Agents</b></li>
+      <li>Settings → добавьте провайдера (<code>baseUrl</code>, <code>apiKey</code>) и модели</li>
+      <li>Выделите код → <b>⇧⌘L</b> / <b>Ctrl+Shift+L</b> — добавить в чат</li>
+      <li>Файл → <b>⇧⌘H</b> / <b>Ctrl+Shift+H</b> — добавить файл в чат</li>
+    </ol>
+
+    <h3>Требования</h3>
+    <ul>
+      <li>WebStorm / IntelliJ <b>2025.2+</b> (build 252+) с JCEF / Web Browser</li>
+      <li>Node.js для sidecar-рантайма агента</li>
+      <li>OpenAI-compatible API и хотя бы один model id</li>
+    </ul>
   ]]></description>
 
-  <!-- Required: on 2025.3.1+ / 2026.2 JCEF is a separate plugin; without a hard
-       dependency JBCefBrowser is invisible (NoClassDefFoundError) and Harbor falls
-       back to the simple Swing settings dialog. -->
-  <depends>com.intellij.modules.platform</depends>
-  <depends>com.intellij.modules.jcef</depends>
+  <change-notes><![CDATA[
+    <b>0.1.53</b>
+    <ul>
+      <li>Фикс кнопки «отправить» при редактировании сообщения пользователя (JCEF)</li>
+    </ul>
+    <b>0.1.52</b>
+    <ul>
+      <li>Фикс выбора режима/модели при редактировании сообщения пользователя (JCEF)</li>
+    </ul>
+    <b>0.1.51</b>
+    <ul>
+      <li>Фикс зависания спиннера при генерации commit message</li>
+    </ul>
+  ]]></change-notes>
 
-  <!-- Content modules that own com.intellij.ui.jcef.* / org.cef.* (IDE 2026.2+) -->
-  <dependencies>
-    <plugin id="com.intellij.modules.jcef"/>
-    <module name="intellij.platform.ui.jcef"/>
-    <module name="intellij.libraries.jcef"/>
-  </dependencies>
+  <!-- JCEF is on the platform classpath in 2025.2 (252). From 2025.3.1 the
+       com.intellij.modules.jcef alias exists — optional so 252 still loads. -->
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.vcs</depends>
+  <depends optional="true" config-file="harbor-jcef.xml">com.intellij.modules.jcef</depends>
 
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow
@@ -64,8 +96,61 @@
       id="HarborAgents.GenerateCommitMessage"
       class="com.harbor.agents.actions.GenerateCommitMessageAction"
       text="Harbor: Generate Commit Message"
-      description="Generate a commit message via Harbor">
+      description="Generate a commit message via Harbor (LLM)"
+      icon="/icons/harbor.svg">
+      <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
       <add-to-group group-id="ToolsMenu" anchor="last"/>
     </action>
+
+    <group id="HarborAgents.EditorPopupGroup" text="Harbor Agents" popup="true">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <action
+        id="HarborAgents.AddSelectionToChat"
+        class="com.harbor.agents.actions.AddSelectionToChatAction"
+        text="Add Selection to Chat"
+        description="Add the selected code to the Harbor Agents composer">
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Shift+L -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control shift L"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift L" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift L" replace-all="true"/>
+      </action>
+      <action
+        id="HarborAgents.AddSelectionToNewChat"
+        class="com.harbor.agents.actions.AddSelectionToNewChatAction"
+        text="Add Selection to New Chat"
+        description="Start a new Harbor chat with the selected code">
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+Shift+L -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control alt shift L"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift L" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift L" replace-all="true"/>
+      </action>
+      <separator/>
+      <action
+        id="HarborAgents.AddFileToChat"
+        class="com.harbor.agents.actions.AddFileToChatAction"
+        text="Add File to Chat"
+        description="Add the current file to the Harbor Agents composer">
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Shift+H -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control shift H"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift H" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift H" replace-all="true"/>
+      </action>
+      <action
+        id="HarborAgents.AddFileToNewChat"
+        class="com.harbor.agents.actions.AddFileToNewChatAction"
+        text="Add File to New Chat"
+        description="Start a new Harbor chat with the current file">
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+Shift+H -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control alt shift H"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift H" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift H" replace-all="true"/>
+      </action>
+    </group>
+
+    <group id="HarborAgents.ProjectViewPopupGroup" text="Harbor Agents" popup="true">
+      <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+      <reference ref="HarborAgents.AddFileToChat"/>
+      <reference ref="HarborAgents.AddFileToNewChat"/>
+    </group>
   </actions>
 </idea-plugin>

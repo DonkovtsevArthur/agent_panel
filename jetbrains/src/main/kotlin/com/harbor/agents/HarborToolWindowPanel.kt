@@ -74,8 +74,8 @@ class HarborToolWindowPanel(private val project: Project) : JPanel(BorderLayout(
     session?.openChatSurface()
   }
 
-  fun postToWebview(json: String) {
-    session?.postToWebview(json)
+  fun postToWebview(json: String, forceRepaint: Boolean = false) {
+    session?.postToWebview(json, forceRepaint)
   }
 
   fun reload() {

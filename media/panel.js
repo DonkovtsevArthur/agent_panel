@@ -30,7 +30,9 @@
   if (typeof state.agentsRailOpen !== "boolean") {
     state.agentsRailOpen = false;
   }
-  const UI_LANG = document.documentElement.lang.startsWith("ru") ? "ru" : "en";
+  let UI_LANG = document.documentElement.lang.startsWith("ru") ? "ru" : "en";
+  /** Host-resolved language for setting `auto` (IDE / VS Code display language). */
+  let hostResolvedUiLang = UI_LANG;
   const UI_SURFACE =
     document.documentElement.getAttribute("data-surface") === "settings"
       ? "settings"
@@ -883,11 +885,55 @@
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
   };
-  const STR = UI_STRINGS[UI_LANG];
+  let STR = UI_STRINGS[UI_LANG];
   const t = (key, ...args) => {
     const value = STR[key];
     return typeof value === "function" ? value(...args) : value;
   };
+
+  function effectiveUiLangFromSetting(setting) {
+    if (setting === "ru" || setting === "en") {
+      return setting;
+    }
+    return hostResolvedUiLang === "ru" ? "ru" : "en";
+  }
+
+  /** Switch panel chrome language without reloading the IDE / webview. */
+  function applyUiLanguage(nextLang) {
+    const lang = nextLang === "ru" ? "ru" : "en";
+    const changed = UI_LANG !== lang;
+    UI_LANG = lang;
+    STR = UI_STRINGS[lang];
+    document.documentElement.lang = lang;
+    if (!changed) {
+      return;
+    }
+    localizeStaticUi();
+    try {
+      if (typeof applySelectedMode === "function") {
+        applySelectedMode(
+          typeof agentMode === "string" && agentMode ? agentMode : "agent",
+          { notify: false }
+        );
+      }
+    } catch {
+      /* mode helpers may not be ready yet */
+    }
+    try {
+      if (typeof updateReasonPickerVisibility === "function") {
+        updateReasonPickerVisibility();
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (typeof forceHarborUiRepaint === "function") {
+        forceHarborUiRepaint();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   const messagesEl = document.getElementById("messages");
   const promptEl = document.getElementById("prompt");
@@ -1561,7 +1607,13 @@
       const autoOpt = settingsLanguage.querySelector('option[value="auto"]');
       const enOpt = settingsLanguage.querySelector('option[value="en"]');
       const ruOpt = settingsLanguage.querySelector('option[value="ru"]');
-      if (autoOpt) autoOpt.textContent = t("languageAuto");
+      if (autoOpt) {
+        autoOpt.textContent = harborHostAvailable()
+          ? UI_LANG === "ru"
+            ? "Авто (как в IDE)"
+            : "Auto (follow IDE)"
+          : t("languageAuto");
+      }
       if (enOpt) enOpt.textContent = t("languageEn");
       if (ruOpt) ruOpt.textContent = t("languageRu");
     }
@@ -2069,6 +2121,11 @@
   let editingAttachments = [];
   let editModelMenuOpen = false;
   let editModeMenuOpen = false;
+  let harborEditPickerOpenedAt = 0;
+  /** Timestamp of last JetBrains pointerdown for edit-save / regenerate / branch. */
+  let harborEditSaveAt = 0;
+  /** Timestamp of last JetBrains pointerdown for agents-rail / branch-pill switch. */
+  let harborAgentNavAt = 0;
   let models = DEFAULT_MODELS.slice();
   let selectedModelId = "";
   let menuOpen = false;
@@ -2222,7 +2279,9 @@
         previewDataUrl: item.previewDataUrl,
       });
     }
+    showScreen("chat");
     renderAttachPreview();
+    focusPrompt();
   }
 
   function removePendingAttachment(id) {
@@ -2605,6 +2664,7 @@
       selectionPreviewEl.hidden = true;
       selectionPreviewEl.innerHTML = "";
       updateSendButton();
+      forceHarborUiRepaint();
       return;
     }
     selectionPreviewEl.hidden = false;
@@ -2632,6 +2692,9 @@
       })
       .join("");
     updateSendButton();
+    forceHarborUiRepaint();
+    setTimeout(forceHarborUiRepaint, 32);
+    setTimeout(forceHarborUiRepaint, 120);
   }
 
   function buildMessageWithSelections(userText) {
@@ -2652,6 +2715,20 @@
     );
   }
 
+  /** JetBrains: hide VS Code–only settings (Tab autocomplete). */
+  function applyJetBrainsSettingsVisibility() {
+    if (!harborHostAvailable()) {
+      return;
+    }
+    document.documentElement.setAttribute("data-harbor-host", "jetbrains");
+    const tabBlock = document.getElementById("settingsTabAutocompleteBlock");
+    if (tabBlock) {
+      tabBlock.hidden = true;
+    }
+  }
+
+  applyJetBrainsSettingsVisibility();
+
   /** JCEF OSR often skips paints after DOM updates until a click — nudge it. */
   function forceHarborUiRepaint() {
     if (!harborHostAvailable()) {
@@ -2660,6 +2737,7 @@
     const root = document.documentElement;
     root.classList.add("harbor-force-paint");
     void (attachPreviewEl && attachPreviewEl.offsetHeight);
+    void (selectionPreviewEl && selectionPreviewEl.offsetHeight);
     void root.offsetHeight;
     requestAnimationFrame(() => {
       root.classList.remove("harbor-force-paint");
@@ -2907,6 +2985,8 @@
   /**
    * OSR often drops the synthesized `click` after pointerup on icon/primary
    * controls (edit-resend, send, regenerate). Retry via el.click() if needed.
+   * Mode/model edit pickers and edit-save open/act on pointerdown — click is
+   * unreliable in OSR and a delayed synthetic click would toggle/double-fire.
    */
   function installHarborClickPolyfill() {
     if (!harborHostAvailable()) {
@@ -2914,13 +2994,95 @@
     }
     const SELECTOR =
       "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .composer-plan-build";
+    const POINTER_ACTION_SELECTOR =
+      ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-save, .msg-regenerate, .msg-branch, .composer-plan-build, #sendBtn";
     let downEl = null;
     let clickSeen = false;
+
+    function runPointerAction(el) {
+      if (!el || el.disabled) {
+        return false;
+      }
+      if (el.classList.contains("msg-edit-mode-trigger")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditModeMenu();
+        return true;
+      }
+      if (el.classList.contains("msg-edit-model-trigger")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditModelMenu();
+        return true;
+      }
+      if (el.classList.contains("msg-edit-save")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditSaveAt = Date.now();
+        submitEditedUserMessage();
+        return true;
+      }
+      if (el.classList.contains("msg-regenerate")) {
+        if (!messagesEl || !messagesEl.contains(el) || !canRegenerate) {
+          return false;
+        }
+        harborEditSaveAt = Date.now();
+        pinChatToBottom();
+        setBusy(true);
+        host.postMessage({
+          type: "regenerate",
+          agentMode,
+          reasoningEffort: selectedReasoningEffort || undefined,
+        });
+        return true;
+      }
+      if (el.classList.contains("msg-branch")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        const index = Number(el.dataset.index);
+        if (!Number.isInteger(index) || index < 0) {
+          return false;
+        }
+        harborEditSaveAt = Date.now();
+        host.postMessage({ type: "branchFromMessage", messageIndex: index });
+        return true;
+      }
+      if (el.classList.contains("composer-plan-build") || el.id === "sendBtn") {
+        harborEditSaveAt = Date.now();
+        try {
+          el.click();
+        } catch {
+          /* ignore */
+        }
+        return true;
+      }
+      return false;
+    }
 
     document.addEventListener(
       "pointerdown",
       (event) => {
         if (event.button !== 0) {
+          return;
+        }
+        const actionEl =
+          event.target && event.target.closest
+            ? event.target.closest(POINTER_ACTION_SELECTOR)
+            : null;
+        if (actionEl && runPointerAction(actionEl)) {
+          event.preventDefault();
+          event.stopPropagation();
+          downEl = null;
+          clickSeen = true;
+          forceHarborUiRepaint();
+          setTimeout(forceHarborUiRepaint, 32);
+          setTimeout(forceHarborUiRepaint, 120);
           return;
         }
         const el =
@@ -2957,6 +3119,9 @@
             ? event.target.closest(SELECTOR)
             : null;
         if (!el || (el !== start && !start.contains(el) && !el.contains(start))) {
+          return;
+        }
+        if (el.matches(POINTER_ACTION_SELECTOR)) {
           return;
         }
         window.setTimeout(() => {
@@ -3966,12 +4131,29 @@
   }
 
   function submitEditedUserMessage() {
-    if (!Number.isInteger(editingUserIndex) || busy) {
+    if (!Number.isInteger(editingUserIndex)) {
       return;
+    }
+    if (busy) {
+      showCopyToast(
+        UI_LANG === "ru"
+          ? "Дождитесь окончания текущего хода или остановите его."
+          : "Wait for the current turn to finish, or stop it."
+      );
+      return;
+    }
+    const input = messagesEl.querySelector(
+      `.msg-edit-input[data-index="${editingUserIndex}"]`
+    );
+    if (input instanceof HTMLTextAreaElement) {
+      editingUserText = input.value;
     }
     const nextText = editingUserText.trim();
     const attachments = editingAttachments.slice();
     if (!nextText && !attachments.length) {
+      showCopyToast(
+        UI_LANG === "ru" ? "Введите текст сообщения." : "Enter a message."
+      );
       return;
     }
     const model =
@@ -4206,19 +4388,36 @@
     menu.style.visibility = "";
     menu.style.left = Math.round(left) + "px";
 
+    const minMenu = 120;
     if (openDown) {
       picker.classList.add("opens-down");
       menu.classList.add("opens-down");
       menu.style.top = Math.round(triggerRect.bottom + gap) + "px";
       menu.style.bottom = "auto";
-      menu.style.maxHeight =
-        Math.max(0, Math.min(cssMax, Math.floor(availBelow))) + "px";
+      let below = Math.floor(availBelow);
+      if (below < minMenu) {
+        below = Math.min(
+          cssMax,
+          Math.max(minMenu, window.innerHeight - triggerRect.bottom - gap - edgePad)
+        );
+      }
+      menu.style.maxHeight = Math.max(minMenu, Math.min(cssMax, below)) + "px";
     } else {
       menu.style.top = "auto";
       menu.style.bottom =
         Math.round(window.innerHeight - triggerRect.top + gap) + "px";
-      menu.style.maxHeight =
-        Math.max(0, Math.min(cssMax, Math.floor(availAbove))) + "px";
+      let above = Math.floor(availAbove);
+      if (above < minMenu) {
+        above = Math.min(
+          cssMax,
+          Math.max(minMenu, triggerRect.top - gap - edgePad)
+        );
+      }
+      menu.style.maxHeight = Math.max(minMenu, Math.min(cssMax, above)) + "px";
+    }
+    if (typeof forceHarborUiRepaint === "function") {
+      forceHarborUiRepaint();
+      setTimeout(forceHarborUiRepaint, 32);
     }
   }
 
@@ -4241,7 +4440,15 @@
 
   function openEditModelMenu() {
     const picker = getEditModelPicker();
-    if (!picker || busy) {
+    if (!picker) {
+      return;
+    }
+    if (busy) {
+      showCopyToast(
+        UI_LANG === "ru"
+          ? "Дождитесь окончания текущего хода или остановите его."
+          : "Wait for the current turn to finish, or stop it."
+      );
       return;
     }
     closeMenu();
@@ -4390,7 +4597,15 @@
 
   function openEditModeMenu() {
     const picker = getEditModePicker();
-    if (!picker || busy) {
+    if (!picker) {
+      return;
+    }
+    if (busy) {
+      showCopyToast(
+        UI_LANG === "ru"
+          ? "Дождитесь окончания текущего хода или остановите его."
+          : "Wait for the current turn to finish, or stop it."
+      );
       return;
     }
     closeMenu();
@@ -4526,6 +4741,7 @@
     if (chatBranches.length < 2) {
       chatBranchesEl.hidden = true;
       chatBranchesEl.innerHTML = "";
+      forceHarborUiRepaint();
       return;
     }
     chatBranchesEl.hidden = false;
@@ -4552,6 +4768,7 @@
         );
       })
       .join("");
+    forceHarborUiRepaint();
   }
 
   function formatTokenCount(n) {
@@ -8792,6 +9009,22 @@
     }
     settingsHydrating = true;
     try {
+    settingsLanguageValue =
+      settings.language === "ru"
+        ? "ru"
+        : settings.language === "en"
+          ? "en"
+          : "auto";
+    if (
+      settings.resolvedLanguage === "ru" ||
+      settings.resolvedLanguage === "en"
+    ) {
+      hostResolvedUiLang = settings.resolvedLanguage;
+    }
+    applyUiLanguage(effectiveUiLangFromSetting(settingsLanguageValue));
+    if (settingsLanguage) {
+      settingsLanguage.value = settingsLanguageValue;
+    }
     settingsProviders = Array.isArray(settings.providers)
       ? settings.providers.map((p) => ({
           id: p.id || "",
@@ -8831,15 +9064,6 @@
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
     settingsWorkspaceName = String(settings.workspaceName || "").trim();
-    settingsLanguageValue =
-      settings.language === "ru"
-        ? "ru"
-        : settings.language === "en"
-          ? "en"
-          : "auto";
-    if (settingsLanguage) {
-      settingsLanguage.value = settingsLanguageValue;
-    }
     if (settingsCommitScope) {
       settingsCommitScope.value =
         settings.commitMessageScope === "workspace" ? "workspace" : "global";
@@ -9072,9 +9296,12 @@
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
         : true,
-      tabAutocompleteEnabled: settingsTabAutocompleteEnabled
-        ? settingsTabAutocompleteEnabled.checked
-        : false,
+      tabAutocompleteEnabled:
+        harborHostAvailable()
+          ? false
+          : settingsTabAutocompleteEnabled
+            ? settingsTabAutocompleteEnabled.checked
+            : false,
       tabAutocompleteModelId: settingsTabAutocompleteModel
         ? settingsTabAutocompleteModel.value.trim()
         : "",
@@ -9266,6 +9493,7 @@
     chatModes = next
       .filter((m) => m.enabled !== false)
       .map((m) => localizeModeMeta({ ...m }));
+    syncModeAccentStyles();
     renderSettingsModes();
     if (typeof renderModeMenu === "function") {
       renderModeMenu();
@@ -9372,6 +9600,78 @@
     return MODE_ACCENT_DEFAULTS[id] || "";
   }
 
+  /** Webview CSP blocks element.style / inline vars — accents go through a nonced <style>. */
+  function getWebviewStyleNonce() {
+    const tagged =
+      document.querySelector("style[nonce]") ||
+      document.querySelector("script[nonce]");
+    if (!tagged) {
+      return "";
+    }
+    return tagged.nonce || tagged.getAttribute("nonce") || "";
+  }
+
+  function ensureModeAccentStyleEl() {
+    let el = document.getElementById("harborModeAccents");
+    if (el) {
+      return el;
+    }
+    el = document.createElement("style");
+    el.id = "harborModeAccents";
+    const nonce = getWebviewStyleNonce();
+    if (nonce) {
+      el.setAttribute("nonce", nonce);
+    }
+    document.head.appendChild(el);
+    return el;
+  }
+
+  function cssAttrValue(value) {
+    return String(value || "")
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"');
+  }
+
+  function syncModeAccentStyles() {
+    const styleEl = ensureModeAccentStyleEl();
+    const modes = settingsModes.length
+      ? settingsModes
+      : chatModes.length
+        ? chatModes
+        : DEFAULT_CHAT_MODES;
+    const seen = new Set();
+    const chunks = [];
+    for (const mode of modes) {
+      const id = String(mode?.id || "").trim();
+      if (!id || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      const custom = normalizeModeColorUi(mode?.color);
+      const accent = custom || MODE_ACCENT_DEFAULTS[id] || "";
+      if (!accent) {
+        continue;
+      }
+      // Built-in plan/ask already styled in panel.css unless user overrode color.
+      if (!custom && (id === "plan" || id === "ask")) {
+        continue;
+      }
+      const attr = cssAttrValue(id);
+      chunks.push(
+        `.composer[data-mode="${attr}"],` +
+          `.msg.user[data-mode="${attr}"],` +
+          `.msg-edit-composer[data-mode="${attr}"]{border-color:${accent};}` +
+          `.mode-picker[data-mode="${attr}"] .model-trigger,` +
+          `.mode-picker[data-mode="${attr}"] .model-trigger:hover:not(:disabled),` +
+          `.mode-picker[data-mode="${attr}"].is-open .model-trigger,` +
+          `.msg-edit-mode-picker[data-mode="${attr}"] .model-trigger{color:${accent};}` +
+          `.mode-picker .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
+          `.agent-run-status-running[data-mode="${attr}"]{--cube-accent:${accent};}`
+      );
+    }
+    styleEl.textContent = chunks.join("\n");
+  }
+
   function applyModeAccentToElement(el, modeId) {
     if (!el) {
       return;
@@ -9382,14 +9682,10 @@
     } else {
       delete el.dataset.mode;
     }
-    const accent = resolveModeAccent(id);
-    if (accent) {
-      el.style.setProperty("--mode-accent", accent);
-      el.classList.add("has-mode-accent");
-    } else {
-      el.style.removeProperty("--mode-accent");
-      el.classList.remove("has-mode-accent");
-    }
+    // Colors: panel.css for plan/ask; #harborModeAccents for custom.
+    // Do not use has-mode-accent + --mode-accent (CSP blocks the var; class overrides builtins).
+    el.classList.remove("has-mode-accent");
+    el.style.removeProperty("--mode-accent");
   }
 
   function getModeEditColor() {
@@ -9570,6 +9866,7 @@
       settingsModes.push(next);
     }
     chatModes = settingsModes.filter((m) => m.enabled !== false);
+    syncModeAccentStyles();
     renderSettingsModes();
     if (typeof renderModeMenu === "function") {
       renderModeMenu();
@@ -12682,6 +12979,7 @@
   }
 
   setAgentMode(agentMode, { close: false, notify: false });
+  syncModeAccentStyles();
   renderModeMenu();
   applySelectedReasoningEffort(selectedReasoningEffort, { notify: false });
 
@@ -13186,6 +13484,7 @@
         }
         settingsModes.splice(index, 1);
         chatModes = settingsModes.filter((m) => m.enabled !== false);
+        syncModeAccentStyles();
         renderSettingsModes();
         renderModeMenu();
         if (!chatModes.some((m) => m.id === agentMode)) {
@@ -13593,10 +13892,16 @@
   if (settingsLanguage) {
     settingsLanguage.addEventListener("change", () => {
       settingsLanguageValue = settingsLanguage.value || "auto";
+      applyUiLanguage(effectiveUiLangFromSetting(settingsLanguageValue));
       schedulePersistSettings(0);
-      showCopyToast(
-        UI_LANG === "ru" ? "Перезагрузка окна…" : "Reloading window…"
-      );
+      if (harborHostAvailable()) {
+        // JetBrains: no window reload — language already applied above.
+        showCopyToast(t("saved"));
+      } else {
+        showCopyToast(
+          UI_LANG === "ru" ? "Перезагрузка окна…" : "Reloading window…"
+        );
+      }
     });
   }
 
@@ -13622,19 +13927,61 @@
   applyAgentsRailVisibility();
 
   if (chatBranchesEl) {
-    chatBranchesEl.addEventListener("click", (event) => {
+    const onBranchClosePointer = (event) => {
+      if (event.button != null && event.button !== 0) {
+        return;
+      }
       const closeBtn = event.target.closest(".chat-branch-close");
-      if (closeBtn && chatBranchesEl.contains(closeBtn)) {
+      if (!closeBtn || !chatBranchesEl.contains(closeBtn)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      // Allow delete while a run is active — host aborts then deletes.
+      // pointerdown + capture: JCEF OSR often drops click on tiny close targets.
+      const chatId = closeBtn.getAttribute("data-chat-id") || "";
+      if (!chatId) {
+        return;
+      }
+      clearMessageQueue(chatId);
+      host.postMessage({ type: "deleteBranch", chatId });
+    };
+    const onBranchSwitchPointer = (event) => {
+      if (!harborHostAvailable()) {
+        return;
+      }
+      if (event.button != null && event.button !== 0) {
+        return;
+      }
+      if (event.target.closest(".chat-branch-close")) {
+        return;
+      }
+      const pill = event.target.closest(".chat-branch-pill");
+      if (!pill || !chatBranchesEl.contains(pill)) {
+        return;
+      }
+      const chatId = pill.getAttribute("data-chat-id") || "";
+      if (!chatId || chatId === activeChatId) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      harborAgentNavAt = Date.now();
+      host.postMessage({ type: "switchBranch", chatId });
+      if (typeof forceHarborUiRepaint === "function") {
+        forceHarborUiRepaint();
+      }
+    };
+    const onBranchClick = (event) => {
+      if (event.target.closest(".chat-branch-close")) {
+        // Handled on pointerdown — do not also switch branch.
         event.preventDefault();
         event.stopPropagation();
-        // Allow delete while a run is active — host abortChatRun(chatId) then
-        // deletes. Blocking on busy left forks undeletable during long Plan turns.
-        const chatId = closeBtn.getAttribute("data-chat-id") || "";
-        if (!chatId) {
-          return;
-        }
-        clearMessageQueue(chatId);
-        host.postMessage({ type: "deleteBranch", chatId });
+        return;
+      }
+      if (Date.now() - harborAgentNavAt < 400) {
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
       const pill = event.target.closest(".chat-branch-pill");
@@ -13647,7 +13994,10 @@
         return;
       }
       host.postMessage({ type: "switchBranch", chatId });
-    });
+    };
+    chatBranchesEl.addEventListener("pointerdown", onBranchClosePointer, true);
+    chatBranchesEl.addEventListener("pointerdown", onBranchSwitchPointer, true);
+    chatBranchesEl.addEventListener("click", onBranchClick);
   }
 
   if (openChatSearchBtn) {
@@ -13785,7 +14135,46 @@
   });
 
   if (archiveListEl) {
+    const onArchivePointer = (event) => {
+      if (!harborHostAvailable()) {
+        return;
+      }
+      if (event.button != null && event.button !== 0) {
+        return;
+      }
+      const deleteBtn = event.target.closest(".row-delete");
+      if (deleteBtn && archiveListEl.contains(deleteBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        if (deleteBtn.dataset.deleteAgent) {
+          host.postMessage({
+            type: "deleteAgent",
+            agentId: deleteBtn.dataset.deleteAgent,
+          });
+        }
+        return;
+      }
+      const restoreBtn = event.target.closest(".row-restore");
+      if (restoreBtn && archiveListEl.contains(restoreBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        if (restoreBtn.dataset.restoreAgent) {
+          host.postMessage({
+            type: "restoreAgent",
+            agentId: restoreBtn.dataset.restoreAgent,
+          });
+        }
+      }
+    };
+    archiveListEl.addEventListener("pointerdown", onArchivePointer, true);
     archiveListEl.addEventListener("click", (event) => {
+      if (Date.now() - harborAgentNavAt < 400) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn) {
         event.preventDefault();
@@ -13814,7 +14203,70 @@
   }
 
   if (agentsListEl) {
+    const onAgentsPointer = (event) => {
+      if (!harborHostAvailable()) {
+        return;
+      }
+      if (event.button != null && event.button !== 0) {
+        return;
+      }
+      if (event.target.closest(".agent-name-input")) {
+        return;
+      }
+      const deleteBtn = event.target.closest(".row-delete");
+      if (deleteBtn && agentsListEl.contains(deleteBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        if (deleteBtn.dataset.deleteAgent) {
+          host.postMessage({
+            type: "deleteAgent",
+            agentId: deleteBtn.dataset.deleteAgent,
+          });
+        }
+        return;
+      }
+      const archiveBtn = event.target.closest(".row-archive");
+      if (archiveBtn && agentsListEl.contains(archiveBtn)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        if (archiveBtn.dataset.archiveAgent) {
+          host.postMessage({
+            type: "archiveAgent",
+            agentId: archiveBtn.dataset.archiveAgent,
+          });
+        }
+        return;
+      }
+      const agentRow = event.target.closest(".agent-row");
+      if (!agentRow || !agentsListEl.contains(agentRow)) {
+        return;
+      }
+      // JCEF OSR often drops synthesized click on the agents rail — open on
+      // pointerdown (same pattern as branch close / edit-save).
+      event.preventDefault();
+      event.stopPropagation();
+      harborAgentNavAt = Date.now();
+      if (workspaceNarrow) {
+        setAgentsRailOpen(false);
+      }
+      host.postMessage({
+        type: "openAgent",
+        agentId: agentRow.dataset.agent || agentRow.getAttribute("data-agent"),
+      });
+      if (typeof forceHarborUiRepaint === "function") {
+        forceHarborUiRepaint();
+        setTimeout(forceHarborUiRepaint, 32);
+      }
+    };
+    agentsListEl.addEventListener("pointerdown", onAgentsPointer, true);
     agentsListEl.addEventListener("click", (event) => {
+      if (Date.now() - harborAgentNavAt < 400) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn) {
         event.preventDefault();
@@ -13989,6 +14441,10 @@
     if (editModeTrigger && messagesEl.contains(editModeTrigger)) {
       event.preventDefault();
       event.stopPropagation();
+      // JetBrains OSR may already have toggled on pointerdown.
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
       toggleEditModeMenu();
       return;
     }
@@ -13996,6 +14452,9 @@
     if (editModelTrigger && messagesEl.contains(editModelTrigger)) {
       event.preventDefault();
       event.stopPropagation();
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
       toggleEditModelMenu();
       return;
     }
@@ -14003,6 +14462,9 @@
     if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
       event.preventDefault();
       event.stopPropagation();
+      if (Date.now() - harborEditSaveAt < 450) {
+        return;
+      }
       submitEditedUserMessage();
       return;
     }
@@ -14010,6 +14472,9 @@
     if (regenBtn && messagesEl.contains(regenBtn)) {
       event.preventDefault();
       event.stopPropagation();
+      if (Date.now() - harborEditSaveAt < 450) {
+        return;
+      }
       // Allow while busy — host aborts the current run, then regenerates.
       if (!canRegenerate) {
         return;
@@ -14027,6 +14492,9 @@
     if (branchBtn && messagesEl.contains(branchBtn)) {
       event.preventDefault();
       event.stopPropagation();
+      if (Date.now() - harborEditSaveAt < 450) {
+        return;
+      }
       // Allow while busy — host forks into a new chat; the old run keeps going.
       const index = Number(branchBtn.dataset.index);
       if (!Number.isInteger(index) || index < 0) {
@@ -14231,6 +14699,7 @@
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
           setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
         }
+        renderChatBranches(msg.branches);
         showScreen(msg.screen || "agents");
         setBusy(Boolean(msg.busy));
         renderMessageQueue();
@@ -14384,10 +14853,12 @@
       case "insertComposerMentions":
         insertComposerMentions(msg.paths);
         setBusy(false);
+        forceHarborUiRepaint();
         break;
       case "insertComposerSelection":
         addPendingSelection(msg.selection);
         setBusy(false);
+        forceHarborUiRepaint();
         break;
       case "agentRenamed":
         if (msg.agentId && msg.name) {

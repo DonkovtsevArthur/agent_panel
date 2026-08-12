@@ -36,7 +36,7 @@ object HarborWebviewHtml {
     val shell = readText(File(outDir, "panel.shell.html")).ifBlank {
       """<div id="workspaceShell" class="workspace-shell"><section id="chatScreen" class="screen chat-screen"><div id="messages"></div></section><section id="settingsScreen" class="screen" hidden></section></div>"""
     }
-    val lang = if (java.util.Locale.getDefault().language.startsWith("ru")) "ru" else "en"
+    val lang = HarborUiLanguage.resolve(project)
     val surfaceAttr = if (surface == "settings") "settings" else "panel"
     val pageTitle = if (surfaceAttr == "settings") "Settings — Harbor Agents" else "Harbor Agents"
     val theme = HarborThemeCss.rootVariables()

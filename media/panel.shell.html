@@ -317,6 +317,7 @@
             <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
           </label>
           <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
+          <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
           <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
           <label class="settings-field settings-check">
             <input id="settingsTabAutocompleteEnabled" type="checkbox" />
@@ -369,6 +370,7 @@
           </label>
           <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
+          </div>
           <label class="settings-field settings-check">
             <input id="settingsSelectionHintsEnabled" type="checkbox" />
             <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
@@ -641,22 +643,39 @@
       </div>
       <div class="settings-modal-body">
         <label class="settings-field">
-          <span class="settings-label">Name</span>
+          <span class="settings-label" id="modeEditNameLabel">Name</span>
           <input id="modeEditLabel" class="settings-input" type="text" placeholder="e.g. Review" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Description</span>
+          <span class="settings-label" id="modeEditDescriptionLabel">Description</span>
           <input id="modeEditDescription" class="settings-input" type="text" placeholder="Short tooltip text" />
         </label>
         <label class="settings-field">
-          <span class="settings-label">Tools</span>
+          <span class="settings-label" id="modeEditToolsLabel">Tools</span>
           <select id="modeEditTools" class="settings-input">
             <option value="agent">Agent — read and edit</option>
             <option value="readonly">Read only</option>
           </select>
         </label>
+        <div class="settings-field">
+          <span class="settings-label" id="modeEditColorLabel">Color</span>
+          <div class="mode-color-row" id="modeEditColorRow" role="group" aria-labelledby="modeEditColorLabel">
+            <button type="button" class="mode-color-swatch is-none is-active" data-color="" title="None" aria-label="None"></button>
+            <button type="button" class="mode-color-swatch" data-color="#a67c00" title="#a67c00" aria-label="#a67c00"></button>
+            <button type="button" class="mode-color-swatch" data-color="#2d6a4f" title="#2d6a4f" aria-label="#2d6a4f"></button>
+            <button type="button" class="mode-color-swatch" data-color="#0e639c" title="#0e639c" aria-label="#0e639c"></button>
+            <button type="button" class="mode-color-swatch" data-color="#7c3aed" title="#7c3aed" aria-label="#7c3aed"></button>
+            <button type="button" class="mode-color-swatch" data-color="#be185d" title="#be185d" aria-label="#be185d"></button>
+            <button type="button" class="mode-color-swatch" data-color="#c2410c" title="#c2410c" aria-label="#c2410c"></button>
+            <button type="button" class="mode-color-swatch" data-color="#0f766e" title="#0f766e" aria-label="#0f766e"></button>
+            <label class="mode-color-custom" title="Custom">
+              <input id="modeEditColor" type="color" value="#0e639c" aria-label="Custom color" />
+            </label>
+          </div>
+          <p class="settings-hint" id="modeEditColorHint">Composer border and user messages in this mode.</p>
+        </div>
         <label class="settings-field">
-          <span class="settings-label">Mode prompt</span>
+          <span class="settings-label" id="modeEditPromptLabel">Mode prompt</span>
           <textarea id="modeEditPrompt" class="settings-input settings-textarea" rows="6" placeholder="Instructions for this mode..."></textarea>
         </label>
       </div>

@@ -166,13 +166,18 @@ export class HeadlessPanelHost {
       chat?.selectedModel || cfg.defaultModel || cfg.models[0]?.id || "";
     this.selectedMode = chat?.selectedMode || "agent";
     this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
+    // Copy arrays — sharing store refs lets later mutations (or a concurrent
+    // turn) silently rewrite another chat's transcript on disk.
     this.history = Array.isArray(chat?.history)
-      ? (chat!.history as ChatMessage[])
+      ? (chat!.history as ChatMessage[]).slice()
       : [];
     this.uiMessages = Array.isArray(chat?.uiMessages)
-      ? chat!.uiMessages
+      ? chat!.uiMessages.slice()
       : [];
-    this.contextTokens = 0;
+    this.contextTokens =
+      typeof chat?.contextTokens === "number" && chat.contextTokens > 0
+        ? chat.contextTokens
+        : 0;
   }
 
   private persist(): void {
@@ -184,16 +189,19 @@ export class HeadlessPanelHost {
   }
 
   private serializeModes() {
-    return getResolvedModes()
-      .filter((m) => m.enabled !== false)
-      .map((m) => ({
-        id: m.id,
-        label: m.label,
-        description: m.description,
-        tools: m.tools,
-        builtin: !!m.builtin,
-        placeholder: m.placeholder,
-      }));
+    const storedIds = new Set(getConfig().modes.map((m) => m.id));
+    return getResolvedModes().map((m) => ({
+      id: m.id,
+      label: m.label,
+      description: m.description || "",
+      tools: m.tools,
+      prompt: m.prompt || "",
+      color: m.color || "",
+      enabled: m.enabled !== false,
+      builtin: Boolean(m.builtin),
+      overridden: storedIds.has(m.id),
+      placeholder: m.placeholder || "",
+    }));
   }
 
   private modelsForUi() {
@@ -232,15 +240,30 @@ export class HeadlessPanelHost {
     switch (msg.type) {
       case "ready":
         return this.onReady(String(msg.surface || "panel"));
-      case "send":
-        return this.onSend(msg as {
-          text?: unknown;
-          model?: unknown;
-          agentMode?: unknown;
-          reasoningEffort?: unknown;
-          attachments?: unknown;
-          hideUser?: unknown;
+      case "send": {
+        // Do not await the full turn — otherwise openAgent/stop RPC stay queued
+        // behind a long runAgentTurn. User bubble is persisted synchronously
+        // before the first await inside onSend.
+        void this.onSend(
+          msg as {
+            text?: unknown;
+            model?: unknown;
+            agentMode?: unknown;
+            reasoningEffort?: unknown;
+            attachments?: unknown;
+            hideUser?: unknown;
+          }
+        ).catch((err) => {
+          const text = err instanceof Error ? err.message : String(err);
+          this.post({
+            type: "runFailed",
+            text,
+            chatId: this.store.activeChatId,
+          });
+          this.post({ type: "idle", chatId: this.store.activeChatId });
         });
+        return { ok: true, started: true };
+      }
       case "editUserMessage":
         return this.onEditUserMessage(msg as {
           index?: unknown;
@@ -435,6 +458,7 @@ export class HeadlessPanelHost {
       })),
       defaultModel: config.defaultModel,
       language: config.language,
+      resolvedLanguage: resolveUiLanguage(config.language),
       defaultContextWindow: config.defaultContextWindow,
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
@@ -771,14 +795,25 @@ export class HeadlessPanelHost {
 
   private readySeq = 0;
   private lastReadyAt = 0;
+  /** Chat id last fully painted by onReady — debounce only same-chat repeats. */
+  private lastReadyChatId = "";
 
   private async onReady(surface: string): Promise<unknown> {
     // JetBrains JCEF may emit ready several times (load + host timer + panel retry).
+    // Do NOT suppress when the active chat changed — otherwise switching agents
+    // within 1.5s skips showChat and the webview keeps the previous (often empty) transcript.
     const now = Date.now();
-    if (now - this.lastReadyAt < 1500 && surface !== "settings") {
+    const activeChatId = this.store.activeChatId || "";
+    if (
+      now - this.lastReadyAt < 1500 &&
+      surface !== "settings" &&
+      activeChatId &&
+      activeChatId === this.lastReadyChatId
+    ) {
       return { ok: true, deduped: true };
     }
     this.lastReadyAt = now;
+    this.lastReadyChatId = activeChatId;
     const seq = ++this.readySeq;
     await new Promise((r) => setTimeout(r, 30));
     if (seq !== this.readySeq) {
@@ -801,13 +836,18 @@ export class HeadlessPanelHost {
     const meta = this.agentMeta();
     const busy =
       this.chatRunState.get(this.store.activeChatId || "") === "running";
+    // Prefer store transcript for paint — live this.uiMessages can lag after a
+    // rapid agent switch if hydrate and a background sync raced.
+    const paintUi = (
+      getActiveChat(this.store)?.uiMessages || this.uiMessages || []
+    ).slice();
     this.post({
       type: "init",
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
-      uiMessages: this.uiMessages,
+      uiMessages: paintUi,
       busy,
       canRegenerate: Boolean(this.getRegenerateState()),
       screen: this.store.screen || "chat",
@@ -828,7 +868,7 @@ export class HeadlessPanelHost {
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
-      uiMessages: this.uiMessages,
+      uiMessages: paintUi,
       busy,
       canRegenerate: Boolean(this.getRegenerateState()),
       ...meta,
@@ -1022,11 +1062,25 @@ export class HeadlessPanelHost {
     if (!agentId || !chatId) {
       return { ok: false };
     }
+    // Match VS Code: stop a run on the branch being deleted, then flush.
+    if (this.chatRunState.get(chatId) === "running") {
+      this.abort?.abort();
+      this.abort = undefined;
+      this.setRunStateForChat(chatId);
+      this.post({ type: "stopped" });
+      this.post({ type: "idle", chatId });
+    }
+    this.flushActiveChatToStore();
     if (!deleteAgentBranch(this.store, agentId, chatId)) {
       return { ok: false };
     }
+    this.chatRunState.delete(chatId);
+    this.store.screen = "chat";
     this.hydrateFromActiveChat();
     this.persist();
+    this.postAgentsList();
+    // Bypass ready debounce and push a fresh showChat (branches) — JCEF OSR
+    // otherwise keeps painting deleted fork pills.
     this.lastReadyAt = 0;
     await this.onReady("panel");
     return { ok: true };
@@ -1345,13 +1399,20 @@ export class HeadlessPanelHost {
     if (!chatId || !this.store.chats[chatId]) {
       return;
     }
+    // While a turn owns this chat, syncRunChat already wrote history/uiMessages.
+    // Flushing this.uiMessages on switch can stomp that with a stale snapshot.
+    const running = this.chatRunState.get(chatId) === "running";
     touchChat(this.store, chatId, {
-      history: this.history,
-      uiMessages: this.uiMessages,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
       contextTokens: this.contextTokens,
+      ...(running
+        ? {}
+        : {
+            history: this.history,
+            uiMessages: this.uiMessages,
+          }),
     } as Partial<ChatSession>);
     this.persist();
   }
@@ -1367,6 +1428,8 @@ export class HeadlessPanelHost {
     this.hydrateFromActiveChat();
     this.persist();
     this.postAgentsList();
+    this.lastReadyAt = 0;
+    this.lastReadyChatId = "";
     await this.onReady("panel");
     return { ok: true };
   }
@@ -1385,6 +1448,9 @@ export class HeadlessPanelHost {
     if (this.acknowledgeViewedChatRunState(agent.chatId)) {
       this.postAgentsList();
     }
+    // Force showChat even if another ready fired recently (agent switch).
+    this.lastReadyAt = 0;
+    this.lastReadyChatId = "";
     await this.onReady("panel");
     return { ok: true };
   }
@@ -1645,20 +1711,43 @@ export class HeadlessPanelHost {
       return { ok: false, error: "no chat" };
     }
 
+    const sourceChat = this.store.chats[runChatId];
     const model =
       String(msg.model || "").trim() ||
       this.selectedModel ||
+      sourceChat.selectedModel ||
       getConfig().defaultModel;
-    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
-    const reasoningEffort = String(
-      msg.reasoningEffort || this.selectedReasoningEffort || ""
+    const agentMode = String(
+      msg.agentMode || this.selectedMode || sourceChat.selectedMode || "agent"
     );
-    this.selectedModel = model;
-    this.selectedMode = agentMode;
+    const reasoningEffort = String(
+      msg.reasoningEffort ||
+        this.selectedReasoningEffort ||
+        sourceChat.selectedReasoningEffort ||
+        ""
+    );
+    if (this.store.activeChatId === runChatId) {
+      this.selectedModel = model;
+      this.selectedMode = agentMode;
+    }
 
-    let runHistory = this.history;
-    let runUiMessages = [...this.uiMessages];
-    let runContextTokens = this.contextTokens;
+    // Copies pinned to runChatId — do not re-read this.history after awaits.
+    let runHistory = (
+      this.store.activeChatId === runChatId
+        ? this.history
+        : sourceChat.history || []
+    ).slice() as ChatMessage[];
+    let runUiMessages = [
+      ...(this.store.activeChatId === runChatId
+        ? this.uiMessages
+        : sourceChat.uiMessages || []),
+    ];
+    let runContextTokens =
+      this.store.activeChatId === runChatId
+        ? this.contextTokens
+        : typeof sourceChat.contextTokens === "number"
+          ? sourceChat.contextTokens
+          : 0;
 
     const syncRunChat = (): void => {
       const chat = this.store.chats[runChatId];

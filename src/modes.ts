@@ -14,6 +14,8 @@ export interface AgentModeDef {
    * Not injected into Cline turns (Cline owns the system prompt; Harbor may pass Settings `systemPrompt` only).
    */
   prompt?: string;
+  /** Accent color for composer border + user bubbles (`#rgb` / `#rrggbb`). */
+  color?: string;
   enabled?: boolean;
   builtin?: boolean;
   placeholder?: string;
@@ -104,6 +106,24 @@ export function normalizeToolsPolicy(value: unknown): ModeToolsPolicy {
   return value === "readonly" ? "readonly" : "agent";
 }
 
+/** Normalize `#rgb` / `#rrggbb` accent; invalid → undefined. */
+export function normalizeModeColor(value: unknown): string | undefined {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const match = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!match) {
+    return undefined;
+  }
+  const hex = match[1];
+  if (hex.length === 3) {
+    const [a, b, c] = hex.split("");
+    return `#${a}${a}${b}${b}${c}${c}`.toLowerCase();
+  }
+  return `#${hex}`.toLowerCase();
+}
+
 function currentUiLanguage(): "en" | "ru" {
   const setting = vscode.workspace
     .getConfiguration("agentPanel")
@@ -127,6 +147,7 @@ export function parseCustomModes(raw: unknown): AgentModeDef[] {
       description?: unknown;
       tools?: unknown;
       prompt?: unknown;
+      color?: unknown;
       enabled?: unknown;
       placeholder?: unknown;
     };
@@ -158,6 +179,10 @@ export function parseCustomModes(raw: unknown): AgentModeDef[] {
     }
     if (typeof row.placeholder === "string" && row.placeholder.trim()) {
       mode.placeholder = row.placeholder.trim();
+    }
+    const color = normalizeModeColor(row.color);
+    if (color) {
+      mode.color = color;
     }
     if (row.enabled === false) {
       mode.enabled = false;
@@ -194,6 +219,14 @@ export function mergeModes(custom: AgentModeDef[]): AgentModeDef[] {
     }
     if (override.placeholder !== undefined) {
       merged.placeholder = override.placeholder;
+    }
+    if (override.color !== undefined) {
+      const color = normalizeModeColor(override.color);
+      if (color) {
+        merged.color = color;
+      } else {
+        delete merged.color;
+      }
     }
     if (override.enabled === false) {
       merged.enabled = false;

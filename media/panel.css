@@ -211,10 +211,6 @@ body {
   border-color: var(--mode-ask);
 }
 
-.msg.user.has-mode-accent {
-  border-color: var(--mode-accent);
-}
-
 .msg.user.is-editing {
   padding: 0;
   background: transparent;
@@ -290,10 +286,6 @@ body {
 
 .msg-edit-composer:has(.msg-edit-mode-picker[data-mode="ask"]) {
   border-color: var(--mode-ask);
-}
-
-.msg-edit-composer.has-mode-accent {
-  border-color: var(--mode-accent);
 }
 
 .msg-edit-input {
@@ -1984,10 +1976,6 @@ body.vscode-dark .md-pre .syntax-property {
   border-color: var(--mode-ask);
 }
 
-.composer.has-mode-accent {
-  border-color: var(--mode-accent);
-}
-
 .composer-wrap.is-drop-target .composer,
 .composer.is-drop-target {
   border-color: var(--vscode-focusBorder, #007fd4);
@@ -2513,12 +2501,6 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--mode-ask);
 }
 
-.mode-picker.has-mode-accent .model-trigger,
-.mode-picker.has-mode-accent .model-trigger:hover:not(:disabled),
-.mode-picker.has-mode-accent.is-open .model-trigger {
-  color: var(--mode-accent);
-}
-
 .mode-picker .model-option[data-mode="plan"] .model-option-label {
   color: var(--mode-plan);
   font-weight: 500;
@@ -2526,11 +2508,6 @@ body.vscode-dark .md-pre .syntax-property {
 
 .mode-picker .model-option[data-mode="ask"] .model-option-label {
   color: var(--mode-ask);
-  font-weight: 500;
-}
-
-.mode-picker .model-option.has-mode-accent .model-option-label {
-  color: var(--mode-accent);
   font-weight: 500;
 }
 
@@ -3307,9 +3284,10 @@ html[data-surface="settings"] .settings-layout {
 
 .chat-branch-close {
   margin: 0;
-  padding: 0 4px 0 2px;
+  padding: 0 8px 0 4px;
   height: 100%;
-  min-height: 22px;
+  min-height: 24px;
+  min-width: 28px;
   border: 1px solid var(--vscode-input-border, transparent);
   border-left: none;
   border-radius: 0 999px 999px 0;
@@ -3319,6 +3297,7 @@ html[data-surface="settings"] .settings-layout {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .chat-branch-item.is-active .chat-branch-close {
@@ -3789,6 +3768,11 @@ html[data-surface="settings"] .settings-layout {
 html[data-harbor-host="jetbrains"] select.harbor-select-open {
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: -1px;
+}
+
+/* Tab autocomplete is VS Code–only (inline ghost / chip). Hide in JetBrains. */
+html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
+  display: none !important;
 }
 
 .settings-textarea {
@@ -4683,10 +4667,6 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 
 .agent-run-status-running[data-mode="ask"] {
   --cube-accent: var(--mode-ask);
-}
-
-.agent-run-status-running.has-mode-accent {
-  --cube-accent: var(--mode-accent);
 }
 
 .agent-run-status-running .cube-bit {
