@@ -1,0 +1,25 @@
+{
+  "language": "ru",
+  "providers": [
+    {
+      "id": "default",
+      "name": "OpenAI-compatible",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "YOUR_API_KEY"
+    }
+  ],
+  "models": [
+    {
+      "id": "gpt-4.1",
+      "label": "GPT-4.1",
+      "providerId": "default",
+      "contextWindow": 128000,
+      "enabled": true
+    }
+  ],
+  "defaultModel": "gpt-4.1",
+  "systemPrompt": "",
+  "subagents": { "enabled": true },
+  "parallelToolCalls": { "enabled": true },
+  "autoCompact": { "enabled": true }
+}

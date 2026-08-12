@@ -1747,11 +1747,16 @@ body.vscode-dark .md-pre .syntax-property {
 .composer-plan-actions,
 .composer-scm-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
   align-items: center;
   margin: 0 2px 8px;
   padding: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .composer-plan-actions[hidden],
@@ -1759,12 +1764,16 @@ body.vscode-dark .md-pre .syntax-property {
   display: none !important;
 }
 
-.composer-plan-build {
+.composer-plan-build,
+.review-commit-push,
+.review-scm-stats {
   min-height: 24px;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 1 auto;
   padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 22%, transparent);
   color: var(--vscode-foreground);
   display: inline-flex;
   align-items: center;
@@ -1772,6 +1781,21 @@ body.vscode-dark .md-pre .syntax-property {
   font: inherit;
   font-size: 11px;
   cursor: pointer;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.composer-plan-build > span:not(.material-symbols-outlined),
+.review-commit-push > span:not(.material-symbols-outlined),
+.review-scm-stats > .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-plan-build {
+  background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 22%, transparent);
 }
 
 .composer-plan-build:hover {
@@ -1784,23 +1808,14 @@ body.vscode-dark .md-pre .syntax-property {
   cursor: default;
 }
 
-.composer-plan-build .material-symbols-outlined {
+.composer-plan-build .material-symbols-outlined,
+.review-commit-push .material-symbols-outlined {
+  flex-shrink: 0;
   font-size: 14px;
 }
 
 .review-commit-push {
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 999px;
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-  color: var(--vscode-foreground);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
 }
 
 .review-commit-push:hover {
@@ -1813,53 +1828,11 @@ body.vscode-dark .md-pre .syntax-property {
   cursor: default;
 }
 
-.review-commit-push .material-symbols-outlined {
-  font-size: 14px;
-}
-
-.review-discard-changes {
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-  color: var(--vscode-foreground);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.review-discard-changes:hover {
-  border-color: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
-  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-}
-
-.review-discard-changes:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.review-discard-changes .material-symbols-outlined {
-  font-size: 14px;
-}
-
 .review-scm-stats {
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
-  color: var(--vscode-foreground);
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
-  font: inherit;
-  font-size: 11px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .review-scm-stats:hover {
@@ -1869,6 +1842,11 @@ body.vscode-dark .md-pre .syntax-property {
 
 .review-scm-stats .label {
   opacity: 0.85;
+}
+
+.review-scm-stats .add,
+.review-scm-stats .del {
+  flex-shrink: 0;
 }
 
 .review-scm-stats .add {
@@ -1884,6 +1862,9 @@ body.vscode-dark .md-pre .syntax-property {
   position: relative;
   z-index: 30;
   overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .message-queue {
@@ -3065,7 +3046,9 @@ button.primary:disabled {
   display: block;
   position: absolute;
   inset: 0;
-  z-index: 15;
+  /* Above .composer-wrap (30) / .composer-meta (40) so the rail drawer
+     covers the compose field instead of sitting under it. */
+  z-index: 60;
   border: none;
   padding: 0;
   margin: 0;
@@ -3078,7 +3061,7 @@ button.primary:disabled {
   left: 0;
   top: 0;
   bottom: 0;
-  z-index: 16;
+  z-index: 61;
   width: min(300px, 85%);
   max-width: none;
   flex: none;

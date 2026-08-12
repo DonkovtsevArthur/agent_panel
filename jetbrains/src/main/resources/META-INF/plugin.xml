@@ -1,0 +1,71 @@
+<idea-plugin>
+  <id>com.harbor.agents</id>
+  <name>Harbor Agents</name>
+  <vendor email="donkovtsev.arthur@gmail.com" url="https://github.com/DonkovtsevArthur/agent_panel">Harbor Agents</vendor>
+
+  <description><![CDATA[
+    Harbor Agents sidebar for WebStorm / IntelliJ.
+    Chat (Agent / Plan / Ask), providers, MCP, commit-from-review.
+    Shares UI (<code>media/panel.js</code>) and Node sidecar with the VS Code extension.
+    Requires the bundled <b>Web Browser (JCEF)</b> plugin.
+  ]]></description>
+
+  <!-- Required: on 2025.3.1+ / 2026.2 JCEF is a separate plugin; without a hard
+       dependency JBCefBrowser is invisible (NoClassDefFoundError) and Harbor falls
+       back to the simple Swing settings dialog. -->
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.jcef</depends>
+
+  <!-- Content modules that own com.intellij.ui.jcef.* / org.cef.* (IDE 2026.2+) -->
+  <dependencies>
+    <plugin id="com.intellij.modules.jcef"/>
+    <module name="intellij.platform.ui.jcef"/>
+    <module name="intellij.libraries.jcef"/>
+  </dependencies>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow
+      id="Harbor Agents"
+      anchor="right"
+      icon="/icons/harbor.svg"
+      factoryClass="com.harbor.agents.HarborToolWindowFactory"/>
+    <notificationGroup id="Harbor Agents" displayType="BALLOON"/>
+  </extensions>
+
+  <actions>
+    <action
+      id="HarborAgents.Open"
+      class="com.harbor.agents.actions.OpenHarborAction"
+      text="Open Harbor Agents"
+      description="Open the Harbor Agents tool window">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+    <action
+      id="HarborAgents.NewChat"
+      class="com.harbor.agents.actions.NewChatAction"
+      text="New Chat"
+      description="Start a new Harbor Agents chat"
+      icon="AllIcons.General.Add"/>
+    <action
+      id="HarborAgents.OpenSettings"
+      class="com.harbor.agents.actions.OpenSettingsAction"
+      text="Settings"
+      description="Open Harbor Agents settings"
+      icon="AllIcons.General.Settings">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+    <action
+      id="HarborAgents.Reload"
+      class="com.harbor.agents.actions.ReloadHarborAction"
+      text="Reload"
+      description="Reload Harbor Agents panel"
+      icon="AllIcons.Actions.Refresh"/>
+    <action
+      id="HarborAgents.GenerateCommitMessage"
+      class="com.harbor.agents.actions.GenerateCommitMessageAction"
+      text="Harbor: Generate Commit Message"
+      description="Generate a commit message via Harbor">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
+</idea-plugin>

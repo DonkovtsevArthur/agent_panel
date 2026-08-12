@@ -1,6 +1,13 @@
 (function () {
-  const vscode = acquireVsCodeApi();
-  const state = vscode.getState() || {
+  /**
+   * Host bridge: JetBrains JCEF injects `globalThis.__harborHost`.
+   * VS Code webview falls back to acquireVsCodeApi() — zero behavior change.
+   * @type {{ postMessage: (msg: unknown) => void, getState: () => any, setState: (s: any) => void }}
+   */
+  const host =
+    (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
+    acquireVsCodeApi();
+  const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
     modelByChat: {},
@@ -411,7 +418,7 @@
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
       commitAndPush: "Commit and push",
-      discardChanges: "Discard",
+      commitAndPushShort: "Commit",
       changesTag: "Changes",
       taskForMode: (label) => `Task (${label})... (@ for file)`,
       modePlaceholder: (label) => `${label}... (@ for file)`,
@@ -823,7 +830,7 @@
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
       commitAndPush: "Закоммитить и запушить",
-      discardChanges: "Отменить",
+      commitAndPushShort: "Закоммитить",
       changesTag: "Изменения",
       taskForMode: (label) => `Задача (${label})… (@ — файл)`,
       modePlaceholder: (label) => `${label}… (@ — файл)`,
@@ -2399,7 +2406,7 @@
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     setBusy(true);
-    vscode.postMessage({
+    host.postMessage({
       type: "send",
       text,
       model: item.model || getSelectedModel(),
@@ -2612,6 +2619,32 @@
     return `${fences.join("\n\n")}\n\n${text}`;
   }
 
+  function harborHostAvailable() {
+    return Boolean(
+      typeof globalThis !== "undefined" && globalThis.__harborHost
+    );
+  }
+
+  /** JCEF OSR often skips paints after DOM updates until a click — nudge it. */
+  function forceHarborUiRepaint() {
+    if (!harborHostAvailable()) {
+      return;
+    }
+    const root = document.documentElement;
+    root.classList.add("harbor-force-paint");
+    void (attachPreviewEl && attachPreviewEl.offsetHeight);
+    void root.offsetHeight;
+    requestAnimationFrame(() => {
+      root.classList.remove("harbor-force-paint");
+      void document.body.offsetHeight;
+      try {
+        host.postMessage({ type: "uiRepaint" });
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
   function renderAttachPreview() {
     if (!attachPreviewEl) {
       return;
@@ -2620,6 +2653,7 @@
       attachPreviewEl.hidden = true;
       attachPreviewEl.innerHTML = "";
       updateSendButton();
+      forceHarborUiRepaint();
       return;
     }
     attachPreviewEl.hidden = false;
@@ -2632,7 +2666,7 @@
             `data:${att.mime || "image/png"};base64,${att.dataBase64}`;
           return (
             `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(att.id)}" title="${label}">` +
-            `<img class="attach-thumb" src="${src}" alt="" />` +
+            `<img class="attach-thumb" src="${src}" alt="" decoding="sync" />` +
             `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
               att.id
             )}" title="${t("remove")}" aria-label="${t("remove")}">` +
@@ -2652,7 +2686,22 @@
         );
       })
       .join("");
+    attachPreviewEl.querySelectorAll("img.attach-thumb").forEach((img) => {
+      if (img.complete) {
+        return;
+      }
+      img.addEventListener(
+        "load",
+        () => {
+          forceHarborUiRepaint();
+        },
+        { once: true }
+      );
+    });
     updateSendButton();
+    forceHarborUiRepaint();
+    setTimeout(forceHarborUiRepaint, 32);
+    setTimeout(forceHarborUiRepaint, 120);
   }
 
   function closeMentionMenu() {
@@ -2872,7 +2921,7 @@
   function requestMentionSearch(query) {
     mentionRequestId += 1;
     const requestId = String(mentionRequestId);
-    vscode.postMessage({
+    host.postMessage({
       type: "searchFiles",
       query: String(query || ""),
       requestId,
@@ -3259,7 +3308,7 @@
       withoutPath.push(file);
     }
     if (withPath.length) {
-      vscode.postMessage({ type: "attachUris", uris: withPath });
+      host.postMessage({ type: "attachUris", uris: withPath });
     }
     if (!withoutPath.length) {
       return;
@@ -3276,7 +3325,7 @@
       }
     }
     if (parsed.length) {
-      vscode.postMessage({
+      host.postMessage({
         type: "attachFiles",
         files: parsed.map(attachmentPayload),
       });
@@ -3308,7 +3357,7 @@
   }
 
   function persistUiState() {
-    vscode.setState(state);
+    host.setState(state);
   }
 
   function persistDraftPrompt() {
@@ -3362,7 +3411,7 @@
     const scrollTop = messagesEl.scrollTop;
     window.clearTimeout(pendingScrollSync);
     pendingScrollSync = window.setTimeout(() => {
-      vscode.postMessage({
+      host.postMessage({
         type: "chatScroll",
         chatId,
         scrollTop,
@@ -3606,7 +3655,7 @@
     closeEditModeMenu();
     stickToBottom = true;
     setBusy(true);
-    vscode.postMessage({
+    host.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
       text: nextText,
@@ -5703,8 +5752,8 @@
     mcpScreenOpen = cat === "mcp";
     if (cat === "mcp") {
       renderMcpServersList();
-      vscode.postMessage({ type: "figmaRefreshStatus" });
-      vscode.postMessage({ type: "mcpRefreshList" });
+      host.postMessage({ type: "figmaRefreshStatus" });
+      host.postMessage({ type: "mcpRefreshList" });
     } else {
       closeMcpEditModal();
       closeMcpCustomEditModal();
@@ -5733,7 +5782,7 @@
 
   function persistAgentsRailOpen() {
     state.agentsRailOpen = agentsRailOpen;
-    vscode.setState(state);
+    host.setState(state);
   }
 
   function applyAgentsRailVisibility() {
@@ -6133,7 +6182,7 @@
       return;
     }
     const requestId = `cs_${Date.now().toString(36)}_${++chatSearchRequestId}`;
-    vscode.postMessage({
+    host.postMessage({
       type: "searchChat",
       requestId,
       query,
@@ -6184,7 +6233,7 @@
     if (hit.chatId) {
       payload.chatId = hit.chatId;
     }
-    vscode.postMessage(payload);
+    host.postMessage(payload);
   }
 
   function openChatSearch(opts) {
@@ -6195,7 +6244,7 @@
     if (chatScreen && chatScreen.hidden) {
       pendingOpenSearch = opts || { fromAgents: true };
       if (activeAgentId) {
-        vscode.postMessage({ type: "openAgent", agentId: activeAgentId });
+        host.postMessage({ type: "openAgent", agentId: activeAgentId });
       }
       return;
     }
@@ -7277,7 +7326,7 @@
     }
     renderFetchModelsPicker();
 
-    vscode.postMessage({
+    host.postMessage({
       type: "listProviderModels",
       requestId,
       providerId: provider.id,
@@ -7285,7 +7334,7 @@
       apiKey: provider.apiKey || "",
       rejectUnauthorized: settingsRejectUnauthorized
         ? settingsRejectUnauthorized.checked
-        : true,
+        : false,
     });
     return requestId;
   }
@@ -8346,7 +8395,7 @@
         return;
       }
     }
-    vscode.postMessage({
+    host.postMessage({
       type: "mcpUpsertServer",
       server: {
         id: mcpCustomEditId ? mcpCustomEditId.value.trim() : "",
@@ -8369,7 +8418,7 @@
     if (settingsHydrating) {
       return;
     }
-    vscode.postMessage({
+    host.postMessage({
       type: "saveSettings",
       settings: collectSettings(),
     });
@@ -8380,7 +8429,7 @@
     if (settingsHydrating) {
       return;
     }
-    vscode.postMessage({
+    host.postMessage({
       type: "saveModes",
       modes: collectCustomModesForSave(),
     });
@@ -8497,7 +8546,7 @@
     if (settings.figma) {
       renderFigmaStatus({ ...figmaStatus, ...settings.figma });
     } else {
-      vscode.postMessage({ type: "figmaRefreshStatus" });
+      host.postMessage({ type: "figmaRefreshStatus" });
     }
     applyModes(settings.modes);
     if (settingsMaxToolRounds) {
@@ -9244,7 +9293,7 @@
       if (agentId === activeAgentId && chatAgentNameEl) {
         chatAgentNameEl.textContent = next;
       }
-      vscode.postMessage({
+      host.postMessage({
         type: "renameAgent",
         agentId,
         name: next,
@@ -9407,7 +9456,7 @@
         `</span>`;
       row.querySelector(".review-file-path").textContent = file.path;
       row.addEventListener("click", () => {
-        vscode.postMessage({ type: "openFileDiff", path: file.path });
+        host.postMessage({ type: "openFileDiff", path: file.path });
       });
       fileList.appendChild(row);
     }
@@ -9496,7 +9545,7 @@
     appendMessage("user", payload, uiMessagesCache.length - 1, -1, []);
     setBusy(true);
     setComposerPlanBuild("", false);
-    vscode.postMessage({
+    host.postMessage({
       type: "send",
       text: payload,
       model: getSelectedModel(),
@@ -9514,7 +9563,7 @@
     const fallback = stripPlanImplementWrapper(planText || pendingPlanText);
     livePlanBuildRequestId += 1;
     const requestId = `plan-build-${livePlanBuildRequestId}`;
-    vscode.postMessage({
+    host.postMessage({
       type: "requestLivePlanForBuild",
       requestId,
       fallbackText: fallback,
@@ -9590,7 +9639,7 @@
       const key = plan.replace(/\s+/g, " ").trim();
       if (forceOpen || key !== lastOpenedPlanKey) {
         lastOpenedPlanKey = key;
-        vscode.postMessage({
+        host.postMessage({
           type: "openPlanMarkdown",
           text: plan,
           reveal: reveal === "preview" ? "preview" : "editor",
@@ -9667,38 +9716,18 @@
     commitPushBtn.disabled = busy;
     commitPushBtn.innerHTML =
       `<span class="material-symbols-outlined" aria-hidden="true">commit</span>` +
-      `<span>${escapeHtml(t("commitAndPush"))}</span>`;
+      `<span>${escapeHtml(t("commitAndPushShort"))}</span>`;
     commitPushBtn.addEventListener("click", () => {
       if (busy) {
         return;
       }
       setBusy(true);
-      vscode.postMessage({
+      host.postMessage({
         type: "commitAndPush",
         paths,
       });
     });
     composerScmActionsEl.appendChild(commitPushBtn);
-
-    const discardBtn = document.createElement("button");
-    discardBtn.type = "button";
-    discardBtn.className = "review-discard-changes";
-    discardBtn.title = t("discardChanges");
-    discardBtn.disabled = busy;
-    discardBtn.innerHTML =
-      `<span class="material-symbols-outlined" aria-hidden="true">undo</span>` +
-      `<span>${escapeHtml(t("discardChanges"))}</span>`;
-    discardBtn.addEventListener("click", () => {
-      if (busy) {
-        return;
-      }
-      setBusy(true);
-      vscode.postMessage({
-        type: "discardChanges",
-        paths,
-      });
-    });
-    composerScmActionsEl.appendChild(discardBtn);
 
     const scmBtn = document.createElement("button");
     scmBtn.type = "button";
@@ -9710,7 +9739,7 @@
       `<span class="add">+${totalAdd}</span>` +
       `<span class="del">−${totalDel}</span>`;
     scmBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "openScm" });
+      host.postMessage({ type: "openScm" });
     });
     composerScmActionsEl.appendChild(scmBtn);
   }
@@ -9767,7 +9796,7 @@
         `</span>`;
       row.querySelector(".review-file-path").textContent = file.path;
       row.addEventListener("click", () => {
-        vscode.postMessage({ type: "openFileDiff", path: file.path });
+        host.postMessage({ type: "openFileDiff", path: file.path });
       });
       fileList.appendChild(row);
     }
@@ -10297,7 +10326,7 @@
     const key = raw.replace(/\s+/g, " ").trim();
     lastOpenedPlanKey = key;
     // Explicit card action: markdown preview beside the editor.
-    vscode.postMessage({
+    host.postMessage({
       type: "openPlanMarkdown",
       text: raw,
       reveal: "preview",
@@ -11100,7 +11129,7 @@
     if (activeChatId) {
       state.modelByChat[activeChatId] = selectedModelId;
     }
-    vscode.setState(state);
+    host.setState(state);
     updateTriggerLabel();
     updateVisionUi();
     applySelectedReasoningEffort(
@@ -11109,7 +11138,7 @@
     );
     if (notify && selectedModelId) {
       localModelChangeAt = Date.now();
-      vscode.postMessage({
+      host.postMessage({
         type: "modelChanged",
         model: selectedModelId,
         chatId: activeChatId || "",
@@ -11391,7 +11420,7 @@
     );
     if (activeChatId) {
       state.modeByChat[activeChatId] = agentMode;
-      vscode.setState(state);
+      host.setState(state);
     }
     if (modePicker) {
       modePicker.dataset.mode = agentMode;
@@ -11421,7 +11450,7 @@
       promptEl.focus();
     }
     if (notify && agentMode) {
-      vscode.postMessage({
+      host.postMessage({
         type: "modeChanged",
         mode: agentMode,
         chatId: activeChatId || "",
@@ -11614,7 +11643,7 @@
     selectedReasoningEffort = level;
     if (activeChatId) {
       state.reasonByChat[activeChatId] = level;
-      vscode.setState(state);
+      host.setState(state);
     }
     if (reasonLabel) {
       reasonLabel.textContent = reasonLevelLabel(level);
@@ -11630,7 +11659,7 @@
       closeReasonMenu();
     }
     if (notify && level) {
-      vscode.postMessage({
+      host.postMessage({
         type: "reasoningEffortChanged",
         reasoningEffort: level,
         chatId: activeChatId || "",
@@ -11664,12 +11693,6 @@
       const commitBtn = composerScmActionsEl.querySelector(".review-commit-push");
       if (commitBtn) {
         commitBtn.disabled = busy;
-      }
-      const discardBtn = composerScmActionsEl.querySelector(
-        ".review-discard-changes"
-      );
-      if (discardBtn) {
-        discardBtn.disabled = busy;
       }
     }
     if (composerPlanActionsEl) {
@@ -12011,7 +12034,7 @@
     closeSlashMenu();
     closeMentionMenu();
     setBusy(true);
-    vscode.postMessage({
+    host.postMessage({
       type: "send",
       text,
       model: getSelectedModel(),
@@ -12027,7 +12050,7 @@
         sendPrompt();
         return;
       }
-      vscode.postMessage({ type: "stop" });
+      host.postMessage({ type: "stop" });
       return;
     }
     sendPrompt();
@@ -12161,7 +12184,7 @@
       const action = item.getAttribute("data-action");
       closePlusMenu();
       if (action === "image") {
-        vscode.postMessage({ type: "pickAttachments", imagesOnly: true });
+        host.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });
   }
@@ -12246,7 +12269,7 @@
       clearComposerDropState();
       const uris = extractDropUris(event.dataTransfer);
       if (uris.length) {
-        vscode.postMessage({ type: "attachUris", uris });
+        host.postMessage({ type: "attachUris", uris });
         return;
       }
       if (event.dataTransfer?.files?.length) {
@@ -12331,6 +12354,13 @@
       imageFiles = await readClipboardImagesFallback();
     }
     if (!imageFiles.length) {
+      // JCEF / JetBrains: clipboard images rarely appear in paste event —
+      // ask the IDE host to read the system clipboard.
+      if (harborHostAvailable()) {
+        event.preventDefault();
+        event.stopPropagation();
+        host.postMessage({ type: "requestClipboardImage" });
+      }
       return;
     }
     event.preventDefault();
@@ -12364,54 +12394,65 @@
     const active = document.activeElement;
     const inPrompt = active === promptEl;
     if (inPrompt) {
+      // Still help JetBrains: paste event may arrive empty for images.
+      if (harborHostAvailable()) {
+        // Let native paste run for text; also probe host clipboard for images.
+        // Host will no-op if clipboard has no image.
+        setTimeout(() => {
+          host.postMessage({ type: "requestClipboardImage" });
+        }, 0);
+      }
       return;
     }
     void (async () => {
       const imageFiles = await readClipboardImagesFallback();
-      if (!imageFiles.length) {
+      if (imageFiles.length) {
+        event.preventDefault();
+        await ingestDroppedFiles(imageFiles);
+        if (promptEl && typeof promptEl.focus === "function") {
+          promptEl.focus();
+        }
         return;
       }
-      event.preventDefault();
-      await ingestDroppedFiles(imageFiles);
-      if (promptEl && typeof promptEl.focus === "function") {
-        promptEl.focus();
+      if (harborHostAvailable()) {
+        host.postMessage({ type: "requestClipboardImage" });
       }
     })();
   });
 
   if (newAgentBtn) {
     newAgentBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "newAgent" });
+      host.postMessage({ type: "newAgent" });
     });
   }
 
   if (chatNewAgentBtn) {
     chatNewAgentBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "newAgent" });
+      host.postMessage({ type: "newAgent" });
     });
   }
 
   if (openArchiveBtn) {
     openArchiveBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showArchive" });
+      host.postMessage({ type: "showArchive" });
     });
   }
 
   if (openSettingsBtn) {
     openSettingsBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showSettings" });
+      host.postMessage({ type: "showSettings" });
     });
   }
 
   if (backFromArchiveBtn) {
     backFromArchiveBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "showAgents" });
+      host.postMessage({ type: "showAgents" });
     });
   }
 
   if (deleteAllArchiveBtn) {
     deleteAllArchiveBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "deleteAllArchived" });
+      host.postMessage({ type: "deleteAllArchived" });
     });
   }
 
@@ -12502,7 +12543,7 @@
       const deleteBtn = event.target.closest(".mcp-delete-btn");
       if (deleteBtn) {
         const id = deleteBtn.dataset.id || "";
-        vscode.postMessage({ type: "mcpDeleteServer", id });
+        host.postMessage({ type: "mcpDeleteServer", id });
       }
     });
     mcpServersList.addEventListener("change", (event) => {
@@ -12516,7 +12557,7 @@
         if (id === "figma") {
           figmaStatus = { ...figmaStatus, enabled: false };
         }
-        vscode.postMessage({ type: "mcpSetEnabled", id, enabled: false });
+        host.postMessage({ type: "mcpSetEnabled", id, enabled: false });
         return;
       }
       if (id === "figma") {
@@ -12531,7 +12572,7 @@
         }
         figmaStatus = { ...figmaStatus, enabled: true };
       }
-      vscode.postMessage({ type: "mcpSetEnabled", id, enabled: true });
+      host.postMessage({ type: "mcpSetEnabled", id, enabled: true });
     });
   }
   if (mcpEditCloseBtn) {
@@ -12572,18 +12613,18 @@
 
   if (settingsFigmaConnectBtn) {
     settingsFigmaConnectBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "figmaConnect" });
+      host.postMessage({ type: "figmaConnect" });
     });
   }
   if (settingsFigmaDisconnectBtn) {
     settingsFigmaDisconnectBtn.addEventListener("click", () => {
-      vscode.postMessage({ type: "figmaDisconnect" });
+      host.postMessage({ type: "figmaDisconnect" });
     });
   }
   if (settingsFigmaPatConnectBtn) {
     settingsFigmaPatConnectBtn.addEventListener("click", () => {
       const token = settingsFigmaPat ? settingsFigmaPat.value.trim() : "";
-      vscode.postMessage({ type: "figmaConnectPat", token });
+      host.postMessage({ type: "figmaConnectPat", token });
       if (settingsFigmaPat) {
         settingsFigmaPat.value = "";
       }
@@ -12591,7 +12632,7 @@
   }
   if (settingsFigmaPatHelpBtn) {
     settingsFigmaPatHelpBtn.addEventListener("click", () => {
-      vscode.postMessage({
+      host.postMessage({
         type: "openExternal",
         url: "https://www.figma.com/settings",
       });
@@ -13057,7 +13098,7 @@
           return;
         }
         clearMessageQueue(chatId);
-        vscode.postMessage({ type: "deleteBranch", chatId });
+        host.postMessage({ type: "deleteBranch", chatId });
         return;
       }
       const pill = event.target.closest(".chat-branch-pill");
@@ -13069,7 +13110,7 @@
       if (!chatId || chatId === activeChatId) {
         return;
       }
-      vscode.postMessage({ type: "switchBranch", chatId });
+      host.postMessage({ type: "switchBranch", chatId });
     });
   }
 
@@ -13214,7 +13255,7 @@
         event.preventDefault();
         event.stopPropagation();
         if (deleteBtn.dataset.deleteAgent) {
-          vscode.postMessage({
+          host.postMessage({
             type: "deleteAgent",
             agentId: deleteBtn.dataset.deleteAgent,
           });
@@ -13228,7 +13269,7 @@
       event.preventDefault();
       event.stopPropagation();
       if (restoreBtn.dataset.restoreAgent) {
-        vscode.postMessage({
+        host.postMessage({
           type: "restoreAgent",
           agentId: restoreBtn.dataset.restoreAgent,
         });
@@ -13243,7 +13284,7 @@
         event.preventDefault();
         event.stopPropagation();
         if (deleteBtn.dataset.deleteAgent) {
-          vscode.postMessage({
+          host.postMessage({
             type: "deleteAgent",
             agentId: deleteBtn.dataset.deleteAgent,
           });
@@ -13255,7 +13296,7 @@
         event.preventDefault();
         event.stopPropagation();
         if (archiveBtn.dataset.archiveAgent) {
-          vscode.postMessage({
+          host.postMessage({
             type: "archiveAgent",
             agentId: archiveBtn.dataset.archiveAgent,
           });
@@ -13268,7 +13309,7 @@
         if (workspaceNarrow) {
           setAgentsRailOpen(false);
         }
-        vscode.postMessage({
+        host.postMessage({
           type: "openAgent",
           agentId: agentRow.dataset.agent,
         });
@@ -13289,7 +13330,7 @@
       if (workspaceNarrow) {
         setAgentsRailOpen(false);
       }
-      vscode.postMessage({
+      host.postMessage({
         type: "openAgent",
         agentId: agentRow.dataset.agent,
       });
@@ -13439,7 +13480,7 @@
       }
       pinChatToBottom();
       setBusy(true);
-      vscode.postMessage({
+      host.postMessage({
         type: "regenerate",
         agentMode,
         reasoningEffort: selectedReasoningEffort || undefined,
@@ -13455,7 +13496,7 @@
       if (!Number.isInteger(index) || index < 0) {
         return;
       }
-      vscode.postMessage({ type: "branchFromMessage", messageIndex: index });
+      host.postMessage({ type: "branchFromMessage", messageIndex: index });
       return;
     }
     const mentionBtn = event.target.closest(".msg-mention");
@@ -13464,7 +13505,7 @@
       event.stopPropagation();
       const path = mentionBtn.getAttribute("data-path");
       if (path) {
-        vscode.postMessage({ type: "openFile", path });
+        host.postMessage({ type: "openFile", path });
       }
       return;
     }
@@ -13495,7 +13536,7 @@
       event.preventDefault();
       const path = file.getAttribute("data-path");
       if (path) {
-        vscode.postMessage({ type: "openFile", path });
+        host.postMessage({ type: "openFile", path });
       }
       return;
     }
@@ -13506,7 +13547,7 @@
     event.preventDefault();
     const href = link.getAttribute("data-href") || link.getAttribute("href");
     if (href) {
-      vscode.postMessage({ type: "openExternal", url: href });
+      host.postMessage({ type: "openExternal", url: href });
     }
   });
 
@@ -14163,14 +14204,14 @@
     }
   });
 
-  vscode.postMessage({ type: "ready", surface: UI_SURFACE });
+  host.postMessage({ type: "ready", surface: UI_SURFACE });
   setContextUsage(0, contextMax);
   restoreDraftPrompt();
 
   // если init потерялся — перезапросим модели
   setTimeout(() => {
     if (UI_SURFACE === "panel" && !models.length) {
-      vscode.postMessage({ type: "ready", surface: UI_SURFACE });
+      host.postMessage({ type: "ready", surface: UI_SURFACE });
     }
   }, 400);
 })();

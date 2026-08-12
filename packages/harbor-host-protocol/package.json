@@ -1,0 +1,15 @@
+{
+  "name": "@harbor/host-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harbor Agents webview↔host and host↔sidecar message contract",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "lint": "tsc -p ./tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

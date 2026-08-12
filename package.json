@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.73",
+  "version": "1.1.76",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -789,7 +789,9 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && node scripts/bundle-mcp.js && node scripts/bundle-cline.js",
+    "compile": "tsc -p ./ && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js",
+    "build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
+    "build:sidecar": "npm run compile",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
     "package": "vsce package",

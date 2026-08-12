@@ -1,0 +1,22 @@
+{
+  "name": "@harbor/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harbor Agents host-agnostic core + Node sidecar for JetBrains",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "harbor-sidecar": "./dist/sidecar.js"
+  },
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "lint": "tsc -p ./tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@harbor/host-protocol": "file:../harbor-host-protocol"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}
