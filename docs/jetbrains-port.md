@@ -73,6 +73,7 @@ Sessions: `.idea/harbor/session.v2.json`.
 
 **Skills** (Settings → Skills): discovery only from Harbor roots
 `<workspace>/.harbor/skills`, `~/.harbor/skills`, and `skills.extraDirectories` from settings.
+Each source can be toggled off (`workspaceEnabled` / `globalEnabled` / `disabledExtraDirectories`) so it is not passed to the model.
 Does **not** auto-scan `.agents/skills`, `.cline/skills`, or `.cursor/skills`.
 Folder picker / open path are handled in the Kotlin host (`skillsPickDirectory`, `skillsOpenPath`).
 

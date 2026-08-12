@@ -25,15 +25,26 @@ export interface HarborSkillInfo {
 
 export interface HarborSkillsConfigSlice {
   enabled: boolean;
+  /** Scan `<workspace>/.harbor/skills` */
+  workspaceEnabled: boolean;
+  /** Scan `~/.harbor/skills` */
+  globalEnabled: boolean;
   extraDirectories: string[];
+  /** Extra directories that are toggled off in Settings. */
+  disabledExtraDirectories: string[];
+  /** Skill names (frontmatter name or dirname) excluded from the tool. */
   disabled: string[];
 }
 
 export interface HarborSkillDirectoryInfo {
   path: string;
+  /** Short label for UI (relative / ~ form). */
+  displayPath: string;
   source: HarborSkillSource;
   /** Built-in Harbor roots are not removable from Settings. */
   removable: boolean;
+  /** Whether this root is scanned for skills. */
+  enabled: boolean;
 }
 
 const SKILL_MD = "SKILL.md";
@@ -84,16 +95,6 @@ export function workspaceHarborSkillsDir(cwd: string): string {
   return path.join(cwd, ".harbor", "skills");
 }
 
-/** Default Harbor skill roots (may not exist yet). */
-export function defaultHarborSkillDirectories(cwd: string): HarborSkillDirectoryInfo[] {
-  const workspace = workspaceHarborSkillsDir(cwd);
-  const global = globalHarborSkillsDir();
-  return [
-    { path: workspace, source: "workspace", removable: false },
-    { path: global, source: "global", removable: false },
-  ];
-}
-
 function normalizeDirPath(raw: string): string {
   return path.resolve(String(raw || "").trim());
 }
@@ -112,34 +113,122 @@ function dedupeDirs(dirs: string[]): string[] {
   return out;
 }
 
+function displayPathFor(
+  absPath: string,
+  source: HarborSkillSource,
+  cwd: string
+): string {
+  if (source === "workspace") {
+    return ".harbor/skills";
+  }
+  if (source === "global") {
+    return "~/.harbor/skills";
+  }
+  const home = os.homedir();
+  const resolved = normalizeDirPath(absPath);
+  if (home && resolved.startsWith(normalizeDirPath(home) + path.sep)) {
+    return `~${resolved.slice(normalizeDirPath(home).length)}`;
+  }
+  const ws = normalizeDirPath(cwd);
+  if (ws && resolved.startsWith(ws + path.sep)) {
+    const rel = path.relative(ws, resolved);
+    return rel || ".";
+  }
+  return resolved;
+}
+
+function isExtraDisabled(
+  absPath: string,
+  disabledExtra: ReadonlyArray<string>
+): boolean {
+  const n = normalizeDirPath(absPath);
+  return disabledExtra.some((p) => normalizeDirPath(p) === n);
+}
+
+/** Default Harbor skill roots (may not exist yet). */
+export function defaultHarborSkillDirectories(
+  cwd: string,
+  config?: Pick<HarborSkillsConfigSlice, "workspaceEnabled" | "globalEnabled">
+): HarborSkillDirectoryInfo[] {
+  const workspace = workspaceHarborSkillsDir(cwd);
+  const global = globalHarborSkillsDir();
+  return [
+    {
+      path: workspace,
+      displayPath: displayPathFor(workspace, "workspace", cwd),
+      source: "workspace",
+      removable: false,
+      enabled: config?.workspaceEnabled !== false,
+    },
+    {
+      path: global,
+      displayPath: displayPathFor(global, "global", cwd),
+      source: "global",
+      removable: false,
+      enabled: config?.globalEnabled !== false,
+    },
+  ];
+}
+
 /**
  * Absolute directories to pass to Cline skills.directories.
- * Includes Harbor defaults + extraDirectories (whether or not they exist yet).
+ * Only enabled roots (workspace / global / extras).
  */
 export function resolveSkillDirectories(
   cwd: string,
-  config: Pick<HarborSkillsConfigSlice, "extraDirectories">
+  config: Pick<
+    HarborSkillsConfigSlice,
+    | "extraDirectories"
+    | "workspaceEnabled"
+    | "globalEnabled"
+    | "disabledExtraDirectories"
+  >
 ): string[] {
-  const defaults = defaultHarborSkillDirectories(cwd).map((d) => d.path);
-  const extra = (config.extraDirectories || [])
-    .map((p) => String(p || "").trim())
-    .filter(Boolean);
-  return dedupeDirs([...defaults, ...extra]);
+  const dirs: string[] = [];
+  if (config.workspaceEnabled !== false) {
+    dirs.push(workspaceHarborSkillsDir(cwd));
+  }
+  if (config.globalEnabled !== false) {
+    dirs.push(globalHarborSkillsDir());
+  }
+  const disabledExtra = config.disabledExtraDirectories || [];
+  for (const raw of config.extraDirectories || []) {
+    const p = String(raw || "").trim();
+    if (!p || isExtraDisabled(p, disabledExtra)) {
+      continue;
+    }
+    dirs.push(p);
+  }
+  return dedupeDirs(dirs);
 }
 
+/** All configured roots for Settings UI (including disabled). */
 export function listSkillDirectoryInfos(
   cwd: string,
-  config: Pick<HarborSkillsConfigSlice, "extraDirectories">
+  config: Pick<
+    HarborSkillsConfigSlice,
+    | "extraDirectories"
+    | "workspaceEnabled"
+    | "globalEnabled"
+    | "disabledExtraDirectories"
+  >
 ): HarborSkillDirectoryInfo[] {
-  const defaults = defaultHarborSkillDirectories(cwd);
+  const defaults = defaultHarborSkillDirectories(cwd, config);
   const defaultSet = new Set(defaults.map((d) => normalizeDirPath(d.path)));
+  const disabledExtra = config.disabledExtraDirectories || [];
   const extras: HarborSkillDirectoryInfo[] = [];
   for (const raw of config.extraDirectories || []) {
     const p = normalizeDirPath(raw);
     if (!p || defaultSet.has(p)) {
       continue;
     }
-    extras.push({ path: p, source: "extra", removable: true });
+    extras.push({
+      path: p,
+      displayPath: displayPathFor(p, "extra", cwd),
+      source: "extra",
+      removable: true,
+      enabled: !isExtraDisabled(p, disabledExtra),
+    });
   }
   return [...defaults, ...extras];
 }
@@ -179,7 +268,7 @@ function isDisabledName(name: string, disabled: ReadonlyArray<string>): boolean 
 }
 
 /**
- * Scan skill directories for one-level children with SKILL.md.
+ * Scan enabled skill directories for one-level children with SKILL.md.
  */
 export function listHarborSkills(
   cwd: string,
@@ -229,7 +318,6 @@ export function listHarborSkills(
         source,
         disabled: isDisabledName(name, disabled),
       };
-      // Prefer workspace over global over extra on name clash
       const rank = (s: HarborSkillSource) =>
         s === "workspace" ? 0 : s === "global" ? 1 : 2;
       const prev = byName.get(name.toLowerCase());
@@ -262,11 +350,15 @@ export function buildSkillsListPayload(
   config: HarborSkillsConfigSlice
 ): {
   enabled: boolean;
+  workspaceEnabled: boolean;
+  globalEnabled: boolean;
   directories: HarborSkillDirectoryInfo[];
   skills: HarborSkillInfo[];
 } {
   return {
     enabled: config.enabled !== false,
+    workspaceEnabled: config.workspaceEnabled !== false,
+    globalEnabled: config.globalEnabled !== false,
     directories: listSkillDirectoryInfos(cwd, config),
     skills: listHarborSkills(cwd, config),
   };

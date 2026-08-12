@@ -4,6 +4,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.ide.BrowserUtil
+import com.intellij.ide.actions.RevealFileAction
+import com.intellij.ide.projectView.ProjectView
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -15,9 +17,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.psi.PsiManager
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
+import java.awt.Desktop
 import java.awt.datatransfer.StringSelection
 import java.io.File
 import java.util.UUID
@@ -349,21 +353,8 @@ class HarborHostBridge(
       }
       "skillsOpenPath" -> {
         val raw = obj.get("path")?.asString ?: return
-        val io = File(raw)
-        val resolved =
-          if (io.isAbsolute) io
-          else if (!project.basePath.isNullOrBlank()) File(project.basePath, raw)
-          else io
-        val lfs = LocalFileSystem.getInstance()
-        var vf =
-          lfs.refreshAndFindFileByIoFile(resolved)
-            ?: lfs.findFileByIoFile(resolved)
-            ?: return
-        if (vf.isDirectory) {
-          vf = vf.findChild("SKILL.md") ?: vf
-        }
-        if (!vf.isDirectory) {
-          FileEditorManager.getInstance(project).openFile(vf, true)
+        ApplicationManager.getApplication().invokeLater {
+          openSkillsPath(raw)
         }
       }
       "skillsPickDirectory" -> {
@@ -542,6 +533,85 @@ class HarborHostBridge(
       else -> {
         sidecar.request("webview.handle", obj) { _ -> }
       }
+    }
+  }
+
+  /**
+   * Open a skill file in the editor, or reveal a skills folder in Finder /
+   * Project view. Harbor skill roots are directories (no SKILL.md at the root),
+   * so FileEditorManager alone is not enough.
+   */
+  private fun openSkillsPath(raw: String) {
+    val path = raw.trim()
+    if (path.isEmpty()) {
+      return
+    }
+    val base = project.basePath
+    val io = File(path)
+    val resolved =
+      if (io.isAbsolute) io
+      else if (!base.isNullOrBlank()) File(base, path)
+      else io
+    try {
+      if (!resolved.exists()) {
+        if (resolved.name.equals("SKILL.md", ignoreCase = true)) {
+          resolved.parentFile?.mkdirs()
+        } else {
+          resolved.mkdirs()
+        }
+      }
+    } catch (e: Exception) {
+      log.warn("Harbor skillsOpenPath mkdir failed: ${resolved.path}", e)
+    }
+    val lfs = LocalFileSystem.getInstance()
+    val vf =
+      lfs.refreshAndFindFileByIoFile(resolved)
+        ?: lfs.findFileByIoFile(resolved)
+    if (vf == null) {
+      log.warn("Harbor skillsOpenPath: path not found ${resolved.path}")
+      // Still try OS reveal for absolute dirs that VFS missed.
+      if (resolved.exists()) {
+        revealInOs(resolved)
+      }
+      return
+    }
+    if (vf.isDirectory) {
+      revealInOs(File(vf.path))
+      try {
+        val psi = PsiManager.getInstance(project).findDirectory(vf)
+        if (psi != null) {
+          ProjectView.getInstance(project).selectPsiElement(psi, true)
+        } else {
+          ProjectView.getInstance(project).select(null, vf, true)
+        }
+      } catch (e: Exception) {
+        log.info("Harbor skillsOpenPath: ProjectView select skipped", e)
+      }
+      return
+    }
+    FileEditorManager.getInstance(project).openFile(vf, true)
+  }
+
+  private fun revealInOs(file: File) {
+    try {
+      if (RevealFileAction.isSupported()) {
+        RevealFileAction.openFile(file)
+        return
+      }
+    } catch (e: Exception) {
+      log.info("Harbor RevealFileAction failed, falling back to Desktop", e)
+    }
+    try {
+      if (Desktop.isDesktopSupported()) {
+        val desktop = Desktop.getDesktop()
+        if (file.isDirectory && desktop.isSupported(Desktop.Action.OPEN)) {
+          desktop.open(file)
+        } else if (file.isFile && desktop.isSupported(Desktop.Action.OPEN)) {
+          desktop.open(file.parentFile ?: file)
+        }
+      }
+    } catch (e: Exception) {
+      log.warn("Harbor skillsOpenPath OS reveal failed: ${file.path}", e)
     }
   }
 

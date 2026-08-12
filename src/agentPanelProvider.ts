@@ -142,7 +142,10 @@ type SettingsPayload = {
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
   skillsEnabled?: boolean;
+  skillsWorkspaceEnabled?: boolean;
+  skillsGlobalEnabled?: boolean;
   skillsExtraDirectories?: string[];
+  skillsDisabledExtraDirectories?: string[];
   skillsDisabled?: string[];
   tabAutocompleteEnabled?: boolean;
   tabAutocompleteModelId?: string;
@@ -276,6 +279,12 @@ type WebviewToHost =
   | { type: "skillsRefreshList" }
   | { type: "skillsSetMasterEnabled"; enabled: boolean }
   | { type: "skillsSetEnabled"; name: string; enabled: boolean }
+  | {
+      type: "skillsSetSourceEnabled";
+      source: "workspace" | "global" | "extra";
+      enabled: boolean;
+      path?: string;
+    }
   | { type: "skillsAddDirectory"; path: string }
   | { type: "skillsRemoveDirectory"; path: string }
   | { type: "skillsPickDirectory" }
@@ -2055,6 +2064,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.handleSkillsSetEnabled(
           String(message.name || ""),
           Boolean(message.enabled)
+        );
+        break;
+      case "skillsSetSourceEnabled":
+        await this.handleSkillsSetSourceEnabled(
+          String(message.source || ""),
+          Boolean(message.enabled),
+          String(message.path || "")
         );
         break;
       case "skillsAddDirectory":
@@ -4221,7 +4237,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
         skillsEnabled: config.skills.enabled,
+        skillsWorkspaceEnabled: config.skills.workspaceEnabled,
+        skillsGlobalEnabled: config.skills.globalEnabled,
         skillsExtraDirectories: config.skills.extraDirectories,
+        skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
         skillsDisabled: config.skills.disabled,
         tabAutocompleteEnabled: config.tabAutocomplete.enabled,
         tabAutocompleteModelId: config.tabAutocomplete.modelId,
@@ -4303,7 +4322,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async updateSkillsConfig(
     patch: Partial<{
       enabled: boolean;
+      workspaceEnabled: boolean;
+      globalEnabled: boolean;
       extraDirectories: string[];
+      disabledExtraDirectories: string[];
       disabled: string[];
     }>
   ): Promise<void> {
@@ -4312,10 +4334,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (patch.enabled !== undefined) {
       await cfg.update("skills.enabled", patch.enabled !== false, target);
     }
+    if (patch.workspaceEnabled !== undefined) {
+      await cfg.update(
+        "skills.workspaceEnabled",
+        patch.workspaceEnabled !== false,
+        target
+      );
+    }
+    if (patch.globalEnabled !== undefined) {
+      await cfg.update(
+        "skills.globalEnabled",
+        patch.globalEnabled !== false,
+        target
+      );
+    }
     if (patch.extraDirectories) {
       await cfg.update(
         "skills.extraDirectories",
         patch.extraDirectories,
+        target
+      );
+    }
+    if (patch.disabledExtraDirectories) {
+      await cfg.update(
+        "skills.disabledExtraDirectories",
+        patch.disabledExtraDirectories,
         target
       );
     }
@@ -4346,6 +4389,35 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         ? disabled
         : [...disabled, skillName];
     await this.updateSkillsConfig({ disabled: next });
+  }
+
+  private async handleSkillsSetSourceEnabled(
+    source: string,
+    enabled: boolean,
+    rawPath: string
+  ): Promise<void> {
+    const src = String(source || "").trim().toLowerCase();
+    if (src === "workspace") {
+      await this.updateSkillsConfig({ workspaceEnabled: enabled });
+      return;
+    }
+    if (src === "global") {
+      await this.updateSkillsConfig({ globalEnabled: enabled });
+      return;
+    }
+    if (src === "extra") {
+      const dir = path.resolve(String(rawPath || "").trim());
+      if (!dir) {
+        return;
+      }
+      const disabled = [...getConfig().skills.disabledExtraDirectories];
+      const next = enabled
+        ? disabled.filter((p) => path.resolve(String(p || "")) !== dir)
+        : disabled.some((p) => path.resolve(String(p || "")) === dir)
+          ? disabled
+          : [...disabled, dir];
+      await this.updateSkillsConfig({ disabledExtraDirectories: next });
+    }
   }
 
   private async handleSkillsAddDirectory(rawPath: string): Promise<void> {
@@ -4379,7 +4451,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const extra = getConfig().skills.extraDirectories.filter(
       (p) => path.resolve(String(p || "")) !== normalized
     );
-    await this.updateSkillsConfig({ extraDirectories: extra });
+    const disabledExtra = getConfig().skills.disabledExtraDirectories.filter(
+      (p) => path.resolve(String(p || "")) !== normalized
+    );
+    await this.updateSkillsConfig({
+      extraDirectories: extra,
+      disabledExtraDirectories: disabledExtra,
+    });
   }
 
   private async handleSkillsPickDirectory(): Promise<void> {
@@ -4401,10 +4479,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     try {
+      const baseName = path.basename(target);
+      const looksLikeFile = /\.[A-Za-z0-9]+$/.test(baseName);
+      if (!looksLikeFile) {
+        try {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.file(target));
+        } catch {
+          /* already exists */
+        }
+      }
       const uri = vscode.Uri.file(target);
-      const stat = await vscode.workspace.fs.stat(uri);
-      if (stat.type & vscode.FileType.Directory) {
-        await vscode.commands.executeCommand("revealInExplorer", uri);
+      let isDir = false;
+      try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        isDir = Boolean(stat.type & vscode.FileType.Directory);
+      } catch {
+        void vscode.window.showWarningMessage(`Path not found: ${target}`);
+        return;
+      }
+      if (isDir) {
+        // Outside-workspace folders (e.g. ~/.harbor/skills) are not in the
+        // Explorer tree — reveal in OS file manager instead.
+        try {
+          await vscode.commands.executeCommand("revealFileInOS", uri);
+        } catch {
+          await vscode.env.openExternal(uri);
+        }
         return;
       }
       const doc = await vscode.workspace.openTextDocument(uri);
@@ -4784,6 +4884,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
     await cfg.update("skills.enabled", raw.skillsEnabled !== false, target);
+    await cfg.update(
+      "skills.workspaceEnabled",
+      raw.skillsWorkspaceEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "skills.globalEnabled",
+      raw.skillsGlobalEnabled !== false,
+      target
+    );
     const skillsExtra = Array.isArray(raw.skillsExtraDirectories)
       ? raw.skillsExtraDirectories
           .map((p) => String(p || "").trim())
@@ -4791,6 +4901,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           .filter((p, i, all) => all.indexOf(p) === i)
       : getConfig().skills.extraDirectories;
     await cfg.update("skills.extraDirectories", skillsExtra, target);
+    const skillsDisabledExtra = Array.isArray(raw.skillsDisabledExtraDirectories)
+      ? raw.skillsDisabledExtraDirectories
+          .map((p) => String(p || "").trim())
+          .filter(Boolean)
+          .filter((p, i, all) => all.indexOf(p) === i)
+      : getConfig().skills.disabledExtraDirectories;
+    await cfg.update(
+      "skills.disabledExtraDirectories",
+      skillsDisabledExtra,
+      target
+    );
     const skillsDisabled = Array.isArray(raw.skillsDisabled)
       ? raw.skillsDisabled
           .map((n) => String(n || "").trim())
@@ -5286,6 +5407,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <span class="material-symbols-outlined" aria-hidden="true">electrical_services</span>
           <span class="settings-nav-label" data-i18n-nav="mcpServers">MCP Servers</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="skills">
+          <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+          <span class="settings-nav-label" data-i18n-nav="skillsSection">Skills</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="browser">
           <span class="material-symbols-outlined" aria-hidden="true">web</span>
           <span class="settings-nav-label" data-i18n-nav="browserAgent">Browser agent</span>
@@ -5392,6 +5517,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <div id="mcpServersList" class="mcp-servers-list"></div>
             <div id="mcpEmpty" class="mcp-empty" hidden>No MCP servers yet.</div>
           </div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="skills" hidden>
+          <h3 class="settings-section-title" id="settingsSkillsTitle">Skills</h3>
+          <p class="settings-section-note" id="settingsSkillsNote">
+            Skills are SKILL.md packs that load when relevant. Put them in the project or global folders listed below.
+          </p>
+          <div class="skills-toolbar">
+            <button type="button" class="text-btn" id="skillsRefreshBtn">
+              <span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+              <span id="skillsRefreshLabel">Refresh</span>
+            </button>
+          </div>
+          <div class="skills-section-head">
+            <h4 class="skills-section-title" id="skillsFoldersTitle">Where Harbor looks</h4>
+          </div>
+          <div id="skillsFoldersList" class="skills-folders-list"></div>
+          <p class="skills-folders-hint" id="skillsFoldersDisabledHint">A disabled folder is not sent to the model.</p>
         </section>
 
         <section class="settings-panel" data-settings-panel="browser" hidden>
