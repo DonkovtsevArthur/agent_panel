@@ -108,6 +108,22 @@
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
+      skillsSection: "Skills",
+      skillsNote:
+        "On-demand instruction packs (SKILL.md). Harbor scans .harbor/skills in the workspace and ~/.harbor/skills, plus folders you add below.",
+      skillsEnabled: "Enable skills",
+      skillsRefresh: "Refresh",
+      skillsAddFolder: "Add folder",
+      skillsOpenHarbor: "Open Harbor folder",
+      skillsListTitle: "Installed skills",
+      skillsFoldersTitle: "Folders",
+      skillsEmpty: "No skills found yet. Add a SKILL.md under a Harbor skills folder.",
+      skillsSourceWorkspace: "Workspace",
+      skillsSourceGlobal: "Global",
+      skillsSourceExtra: "Extra",
+      skillsOpen: "Open",
+      skillsRemoveFolder: "Remove",
+      skillsBuiltinFolder: "Built-in",
       mcpServersOpen: "Open connection list",
       mcpSubtitle: "Manage MCP server configurations used by Harbor Agents.",
       mcpSearchPlaceholder: "Search MCP servers...",
@@ -530,6 +546,23 @@
       mcpServers: "MCP Servers",
       mcpServersNote:
         "Управление MCP-подключениями Harbor Agents (Figma и другие).",
+      skillsSection: "Skills",
+      skillsNote:
+        "Инструкции по требованию (SKILL.md). Harbor смотрит .harbor/skills в проекте и ~/.harbor/skills, плюс папки, которые вы добавите ниже.",
+      skillsEnabled: "Включить skills",
+      skillsRefresh: "Обновить",
+      skillsAddFolder: "Добавить папку",
+      skillsOpenHarbor: "Открыть папку Harbor",
+      skillsListTitle: "Установленные skills",
+      skillsFoldersTitle: "Папки",
+      skillsEmpty:
+        "Пока нет skills. Положите SKILL.md в папку Harbor skills.",
+      skillsSourceWorkspace: "Проект",
+      skillsSourceGlobal: "Глобально",
+      skillsSourceExtra: "Доп.",
+      skillsOpen: "Открыть",
+      skillsRemoveFolder: "Убрать",
+      skillsBuiltinFolder: "Встроенная",
       mcpServersOpen: "Открыть список подключений",
       mcpSubtitle: "Управление конфигурациями MCP-серверов для Harbor Agents.",
       mcpSearchPlaceholder: "Поиск MCP-серверов...",
@@ -1224,6 +1257,15 @@
   const mcpCustomUrlLabel = document.getElementById("mcpCustomUrlLabel");
   const mcpCustomTokenLabel = document.getElementById("mcpCustomTokenLabel");
   let mcpServersCache = [];
+  const settingsSkillsEnabled = document.getElementById("settingsSkillsEnabled");
+  const skillsRefreshBtn = document.getElementById("skillsRefreshBtn");
+  const skillsAddFolderBtn = document.getElementById("skillsAddFolderBtn");
+  const skillsOpenHarborBtn = document.getElementById("skillsOpenHarborBtn");
+  const skillsList = document.getElementById("skillsList");
+  const skillsEmpty = document.getElementById("skillsEmpty");
+  const skillsListCount = document.getElementById("skillsListCount");
+  const skillsFoldersList = document.getElementById("skillsFoldersList");
+  let skillsCache = { enabled: true, directories: [], skills: [] };
   const settingsFigmaEnabled = null;
   const settingsFigmaEnabledLabel = null;
   const settingsFigmaStatus = mcpEditStatus;
@@ -1511,6 +1553,7 @@
     setText("settingsLanguageTitle", "languageSection");
     setText("settingsCommitTitle", "commitMessages");
     setText("settingsMcpTitle", "mcpServers");
+    setText("settingsSkillsTitle", "skillsSection");
     setText("settingsBrowserTitle", "browserAgentTitle");
     setText("settingsAgentTitle", "agentBehavior");
     setText("settingsAdvancedTitle", "advancedSettings");
@@ -1850,6 +1893,20 @@
       settingsSelectionHintsLabel.textContent = t("selectionHints");
     }
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
+    const settingsSkillsNote = document.getElementById("settingsSkillsNote");
+    if (settingsSkillsNote) settingsSkillsNote.textContent = t("skillsNote");
+    const settingsSkillsEnabledLabel = document.getElementById(
+      "settingsSkillsEnabledLabel"
+    );
+    if (settingsSkillsEnabledLabel) {
+      settingsSkillsEnabledLabel.textContent = t("skillsEnabled");
+    }
+    setText("skillsRefreshLabel", "skillsRefresh");
+    setText("skillsAddFolderLabel", "skillsAddFolder");
+    setText("skillsOpenHarborLabel", "skillsOpenHarbor");
+    setText("skillsListTitle", "skillsListTitle");
+    setText("skillsFoldersTitle", "skillsFoldersTitle");
+    if (skillsEmpty) skillsEmpty.textContent = t("skillsEmpty");
     const settingsBrowserNote = document.getElementById("settingsBrowserNote");
     if (settingsBrowserNote) {
       settingsBrowserNote.textContent = t("browserAgentNote");
@@ -2728,6 +2785,153 @@
   }
 
   applyJetBrainsSettingsVisibility();
+
+  /**
+   * JCEF OSR: CSS cursor is applied by the Kotlin host; HTML title tooltips are
+   * drawn in-page (native title never shows in OSR).
+   */
+  function installJetBrainsChromeUx() {
+    if (!harborHostAvailable()) {
+      return;
+    }
+    let lastCursor = "";
+    let tipTimer = 0;
+    let tipEl = document.getElementById("harborJcefTip");
+    if (!tipEl) {
+      tipEl = document.createElement("div");
+      tipEl.id = "harborJcefTip";
+      tipEl.setAttribute("role", "tooltip");
+      tipEl.hidden = true;
+      document.body.appendChild(tipEl);
+    }
+
+    function resolveCursor(el) {
+      let node = el;
+      while (node && node.nodeType === 1) {
+        const value = window.getComputedStyle(node).cursor;
+        if (value && value !== "auto") {
+          return value;
+        }
+        node = node.parentElement;
+      }
+      return "default";
+    }
+
+    function resolveTitle(el) {
+      const titled = el && el.closest ? el.closest("[title]") : null;
+      if (!titled) {
+        return "";
+      }
+      return String(titled.getAttribute("title") || "").trim();
+    }
+
+    function hideTip() {
+      if (tipTimer) {
+        clearTimeout(tipTimer);
+        tipTimer = 0;
+      }
+      tipEl.hidden = true;
+      tipEl.textContent = "";
+    }
+
+    function placeTip(x, y) {
+      const pad = 12;
+      const rect = tipEl.getBoundingClientRect();
+      const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      let left = x + pad;
+      let top = y + 18;
+      if (left + rect.width > vw - 4) {
+        left = Math.max(4, x - rect.width - pad);
+      }
+      if (top + rect.height > vh - 4) {
+        top = Math.max(4, y - rect.height - 8);
+      }
+      tipEl.style.left = `${Math.round(left)}px`;
+      tipEl.style.top = `${Math.round(top)}px`;
+    }
+
+    function showTip(text, x, y) {
+      if (!text) {
+        hideTip();
+        return;
+      }
+      if (tipTimer) {
+        clearTimeout(tipTimer);
+      }
+      tipTimer = window.setTimeout(() => {
+        tipTimer = 0;
+        tipEl.textContent = text;
+        tipEl.hidden = false;
+        placeTip(x, y);
+        // Reposition after layout with real size.
+        requestAnimationFrame(() => placeTip(x, y));
+      }, 450);
+    }
+
+    function publishCursor(cursor) {
+      if (cursor === lastCursor) {
+        return;
+      }
+      lastCursor = cursor;
+      try {
+        host.postMessage({ type: "jcefChrome", cursor });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    let raf = 0;
+    let pending = null;
+    function onPointer(event) {
+      const el =
+        event.target && event.target.nodeType === 1
+          ? event.target
+          : document.elementFromPoint(event.clientX, event.clientY);
+      if (!el) {
+        return;
+      }
+      const cursor = resolveCursor(el);
+      const title = resolveTitle(el);
+      const x = event.clientX;
+      const y = event.clientY;
+      pending = { cursor, title, x, y };
+      if (raf) {
+        return;
+      }
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const next = pending;
+        pending = null;
+        if (!next) {
+          return;
+        }
+        publishCursor(next.cursor);
+        if (next.title) {
+          if (tipEl.hidden || tipEl.textContent !== next.title) {
+            showTip(next.title, next.x, next.y);
+          } else {
+            placeTip(next.x, next.y);
+          }
+        } else {
+          hideTip();
+        }
+      });
+    }
+
+    document.addEventListener("pointermove", onPointer, { passive: true });
+    document.addEventListener("pointerdown", hideTip, { passive: true });
+    document.addEventListener(
+      "pointerleave",
+      () => {
+        hideTip();
+        publishCursor("default");
+      },
+      { passive: true }
+    );
+  }
+
+  installJetBrainsChromeUx();
 
   /** JCEF OSR often skips paints after DOM updates until a click — nudge it. */
   function forceHarborUiRepaint() {
@@ -6287,6 +6491,7 @@
       "language",
       "commit",
       "mcp",
+      "skills",
       "browser",
       "agent",
       "advanced",
@@ -6312,6 +6517,10 @@
     } else {
       closeMcpEditModal();
       closeMcpCustomEditModal();
+    }
+    if (cat === "skills") {
+      renderSkillsSettings();
+      host.postMessage({ type: "skillsRefreshList" });
     }
     if (settingsBody) {
       settingsBody.scrollTop = 0;
@@ -8718,6 +8927,106 @@
     }
   }
 
+  function skillSourceLabel(source) {
+    if (source === "workspace") return t("skillsSourceWorkspace");
+    if (source === "global") return t("skillsSourceGlobal");
+    return t("skillsSourceExtra");
+  }
+
+  function renderSkillsSettings() {
+    const skills = Array.isArray(skillsCache.skills) ? skillsCache.skills : [];
+    const directories = Array.isArray(skillsCache.directories)
+      ? skillsCache.directories
+      : [];
+    if (settingsSkillsEnabled) {
+      settingsSkillsEnabled.checked = skillsCache.enabled !== false;
+    }
+    if (skillsListCount) {
+      skillsListCount.textContent = String(skills.length);
+    }
+    if (skillsEmpty) {
+      skillsEmpty.hidden = skills.length > 0;
+    }
+    if (skillsList) {
+      skillsList.innerHTML = "";
+      for (const skill of skills) {
+        const card = document.createElement("div");
+        card.className = "skills-card";
+        card.dataset.skillName = skill.name || "";
+        const head = document.createElement("div");
+        head.className = "skills-card-head";
+        const title = document.createElement("div");
+        title.className = "skills-card-title";
+        title.textContent = skill.name || "";
+        const badge = document.createElement("span");
+        badge.className = "skills-badge";
+        badge.textContent = skillSourceLabel(skill.source);
+        head.appendChild(title);
+        head.appendChild(badge);
+        const desc = document.createElement("p");
+        desc.className = "skills-card-desc";
+        desc.textContent = skill.description || "";
+        const actions = document.createElement("div");
+        actions.className = "skills-card-actions";
+        const toggleLabel = document.createElement("label");
+        toggleLabel.className = "skills-toggle";
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.checked = skill.disabled !== true;
+        toggle.setAttribute("data-skills-toggle", skill.name || "");
+        toggleLabel.appendChild(toggle);
+        const openBtn = document.createElement("button");
+        openBtn.type = "button";
+        openBtn.className = "text-btn";
+        openBtn.setAttribute("data-skills-open", skill.skillMdPath || skill.dirPath || "");
+        openBtn.textContent = t("skillsOpen");
+        actions.appendChild(toggleLabel);
+        actions.appendChild(openBtn);
+        card.appendChild(head);
+        if (skill.description) {
+          card.appendChild(desc);
+        }
+        card.appendChild(actions);
+        skillsList.appendChild(card);
+      }
+    }
+    if (skillsFoldersList) {
+      skillsFoldersList.innerHTML = "";
+      for (const dir of directories) {
+        const row = document.createElement("div");
+        row.className = "skills-folder-row";
+        const pathEl = document.createElement("code");
+        pathEl.className = "skills-folder-path";
+        pathEl.textContent = dir.path || "";
+        const meta = document.createElement("span");
+        meta.className = "skills-badge";
+        meta.textContent = dir.removable
+          ? skillSourceLabel(dir.source)
+          : t("skillsBuiltinFolder");
+        const actions = document.createElement("div");
+        actions.className = "skills-card-actions";
+        const openBtn = document.createElement("button");
+        openBtn.type = "button";
+        openBtn.className = "text-btn";
+        openBtn.setAttribute("data-skills-open", dir.path || "");
+        openBtn.textContent = t("skillsOpen");
+        actions.appendChild(openBtn);
+        if (dir.removable) {
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "text-btn";
+          removeBtn.setAttribute("data-skills-remove-dir", dir.path || "");
+          removeBtn.textContent = t("skillsRemoveFolder");
+          actions.appendChild(removeBtn);
+        }
+        row.appendChild(pathEl);
+        row.appendChild(meta);
+        row.appendChild(actions);
+        skillsFoldersList.appendChild(row);
+      }
+    }
+  }
+
   function openMcpEditModal(serverId) {
     if (serverId && serverId !== "figma") {
       openMcpCustomEditModal(serverId);
@@ -9137,6 +9446,19 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    if (settingsSkillsEnabled) {
+      settingsSkillsEnabled.checked = settings.skillsEnabled !== false;
+    }
+    if (
+      Array.isArray(settings.skillsExtraDirectories) ||
+      Array.isArray(settings.skillsDisabled)
+    ) {
+      // Keep cache in sync when settings hydrate; full list comes via skillsList.
+      skillsCache = {
+        ...skillsCache,
+        enabled: settings.skillsEnabled !== false,
+      };
+    }
     fillTabAutocompleteModelSelect(settings.tabAutocompleteModelId || "");
     if (settingsTabAutocompleteEnabled) {
       settingsTabAutocompleteEnabled.checked =
@@ -9296,6 +9618,21 @@
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
         : true,
+      skillsEnabled: settingsSkillsEnabled
+        ? settingsSkillsEnabled.checked
+        : true,
+      skillsExtraDirectories: Array.isArray(skillsCache.directories)
+        ? skillsCache.directories
+            .filter((d) => d && d.removable)
+            .map((d) => d.path)
+            .filter(Boolean)
+        : [],
+      skillsDisabled: Array.isArray(skillsCache.skills)
+        ? skillsCache.skills
+            .filter((s) => s && s.disabled)
+            .map((s) => s.name)
+            .filter(Boolean)
+        : [],
       tabAutocompleteEnabled:
         harborHostAvailable()
           ? false
@@ -9657,6 +9994,12 @@
         continue;
       }
       const attr = cssAttrValue(id);
+      // Override CSS vars so panel.css cube rules for plan/ask pick up custom color.
+      if (custom && id === "plan") {
+        chunks.push(`:root{--mode-plan:${accent};}`);
+      } else if (custom && id === "ask") {
+        chunks.push(`:root{--mode-ask:${accent};}`);
+      }
       chunks.push(
         `.composer[data-mode="${attr}"],` +
           `.msg.user[data-mode="${attr}"],` +
@@ -9666,7 +10009,7 @@
           `.mode-picker[data-mode="${attr}"].is-open .model-trigger,` +
           `.msg-edit-mode-picker[data-mode="${attr}"] .model-trigger{color:${accent};}` +
           `.mode-picker .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
-          `.agent-run-status-running[data-mode="${attr}"]{--cube-accent:${accent};}`
+          `.agents-list .agent-run-status-running[data-mode="${attr}"]{--cube-accent:${accent};}`
       );
     }
     styleEl.textContent = chunks.join("\n");
@@ -9957,9 +10300,10 @@
           : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="${t("archive")}" aria-label="${t("archive")}">` +
             ARCHIVE_ICON +
             `</button>`;
-        const runMode =
-          a.runMode === "plan" || a.runMode === "ask" ? a.runMode : "";
-        const runModeAttr = runMode ? ` data-mode="${runMode}"` : "";
+        const runMode = String(a.runMode || "").trim();
+        const runModeAttr = runMode
+          ? ` data-mode="${escapeHtml(runMode)}"`
+          : "";
         const statusHtml =
           a.runState === "running"
             ? `<span class="agent-run-status agent-run-status-running"${runModeAttr} aria-label="Running"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>`
@@ -13294,6 +13638,84 @@
       ) {
         persistSettingsNow();
       }
+      if (target.id === "settingsSkillsEnabled") {
+        host.postMessage({
+          type: "skillsSetMasterEnabled",
+          enabled: settingsSkillsEnabled
+            ? settingsSkillsEnabled.checked
+            : true,
+        });
+      }
+    });
+  }
+
+  if (skillsRefreshBtn) {
+    skillsRefreshBtn.addEventListener("click", () => {
+      host.postMessage({ type: "skillsRefreshList" });
+    });
+  }
+  if (skillsAddFolderBtn) {
+    skillsAddFolderBtn.addEventListener("click", () => {
+      host.postMessage({ type: "skillsPickDirectory" });
+    });
+  }
+  if (skillsOpenHarborBtn) {
+    skillsOpenHarborBtn.addEventListener("click", () => {
+      const workspaceDir = (skillsCache.directories || []).find(
+        (d) => d && d.source === "workspace"
+      );
+      const path =
+        (workspaceDir && workspaceDir.path) ||
+        (skillsCache.directories &&
+          skillsCache.directories[0] &&
+          skillsCache.directories[0].path) ||
+        "";
+      if (path) {
+        host.postMessage({ type: "skillsOpenPath", path });
+      }
+    });
+  }
+  if (skillsList) {
+    skillsList.addEventListener("change", (event) => {
+      const toggle = event.target.closest("[data-skills-toggle]");
+      if (!toggle) {
+        return;
+      }
+      const name = toggle.getAttribute("data-skills-toggle") || "";
+      host.postMessage({
+        type: "skillsSetEnabled",
+        name,
+        enabled: toggle.checked === true,
+      });
+    });
+    skillsList.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-skills-open]");
+      if (!openBtn) {
+        return;
+      }
+      const path = openBtn.getAttribute("data-skills-open") || "";
+      if (path) {
+        host.postMessage({ type: "skillsOpenPath", path });
+      }
+    });
+  }
+  if (skillsFoldersList) {
+    skillsFoldersList.addEventListener("click", (event) => {
+      const openBtn = event.target.closest("[data-skills-open]");
+      if (openBtn) {
+        const path = openBtn.getAttribute("data-skills-open") || "";
+        if (path) {
+          host.postMessage({ type: "skillsOpenPath", path });
+        }
+        return;
+      }
+      const removeBtn = event.target.closest("[data-skills-remove-dir]");
+      if (removeBtn) {
+        const path = removeBtn.getAttribute("data-skills-remove-dir") || "";
+        if (path) {
+          host.postMessage({ type: "skillsRemoveDirectory", path });
+        }
+      }
     });
   }
 
@@ -14776,6 +15198,14 @@
       case "mcpServers":
         mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
         renderMcpServersList();
+        break;
+      case "skillsList":
+        skillsCache = {
+          enabled: msg.enabled !== false,
+          directories: Array.isArray(msg.directories) ? msg.directories : [],
+          skills: Array.isArray(msg.skills) ? msg.skills : [],
+        };
+        renderSkillsSettings();
         break;
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));

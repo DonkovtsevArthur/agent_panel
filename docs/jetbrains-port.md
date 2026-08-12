@@ -71,9 +71,16 @@ Example: [`docs/harbor-settings.example.json`](harbor-settings.example.json).
 
 Sessions: `.idea/harbor/session.v2.json`.
 
+**Skills** (Settings → Skills): discovery only from Harbor roots
+`<workspace>/.harbor/skills`, `~/.harbor/skills`, and `skills.extraDirectories` from settings.
+Does **not** auto-scan `.agents/skills`, `.cline/skills`, or `.cursor/skills`.
+Folder picker / open path are handled in the Kotlin host (`skillsPickDirectory`, `skillsOpenPath`).
+
 ```bash
 npm run build:sidecar   # → out/harborSidecar.js (~670KB + external out/clineBundle.js)
 # Sidecar must run with cwd/out next to clineBundle.js (JetBrains sets HARBOR_* env).
+# After skills/runtime changes also rebuild clineBundle (`npm run compile` / bundle-cline)
+# so `createUserInstructionConfigService` is exported.
 ```
 
 Headless turn path: `src/sidecarMain.ts` → `HeadlessPanelHost` → `runAgentTurn` / Cline

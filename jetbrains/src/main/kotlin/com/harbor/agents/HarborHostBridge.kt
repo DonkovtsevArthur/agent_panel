@@ -347,6 +347,49 @@ class HarborHostBridge(
             ?: return
         FileEditorManager.getInstance(project).openFile(vf, true)
       }
+      "skillsOpenPath" -> {
+        val raw = obj.get("path")?.asString ?: return
+        val io = File(raw)
+        val resolved =
+          if (io.isAbsolute) io
+          else if (!project.basePath.isNullOrBlank()) File(project.basePath, raw)
+          else io
+        val lfs = LocalFileSystem.getInstance()
+        var vf =
+          lfs.refreshAndFindFileByIoFile(resolved)
+            ?: lfs.findFileByIoFile(resolved)
+            ?: return
+        if (vf.isDirectory) {
+          vf = vf.findChild("SKILL.md") ?: vf
+        }
+        if (!vf.isDirectory) {
+          FileEditorManager.getInstance(project).openFile(vf, true)
+        }
+      }
+      "skillsPickDirectory" -> {
+        ApplicationManager.getApplication().invokeLater {
+          val descriptor =
+            FileChooserDescriptor(
+              /* chooseFiles = */ false,
+              /* chooseFolders = */ true,
+              /* chooseJars = */ false,
+              /* chooseJarsAsFiles = */ false,
+              /* chooseJarContents = */ false,
+              /* chooseMultiple = */ false,
+            ).withTitle("Add skills folder")
+          val chosen = FileChooser.chooseFiles(descriptor, project, null)
+          val folder = chosen.firstOrNull() ?: return@invokeLater
+          sidecar.request(
+            "webview.handle",
+            gson.toJsonTree(
+              mapOf(
+                "type" to "skillsAddDirectory",
+                "path" to folder.path,
+              )
+            ),
+          ) { _ -> }
+        }
+      }
       "copyText" -> {
         val text = obj.get("text")?.asString ?: return
         CopyPasteManager.getInstance().setContents(StringSelection(text))
@@ -371,6 +414,15 @@ class HarborHostBridge(
         }
       }
       "uiRepaint" -> scheduleBrowserRepaint()
+      "jcefChrome" -> {
+        val cursor = obj.get("cursor")?.asString.orEmpty()
+        val title = obj.get("title")?.asString.orEmpty()
+        val xEl = obj.get("x")
+        val yEl = obj.get("y")
+        val x = if (xEl != null && xEl.isJsonPrimitive) xEl.asInt else null
+        val y = if (yEl != null && yEl.isJsonPrimitive) yEl.asInt else null
+        HarborJcefChrome.applyFromWebview(browser, cursor, title, x, y)
+      }
       "openPlanMarkdown" -> {
         val text = obj.get("text")?.asString ?: return
         val reveal = obj.get("reveal")?.asString ?: "editor"

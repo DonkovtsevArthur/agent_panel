@@ -21,5 +21,10 @@
   "systemPrompt": "",
   "subagents": { "enabled": true },
   "parallelToolCalls": { "enabled": true },
-  "autoCompact": { "enabled": true }
+  "autoCompact": { "enabled": true },
+  "skills": {
+    "enabled": true,
+    "extraDirectories": [],
+    "disabled": []
+  }
 }
