@@ -188,24 +188,29 @@
       figmaOpenTokenHelp: "Open token settings",
       backToSettings: "Back to settings",
       systemPrompt: "System prompt",
+      systemPromptEmpty: "Empty",
+      agentLimits: "Limits",
+      agentExecution: "Execution",
+      agentInterface: "Interface",
       maxToolRounds: "Max tool rounds",
-      maxResponseLength: "Max response length (chars)",
+      maxTokens: "Response limit",
+      maxTokensHint: "tokens",
+      maxResponseLength: "Max length",
+      maxResponseCharsHint: "characters",
       soundNotifications: "Sound notifications",
+      soundNotificationsNote: "Signal when the agent finishes a turn.",
       parallelAgents: "Parallel agents",
-      parallelAgentsNote:
-        "On: spawn_agent + instruct to delegate. Off: no sub-agents. Plan/Ask children stay read-only.",
+      parallelAgentsNote: "Child agents. In Plan and Ask they only read.",
       parallelToolCalls: "Parallel tool calls",
       parallelToolCallsNote:
-        "Run independent tools from one model response at the same time.",
+        "Independent tools from one response run together.",
       autoCompact: "Auto compact",
-      autoCompactNote:
-        "Compress conversation context when it approaches the model input limit.",
+      autoCompactNote: "Compress the chat near the model window limit.",
       toolsAutoApprove: "Auto-approve tools",
-      toolsAutoApproveNote:
-        "On: run tools without asking. Off: confirm each tool (edit, terminal, MCP).",
+      toolsAutoApproveNote: "No prompt. Off — ask every time.",
       checkpoints: "Workspace checkpoints",
       checkpointsNote:
-        "Git snapshot at the start of each run. Click the checkpoint card in chat to restore files.",
+        "Git snapshot at the start of a turn. The card rolls back files.",
       checkpointRestore: "Restore workspace files from this checkpoint?",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Enable Tab autocomplete",
@@ -243,6 +248,7 @@
         "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ / Ctrl+Shift+Enter · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
+      selectionHintsNote: "Action chip over selected code.",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -551,7 +557,6 @@
       commitPrompt: "Промпт / правило коммита",
       commitPromptPlaceholder:
         "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
-      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote:
@@ -639,24 +644,29 @@
       figmaOpenTokenHelp: "Открыть настройки токена",
       backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
+      systemPromptEmpty: "Пусто",
+      agentLimits: "Лимиты",
+      agentExecution: "Выполнение",
+      agentInterface: "Интерфейс",
       maxToolRounds: "Макс. раундов tools",
-      maxResponseLength: "Макс. длина ответа (символы)",
+      maxTokens: "Лимит ответа",
+      maxTokensHint: "токены",
+      maxResponseLength: "Макс. длина",
+      maxResponseCharsHint: "символы",
       soundNotifications: "Звуковые уведомления",
+      soundNotificationsNote: "Сигнал, когда агент закончил ход.",
       parallelAgents: "Параллельные агенты",
-      parallelAgentsNote:
-        "Вкл: spawn_agent + правило делегировать. Выкл: без субагентов. В Plan/Ask дети только читают.",
+      parallelAgentsNote: "Дочерние агенты. В Plan и Ask — только чтение.",
       parallelToolCalls: "Параллельные tool calls",
       parallelToolCallsNote:
-        "Выполнять независимые tools из одного ответа модели одновременно.",
+        "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
-      autoCompactNote:
-        "Сжимать контекст разговора, когда он приближается к лимиту входа модели.",
+      autoCompactNote: "Сжимать диалог у лимита окна модели.",
       toolsAutoApprove: "Автоподтверждение tools",
-      toolsAutoApproveNote:
-        "Вкл: tools без вопроса. Выкл: спрашивать перед каждым (правка, терминал, MCP).",
+      toolsAutoApproveNote: "Без запроса. Выкл. — спрашивать каждый раз.",
       checkpoints: "Чекпоинты workspace",
       checkpointsNote:
-        "Git-снимок в начале хода. Карточка чекпоинта в чате откатывает файлы.",
+        "Git-снимок в начале хода. Карточка откатывает файлы.",
       checkpointRestore: "Восстановить файлы из этого чекпоинта?",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Включить Tab autocomplete",
@@ -694,6 +704,7 @@
         "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Стейтмент: ⌘⇧⏎ / Ctrl+Shift+Enter · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
+      selectionHintsNote: "Чип действий над выделенным кодом.",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
@@ -1204,6 +1215,28 @@
     "settingsAutoglmBinaryPath"
   );
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
+  const settingsSystemPromptToggle = document.getElementById(
+    "settingsSystemPromptToggle"
+  );
+  const settingsSystemPromptCard = document.getElementById(
+    "settingsSystemPromptCard"
+  );
+  const settingsSystemPromptBody = document.getElementById(
+    "settingsSystemPromptBody"
+  );
+  const settingsSystemPromptPreview = document.getElementById(
+    "settingsSystemPromptPreview"
+  );
+
+  function updateSystemPromptPreview() {
+    if (!settingsSystemPromptPreview) {
+      return;
+    }
+    const raw = String(settingsSystemPrompt?.value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    settingsSystemPromptPreview.textContent = raw || t("systemPromptEmpty");
+  }
   const settingsCommitScope = document.getElementById("settingsCommitScope");
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
@@ -1590,6 +1623,9 @@
     setText("settingsSkillsTitle", "skillsSection");
     setText("settingsBrowserTitle", "browserAgentTitle");
     setText("settingsAgentTitle", "agentBehavior");
+    setText("settingsLimitsTitle", "agentLimits");
+    setText("settingsExecutionTitle", "agentExecution");
+    setText("settingsInterfaceTitle", "agentInterface");
     setText("settingsAdvancedTitle", "advancedSettings");
     document.querySelectorAll("[data-i18n-nav]").forEach((el) => {
       const key = el.getAttribute("data-i18n-nav");
@@ -1718,18 +1754,21 @@
     if (settingsMaxTokensLabel) {
       settingsMaxTokensLabel.textContent = t("maxTokens");
     }
+    setText("settingsMaxTokensHint", "maxTokensHint");
     const settingsMaxResponseCharsLabel = document.getElementById(
       "settingsMaxResponseCharsLabel"
     );
     if (settingsMaxResponseCharsLabel) {
       settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
     }
+    setText("settingsMaxResponseCharsHint", "maxResponseCharsHint");
     const settingsSoundNotificationsLabel = document.getElementById(
       "settingsSoundNotificationsLabel"
     );
     if (settingsSoundNotificationsLabel) {
       settingsSoundNotificationsLabel.textContent = t("soundNotifications");
     }
+    setText("settingsSoundNotificationsNote", "soundNotificationsNote");
     const settingsSubagentsLabel = document.getElementById(
       "settingsSubagentsLabel"
     );
@@ -1950,6 +1989,8 @@
     if (settingsSelectionHintsLabel) {
       settingsSelectionHintsLabel.textContent = t("selectionHints");
     }
+    setText("settingsSelectionHintsNote", "selectionHintsNote");
+    updateSystemPromptPreview();
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     const settingsSkillsNote = document.getElementById("settingsSkillsNote");
     if (settingsSkillsNote) settingsSkillsNote.textContent = t("skillsNote");
@@ -9619,6 +9660,7 @@
     }
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
+      updateSystemPromptPreview();
     }
     if (settingsCommitLanguage) {
       settingsCommitLanguage.value =
@@ -13987,6 +14029,22 @@
   }
 
   const settingsBody = document.getElementById("settingsBody");
+  if (settingsSystemPromptToggle && settingsSystemPromptCard) {
+    settingsSystemPromptToggle.addEventListener("click", () => {
+      const open = !settingsSystemPromptCard.classList.contains("is-open");
+      settingsSystemPromptCard.classList.toggle("is-open", open);
+      settingsSystemPromptToggle.setAttribute(
+        "aria-expanded",
+        open ? "true" : "false"
+      );
+      if (settingsSystemPromptBody) {
+        settingsSystemPromptBody.hidden = !open;
+      }
+      if (open && settingsSystemPrompt) {
+        settingsSystemPrompt.focus();
+      }
+    });
+  }
   if (settingsBody) {
     settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
     settingsBody.addEventListener("input", (event) => {
@@ -13999,6 +14057,9 @@
           "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsAutoglmBinaryPath"
         )
       ) {
+        if (target.closest("#settingsSystemPrompt")) {
+          updateSystemPromptPreview();
+        }
         schedulePersistSettings();
       }
     });

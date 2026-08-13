@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.3.113"
+version = "1.4.113"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,10 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.4.113</b>
+            <ul>
+              <li>Settings → Поведение агента: свёрнутый промпт, лимиты в ряд, группы Выполнение / Интерфейс и switch-ряды</li>
+            </ul>
             <b>1.3.113</b>
             <ul>
               <li>GLM vision: не подменять картинки Cline, только ставить их перед текстом</li>
