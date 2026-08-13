@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.5.141"
+version = "1.5.143"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,10 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.5.143</b>
+            <ul>
+              <li>Интеллект (reasoning) для Kimi и GLM-4.5+/5.x, не только Claude</li>
+            </ul>
             <b>1.5.141</b>
             <ul>
               <li>Настройки: селекты как выбор режима в композе; попап не закрывается сразу</li>

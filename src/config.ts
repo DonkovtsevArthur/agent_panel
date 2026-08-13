@@ -55,8 +55,8 @@ export interface AgentModel {
    */
   supportsVision?: boolean;
   /**
-   * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4 через
-   * OpenAI-compatible гейтвей). Пусто = default по capability ("high").
+   * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4, Kimi,
+   * GLM-4.5+ через OpenAI-compatible гейтвей). Пусто = default по capability ("high").
    * Допустимо: "low" | "medium" | "high" | "xhigh".
    * Если задано — модель считается поддерживающей reasoning в UI селекторе.
    */
@@ -757,7 +757,7 @@ export function resolveModelReasoningEffort(
   );
 }
 
-/** Модель принимает reasoning_effort (Claude 3.5+/4 или явный override в Settings). */
+/** Модель принимает reasoning_effort (Claude 3.5+/4, Kimi, GLM-4.5+ или override в Settings). */
 export function resolveModelSupportsReasoningEffort(
   modelOrId: string | AgentModel
 ): boolean {
