@@ -247,6 +247,13 @@ export class HeadlessPanelHost {
     type: string;
     [key: string]: unknown;
   }): Promise<unknown> {
+    if (
+      msg.type === "send" ||
+      msg.type === "regenerate" ||
+      msg.type === "editUserMessage"
+    ) {
+      HarborHeadless.applyIdeContext(msg.ideContext);
+    }
     switch (msg.type) {
       case "ready":
         return this.onReady(String(msg.surface || "panel"));

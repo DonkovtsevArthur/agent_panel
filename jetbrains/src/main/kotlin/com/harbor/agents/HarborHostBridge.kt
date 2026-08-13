@@ -530,6 +530,14 @@ class HarborHostBridge(
           }
         }
       }
+      "send", "regenerate", "editUserMessage" -> {
+        try {
+          obj.add("ideContext", HarborIdeContext.toJson(project))
+        } catch (t: Throwable) {
+          log.warn("Harbor ideContext snapshot failed", t)
+        }
+        sidecar.request("webview.handle", obj) { _ -> }
+      }
       else -> {
         sidecar.request("webview.handle", obj) { _ -> }
       }
