@@ -78,6 +78,8 @@ export async function runAgentTurn(options: {
   callbacks: AgentRunCallbacks;
   /** Paths from the previous agent edit turn — discard «свои». */
   lastAgentEditedPaths?: string[];
+  chatId?: string;
+  resetSession?: boolean;
 }): Promise<ChatMessage[]> {
   return runClineAgentTurn(options);
 }

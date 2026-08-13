@@ -22,6 +22,8 @@ export interface InProcessTurnParams {
   storageUri?: vscode.Uri;
   signal?: AbortSignal;
   lastAgentEditedPaths?: string[];
+  chatId?: string;
+  resetSession?: boolean;
   callbacks: AgentRunCallbacks;
 }
 
@@ -43,5 +45,7 @@ export async function runHarborTurnInProcess(
     reasoningEffort: params.reasoningEffort,
     callbacks: params.callbacks,
     lastAgentEditedPaths: params.lastAgentEditedPaths,
+    chatId: params.chatId,
+    resetSession: params.resetSession,
   });
 }

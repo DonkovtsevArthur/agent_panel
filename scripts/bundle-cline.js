@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const esbuild = require("esbuild");
 
 const stubsDir = path.join(__dirname, "stubs");
@@ -55,5 +56,24 @@ esbuild
       "@opentelemetry/exporter-logs-otlp-http": otlpExporterStub,
     },
     plugins: [harborNoLangfuseTelemetryPlugin()],
+  })
+  .then(() => {
+    // Harbor: spawn children inherit parent extraTools (MCP). Vendor source
+    // is spawn-tool.ts; this keeps the running CJS bundle aligned when the
+    // bundled factory still matches the Harbor-patched shape.
+    const outfile = path.join(__dirname, "..", "out", "clineBundle.js");
+    const source = fs.readFileSync(outfile, "utf8");
+    const oldSnippet = `createSubAgentTools: () => {
+    let Y10 = Z10.enableTools ? G63({ cwd: Z10.cwd, telemetry: Z10.telemetry, ...z12[B$2({ mode: Z10.mode })], enableAskQuestion: false, executors: J10 }) : [];
+    return J$3(Y10);
+  }`;
+    const newSnippet = `createSubAgentTools: () => {
+    let Y10 = Z10.enableTools ? G63({ cwd: Z10.cwd, telemetry: Z10.telemetry, ...z12[B$2({ mode: Z10.mode })], enableAskQuestion: false, enableSpawnAgent: false, enableAgentTeams: false, executors: J10 }) : [];
+    let extras = Array.isArray(Z10.extraTools) ? Z10.extraTools : [];
+    return J$3(Y10.concat(extras));
+  }`;
+    if (source.includes(oldSnippet) && !source.includes("Y10.concat(extras)")) {
+      fs.writeFileSync(outfile, source.replace(oldSnippet, newSnippet));
+    }
   })
   .catch(() => process.exit(1));

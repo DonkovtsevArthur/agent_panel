@@ -30,6 +30,12 @@ import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage 
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import {
+  discardAllClineChatSessions,
+  discardClineChatSession,
+  discardClineChatSessions,
+  disposeClineRuntime,
+} from "./clineRuntime";
+import {
   classifyModelFallbackError,
   modelFallbackEligibility,
   selectFallbackModel,
@@ -518,12 +524,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     uris?: readonly vscode.Uri[]
   ): Promise<void> {
     const resolved = resolveFilesForHarbor(uri, uris);
-    if (!resolved.fileUris.length && !resolved.mentionPaths.length) {
-      void vscode.window.showInformationMessage(
-        "Open a file in the editor or pick one in the explorer."
-      );
-      return;
-    }
     this.newChat();
     await this.addResolvedFilesToChat(resolved);
   }
@@ -533,9 +533,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     mentionPaths: string[];
   }): Promise<void> {
     if (!resolved.fileUris.length && !resolved.mentionPaths.length) {
-      void vscode.window.showInformationMessage(
-        "Open a file in the editor or pick one in the explorer."
-      );
+      await this.pickAttachmentsFromUi();
       return;
     }
     if (resolved.fileUris.length) {
@@ -654,6 +652,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.persistActiveChat();
     this.saveStore();
+    void disposeClineRuntime();
     this.settingsPanel?.dispose();
     this.settingsPanel = undefined;
     for (const d of this.webviewDisposables) {
@@ -1257,6 +1256,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async reloadStoreForWorkspace(): Promise<void> {
     this.workspaceGeneration += 1;
     this.abortAllRuns();
+    await discardAllClineChatSessions();
     await this.saveStore();
     this.loadStore();
     this.workspaceGeneration += 1;
@@ -2429,6 +2429,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     this.abortChatRun(chatId);
+    await discardClineChatSession(chatId);
     this.persistActiveChat();
     if (!deleteAgentBranch(this.store, agent.id, chatId)) {
       return;
@@ -2532,6 +2533,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     for (const chatId of getAgentChatIds(agent)) {
       this.abortChatRun(chatId);
     }
+    await discardClineChatSessions(getAgentChatIds(agent));
     this.persistActiveChat();
     if (!deleteAgentFromStore(this.store, agentId)) {
       return;
@@ -2572,6 +2574,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const ids: string[] = [];
     for (const item of archived) {
       const agent = this.store.agents.find((a) => a.id === item.id);
       if (!agent) {
@@ -2579,8 +2582,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
       for (const chatId of getAgentChatIds(agent)) {
         this.abortChatRun(chatId);
+        ids.push(chatId);
       }
     }
+    await discardClineChatSessions(ids);
     this.persistActiveChat();
     deleteAllArchivedAgentsFromStore(this.store);
     this.hydrateActiveChat();
@@ -2803,6 +2808,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       reasoningEffort?: string;
       /** Pin turn to this chat when edit/regenerate races a chat switch. */
       chatId?: string;
+      /** Drop the live Cline session (regenerate / edit user message). */
+      resetSession?: boolean;
     }
   ): Promise<void> {
     const config = getConfig();
@@ -3045,6 +3052,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             reasoningEffort: reasoningEffortForRun,
             lastAgentEditedPaths:
               this.store.chats[runChatId]?.lastAgentEditedPaths || [],
+            chatId: runChatId,
+            resetSession: Boolean(options?.resetSession),
             callbacks: {
           onPhase: (phase, detail) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -3539,6 +3548,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       agentMode,
       reasoningEffort,
       chatId: runChatId,
+      resetSession: true,
     });
   }
 
@@ -3663,6 +3673,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       agentMode,
       reasoningEffort,
       chatId: runChatId,
+      resetSession: true,
     });
   }
 
@@ -5315,6 +5326,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <span class="material-symbols-outlined" aria-hidden="true">add</span>
               </button>
               <div class="composer-plus-menu" id="composerPlusMenu" role="menu" hidden>
+                <button type="button" class="composer-plus-item" data-action="file" role="menuitem">
+                  <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
+                  <span>File</span>
+                </button>
                 <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
                   <span class="material-symbols-outlined" aria-hidden="true">image</span>
                   <span>Image</span>

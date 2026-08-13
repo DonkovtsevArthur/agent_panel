@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import {
   getConfig,
   getContextWindow,
+  getModeById,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
@@ -27,7 +28,10 @@ import { toClineReasoningOptions } from "./reasoningEffort";
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiClient";
 import type { MessageAttachment } from "./attachments";
-import { attachmentPreviewDataUrl } from "./attachments";
+import {
+  attachmentPreviewDataUrl,
+  buildInlinedAttachmentsPrompt,
+} from "./attachments";
 import {
   enabledSkillNames,
   resolveSkillDirectories,
@@ -38,12 +42,17 @@ import type {
 import type { AgentStepEvent, ToolStepMetrics } from "./agentSteps";
 import {
   appendFigmaRuntimeNudge,
+  harborMcpToolFingerprint,
   loadHarborMcpToolsForCline,
   messageHasFigmaUrl,
   shouldNotifyFigmaNeedsConnect,
   type ClineCreateMcpTools,
   type ClineCreateTool,
 } from "./clineMcpTools";
+import {
+  activeFileAlreadyInlined,
+  buildTurnContextBlock,
+} from "./turnContext";
 import {
   createHarborNoopTelemetry,
   HARBOR_CLINE_DISTINCT_ID,
@@ -117,10 +126,26 @@ type ClineStartResult = {
 
 type ClineCoreInstance = {
   start: (input: Record<string, unknown>) => Promise<ClineStartResult>;
+  send: (input: {
+    sessionId: string;
+    prompt: string;
+    userImages?: string[];
+    userFiles?: string[];
+    mode?: string;
+  }) => Promise<ClineStartResult["result"] | undefined>;
   abort: (sessionId: string, reason?: unknown) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
+  dispose?: () => Promise<void>;
   subscribe: (listener: (event: CoreSessionEvent) => void) => () => void;
 };
+
+type LiveClineChat = {
+  sessionId: string;
+  fingerprint: string;
+};
+
+/** Harbor chatId → live interactive Cline session (in-memory; lost on reload). */
+const liveClineByChatId = new Map<string, LiveClineChat>();
 
 /**
  * Subset of Cline's ModelInfo (vendor/.../shared/src/llms/model-info.ts) that
@@ -925,6 +950,93 @@ function newSessionId(): string {
   return `harbor-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function clineSessionFingerprint(parts: {
+  mode: string;
+  model: string;
+  cwd: string;
+  spawn: boolean;
+  parallel: number;
+  compact: boolean;
+  reasoning: string;
+  mcp: string;
+}): string {
+  return [
+    parts.mode,
+    parts.model,
+    parts.cwd,
+    parts.spawn ? "1" : "0",
+    String(parts.parallel),
+    parts.compact ? "1" : "0",
+    parts.reasoning,
+    parts.mcp,
+  ].join("|");
+}
+
+function isUnusableClineSessionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /session_not_found|session_run_in_progress|Session not found/i.test(
+    message
+  );
+}
+
+async function stopLiveClineSession(live: LiveClineChat): Promise<void> {
+  try {
+    const bundle = loadClineBundle();
+    const core = await getClineCore(bundle);
+    await core.abort(live.sessionId, "harbor-discard").catch(() => {
+      /* ignore */
+    });
+    await core.stop(live.sessionId);
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Drop the live Cline session for a Harbor chat (regenerate / edit / delete). */
+export async function discardClineChatSession(
+  chatId: string
+): Promise<void> {
+  const id = String(chatId || "").trim();
+  if (!id) {
+    return;
+  }
+  const live = liveClineByChatId.get(id);
+  if (!live) {
+    return;
+  }
+  liveClineByChatId.delete(id);
+  await stopLiveClineSession(live);
+}
+
+export async function discardClineChatSessions(
+  chatIds: readonly string[]
+): Promise<void> {
+  for (const chatId of chatIds) {
+    await discardClineChatSession(chatId);
+  }
+}
+
+export async function discardAllClineChatSessions(): Promise<void> {
+  const ids = [...liveClineByChatId.keys()];
+  await discardClineChatSessions(ids);
+}
+
+/** Extension shutdown: stop chats and dispose the shared ClineCore host. */
+export async function disposeClineRuntime(): Promise<void> {
+  await discardAllClineChatSessions();
+  const pending = corePromise;
+  corePromise = undefined;
+  if (!pending) {
+    return;
+  }
+  try {
+    const core = await pending;
+    await core.dispose?.();
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * Build a `providerConfig` for ClineCore `start` that surfaces upstream 4xx/5xx
  * bodies. Without this, openai-compatible / LiteLLM/OpenRouter rejections arrive
@@ -981,6 +1093,10 @@ export async function runClineAgentTurn(options: {
   reasoningEffort?: string;
   callbacks: AgentRunCallbacks;
   lastAgentEditedPaths?: string[];
+  /** Stable Harbor chat id — keeps one Cline session across turns. */
+  chatId?: string;
+  /** Regenerate / edit: drop the live session and re-seed from history. */
+  resetSession?: boolean;
 }): Promise<ChatMessage[]> {
   const { callbacks } = options;
   const bundle = loadClineBundle();
@@ -1013,6 +1129,8 @@ export async function runClineAgentTurn(options: {
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
     ? harborDefaultRulesForLanguage(uiLang)
     : String(config.systemPrompt || "").trim();
+  const modeDef = getModeById(options.agentMode);
+  const modePrompt = String(modeDef.prompt || "").trim();
   const harborRules = [
     customRules,
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
@@ -1021,6 +1139,9 @@ export async function runClineAgentTurn(options: {
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
+      : "",
+    modePrompt
+      ? `# Mode: ${modeDef.label || modeDef.id}\n${modePrompt}`
       : "",
   ]
     .map((part) => String(part || "").trim())
@@ -1042,7 +1163,40 @@ export async function runClineAgentTurn(options: {
   );
 
   const core = await getClineCore(bundle);
-  const sessionId = newSessionId();
+  const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
+  const enableAutoCompact = config.autoCompact.enabled !== false;
+  /** Default matches Cline AgentConfigSchema (8 → parallel). */
+  const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
+  const chatId = String(options.chatId || "").trim();
+  const persistSession = Boolean(chatId);
+  const reasoningKey = resolveModelSupportsReasoningEffort(options.model)
+    ? String(
+        options.reasoningEffort || resolveModelReasoningEffort(options.model) || ""
+      )
+    : "";
+  const mcpFingerprint = await harborMcpToolFingerprint(clineMode === "plan");
+  const fingerprint = clineSessionFingerprint({
+    mode: String(options.agentMode || "agent").toLowerCase(),
+    model: options.model,
+    cwd,
+    spawn: enableSpawnAgent,
+    parallel: maxParallelToolCalls,
+    compact: enableAutoCompact,
+    reasoning: reasoningKey,
+    mcp: mcpFingerprint,
+  });
+
+  if (persistSession && options.resetSession) {
+    await discardClineChatSession(chatId);
+  }
+  let live = persistSession ? liveClineByChatId.get(chatId) : undefined;
+  if (live && live.fingerprint !== fingerprint) {
+    liveClineByChatId.delete(chatId);
+    await stopLiveClineSession(live);
+    live = undefined;
+  }
+  let sessionId = live?.sessionId || newSessionId();
+  let reusedSession = Boolean(live);
 
   const edits: FileEditStat[] = [];
   let assistantText = "";
@@ -1053,10 +1207,6 @@ export async function runClineAgentTurn(options: {
   /** Sum turn deltas so parent + forwarded child usage both count. */
   let usagePromptTokens = 0;
   let usageCompletionTokens = 0;
-  const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
-  const enableAutoCompact = config.autoCompact.enabled !== false;
-  /** Default matches Cline AgentConfigSchema (8 → parallel). */
-  const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
 
   /**
    * Surface non-lifecycle Cline notices as Harbor phase "cline".
@@ -1327,11 +1477,23 @@ export async function runClineAgentTurn(options: {
   }
 
   let userPrompt = String(options.userText || "").trim();
-  const fileNames = (options.attachments || [])
-    .filter((a) => a.kind !== "image")
-    .map((a) => a.name || a.path || "file");
-  if (fileNames.length) {
-    userPrompt = `${userPrompt}\n\n[attachments: ${fileNames.join(", ")}]`.trim();
+  const inlined = await buildInlinedAttachmentsPrompt(
+    options.userText,
+    options.attachments
+  );
+  if (inlined.text) {
+    userPrompt = userPrompt
+      ? `${userPrompt}\n\n${inlined.text}`
+      : inlined.text;
+  }
+  const turnContext = await buildTurnContextBlock({
+    skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
+    lastAgentEditedPaths: options.lastAgentEditedPaths,
+  });
+  if (turnContext) {
+    userPrompt = userPrompt
+      ? `${userPrompt}\n\n${turnContext}`
+      : turnContext;
   }
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
@@ -1394,69 +1556,95 @@ export async function runClineAgentTurn(options: {
     : undefined;
 
   try {
-    const startResult = await core.start({
-      source: "vscode",
-      interactive: false,
-      prompt: userPrompt,
-      ...(userImages.length ? { userImages } : {}),
-      ...(initialMessages.length ? { initialMessages } : {}),
-      ...(userInstructionService
-        ? {
-            localRuntime: {
-              userInstructionService,
-              configExtensions: [...configExtensions],
-            },
-          }
-        : {
-            localRuntime: {
-              configExtensions: [...configExtensions],
-            },
-          }),
-      config: {
-        sessionId,
-        providerId: "openai-compatible",
-        modelId: options.model,
-        apiKey: endpoint.apiKey || "no-key",
-        baseUrl: endpoint.baseUrl,
-        cwd,
-        workspaceRoot: cwd,
-        mode: clineMode,
-        enableTools: true,
-        enableSpawnAgent,
-        enableAgentTeams: true,
-        disableMcpSettingsTools: true,
-        maxParallelToolCalls,
-        // TLS: pass Harbor fetch so corporate self-signed proxies work when
-        // Advanced → Validate TLS is off (default).
-        fetch: harborFetch as typeof fetch,
-        ...(enableAutoCompact
+    let result: ClineStartResult["result"];
+    if (reusedSession) {
+      try {
+        result = await core.send({
+          sessionId,
+          prompt: userPrompt,
+          ...(userImages.length ? { userImages } : {}),
+          mode: clineMode,
+        });
+      } catch (error) {
+        if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
+          throw error;
+        }
+        liveClineByChatId.delete(chatId);
+        reusedSession = false;
+        sessionId = newSessionId();
+      }
+    }
+
+    if (!reusedSession) {
+      const startResult = await core.start({
+        source: "vscode",
+        interactive: persistSession,
+        prompt: userPrompt,
+        ...(userImages.length ? { userImages } : {}),
+        ...(initialMessages.length ? { initialMessages } : {}),
+        ...(userInstructionService
           ? {
-              compaction: {
-                enabled: true,
-                strategy: "agentic" as const,
+              localRuntime: {
+                userInstructionService,
+                configExtensions: [...configExtensions],
               },
             }
-          : {}),
-        // Iteration budget: leave unset so Cline treats it as unlimited
-        // (Harbor maxToolRounds no longer caps the turn).
-        systemPrompt: baseSystemPrompt,
-        ...(skillsMasterEnabled && skillAllowlist.length
-          ? { skills: skillAllowlist }
-          : skillsMasterEnabled
-            ? { skills: [] as string[] }
+          : {
+              localRuntime: {
+                configExtensions: [...configExtensions],
+              },
+            }),
+        config: {
+          sessionId,
+          providerId: "openai-compatible",
+          modelId: options.model,
+          apiKey: endpoint.apiKey || "no-key",
+          baseUrl: endpoint.baseUrl,
+          cwd,
+          workspaceRoot: cwd,
+          mode: clineMode,
+          enableTools: true,
+          enableSpawnAgent,
+          enableAgentTeams: true,
+          disableMcpSettingsTools: true,
+          maxParallelToolCalls,
+          // TLS: pass Harbor fetch so corporate self-signed proxies work when
+          // Advanced → Validate TLS is off (default).
+          fetch: harborFetch as typeof fetch,
+          ...(enableAutoCompact
+            ? {
+                compaction: {
+                  enabled: true,
+                  strategy: "agentic" as const,
+                },
+              }
             : {}),
-        ...reasoningOptions,
-        ...modelInfoData,
-        // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
-        // "Request failed with status code N" — critical for spawn_agent children.
-        providerConfig: buildHarborProviderConfig(),
-      },
-    });
+          // Iteration budget: leave unset so Cline treats it as unlimited
+          // (Harbor maxToolRounds no longer caps the turn).
+          systemPrompt: baseSystemPrompt,
+          ...(skillsMasterEnabled && skillAllowlist.length
+            ? { skills: skillAllowlist }
+            : skillsMasterEnabled
+              ? { skills: [] as string[] }
+              : {}),
+          ...reasoningOptions,
+          ...modelInfoData,
+          // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
+          // "Request failed with status code N" — critical for spawn_agent children.
+          providerConfig: buildHarborProviderConfig(),
+        },
+      });
+      sessionId = String(startResult.sessionId || sessionId);
+      result = startResult.result;
+    }
+
+    if (persistSession) {
+      liveClineByChatId.set(chatId, { sessionId, fingerprint });
+    }
 
     unsubscribe();
     options.signal?.removeEventListener("abort", onAbort);
 
-    const result = startResult.result;
     const finishReason = String(result?.finishReason || "");
     const aborted =
       options.signal?.aborted ||
@@ -1514,10 +1702,12 @@ export async function runClineAgentTurn(options: {
     setClineStatus(message || "failed");
     throw error;
   } finally {
-    try {
-      await core.stop(sessionId);
-    } catch {
-      /* session may already be finalized */
+    if (!persistSession) {
+      try {
+        await core.stop(sessionId);
+      } catch {
+        /* session may already be finalized */
+      }
     }
   }
 }

@@ -40,7 +40,7 @@ review seeds) via `src/clineRuntime.ts`.
 | Patch | Where | Why |
 |-------|--------|-----|
 | Forward `maxParallelToolCalls` | `sdk/packages/core/.../local-runtime-host.ts`, `.../types/config.ts` | Session config field was dropped when building `AgentConfig`, so Harbor/`maxParallelToolCalls` never reached `toolExecution: "parallel"`. |
-| Subagent LiteLLM-safe model config | `sdk/packages/core/.../local/spawn-tool.ts`, `.../team/subagent-prompts.ts` | Strip catalog `reasoning` capabilities on spawn children; inherit parent thinking/effort; serialize spawns per root. Always wrap child system prompts in full Cline base (openai-compatible used to pass bare spawn text → Claude+tools `streaming_error`). No nested `spawn_agent` / ask_question on children. |
+| Subagent LiteLLM-safe model config | `sdk/packages/core/.../local/spawn-tool.ts`, `.../team/subagent-prompts.ts` | Strip catalog `reasoning` capabilities on spawn children; inherit parent thinking/effort; serialize spawns per root. Always wrap child system prompts in full Cline base (openai-compatible used to pass bare spawn text → Claude+tools `streaming_error`). No nested `spawn_agent` / ask_question on children. Parent `extraTools` (Harbor MCP) are concatenated onto child tools. |
 
 ## Телеметрия (не режем в форке)
 

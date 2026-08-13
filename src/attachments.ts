@@ -96,6 +96,10 @@ const TEXT_EXT = new Set([
 export const MAX_ATTACHMENTS = 8;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_TEXT_CHARS = 40_000;
+/** Per-file cap when inlining @mentions / attachments into a Cline user turn. */
+export const TURN_INLINE_FILE_CHARS = 12_000;
+/** Total cap across inlined text files in one turn. */
+export const TURN_INLINE_FILES_TOTAL_CHARS = 32_000;
 
 export function newAttachmentId(): string {
   return `att_${Date.now().toString(36)}_${Math.random()
@@ -509,7 +513,8 @@ function truncateText(text: string, max = MAX_TEXT_CHARS): string {
 }
 
 async function fileTextExcerpt(
-  attachment: MessageAttachment
+  attachment: MessageAttachment,
+  maxChars = MAX_TEXT_CHARS
 ): Promise<string | undefined> {
   if (!attachment.path) {
     return undefined;
@@ -524,11 +529,59 @@ async function fileTextExcerpt(
   try {
     const uri = vscode.Uri.joinPath(folders[0].uri, attachment.path);
     const raw = await fs.readFile(uri.fsPath, "utf8");
-    return truncateText(raw);
+    return truncateText(raw, maxChars);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     return `Не удалось прочитать ${attachment.path}: ${text}`;
   }
+}
+
+/**
+ * Inline workspace file attachments / `@path` mentions into the turn prompt
+ * so the model does not spend a round on read_file for files the user already
+ * pointed at. Images stay out of this string (Cline `userImages`).
+ */
+export async function buildInlinedAttachmentsPrompt(
+  userText: string,
+  attachments: MessageAttachment[] | undefined
+): Promise<{ text: string; paths: string[] }> {
+  const mentionList = await attachmentsFromMentions(userText, attachments);
+  const list = [...(attachments || []), ...mentionList].filter(
+    (att) => att.kind !== "image"
+  );
+  if (!list.length) {
+    return { text: "", paths: [] };
+  }
+
+  const chunks: string[] = [];
+  const paths: string[] = [];
+  let used = 0;
+  for (const att of list) {
+    const label = att.path || att.name;
+    if (label) {
+      paths.push(label);
+    }
+    const remaining = TURN_INLINE_FILES_TOTAL_CHARS - used;
+    if (remaining <= 0) {
+      chunks.push(`Прикреплён файл: ${label} (skipped — inline budget)`);
+      continue;
+    }
+    const cap = Math.min(TURN_INLINE_FILE_CHARS, remaining);
+    const excerpt = await fileTextExcerpt(att, cap);
+    if (excerpt && excerpt.startsWith("Файл (бинарный")) {
+      chunks.push(`Прикреплён файл: ${label} (${att.mime || "binary"})`);
+      continue;
+    }
+    if (excerpt) {
+      used += excerpt.length;
+      chunks.push(
+        `Прикреплённый файл \`${label}\`:\n\`\`\`\n${excerpt}\n\`\`\``
+      );
+    } else {
+      chunks.push(`Прикреплён файл: ${label}`);
+    }
+  }
+  return { text: chunks.join("\n\n").trim(), paths };
 }
 
 const MENTION_RE = /@([^\s@]+)/g;

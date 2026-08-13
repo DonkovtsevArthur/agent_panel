@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "0.1.67"
+version = "1.1.95"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,10 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.1.95</b>
+            <ul>
+              <li>Прикрепить файл из чата: пункт «Файл» в меню +, диалог выбора если нет открытого файла</li>
+            </ul>
             <b>0.1.58</b>
             <ul>
               <li>Курсор pointer и tooltip в WebStorm (JCEF OSR): in-page tip + re-assert cursor</li>
