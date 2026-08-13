@@ -5402,6 +5402,7 @@
       return "open";
     }
     if (
+      n === "vision" ||
       n === "vision_attached_screenshot" ||
       n === "vision_page_url" ||
       n === "vision_figma_screenshot" ||
