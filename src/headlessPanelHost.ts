@@ -1142,9 +1142,20 @@ export class HeadlessPanelHost {
   }
 
   private async onArchiveAgent(agentId: string): Promise<unknown> {
-    if (!agentId || !archiveAgentInStore(this.store, agentId)) {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (!agent || agent.archivedAt) {
       return { ok: false };
     }
+    const chatIds = getAgentChatIds(agent);
+    if (chatIds.some((id) => this.chatRunState.get(id) === "running")) {
+      this.abort?.abort();
+      this.abort = undefined;
+    }
+    await discardClineChatSessions(chatIds);
+    if (!archiveAgentInStore(this.store, agentId)) {
+      return { ok: false };
+    }
+    retainClineChatSession(this.store.activeChatId);
     await this.afterStoreMutation({ showAgentsRail: true });
     return { ok: true };
   }
@@ -1173,6 +1184,7 @@ export class HeadlessPanelHost {
     if (!deleteAgentFromStore(this.store, agentId)) {
       return { ok: false };
     }
+    retainClineChatSession(this.store.activeChatId);
     await this.afterStoreMutation({
       preferArchive,
       showAgentsRail: !preferArchive,
@@ -1181,10 +1193,21 @@ export class HeadlessPanelHost {
   }
 
   private async onDeleteAllArchived(): Promise<unknown> {
+    const archived = buildArchiveList(this.store);
+    const ids: string[] = [];
+    for (const item of archived) {
+      const agent = this.store.agents.find((a) => a.id === item.id);
+      if (!agent) {
+        continue;
+      }
+      ids.push(...getAgentChatIds(agent));
+    }
+    await discardClineChatSessions(ids);
     const n = deleteAllArchivedAgentsFromStore(this.store);
     if (!n) {
       return { ok: true, deleted: 0 };
     }
+    retainClineChatSession(this.store.activeChatId);
     this.store.screen = "archive";
     ensureActiveVisible(this.store);
     this.hydrateFromActiveChat();
@@ -1213,6 +1236,7 @@ export class HeadlessPanelHost {
     if (!deleteAgentBranch(this.store, agentId, chatId)) {
       return { ok: false };
     }
+    retainClineChatSession(this.store.activeChatId);
     this.chatRunState.delete(chatId);
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
@@ -1252,6 +1276,11 @@ export class HeadlessPanelHost {
     if (!created) {
       return { ok: false, error: "cannot branch" };
     }
+    onClineActiveChatChanged({
+      previousChatId: fromChatId,
+      nextChatId: created.id,
+      previousStillRunning: this.isChatRunning(fromChatId),
+    });
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
     this.persist();
@@ -1269,9 +1298,15 @@ export class HeadlessPanelHost {
       return { ok: true };
     }
     this.flushActiveChatToStore();
+    const previousChatId = this.store.activeChatId;
     if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
       return { ok: false };
     }
+    onClineActiveChatChanged({
+      previousChatId,
+      nextChatId: chatId,
+      previousStillRunning: this.isChatRunning(previousChatId),
+    });
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
     this.persist();
@@ -1556,9 +1591,26 @@ export class HeadlessPanelHost {
     this.persist();
   }
 
+  private isChatRunning(chatId: string | undefined): boolean {
+    return Boolean(chatId) && this.chatRunState.get(chatId) === "running";
+  }
+
+  /**
+   * Call before changing `store.activeChatId`. Idle-evicts the previous
+   * Cline session unless a turn is still running there.
+   */
+  private syncClineSessionForChatSwitch(nextChatId: string): void {
+    onClineActiveChatChanged({
+      previousChatId: this.store.activeChatId,
+      nextChatId,
+      previousStillRunning: this.isChatRunning(this.store.activeChatId),
+    });
+  }
+
   private async onNewAgent(): Promise<unknown> {
     this.flushActiveChatToStore();
     const { agent, chat } = createEmptyAgent(this.selectedModel);
+    this.syncClineSessionForChatSwitch(chat.id);
     this.store.agents.unshift(agent);
     this.store.chats[chat.id] = chat;
     this.store.activeAgentId = agent.id;
@@ -1579,6 +1631,7 @@ export class HeadlessPanelHost {
       return { ok: false, error: "agent not found" };
     }
     this.flushActiveChatToStore();
+    this.syncClineSessionForChatSwitch(agent.chatId);
     this.store.activeAgentId = agent.id;
     this.store.activeChatId = agent.chatId;
     this.store.screen = "chat";
@@ -1974,6 +2027,7 @@ export class HeadlessPanelHost {
 
     const ac = new AbortController();
     this.abort = ac;
+    retainClineChatSession(runChatId);
     const editedPaths: string[] = [];
     let assistantText = "";
     this.setRunStateForChat(runChatId, "running");
@@ -2186,6 +2240,10 @@ export class HeadlessPanelHost {
       this.abort = undefined;
       this.setStatusForChat(runChatId, "", true);
       postToRun({ type: "idle" });
+      onClineActiveChatChanged({
+        previousChatId: runChatId,
+        nextChatId: this.store.activeChatId,
+      });
     }
   }
 
