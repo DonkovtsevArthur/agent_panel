@@ -104,7 +104,6 @@
       commitPrompt: "Commit prompt / rule",
       commitPromptPlaceholder:
         "Optional. Example: write short English commit messages focused on why.",
-      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
