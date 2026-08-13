@@ -151,6 +151,8 @@ export interface ChatSession {
   history: ChatMessage[];
   uiMessages: UiMessage[];
   updatedAt: number;
+  /** Когда чат создан. Не меняется при persist / новых сообщениях. */
+  createdAt?: number;
   /** Если задано — чат в архиве и скрыт из основного списка */
   archivedAt?: number;
   /** Последний известный расход контекста (токены). */
@@ -183,6 +185,8 @@ export interface AgentRecord {
   /** Все чаты/ветки агента (включая chatId). */
   chatIds: string[];
   updatedAt: number;
+  /** Когда агент создан. Не меняется при persist / новых сообщениях. */
+  createdAt?: number;
   /** Если задано — агент в архиве и скрыт из основного списка */
   archivedAt?: number;
 }
@@ -219,6 +223,7 @@ export interface AgentListItem {
   model: string;
   preview: string;
   updatedAt: number;
+  createdAt: number;
   active: boolean;
   contextUsed: number;
   selectedModel: string;
@@ -471,6 +476,7 @@ function createEmptyChat(selectedModel = ""): ChatSession {
     selectedMode: "agent",
     history: [],
     uiMessages: [],
+    createdAt: now,
     updatedAt: now,
   };
 }
@@ -519,6 +525,7 @@ export function createEmptyAgent(selectedModel = ""): {
       name: "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
+      createdAt: now,
       updatedAt: now,
     },
     chat,
@@ -539,7 +546,17 @@ function uniqueAgentId(id: string, used: Set<string>): string {
   return next;
 }
 
+function frozenCreatedAt(...candidates: Array<number | undefined>): number {
+  for (const n of candidates) {
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      return n;
+    }
+  }
+  return Date.now();
+}
+
 function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
+  const updatedAt = chat.updatedAt || Date.now();
   const next: ChatSession = {
     ...chat,
     title: chat.title || titleFromMessages(chat.uiMessages || []),
@@ -547,7 +564,8 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
     selectedMode: normalizeSelectedMode(chat.selectedMode),
     history: Array.isArray(chat.history) ? chat.history : [],
     uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
-    updatedAt: chat.updatedAt || Date.now(),
+    createdAt: frozenCreatedAt(chat.createdAt, updatedAt),
+    updatedAt,
   };
   if (chat.parentChatId) {
     next.parentChatId = chat.parentChatId;
@@ -614,11 +632,17 @@ function normalizeAgents(
       ...chatIds.map((cid) => chats[cid]?.updatedAt || 0),
       0
     );
+    const earliestChatCreated = Math.min(
+      ...chatIds.map((cid) =>
+        frozenCreatedAt(chats[cid]?.createdAt, chats[cid]?.updatedAt)
+      )
+    );
     agents.push({
       id,
       name: rawAgent.name || "New Agent",
       chatId,
       chatIds,
+      createdAt: frozenCreatedAt(rawAgent.createdAt, earliestChatCreated),
       updatedAt: Math.max(rawAgent.updatedAt || 0, latestChatUpdated),
       archivedAt: rawAgent.archivedAt,
       ...(asNameSource(rawAgent.nameSource)
@@ -640,6 +664,7 @@ function normalizeAgents(
       name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId,
       chatIds: [chatId],
+      createdAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
       updatedAt: chat.updatedAt || Date.now(),
       archivedAt: chat.archivedAt,
     });
@@ -695,6 +720,7 @@ export function migrateToStoreV2(
       selectedMode: "agent",
       history: Array.isArray(v1.history) ? v1.history : [],
       uiMessages: Array.isArray(v1.uiMessages) ? v1.uiMessages : [],
+      createdAt: v1.updatedAt || Date.now(),
       updatedAt: v1.updatedAt || Date.now(),
     };
     const agent: AgentRecord = {
@@ -702,6 +728,7 @@ export function migrateToStoreV2(
       name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
+      createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
     };
     return {
@@ -737,6 +764,34 @@ export function getActiveChat(store: AgentsStoreV2): ChatSession | undefined {
   return store.chats[store.activeChatId];
 }
 
+function uiActivityKey(msgs: UiMessage[] | undefined): string {
+  const list = msgs || [];
+  const last = list[list.length - 1];
+  if (!last) {
+    return "0";
+  }
+  return `${list.length}:${last.role}:${last.text}:${last.reasoning || ""}`;
+}
+
+function shouldBumpChatTime(
+  chat: ChatSession,
+  patch: Partial<ChatSession>
+): boolean {
+  if (
+    Array.isArray(patch.uiMessages) &&
+    uiActivityKey(chat.uiMessages) !== uiActivityKey(patch.uiMessages)
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(patch.history) &&
+    (chat.history?.length || 0) !== patch.history.length
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function touchChat(
   store: AgentsStoreV2,
   chatId: string,
@@ -749,10 +804,12 @@ export function touchChat(
   if (Array.isArray(patch.uiMessages)) {
     capUiMessageReasoning(patch.uiMessages);
   }
+  const bumpTime = shouldBumpChatTime(chat, patch);
   const next: ChatSession = {
     ...chat,
     ...patch,
-    updatedAt: Date.now(),
+    createdAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
+    updatedAt: bumpTime ? Date.now() : chat.updatedAt,
   };
   const agent = findAgentByChatId(store, chatId);
   const nameSource = agent
@@ -771,7 +828,12 @@ export function touchChat(
   store.chats[chatId] = next;
 
   if (agent) {
-    agent.updatedAt = next.updatedAt;
+    if (!agent.createdAt) {
+      agent.createdAt = frozenCreatedAt(next.createdAt, agent.updatedAt);
+    }
+    if (bumpTime) {
+      agent.updatedAt = next.updatedAt;
+    }
     if (
       !next.parentChatId &&
       nameSource !== "generated" &&
@@ -800,6 +862,12 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
         model: chat?.selectedModel || "",
         preview: chat ? previewFromMessages(chat.uiMessages) : "Empty chat",
         updatedAt: agent.updatedAt,
+        createdAt: frozenCreatedAt(
+          chat?.createdAt,
+          agent.createdAt,
+          chat?.updatedAt,
+          agent.updatedAt
+        ),
         active: agent.id === store.activeAgentId,
         contextUsed:
           typeof chat?.contextTokens === "number" && chat.contextTokens > 0
@@ -1240,6 +1308,7 @@ export function branchChatFromMessage(
       : {}),
     history: copyUiAttachmentsOntoHistory(prefix.history, prefix.uiMessages),
     uiMessages: prefix.uiMessages,
+    createdAt: now,
     updatedAt: now,
     parentChatId: fromChatId,
     branchedFromUiIndex: uiIndex,
@@ -1467,7 +1536,7 @@ export function searchChatMessages(
           messageIndex: i,
           role: msg.role,
           snippet: makeSearchSnippet(text, query),
-          updatedAt: chat.updatedAt,
+          updatedAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
         });
         if (hits.length >= limit) {
           return hits;

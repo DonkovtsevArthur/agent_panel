@@ -1882,7 +1882,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       name: a.name,
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
-      time: formatListTime(a.updatedAt, lang),
+      time: formatListTime(a.createdAt || a.updatedAt, lang),
       active: a.active,
       empty: a.empty,
       runState: this.runStateForAgent(a.id),
