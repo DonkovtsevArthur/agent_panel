@@ -4,10 +4,11 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { runAgentTurn } from "./agentLoop";
+import { runAgentTurn, type AgentPhase } from "./agentLoop";
 import {
   discardClineChatSession,
   discardClineChatSessions,
+  restoreClineChatCheckpoint,
 } from "./clineRuntime";
 import {
   getConfig,
@@ -33,6 +34,7 @@ import {
   buildArchiveList,
   buildBranchesList,
   createDefaultStore,
+  copyUiAttachmentsOntoHistory,
   createEmptyAgent,
   deleteAgentBranch,
   deleteAgentFromStore,
@@ -50,11 +52,19 @@ import {
 import {
   getOpenAICompatibleClient,
   type ChatMessage,
+  type ListedProviderModel,
 } from "./openaiClient";
 import type { ChatSession } from "./sessionStore";
 import { HarborHeadless } from "./vscodeHeadlessStub";
-import type { MessageAttachment } from "./attachments";
+import {
+  persistIncomingAttachments,
+  stripAttachmentPayload,
+  type IncomingAttachment,
+  type MessageAttachment,
+} from "./attachments";
+import { resolveToolApproval } from "./toolApproval";
 import { resolveUiLanguage } from "./i18n";
+import { modePhaseStatusLabel, modeThinkingLabel } from "./modes";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import type { FileEditStat } from "./diffStats";
 import { hasUncommittedChanges } from "./gitStatus";
@@ -138,6 +148,11 @@ export class HeadlessPanelHost {
   >();
   /** Per-chat run indicator for the agents rail loader (cube). */
   private readonly chatRunState = new Map<string, ChatRunState>();
+  /** Busy-line under the transcript («Думаю…» / tool phases) — same as VS Code. */
+  private readonly chatStatusState = new Map<
+    string,
+    { text: string; hidden: boolean; phase?: AgentPhase; modelLabel?: string }
+  >();
 
   constructor(opts: HeadlessPanelOptions) {
     this.opts = opts;
@@ -178,9 +193,10 @@ export class HeadlessPanelHost {
     this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
     // Copy arrays — sharing store refs lets later mutations (or a concurrent
     // turn) silently rewrite another chat's transcript on disk.
-    this.history = Array.isArray(chat?.history)
-      ? (chat!.history as ChatMessage[]).slice()
-      : [];
+    this.history = copyUiAttachmentsOntoHistory(
+      Array.isArray(chat?.history) ? (chat!.history as ChatMessage[]).slice() : [],
+      Array.isArray(chat?.uiMessages) ? chat!.uiMessages.slice() : []
+    );
     this.uiMessages = Array.isArray(chat?.uiMessages)
       ? chat!.uiMessages.slice()
       : [];
@@ -300,10 +316,37 @@ export class HeadlessPanelHost {
         this.abort = undefined;
         if (this.store.activeChatId) {
           this.setRunStateForChat(this.store.activeChatId);
+          this.setStatusForChat(this.store.activeChatId, "", true);
         }
         this.post({ type: "stopped" });
         this.post({ type: "idle", chatId: this.store.activeChatId });
         return { ok: true };
+      case "toolApprovalResult":
+        resolveToolApproval(
+          String(msg.requestId || ""),
+          msg.approved === true
+        );
+        return { ok: true };
+      case "restoreCheckpoint": {
+        const chatId = String(msg.chatId || this.store.activeChatId || "");
+        const runCount = Number(msg.checkpointRunCount);
+        const result = await restoreClineChatCheckpoint(chatId, {
+          checkpointRunCount:
+            Number.isFinite(runCount) && runCount > 0 ? runCount : undefined,
+        });
+        if (result.ok) {
+          const edited = this.store.chats[chatId]?.lastAgentEditedPaths || [];
+          this.opts.onVfsRefresh?.(edited);
+        }
+        this.post({
+          type: result.ok ? "status" : "runFailed",
+          text: result.ok
+            ? "Workspace restored from checkpoint"
+            : result.error || "Checkpoint restore failed",
+          chatId,
+        });
+        return result;
+      }
       case "newChat":
       case "newAgent":
         return this.onNewAgent();
@@ -515,6 +558,8 @@ export class HeadlessPanelHost {
       subagentsEnabled: config.subagents.enabled,
       parallelToolCallsEnabled: config.parallelToolCalls.enabled,
       autoCompactEnabled: config.autoCompact.enabled,
+      toolsAutoApprove: config.tools.autoApprove,
+      checkpointsEnabled: config.checkpoints.enabled,
       skillsEnabled: config.skills.enabled,
       skillsWorkspaceEnabled: config.skills.workspaceEnabled,
       skillsGlobalEnabled: config.skills.globalEnabled,
@@ -785,7 +830,10 @@ export class HeadlessPanelHost {
         ? msg.rejectUnauthorized
         : config.rejectUnauthorized;
 
-    const reply = (payload: { models?: string[]; error?: string }) => {
+    const reply = (payload: {
+      models?: ListedProviderModel[];
+      error?: string;
+    }) => {
       this.post({
         type: "providerModelsListed",
         requestId,
@@ -815,12 +863,7 @@ export class HeadlessPanelHost {
         caBundlePath: config.caBundlePath,
       });
       const models = await client.listModels(controller.signal);
-      const unique = Array.from(
-        new Set(models.map((id) => String(id || "").trim()).filter(Boolean))
-      ).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
-      );
-      reply({ models: unique });
+      reply({ models });
       return { ok: true };
     } catch (error) {
       const aborted =
@@ -906,6 +949,7 @@ export class HeadlessPanelHost {
       modes: this.serializeModes(),
       harborHost: "jetbrains",
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
     });
     this.postAgentsList();
     this.postSettingsPayload();
@@ -923,7 +967,7 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
-      status: null,
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
     });
     this.ensureAllProvidersProbed();
@@ -938,6 +982,45 @@ export class HeadlessPanelHost {
     }
     const row = getConfig().models.find((m) => m.id === id);
     return String(row?.label || id).trim() || id;
+  }
+
+  /** Label for the chat busy-line; empty so the webview omits `(—)`. */
+  private statusModelLabel(modelId: string): string {
+    const label = this.modelLabel(modelId);
+    return !label || label === "—" ? "" : label;
+  }
+
+  private setStatusForChat(
+    chatId: string | undefined,
+    text: string,
+    hidden = false,
+    phase?: AgentPhase,
+    modelLabel?: string
+  ): void {
+    if (!chatId) {
+      return;
+    }
+    const nextHidden = Boolean(hidden || !text);
+    if (nextHidden) {
+      this.chatStatusState.delete(chatId);
+    } else {
+      this.chatStatusState.set(chatId, {
+        text,
+        hidden: false,
+        phase,
+        modelLabel: modelLabel || undefined,
+      });
+    }
+    if (this.isViewingChat(chatId)) {
+      this.post({
+        type: "status",
+        chatId,
+        text,
+        hidden: nextHidden,
+        phase,
+        modelLabel: nextHidden ? undefined : modelLabel || undefined,
+      });
+    }
   }
 
   private isViewingChat(chatId: string | undefined): boolean {
@@ -1635,9 +1718,22 @@ export class HeadlessPanelHost {
       return { ok: false, error: "bad index" };
     }
 
-    const attachments = Array.isArray(msg.attachments)
-      ? (msg.attachments as MessageAttachment[])
-      : target.attachments || [];
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await this.persistTurnAttachments(
+        Array.isArray(msg.attachments) ? msg.attachments : target.attachments
+      );
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.post({
+        type: "runFailed",
+        text: messageText,
+        chatId: this.store.activeChatId,
+      });
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: messageText };
+    }
     if (!nextText && !attachments.length) {
       this.postRegenerateState();
       this.post({ type: "idle", chatId: this.store.activeChatId });
@@ -1669,7 +1765,7 @@ export class HeadlessPanelHost {
       mode: agentMode,
     };
     if (attachments.length) {
-      uiMsg.attachments = attachments;
+      uiMsg.attachments = attachments.map(stripAttachmentPayload);
     }
     this.uiMessages.push(uiMsg);
     this.lastTurnModel = "";
@@ -1746,6 +1842,18 @@ export class HeadlessPanelHost {
     });
   }
 
+  private async persistTurnAttachments(
+    incoming: unknown
+  ): Promise<MessageAttachment[]> {
+    if (!Array.isArray(incoming) || !incoming.length) {
+      return [];
+    }
+    return persistIncomingAttachments(
+      incoming as IncomingAttachment[],
+      HarborHeadless.getExtensionContext().storageUri as never
+    );
+  }
+
   private async onSend(msg: {
     text?: unknown;
     model?: unknown;
@@ -1756,11 +1864,26 @@ export class HeadlessPanelHost {
     resetSession?: unknown;
   }): Promise<unknown> {
     const text = String(msg.text || "").trim();
-    if (!text) {
-      return { ok: false, error: "empty" };
-    }
     if (this.abort) {
       return { ok: false, error: "busy" };
+    }
+
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await this.persistTurnAttachments(msg.attachments);
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.post({
+        type: "runFailed",
+        text: messageText,
+        chatId: this.store.activeChatId,
+      });
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: messageText };
+    }
+    if (!text && !attachments.length) {
+      return { ok: false, error: "empty" };
     }
 
     const runChatId = this.store.activeChatId;
@@ -1837,11 +1960,9 @@ export class HeadlessPanelHost {
         text,
         mode: agentMode,
       };
-      const attachments = Array.isArray(msg.attachments)
-        ? (msg.attachments as MessageAttachment[])
-        : [];
-      if (attachments.length) {
-        userUi.attachments = attachments;
+      const attachmentsForUi = attachments.map(stripAttachmentPayload);
+      if (attachmentsForUi.length) {
+        userUi.attachments = attachmentsForUi;
       }
       // Persist immediately (webview already showed the bubble). Otherwise
       // switching chats before the turn finishes drops the user message.
@@ -1854,15 +1975,22 @@ export class HeadlessPanelHost {
     const editedPaths: string[] = [];
     let assistantText = "";
     this.setRunStateForChat(runChatId, "running");
+    const mode = getModeById(agentMode);
+    let activeTurnModel = model;
+    this.setStatusForChat(
+      runChatId,
+      modeThinkingLabel(mode),
+      false,
+      "thinking",
+      this.statusModelLabel(activeTurnModel)
+    );
 
     try {
       runHistory = await runAgentTurn({
         model,
         history: runHistory,
         userText: text,
-        attachments: Array.isArray(msg.attachments)
-          ? (msg.attachments as MessageAttachment[])
-          : undefined,
+        attachments: attachments.length ? attachments : undefined,
         signal: ac.signal,
         agentMode,
         reasoningEffort: reasoningEffort || undefined,
@@ -1870,13 +1998,39 @@ export class HeadlessPanelHost {
           this.store.chats[runChatId]?.lastAgentEditedPaths || [],
         chatId: runChatId,
         resetSession: Boolean(msg.resetSession),
+        storageUri: HarborHeadless.getExtensionContext().storageUri as never,
         callbacks: {
           onPhase: (phase, detail) => {
-            postToRun({
-              type: "status",
+            if (phase === "cline") {
+              this.setStatusForChat(
+                runChatId,
+                detail || "cline",
+                false,
+                "cline",
+                this.statusModelLabel(activeTurnModel)
+              );
+              return;
+            }
+            this.setStatusForChat(
+              runChatId,
+              detail || modePhaseStatusLabel(phase, mode),
+              false,
               phase,
-              text: detail || phase,
-            });
+              this.statusModelLabel(activeTurnModel)
+            );
+          },
+          onActiveModel: (modelId) => {
+            activeTurnModel = modelId;
+            const current = this.chatStatusState.get(runChatId);
+            if (current && !current.hidden && current.text) {
+              this.setStatusForChat(
+                runChatId,
+                current.text,
+                false,
+                current.phase,
+                this.statusModelLabel(activeTurnModel)
+              );
+            }
           },
           onTool: (t) => {
             postToRun({
@@ -2028,6 +2182,7 @@ export class HeadlessPanelHost {
       return { ok: false, error: message };
     } finally {
       this.abort = undefined;
+      this.setStatusForChat(runChatId, "", true);
       postToRun({ type: "idle" });
     }
   }

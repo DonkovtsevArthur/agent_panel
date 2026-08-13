@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { AgentPanelProvider } from "./agentPanelProvider";
 import { generateCommitMessage } from "./commitMessage";
 import { startEditorContextTracking } from "./editorContext";
+import { startTerminalOutputTracking } from "./terminalContext";
 import { registerGitDiffProvider } from "./gitDiff";
 import { initMcpManager } from "./mcpBundle";
 import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
@@ -15,6 +16,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);
+  startTerminalOutputTracking(context.subscriptions);
   registerGitDiffProvider(context.subscriptions);
   registerSelectionCodeLens(context.subscriptions);
   startTabAutocomplete(context);

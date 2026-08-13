@@ -27,14 +27,18 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
+import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
+import { resolveToolApproval } from "./toolApproval";
 import {
   discardAllClineChatSessions,
   discardClineChatSession,
   discardClineChatSessions,
+  restoreClineChatCheckpoint,
   disposeClineRuntime,
 } from "./clineRuntime";
+import { reloadEditorsAfterCheckpointRestore } from "./checkpointEditors";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
@@ -65,11 +69,16 @@ import {
   workspaceHarborSkillsDir,
 } from "./harborSkills";
 import {
+  modePhaseStatusLabel,
   modeThinkingLabel,
   parseCustomModes,
   type AgentModeDef,
 } from "./modes";
-import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
+import {
+  getOpenAICompatibleClient,
+  type ChatMessage,
+  type ListedProviderModel,
+} from "./openaiClient";
 import {
   ensureProposedPlanWrapper,
   looksLikeImplementationPlan,
@@ -89,6 +98,7 @@ import {
   chatHasMessages,
   cloneStore,
   collapseOldToolUiMessages,
+  copyUiAttachmentsOntoHistory,
   createEmptyAgent,
   deleteAgentFromStore,
   deleteAllArchivedAgentsFromStore,
@@ -147,6 +157,8 @@ type SettingsPayload = {
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
+  toolsAutoApprove?: boolean;
+  checkpointsEnabled?: boolean;
   skillsEnabled?: boolean;
   skillsWorkspaceEnabled?: boolean;
   skillsGlobalEnabled?: boolean;
@@ -303,7 +315,9 @@ type WebviewToHost =
       apiKey?: string;
       rejectUnauthorized?: boolean;
       caBundlePath?: string;
-    };
+    }
+  | { type: "toolApprovalResult"; requestId: string; approved: boolean }
+  | { type: "restoreCheckpoint"; chatId?: string; checkpointRunCount?: number };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -808,7 +822,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.contextTokens = 0;
       return;
     }
-    this.history = chat.history || [];
+    this.history = copyUiAttachmentsOntoHistory(
+      chat.history || [],
+      chat.uiMessages || []
+    );
     this.uiMessages = chat.uiMessages || [];
     this.selectedModel = chat.selectedModel || "";
     this.selectedMode = getModeById(chat.selectedMode).id;
@@ -1754,7 +1771,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : config.caBundlePath;
 
     const reply = (payload: {
-      models?: string[];
+      models?: ListedProviderModel[];
       error?: string;
     }): void => {
       this.settingsPanel?.webview.postMessage({
@@ -1786,16 +1803,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         caBundlePath,
       });
       const models = await client.listModels(controller.signal);
-      const unique = Array.from(
-        new Set(
-          models
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-        )
-      ).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
-      );
-      reply({ models: unique });
+      reply({ models });
     } catch (error) {
       const aborted =
         controller.signal.aborted ||
@@ -2308,6 +2316,34 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           reasoningEffort: message.reasoningEffort,
         });
         break;
+      case "toolApprovalResult":
+        resolveToolApproval(
+          String(message.requestId || ""),
+          message.approved === true
+        );
+        break;
+      case "restoreCheckpoint": {
+        const chatId = String(message.chatId || this.store.activeChatId || "");
+        const runCount = Number(message.checkpointRunCount);
+        const result = await restoreClineChatCheckpoint(chatId, {
+          checkpointRunCount: Number.isFinite(runCount) && runCount > 0
+            ? runCount
+            : undefined,
+        });
+        if (result.ok) {
+          const edited =
+            this.store.chats[chatId]?.lastAgentEditedPaths || [];
+          await reloadEditorsAfterCheckpointRestore(edited);
+        }
+        this.view?.webview.postMessage({
+          type: result.ok ? "status" : "runFailed",
+          text: result.ok
+            ? "Workspace restored from checkpoint"
+            : result.error || "Checkpoint restore failed",
+          chatId,
+        });
+        break;
+      }
     }
   }
 
@@ -3069,38 +3105,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               );
               return;
             }
-            const lang = resolveUiLanguage(getConfig().language);
-            const fallback =
-              phase === "done"
-                ? lang === "ru"
-                  ? "Готово"
-                  : "Done"
-                : phase === "editing"
-                  ? lang === "ru"
-                    ? "Редактирую..."
-                    : "Editing..."
-                  : phase === "verifying"
-                    ? lang === "ru"
-                      ? "Проверяю..."
-                      : "Verifying..."
-                  : phase === "reading"
-                    ? lang === "ru"
-                      ? "Читаю..."
-                      : "Reading..."
-                    : phase === "listing"
-                      ? lang === "ru"
-                        ? "Просматриваю..."
-                        : "Listing..."
-                      : phase === "running"
-                        ? lang === "ru"
-                          ? "Запускаю..."
-                          : "Running..."
-                        : lang === "ru"
-                          ? "Думаю..."
-                          : "Thinking...";
             this.setStatusForChat(
               runChatId,
-              detail || fallback,
+              detail || modePhaseStatusLabel(phase, mode),
               false,
               phase,
               this.modelLabel(activeTurnModel)
@@ -3163,7 +3170,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 runUiMessages.push(uiMsg);
               }
               syncRunChat();
-            } else if (event.kind === "compaction" || event.kind === "retry") {
+            } else if (
+              event.kind === "compaction" ||
+              event.kind === "checkpoint" ||
+              event.kind === "retry"
+            ) {
               runUiMessages.push({
                 role: "tool",
                 text: event.text || event.kind,
@@ -3173,6 +3184,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   text: event.text,
                   attempt: event.attempt,
                   maxAttempts: event.maxAttempts,
+                  checkpointRunCount: event.checkpointRunCount,
                 },
               });
               syncRunChat();
@@ -4247,6 +4259,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         subagentsEnabled: config.subagents.enabled,
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
+        toolsAutoApprove: config.tools.autoApprove,
+        checkpointsEnabled: config.checkpoints.enabled,
         skillsEnabled: config.skills.enabled,
         skillsWorkspaceEnabled: config.skills.workspaceEnabled,
         skillsGlobalEnabled: config.skills.globalEnabled,
@@ -4739,18 +4753,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (!providerId || !providerIds.has(providerId)) {
           providerId = primaryId;
         }
-        const contextWindow =
-          typeof m?.contextWindow === "number" &&
-          Number.isFinite(m.contextWindow) &&
-          m.contextWindow >= 1024
-            ? Math.floor(m.contextWindow)
-            : undefined;
-        const maxOutputTokens =
-          typeof m?.maxOutputTokens === "number" &&
-          Number.isFinite(m.maxOutputTokens) &&
-          m.maxOutputTokens > 0
-            ? Math.floor(m.maxOutputTokens)
-            : undefined;
+        const limits = readModelTokenLimits(m);
+        const contextWindow = limits.contextWindow;
+        const maxOutputTokens = limits.maxOutputTokens;
         const row: {
           id: string;
           label?: string;
@@ -4892,6 +4897,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "autoCompact.enabled",
       raw.autoCompactEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "tools.autoApprove",
+      raw.toolsAutoApprove !== false,
+      target
+    );
+    await cfg.update(
+      "checkpoints.enabled",
+      raw.checkpointsEnabled !== false,
       target
     );
     await cfg.update("skills.enabled", raw.skillsEnabled !== false, target);
@@ -5610,6 +5625,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
           </label>
           <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
+          <label class="settings-field settings-check">
+            <input id="settingsToolsAutoApprove" type="checkbox" />
+            <span class="settings-label" id="settingsToolsAutoApproveLabel">Auto-approve tools</span>
+          </label>
+          <p class="settings-hint" id="settingsToolsAutoApproveNote">Off — confirm each tool before it runs.</p>
+          <label class="settings-field settings-check">
+            <input id="settingsCheckpointsEnabled" type="checkbox" />
+            <span class="settings-label" id="settingsCheckpointsLabel">Workspace checkpoints</span>
+          </label>
+          <p class="settings-hint" id="settingsCheckpointsNote">Git snapshot at the start of each run. Click the checkpoint card in chat to restore files.</p>
           <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
           <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
           <label class="settings-field settings-check">

@@ -376,14 +376,27 @@ export function toGatewayRequestMessages(
 										isError: part.is_error ?? false,
 									},
 								];
-							case "image":
+							case "image": {
+								const fromData =
+									typeof part.data === "string" ? part.data.trim() : "";
+								const fromImageField =
+									typeof (part as { image?: unknown }).image === "string"
+										? String((part as { image: string }).image).trim()
+										: "";
+								const payload = fromData || fromImageField;
+								if (!payload) {
+									return [];
+								}
 								return [
 									{
 										type: "image" as const,
-										image: `data:${part.mediaType};base64,${part.data}`,
+										image: payload.startsWith("data:")
+											? payload
+											: `data:${part.mediaType};base64,${payload}`,
 										mediaType: part.mediaType,
 									},
 								];
+							}
 							case "file":
 								return [{ type: "text" as const, text: part.content }];
 							case "redacted_thinking":

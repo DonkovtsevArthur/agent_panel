@@ -17,6 +17,7 @@ import {
   resolveModelCapabilities,
   resolveModelContextWindow,
 } from "./modelCapabilities";
+import { readModelTokenLimits } from "./modelTokenLimits";
 import { normalizeReasoningEffort } from "./reasoningEffort";
 import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 
@@ -168,6 +169,18 @@ export interface AgentPanelConfig {
    * approaches the model input budget (`compaction.enabled`).
    */
   autoCompact: {
+    enabled: boolean;
+  };
+  /**
+   * Auto-approve Cline tools (current Harbor default). Off → confirm each tool.
+   */
+  tools: {
+    autoApprove: boolean;
+  };
+  /**
+   * Cline git checkpoints at the start of each root-agent run (restore via UI).
+   */
+  checkpoints: {
     enabled: boolean;
   };
   /**
@@ -359,8 +372,6 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       id?: unknown;
       label?: unknown;
       providerId?: unknown;
-      contextWindow?: unknown;
-      maxOutputTokens?: unknown;
       enabled?: unknown;
       favorite?: unknown;
       supportsVision?: unknown;
@@ -378,18 +389,9 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       typeof row.providerId === "string" && row.providerId.trim()
         ? row.providerId.trim()
         : undefined;
-    const contextWindow =
-      typeof row.contextWindow === "number" &&
-      Number.isFinite(row.contextWindow) &&
-      row.contextWindow > 0
-        ? Math.floor(row.contextWindow)
-        : undefined;
-    const maxOutputTokens =
-      typeof row.maxOutputTokens === "number" &&
-      Number.isFinite(row.maxOutputTokens) &&
-      row.maxOutputTokens > 0
-        ? Math.floor(row.maxOutputTokens)
-        : undefined;
+    const limits = readModelTokenLimits(item);
+    const contextWindow = limits.contextWindow;
+    const maxOutputTokens = limits.maxOutputTokens;
     const model: AgentModel = { id };
     if (label) {
       model.label = label;
@@ -562,6 +564,12 @@ export function getConfig(): AgentPanelConfig {
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
     },
+    tools: {
+      autoApprove: cfg.get<boolean>("tools.autoApprove") !== false,
+    },
+    checkpoints: {
+      enabled: cfg.get<boolean>("checkpoints.enabled") !== false,
+    },
     skills: (() => {
       const extraRaw = cfg.get<unknown>("skills.extraDirectories");
       const extraDirectories = Array.isArray(extraRaw)
@@ -688,22 +696,28 @@ export function guessModelSupportsVision(modelId: string): boolean {
   return resolveModelCapabilities(modelId).supportsVision;
 }
 
-/** Итоговое supportsVision: явный флаг модели → known/эвристика. */
+/**
+ * Итоговое supportsVision.
+ * Явный `true` в Settings включает vision у неизвестных id.
+ * Эвристика по id (claude / gpt-4o / gemini / …) не должна гаситься
+ * устаревшим `supportsVision: false` из API — иначе Cline подменяет
+ * пиксели плейсхолдером «this model cannot view images».
+ */
 export function resolveModelSupportsVision(
   modelOrId: AgentModel | string | undefined
 ): boolean {
   if (!modelOrId) {
     return false;
   }
-  if (typeof modelOrId === "string") {
-    const fromConfig = getConfig().models.find((m) => m.id === modelOrId);
-    return resolveModelCapabilities(modelOrId, {
-      supportsVision: fromConfig?.supportsVision,
-    }).supportsVision;
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  const stored =
+    typeof modelOrId === "string"
+      ? getConfig().models.find((m) => m.id === modelOrId)?.supportsVision
+      : modelOrId.supportsVision;
+  if (stored === true) {
+    return true;
   }
-  return resolveModelCapabilities(modelOrId.id, {
-    supportsVision: modelOrId.supportsVision,
-  }).supportsVision;
+  return resolveModelCapabilities(id).supportsVision;
 }
 
 /**

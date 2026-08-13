@@ -53,22 +53,30 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
     }
     val node = resolveNodeBinary()
     val workspace = project.basePath ?: System.getProperty("user.home")
+    log.info(
+      "Harbor sidecar start script=${script.absolutePath} " +
+        "plugin=${HarborPluginInfo.version()} workspace=$workspace",
+    )
     try {
       val pb = ProcessBuilder(node, script.absolutePath)
         .directory(script.parentFile)
         .redirectErrorStream(false)
-      pb.environment()["HARBOR_WORKSPACE"] = workspace
-      pb.environment()["HARBOR_IDE"] = "jetbrains"
-      pb.environment()["HARBOR_OUT_DIR"] = script.parentFile.absolutePath
+      val env = pb.environment()
+      val extras = "/opt/homebrew/bin:/usr/local/bin:/usr/bin"
+      env["PATH"] = "$extras:${env["PATH"] ?: ""}"
+      env["HARBOR_WORKSPACE"] = workspace
+      env["HARBOR_IDE"] = "jetbrains"
+      env["HARBOR_OUT_DIR"] = script.parentFile.absolutePath
+      env["HARBOR_PLUGIN_VERSION"] = HarborPluginInfo.version()
       val ideaHarbor = File(workspace, ".idea/harbor")
       val settingsFile = File(ideaHarbor, "settings.json")
-      pb.environment()["HARBOR_SESSION_PATH"] = File(ideaHarbor, "session.v2.json").absolutePath
-      pb.environment()["HARBOR_SETTINGS_PATH"] = settingsFile.absolutePath
-      pb.environment()["HARBOR_LANG"] = HarborUiLanguage.resolve(project)
+      env["HARBOR_SESSION_PATH"] = File(ideaHarbor, "session.v2.json").absolutePath
+      env["HARBOR_SETTINGS_PATH"] = settingsFile.absolutePath
+      env["HARBOR_LANG"] = HarborUiLanguage.resolve(project)
       // Match Harbor Advanced → Validate TLS (default off). Must be set before
       // Node boots so undici/OpenSSL honor corporate self-signed gateways.
       if (!readRejectUnauthorized(settingsFile)) {
-        pb.environment()["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
+        env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0"
       }
       val p = pb.start()
       process = p
@@ -207,21 +215,24 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       val f = File(fromEnv)
       if (f.exists()) return f
     }
-    // Dev: ../out/harborSidecar.js relative to jetbrains/ or repo root
-    val candidates = listOf(
-      File(System.getProperty("user.dir"), "../out/harborSidecar.js"),
-      File(System.getProperty("user.dir"), "out/harborSidecar.js"),
-      File(System.getProperty("user.dir"), "../../out/harborSidecar.js"),
-    )
-    for (c in candidates) {
-      if (c.exists()) return c.canonicalFile
+    if (HarborPluginInfo.devOverlay()) {
+      val candidates = listOf(
+        File(System.getProperty("user.dir"), "../out/harborSidecar.js"),
+        File(System.getProperty("user.dir"), "out/harborSidecar.js"),
+        File(System.getProperty("user.dir"), "../../out/harborSidecar.js"),
+      )
+      for (c in candidates) {
+        if (c.exists()) return c.canonicalFile
+      }
     }
 
-    // Packaged: extract sidecar + clineBundle into the same temp dir
+    // Packaged: extract sidecar + clineBundle into a versioned temp dir so an
+    // older unzip cannot mix with a newly installed plugin.
     val stream = javaClass.getResourceAsStream("/harbor/sidecar/harborSidecar.js")
       ?: javaClass.getResourceAsStream("/sidecar/harborSidecar.js")
     if (stream != null) {
-      val dir = File(FileUtil.getTempDirectory(), "harbor-sidecar")
+      val version = HarborPluginInfo.version().replace(Regex("[^A-Za-z0-9._-]"), "_")
+      val dir = File(FileUtil.getTempDirectory(), "harbor-sidecar-$version")
       dir.mkdirs()
       val out = File(dir, "harborSidecar.js")
       stream.use { input -> out.outputStream().use { input.copyTo(it) } }
@@ -232,6 +243,15 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
         clineStream.use { input -> clineOut.outputStream().use { input.copyTo(it) } }
       }
       return out
+    }
+
+    val fallback = listOf(
+      File(System.getProperty("user.dir"), "../out/harborSidecar.js"),
+      File(System.getProperty("user.dir"), "out/harborSidecar.js"),
+      File(System.getProperty("user.dir"), "../../out/harborSidecar.js"),
+    )
+    for (c in fallback) {
+      if (c.exists()) return c.canonicalFile
     }
     return null
   }

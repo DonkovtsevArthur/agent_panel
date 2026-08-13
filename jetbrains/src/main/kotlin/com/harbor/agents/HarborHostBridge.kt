@@ -85,6 +85,32 @@ class HarborHostBridge(
             }
           }
         }
+        "host.requestToolApproval" -> {
+          val requestId = params?.get("requestId")?.asString.orEmpty()
+          val toolName = params?.get("toolName")?.asString ?: "tool"
+          val preview = params?.get("preview")?.asString.orEmpty()
+          ApplicationManager.getApplication().invokeLater {
+            val message = buildString {
+              append("Allow Harbor Agents to run $toolName?")
+              if (preview.isNotBlank()) {
+                append("\n\n")
+                append(preview.take(400))
+              }
+            }
+            val answer = Messages.showYesNoDialog(
+              project,
+              message,
+              "Harbor Agents",
+              Messages.getWarningIcon(),
+            )
+            val obj = JsonObject().apply {
+              addProperty("type", "toolApprovalResult")
+              addProperty("requestId", requestId)
+              addProperty("approved", answer == Messages.YES)
+            }
+            sidecar.request("webview.handle", obj) { _ -> }
+          }
+        }
         "vfs.refresh" -> {
           val paths = params?.getAsJsonArray("paths")?.mapNotNull { it.asString } ?: emptyList()
           vfsRefresh.refresh(paths)
@@ -390,6 +416,7 @@ class HarborHostBridge(
         ApplicationManager.getApplication().executeOnPooledThread {
           val attachments = HarborClipboard.readImageAttachments()
           if (attachments.isNotEmpty()) {
+            HarborAttachmentStore.remember(attachments)
             ApplicationManager.getApplication().invokeLater {
               postToWebview(
                 gson.toJson(
@@ -441,7 +468,7 @@ class HarborHostBridge(
         }
       }
       "pickAttachments" -> {
-        val imagesOnly = obj.get("imagesOnly")?.asBoolean != false
+        val imagesOnly = obj.get("imagesOnly")?.asBoolean == true
         ApplicationManager.getApplication().invokeLater {
           pickAttachments(imagesOnly)
         }
@@ -469,6 +496,7 @@ class HarborHostBridge(
             if (attachments.size >= 8) break
           }
           if (attachments.isEmpty()) return@executeOnPooledThread
+          HarborAttachmentStore.remember(attachments)
           ApplicationManager.getApplication().invokeLater {
             postToWebview(
               HarborFileDrop.attachmentsJson(attachments),
@@ -535,6 +563,9 @@ class HarborHostBridge(
           obj.add("ideContext", HarborIdeContext.toJson(project))
         } catch (t: Throwable) {
           log.warn("Harbor ideContext snapshot failed", t)
+        }
+        if (type == "send" || type == "editUserMessage") {
+          HarborAttachmentStore.hydrateSend(obj)
         }
         sidecar.request("webview.handle", obj) { _ -> }
       }
@@ -677,6 +708,7 @@ class HarborHostBridge(
       if (attachments.isEmpty()) {
         return@executeOnPooledThread
       }
+      HarborAttachmentStore.remember(attachments)
       ApplicationManager.getApplication().invokeLater {
         postToWebview(
           gson.toJson(
@@ -723,6 +755,7 @@ class HarborHostBridge(
   }
 
   fun postToWebview(json: String, forceRepaint: Boolean = false) {
+    HarborAttachmentStore.rememberFromHostJson(json)
     val escaped = gson.toJson(json)
     val script = """
       (function() {

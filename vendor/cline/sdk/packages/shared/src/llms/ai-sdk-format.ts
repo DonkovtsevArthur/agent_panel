@@ -231,6 +231,9 @@ function toUserImagePart(
 	image: Extract<AiSdkFormatterPart, { type: "image" }>,
 	state: MediaBudgetState,
 ): AiSdkMessagePart {
+	if (image.image == null) {
+		return imageOmittedTextPart();
+	}
 	if (image.image instanceof URL) {
 		if (image.image.protocol === "data:") {
 			const validation = validateAndReserveImageMedia(

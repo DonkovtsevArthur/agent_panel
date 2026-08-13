@@ -195,8 +195,19 @@ function contentBlockToAgentPart(block: ContentBlock): AgentMessagePart {
 				redacted: true,
 				metadata: { data: block.data },
 			};
-		case "image":
-			return { type: "image", image: block.data, mediaType: block.mediaType };
+		case "image": {
+			const fromData =
+				typeof block.data === "string" ? block.data.trim() : "";
+			const fromImageField =
+				typeof (block as { image?: unknown }).image === "string"
+					? String((block as { image: string }).image).trim()
+					: "";
+			const payload = fromData || fromImageField;
+			if (!payload) {
+				return { type: "text", text: "" };
+			}
+			return { type: "image", image: payload, mediaType: block.mediaType };
+		}
 		case "file":
 			return { type: "file", path: block.path, content: block.content };
 		case "tool_use":

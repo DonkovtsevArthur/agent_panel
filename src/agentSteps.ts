@@ -7,6 +7,7 @@ export type AgentStepKind =
   | "text"
   | "tool"
   | "compaction"
+  | "checkpoint"
   | "retry";
 
 export type AgentToolStepStatus = "queued" | "running" | "done" | "error";
@@ -27,6 +28,8 @@ export interface AgentStepEvent {
    * Populated by the runtime from the Cline tool output on `content_end`.
    */
   metrics?: ToolStepMetrics;
+  /** Cline checkpoint run index — used when the user clicks the restore card. */
+  checkpointRunCount?: number;
 }
 
 /**

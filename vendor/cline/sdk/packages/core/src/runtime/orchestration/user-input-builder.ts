@@ -24,11 +24,11 @@ export async function buildInitialUserContent(
 	}
 
 	const content: LlmsProviders.ContentBlock[] = [
+		...imageBlocks,
 		{
 			type: "text",
 			text: userMessage,
 		},
-		...imageBlocks,
 	];
 	if (fileTextBlocks) {
 		content.push(...fileTextBlocks);

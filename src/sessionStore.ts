@@ -15,7 +15,7 @@ export type { MessageAttachment };
 /** Persisted structured step for tool / compaction / retry replay in the webview. */
 export interface UiMessageStep {
   stepId: string;
-  kind: "tool" | "compaction" | "retry" | "thinking" | "text";
+  kind: "tool" | "compaction" | "checkpoint" | "retry" | "thinking" | "text";
   toolCallId?: string;
   name?: string;
   argsPreview?: string;
@@ -25,6 +25,7 @@ export interface UiMessageStep {
   attempt?: number;
   maxAttempts?: number;
   metrics?: ToolStepMetrics;
+  checkpointRunCount?: number;
 }
 
 export interface UiMessage {
@@ -833,25 +834,36 @@ export function formatListTime(
   const d = new Date(ts);
   const now = new Date();
   const locale = lang === "ru" ? "ru-RU" : "en-US";
+  const diffMs = Math.max(0, now.getTime() - d.getTime());
+  const diffMin = Math.floor(diffMs / 60_000);
+  const diffHour = Math.floor(diffMs / 3_600_000);
+  const diffDay = Math.floor(diffMs / 86_400_000);
   const sameDay =
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString(locale, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (
+  const isYesterday =
     d.getFullYear() === yesterday.getFullYear() &&
     d.getMonth() === yesterday.getMonth() &&
-    d.getDate() === yesterday.getDate()
-  ) {
+    d.getDate() === yesterday.getDate();
+
+  if (diffMin < 1) {
+    return lang === "ru" ? "сейчас" : "now";
+  }
+  if (diffMin < 60) {
+    return lang === "ru" ? `${diffMin} мин` : `${diffMin}m`;
+  }
+  if (sameDay) {
+    const hours = Math.max(1, diffHour);
+    return lang === "ru" ? `${hours} ч` : `${hours}h`;
+  }
+  if (isYesterday) {
     return lang === "ru" ? "вчера" : "yesterday";
+  }
+  if (diffDay < 7) {
+    return lang === "ru" ? `${diffDay} дн` : `${diffDay}d`;
   }
   return d.toLocaleDateString(locale, { day: "numeric", month: "short" });
 }
@@ -893,6 +905,29 @@ function cloneHistoryMessage(msg: ChatMessage): ChatMessage {
     }));
   }
   return next;
+}
+
+/** Copy image/file chips from UI user bubbles onto matching history user rows. */
+export function copyUiAttachmentsOntoHistory(
+  history: ChatMessage[],
+  uiMessages: UiMessage[]
+): ChatMessage[] {
+  const uiUsers = uiMessages.filter((m) => m.role === "user");
+  let u = 0;
+  return history.map((msg) => {
+    if (msg.role !== "user") {
+      return msg;
+    }
+    const ui = uiUsers[u];
+    u += 1;
+    if (msg.attachments?.length || !ui?.attachments?.length) {
+      return msg;
+    }
+    return {
+      ...msg,
+      attachments: ui.attachments.map((a) => ({ ...a })),
+    };
+  });
 }
 
 /** Префикс истории/UI до сообщения включительно — для новой ветки. */
@@ -1032,7 +1067,7 @@ export function branchChatFromMessage(
     ...(source.selectedReasoningEffort
       ? { selectedReasoningEffort: source.selectedReasoningEffort }
       : {}),
-    history: prefix.history,
+    history: copyUiAttachmentsOntoHistory(prefix.history, prefix.uiMessages),
     uiMessages: prefix.uiMessages,
     updatedAt: now,
     parentChatId: fromChatId,

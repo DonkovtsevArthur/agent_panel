@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.1.96"
+version = "1.3.113"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,38 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.3.113</b>
+            <ul>
+              <li>GLM vision: не подменять картинки Cline, только ставить их перед текстом</li>
+            </ul>
+            <b>1.2.113</b>
+            <ul>
+              <li>GLM + картинка: не клеим dump редактора, пиксели первыми в chat/completions</li>
+            </ul>
+            <b>1.1.113</b>
+            <ul>
+              <li>GLM на форке: картинки уходят в chat/completions (обход каталога Cline без images)</li>
+            </ul>
+            <b>1.1.112</b>
+            <ul>
+              <li>Форк чата: картинки доходят до модели (форма Cline ImageContent, пиксели на последнем ходе)</li>
+            </ul>
+            <b>1.1.111</b>
+            <ul>
+              <li>GLM-5.2: картинки на форке и следующем ходе (capability images)</li>
+            </ul>
+            <b>1.1.110</b>
+            <ul>
+              <li>WebStorm: снимок редактора на EDT (файл/курсор/терминал не теряются, когда фокус в чате); UI и sidecar из плагина, не из user.dir</li>
+            </ul>
+            <b>1.1.103</b>
+            <ul>
+              <li>Фикс кнопки «отправить» в композере и при редактировании сообщения (клик по иконке в webview)</li>
+            </ul>
+            <b>1.1.97</b>
+            <ul>
+              <li>Контекст хода: терминал/Run, символ у курсора, git ahead/behind, правила по файлу; картинки в истории; чекпоинты и подтверждение tools</li>
+            </ul>
             <b>1.1.96</b>
             <ul>
               <li>Контекст хода из IDE: открытый файл, курсор, выделение, диагностики; живая Cline-сессия на чат; MCP у субагентов</li>
@@ -76,18 +108,6 @@ intellijPlatform {
             <b>1.1.95</b>
             <ul>
               <li>Прикрепить файл из чата: пункт «Файл» в меню +, диалог выбора если нет открытого файла</li>
-            </ul>
-            <b>0.1.58</b>
-            <ul>
-              <li>Курсор pointer и tooltip в WebStorm (JCEF OSR): in-page tip + re-assert cursor</li>
-            </ul>
-            <b>0.1.56</b>
-            <ul>
-              <li>Кастомный цвет режима на кубике-спиннере в списке агентов</li>
-            </ul>
-            <b>0.1.55</b>
-            <ul>
-              <li>Клик по чату в списке с первого раза (JCEF OSR pointerdown + focus)</li>
             </ul>
             """.trimIndent()
         )

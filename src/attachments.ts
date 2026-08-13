@@ -440,11 +440,15 @@ async function readAttachmentBytes(
     return Buffer.from(attachment.dataBase64, "base64");
   }
   if (attachment.path) {
+    const rawPath = String(attachment.path);
+    if (path.isAbsolute(rawPath)) {
+      return fs.readFile(rawPath);
+    }
     const folders = vscode.workspace.workspaceFolders;
     if (!folders?.length) {
       return undefined;
     }
-    const uri = vscode.Uri.joinPath(folders[0].uri, attachment.path);
+    const uri = vscode.Uri.joinPath(folders[0].uri, rawPath);
     return fs.readFile(uri.fsPath);
   }
   if (attachment.storageKey && storageUri) {
@@ -461,7 +465,8 @@ export async function attachmentPreviewDataUrl(
   attachment: MessageAttachment,
   storageUri: vscode.Uri | undefined
 ): Promise<string | undefined> {
-  if (attachment.kind !== "image") {
+  const mime = String(attachment.mime || "").toLowerCase();
+  if (attachment.kind !== "image" && !mime.startsWith("image/")) {
     return undefined;
   }
   if (attachment.previewDataUrl) {
@@ -522,13 +527,19 @@ async function fileTextExcerpt(
   if (!isProbablyTextFile(attachment.name, attachment.mime)) {
     return `Файл (бинарный или неизвестный тип): ${attachment.path}`;
   }
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders?.length) {
+  const rawPath = String(attachment.path);
+  const abs = path.isAbsolute(rawPath);
+  if (!abs && !vscode.workspace.workspaceFolders?.length) {
     return undefined;
   }
   try {
-    const uri = vscode.Uri.joinPath(folders[0].uri, attachment.path);
-    const raw = await fs.readFile(uri.fsPath, "utf8");
+    const fsPath = abs
+      ? rawPath
+      : vscode.Uri.joinPath(
+          vscode.workspace.workspaceFolders![0].uri,
+          rawPath
+        ).fsPath;
+    const raw = await fs.readFile(fsPath, "utf8");
     return truncateText(raw, maxChars);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);

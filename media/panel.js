@@ -201,6 +201,13 @@
       autoCompact: "Auto compact",
       autoCompactNote:
         "Compress conversation context when it approaches the model input limit.",
+      toolsAutoApprove: "Auto-approve tools",
+      toolsAutoApproveNote:
+        "On: run tools without asking. Off: confirm each tool (edit, terminal, MCP).",
+      checkpoints: "Workspace checkpoints",
+      checkpointsNote:
+        "Git snapshot at the start of each run. Click the checkpoint card in chat to restore files.",
+      checkpointRestore: "Restore workspace files from this checkpoint?",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Enable Tab autocomplete",
       tabAutocompleteNote:
@@ -645,6 +652,13 @@
       autoCompact: "Автосжатие контекста",
       autoCompactNote:
         "Сжимать контекст разговора, когда он приближается к лимиту входа модели.",
+      toolsAutoApprove: "Автоподтверждение tools",
+      toolsAutoApproveNote:
+        "Вкл: tools без вопроса. Выкл: спрашивать перед каждым (правка, терминал, MCP).",
+      checkpoints: "Чекпоинты workspace",
+      checkpointsNote:
+        "Git-снимок в начале хода. Карточка чекпоинта в чате откатывает файлы.",
+      checkpointRestore: "Восстановить файлы из этого чекпоинта?",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Включить Tab autocomplete",
       tabAutocompleteNote:
@@ -1145,6 +1159,12 @@
   const settingsAutoCompactEnabled = document.getElementById(
     "settingsAutoCompactEnabled"
   );
+  const settingsToolsAutoApprove = document.getElementById(
+    "settingsToolsAutoApprove"
+  );
+  const settingsCheckpointsEnabled = document.getElementById(
+    "settingsCheckpointsEnabled"
+  );
   const settingsTabAutocompleteEnabled = document.getElementById(
     "settingsTabAutocompleteEnabled"
   );
@@ -1335,6 +1355,7 @@
   let fetchModelsActiveRequestId = "";
   let fetchModelsProviderId = "";
   let fetchModelsIds = [];
+  let fetchModelsById = new Map();
   let fetchModelsSelected = new Set();
   let fetchModelsExisting = new Set();
   let fetchModelsLoading = false;
@@ -1746,6 +1767,30 @@
     if (settingsAutoCompactNote) {
       settingsAutoCompactNote.textContent = t("autoCompactNote");
     }
+    const settingsToolsAutoApproveLabel = document.getElementById(
+      "settingsToolsAutoApproveLabel"
+    );
+    if (settingsToolsAutoApproveLabel) {
+      settingsToolsAutoApproveLabel.textContent = t("toolsAutoApprove");
+    }
+    const settingsToolsAutoApproveNote = document.getElementById(
+      "settingsToolsAutoApproveNote"
+    );
+    if (settingsToolsAutoApproveNote) {
+      settingsToolsAutoApproveNote.textContent = t("toolsAutoApproveNote");
+    }
+    const settingsCheckpointsLabel = document.getElementById(
+      "settingsCheckpointsLabel"
+    );
+    if (settingsCheckpointsLabel) {
+      settingsCheckpointsLabel.textContent = t("checkpoints");
+    }
+    const settingsCheckpointsNote = document.getElementById(
+      "settingsCheckpointsNote"
+    );
+    if (settingsCheckpointsNote) {
+      settingsCheckpointsNote.textContent = t("checkpointsNote");
+    }
     const settingsTabAutocompleteTitle = document.getElementById(
       "settingsTabAutocompleteTitle"
     );
@@ -2139,17 +2184,15 @@
     if (!model) {
       return false;
     }
-    if (typeof model === "string") {
-      const found = models.find((m) => m.id === model);
-      if (found && typeof found.supportsVision === "boolean") {
-        return found.supportsVision;
-      }
-      return guessModelSupportsVision(model);
+    const id = typeof model === "string" ? model : model.id;
+    const stored =
+      typeof model === "string"
+        ? models.find((m) => m.id === model)?.supportsVision
+        : model.supportsVision;
+    if (stored === true) {
+      return true;
     }
-    if (typeof model.supportsVision === "boolean") {
-      return model.supportsVision;
-    }
-    return guessModelSupportsVision(model.id);
+    return guessModelSupportsVision(id);
   }
 
   let busy = false;
@@ -2184,7 +2227,7 @@
   let editModelMenuOpen = false;
   let editModeMenuOpen = false;
   let harborEditPickerOpenedAt = 0;
-  /** Timestamp of last JetBrains pointerdown for edit-save / regenerate / branch. */
+  /** Timestamp of last edit-save / regenerate / branch pointer or submit. */
   let harborEditSaveAt = 0;
   /** Timestamp of last JetBrains pointerdown for agents-rail / branch-pill switch. */
   let harborAgentNavAt = 0;
@@ -2302,7 +2345,7 @@
   }
 
   function attachmentPayload(att) {
-    return {
+    const row = {
       id: att.id,
       kind: att.kind,
       name: att.name,
@@ -2310,8 +2353,23 @@
       path: att.path,
       storageKey: att.storageKey,
       size: att.size,
-      dataBase64: att.dataBase64,
     };
+    // JCEF JSQuery truncates multi-MB JSON. Kotlin HarborAttachmentStore
+    // already has picker/clipboard/drop bytes — omit huge payloads.
+    // Small screenshots still fit JSQuery; include them so a cache miss
+    // (paste decoded only in the webview) does not drop the image.
+    const data = att.dataBase64;
+    const MAX_JSQUERY_BASE64 = 400000;
+    if (!harborHostAvailable()) {
+      row.dataBase64 = data;
+    } else if (
+      typeof data === "string" &&
+      data.length > 0 &&
+      data.length <= MAX_JSQUERY_BASE64
+    ) {
+      row.dataBase64 = data;
+    }
+    return row;
   }
 
   function mergePendingAttachments(list) {
@@ -4376,6 +4434,7 @@
     }
     closeEditModelMenu();
     closeEditModeMenu();
+    harborEditSaveAt = Date.now();
     stickToBottom = true;
     setBusy(true);
     host.postMessage({
@@ -4392,6 +4451,39 @@
     editingModelId = "";
     editingModeId = "";
     editingAttachments = [];
+  }
+
+  function eventTargetElement(event) {
+    const target = event.target;
+    if (target instanceof Element) {
+      return target;
+    }
+    if (target && target.parentElement instanceof Element) {
+      return target.parentElement;
+    }
+    return null;
+  }
+
+  /** VS Code webview often drops `click` on the sticky edit-save control. */
+  function trySubmitEditedUserMessageFromPointer(event) {
+    if (event.button != null && event.button !== 0) {
+      return false;
+    }
+    const target = eventTargetElement(event);
+    if (!target || !messagesEl) {
+      return false;
+    }
+    const saveBtn = target.closest(".msg-edit-save");
+    if (!saveBtn || !messagesEl.contains(saveBtn) || saveBtn.disabled) {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - harborEditSaveAt < 450) {
+      return true;
+    }
+    submitEditedUserMessage();
+    return true;
   }
 
   function modelDisplayName(id) {
@@ -6103,6 +6195,9 @@
     if (kind === "compaction") {
       return "compress";
     }
+    if (kind === "checkpoint") {
+      return "restore";
+    }
     if (kind === "retry") {
       return "replay";
     }
@@ -6316,7 +6411,9 @@
       const label =
         step.kind === "compaction"
           ? step.text || "Context compacted"
-          : step.kind === "retry"
+          : step.kind === "checkpoint"
+            ? step.text || "Workspace checkpoint"
+            : step.kind === "retry"
             ? step.text ||
               `Retry ${step.attempt || "?"}/${step.maxAttempts || "?"}`
             : step.text || step.kind || "";
@@ -6327,6 +6424,22 @@
       if (labelEl) {
         labelEl.textContent = label;
       }
+    }
+
+    if (step.kind === "checkpoint") {
+      el.classList.add("agent-step-checkpoint");
+      el.style.cursor = "pointer";
+      el.title = t("checkpointRestore");
+      el.onclick = () => {
+        if (!window.confirm(t("checkpointRestore"))) {
+          return;
+        }
+        host.postMessage({
+          type: "restoreCheckpoint",
+          chatId: activeChatId || "",
+          checkpointRunCount: Number(step.checkpointRunCount) || undefined,
+        });
+      };
     }
 
     updateToolGroupSummary(group);
@@ -7624,34 +7737,112 @@
     return undefined;
   }
 
-  function pickNestedField(raw, keys) {
-    const direct = pickField(raw, keys);
-    if (direct != null) {
-      return direct;
+  function readVisionFromArchitecture(raw) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
     }
-    const nestKeys = [
-      "model_info",
-      "modelInfo",
-      "limits",
-      "limit",
-      "metadata",
-      "meta",
-      "config",
-      "parameters",
-      "params",
-      "info",
-      "capabilities",
-    ];
-    for (const nestKey of nestKeys) {
-      const nested = pickField(raw, [nestKey]);
-      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-        const value = pickField(nested, keys);
-        if (value != null) {
-          return value;
+    const nested = [raw.architecture, raw.model_info, raw.modelInfo, raw.info];
+    for (const src of nested) {
+      if (!src || typeof src !== "object") {
+        continue;
+      }
+      const modalities =
+        src.input_modalities || src.inputModalities || src.modality;
+      if (Array.isArray(modalities)) {
+        if (modalities.some((item) => /image/i.test(String(item)))) {
+          return true;
         }
+      } else if (typeof modalities === "string" && /image/i.test(modalities)) {
+        return true;
       }
     }
     return undefined;
+  }
+
+  function pickPositiveIntField(raw, keys) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
+    }
+    const lowerMap = new Map(
+      Object.entries(raw).map(([k, v]) => [String(k).toLowerCase(), v])
+    );
+    for (const key of keys) {
+      const value = Object.prototype.hasOwnProperty.call(raw, key)
+        ? raw[key]
+        : lowerMap.get(String(key).toLowerCase());
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) {
+        return Math.floor(n);
+      }
+    }
+    return undefined;
+  }
+
+  function collectTokenLimitSources(raw) {
+    const sources = [raw];
+    for (const value of Object.values(raw)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        sources.push(value);
+      }
+    }
+    return sources;
+  }
+
+  function pickTokenLimitFromSources(sources, keys) {
+    for (const source of sources) {
+      const value = pickPositiveIntField(source, keys);
+      if (value != null) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  function readModelTokenLimits(raw) {
+    if (!raw || typeof raw !== "object") {
+      return {};
+    }
+    const sources = collectTokenLimitSources(raw);
+    const contextWindow = pickTokenLimitFromSources(sources, [
+      "max_input_tokens",
+      "maxInputTokens",
+      "max_input",
+      "maxInput",
+      "input_tokens",
+      "inputTokens",
+      "context_window",
+      "contextWindow",
+      "context_length",
+      "contextLength",
+      "max_context_tokens",
+      "maxContextTokens",
+      "max_context",
+      "maxContext",
+      "context",
+    ]);
+    const maxOutputTokens =
+      pickTokenLimitFromSources(sources, [
+        "max_output_tokens",
+        "maxOutputTokens",
+        "max_output",
+        "maxOutput",
+        "max_completion_tokens",
+        "maxCompletionTokens",
+        "output_tokens",
+        "outputTokens",
+        "completion_tokens",
+        "completionTokens",
+        "output",
+      ]) ??
+      pickTokenLimitFromSources(sources, ["max_tokens", "maxTokens"]);
+    const limits = {};
+    if (contextWindow != null && contextWindow >= 1024) {
+      limits.contextWindow = contextWindow;
+    }
+    if (maxOutputTokens != null) {
+      limits.maxOutputTokens = maxOutputTokens;
+    }
+    return limits;
   }
 
   function normalizeModelEntry(raw) {
@@ -7692,46 +7883,14 @@
       ]) || ""
     ).trim() || id;
 
-    const contextRaw = pickNestedField(raw, [
-      "contextWindow",
-      "context_window",
-      "contextLength",
-      "context_length",
-      "maxContext",
-      "max_context",
-      "maxContextTokens",
-      "max_context_tokens",
-      "max_input_tokens",
-      "maxInputTokens",
-      "max_input",
-      "maxInput",
-      "input_tokens",
-      "inputTokens",
-      "context",
-      "tokens",
-      "max_tokens",
-      "maxTokens",
-    ]);
-    const outputRaw = pickNestedField(raw, [
-      "maxOutputTokens",
-      "max_output_tokens",
-      "max_output",
-      "maxOutput",
-      "output_tokens",
-      "outputTokens",
-      "max_completion_tokens",
-      "maxCompletionTokens",
-      "completion_tokens",
-      "completionTokens",
-    ]);
-    const contextWindow = Number(contextRaw);
-    const maxOutputTokens = Number(outputRaw);
+    const limits = readModelTokenLimits(raw);
     const visionRaw = pickField(raw, [
       "supportsVision",
       "supports_vision",
       "vision",
       "multimodal",
     ]);
+    const visionFromArchitecture = readVisionFromArchitecture(raw);
     const providerId = String(
       pickField(raw, [
         "providerId",
@@ -7744,18 +7903,24 @@
     if (providerId) {
       model.providerId = providerId;
     }
-    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
-      model.contextWindow = Math.floor(contextWindow);
+    if (limits.contextWindow) {
+      model.contextWindow = limits.contextWindow;
     }
-    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
-      model.maxOutputTokens = Math.floor(maxOutputTokens);
+    if (limits.maxOutputTokens) {
+      model.maxOutputTokens = limits.maxOutputTokens;
     }
-    if (visionRaw === true || visionRaw === "true" || visionRaw === 1) {
+    if (
+      visionRaw === true ||
+      visionRaw === "true" ||
+      visionRaw === 1 ||
+      visionFromArchitecture === true
+    ) {
       model.supportsVision = true;
     } else if (
-      visionRaw === false ||
-      visionRaw === "false" ||
-      visionRaw === 0
+      (visionRaw === false ||
+        visionRaw === "false" ||
+        visionRaw === 0) &&
+      !guessModelSupportsVision(id)
     ) {
       model.supportsVision = false;
     }
@@ -7868,10 +8033,13 @@
         skipped += 1;
         continue;
       }
+      const extra = fetchModelsById.get(id) || {};
       incoming.push({
         id,
-        label: id,
+        label: extra.label || id,
         providerId: provider,
+        contextWindow: extra.contextWindow,
+        maxOutputTokens: extra.maxOutputTokens,
         enabled: true,
         supportsVision: guessModelSupportsVision(id),
       });
@@ -7882,6 +8050,38 @@
     }
     const result = upsertModels(incoming, provider);
     return { added: result.added, skipped, total: result.total };
+  }
+
+  function fillExistingModelLimitsFromFetch() {
+    const provider = String(fetchModelsProviderId || "").trim();
+    let changed = 0;
+    for (const model of settingsModels) {
+      const id = String(model.id || "").trim();
+      if (!id) {
+        continue;
+      }
+      const extra = fetchModelsById.get(id);
+      if (!extra) {
+        continue;
+      }
+      const modelProvider = String(model.providerId || "").trim();
+      if (provider && modelProvider && modelProvider !== provider) {
+        continue;
+      }
+      if (!model.contextWindow && extra.contextWindow) {
+        model.contextWindow = extra.contextWindow;
+        changed += 1;
+      }
+      if (!model.maxOutputTokens && extra.maxOutputTokens) {
+        model.maxOutputTokens = extra.maxOutputTokens;
+        changed += 1;
+      }
+    }
+    if (changed) {
+      renderSettingsModels();
+      schedulePersistSettings(0);
+    }
+    return changed;
   }
 
   function providerById(providerId) {
@@ -7909,6 +8109,7 @@
 
   function resetFetchModelsState() {
     fetchModelsIds = [];
+    fetchModelsById = new Map();
     fetchModelsSelected = new Set();
     fetchModelsExisting = new Set();
     fetchModelsLoading = false;
@@ -8158,6 +8359,33 @@
     return true;
   }
 
+  function normalizeListedProviderModel(item) {
+    if (typeof item === "string") {
+      const id = item.trim();
+      return id ? { id } : null;
+    }
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    const id = String(item.id || "").trim();
+    if (!id) {
+      return null;
+    }
+    const model = { id };
+    const label = String(item.label || "").trim();
+    if (label && label !== id) {
+      model.label = label;
+    }
+    const limits = readModelTokenLimits(item);
+    if (limits.contextWindow) {
+      model.contextWindow = limits.contextWindow;
+    }
+    if (limits.maxOutputTokens) {
+      model.maxOutputTokens = limits.maxOutputTokens;
+    }
+    return model;
+  }
+
   function onProviderModelsListed(msg) {
     const requestId = String(msg?.requestId || "");
     if (!requestId || requestId !== fetchModelsActiveRequestId) {
@@ -8170,15 +8398,19 @@
     if (msg.error) {
       fetchModelsError = String(msg.error);
       fetchModelsIds = [];
+      fetchModelsById = new Map();
       fetchModelsSelected = new Set();
     } else {
       fetchModelsError = "";
-      fetchModelsIds = Array.isArray(msg.models)
-        ? msg.models.map((id) => String(id || "").trim()).filter(Boolean)
+      const listed = Array.isArray(msg.models)
+        ? msg.models.map(normalizeListedProviderModel).filter(Boolean)
         : [];
+      fetchModelsById = new Map(listed.map((model) => [model.id, model]));
+      fetchModelsIds = listed.map((model) => model.id);
       fetchModelsSelected = new Set(
         fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
       );
+      fillExistingModelLimitsFromFetch();
     }
     renderFetchModelsPicker();
   }
@@ -9438,6 +9670,12 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    if (settingsToolsAutoApprove) {
+      settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
+    }
+    if (settingsCheckpointsEnabled) {
+      settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
+    }
     if (
       Array.isArray(settings.skillsExtraDirectories) ||
       Array.isArray(settings.skillsDisabled)
@@ -9606,6 +9844,12 @@
         : true,
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
+        : true,
+      toolsAutoApprove: settingsToolsAutoApprove
+        ? settingsToolsAutoApprove.checked
+        : true,
+      checkpointsEnabled: settingsCheckpointsEnabled
+        ? settingsCheckpointsEnabled.checked
         : true,
       skillsEnabled: skillsCache.enabled !== false,
       skillsExtraDirectories: Array.isArray(skillsCache.directories)
@@ -9995,7 +10239,9 @@
           `.mode-picker[data-mode="${attr}"] .model-trigger:hover:not(:disabled),` +
           `.mode-picker[data-mode="${attr}"].is-open .model-trigger,` +
           `.msg-edit-mode-picker[data-mode="${attr}"] .model-trigger{color:${accent};}` +
-          `.mode-picker .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
+          `.mode-picker .model-option[data-mode="${attr}"] .model-option-label,` +
+          `#modeMenu .model-option[data-mode="${attr}"] .model-option-label,` +
+          `.msg-edit-mode-menu .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
           `.agents-list .agent-run-status-running[data-mode="${attr}"]{--cube-accent:${accent};}`
       );
     }
@@ -10230,11 +10476,10 @@
           `<div class="agent-block archive-block" data-agent="${a.id}">` +
           `<div class="agent-row-wrap archive-row-wrap">` +
           `<div class="agent-row flat">` +
-          `<span class="agent-main">` +
-          `<div class="agent-name"></div>` +
-          `<div class="agent-meta"><span class="agent-preview"></span></div>` +
-          `</span>` +
-          `</div>` +
+          `<div class="agent-main">` +
+          `<div class="agent-name-row">` +
+          `<div class="agent-name-wrap"><div class="agent-name"></div></div>` +
+          `<div class="agent-trailing">` +
           `<span class="agent-time"></span>` +
           `<div class="row-actions">` +
           `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="${t("restore")}" aria-label="${t("restore")}">` +
@@ -10243,6 +10488,11 @@
           `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="${t("delete")}" aria-label="${t("delete")}">` +
           DELETE_ICON +
           `</button>` +
+          `</div>` +
+          `</div>` +
+          `</div>` +
+          `<div class="agent-preview"></div>` +
+          `</div>` +
           `</div>` +
           `</div>` +
           `</div>`
@@ -10260,6 +10510,30 @@
       );
       block.querySelector(".agent-time").textContent = a.time || "";
     });
+  }
+
+  function shortModelChip(raw) {
+    const s = String(raw || "").trim();
+    if (!s || s === "—") {
+      return "—";
+    }
+    const last = s.includes("/") ? s.slice(s.lastIndexOf("/") + 1) : s;
+    if (/^claude-sonnet-/i.test(last)) {
+      return last.replace(/^claude-sonnet-/i, "Sonnet ");
+    }
+    if (/^claude-opus-/i.test(last)) {
+      return last.replace(/^claude-opus-/i, "Opus ");
+    }
+    if (/^claude-haiku-/i.test(last)) {
+      return last.replace(/^claude-haiku-/i, "Haiku ");
+    }
+    if (/^glm-/i.test(last)) {
+      return last.replace(/^glm-/i, "GLM ");
+    }
+    if (/^gpt-/i.test(last)) {
+      return last.replace(/^gpt-/i, "GPT-");
+    }
+    return last;
   }
 
   function renderAgentsList() {
@@ -10303,16 +10577,21 @@
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
           `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
-          `<span class="agent-main">` +
+          `<div class="agent-main">` +
           statusHtml +
-          `<div class="agent-name-row"><div class="agent-name"></div></div>` +
-          `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
-          `</span>` +
-          `</div>` +
+          `<div class="agent-name-row">` +
+          `<div class="agent-name-wrap"><div class="agent-name"></div></div>` +
+          `<div class="agent-trailing">` +
+          `<span class="agent-time"></span>` +
           `<div class="row-actions">` +
           action +
           `</div>` +
-          `<span class="agent-time"></span>` +
+          `</div>` +
+          `</div>` +
+          `<div class="agent-preview"></div>` +
+          `<span class="agent-chip"></span>` +
+          `</div>` +
+          `</div>` +
           `</div>` +
           `</div>`
         );
@@ -10325,7 +10604,14 @@
         return;
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
-      block.querySelector(".agent-chip").textContent = a.model || "—";
+      const chip = block.querySelector(".agent-chip");
+      const chipText = shortModelChip(a.model);
+      chip.textContent = chipText === "—" ? "" : chipText;
+      if (chip.textContent && a.model) {
+        chip.title = String(a.model);
+      } else {
+        chip.removeAttribute("title");
+      }
       block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
         a.preview
       );
@@ -12122,6 +12408,12 @@
         if (input) {
           input.value = editingUserText;
         }
+        const saveBtn = body.querySelector(".msg-edit-save");
+        if (saveBtn) {
+          saveBtn.addEventListener("pointerdown", (event) => {
+            trySubmitEditedUserMessageFromPointer(event);
+          });
+        }
       } else if (msgAttachments.length) {
         const attachHtml = renderMessageAttachments(msgAttachments);
         if (attachHtml) {
@@ -12420,6 +12712,7 @@
     if (composerPlusMenu) {
       composerPlusMenu.hidden = true;
     }
+    resetModelMenuPlacement(composerPlusEl, composerPlusMenu);
   }
 
   function openPlusMenu() {
@@ -12437,6 +12730,7 @@
     }
     if (composerPlusMenu) {
       composerPlusMenu.hidden = false;
+      placeModelMenu(composerPlusEl, composerPlusMenu, chatScreen);
     }
   }
 
@@ -12525,6 +12819,7 @@
     if (modeMenu) {
       modeMenu.hidden = true;
     }
+    resetModelMenuPlacement(modePicker, modeMenu);
   }
 
   function openModeMenu() {
@@ -12543,6 +12838,7 @@
     }
     if (modeMenu) {
       modeMenu.hidden = false;
+      placeModelMenu(modePicker, modeMenu, chatScreen);
     }
   }
 
@@ -12584,6 +12880,7 @@
     }
     if (modeMenu && !modeMenu.hidden) {
       renderModeMenu();
+      placeModelMenu(modePicker, modeMenu, chatScreen);
     }
     if (promptEl) {
       promptEl.placeholder =
@@ -13007,24 +13304,34 @@
     ) {
       closeMenu();
     }
-    if (
-      plusMenuOpen &&
-      composerPlusEl &&
-      !composerPlusEl.contains(event.target)
-    ) {
+    const inPlusMenu =
+      Boolean(
+        composerPlusEl &&
+          targetNode &&
+          composerPlusEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element &&
+          target.closest("#composerPlusMenu, .composer-plus-menu.is-fixed")
+      );
+    if (plusMenuOpen && !inPlusMenu) {
       closePlusMenu();
     }
     if (
       modeMenuOpen &&
-      modePicker &&
-      !modePicker.contains(event.target)
+      !(
+        (modePicker && targetNode && modePicker.contains(targetNode)) ||
+        (target instanceof Element && target.closest("#modeMenu"))
+      )
     ) {
       closeModeMenu();
     }
     if (
       reasonMenuOpen &&
-      reasonPicker &&
-      !reasonPicker.contains(event.target)
+      !(
+        (reasonPicker && targetNode && reasonPicker.contains(targetNode)) ||
+        (target instanceof Element && target.closest("#reasonMenu"))
+      )
     ) {
       closeReasonMenu();
     }
@@ -13073,6 +13380,11 @@
       }
     }
     // Floated edit menus live on document.body — must not cancel the edit.
+    // Save/resend is inside the composer; still exclude it explicitly so a
+    // VS Code webview retarget (sticky user bubble) cannot abort the click.
+    const inEditSave =
+      target instanceof Element &&
+      Boolean(target.closest(".msg-edit-save, .msg-edit-footer-right"));
     if (Number.isInteger(editingUserIndex) && !busy) {
       const composer = messagesEl.querySelector(".msg-edit-composer");
       if (
@@ -13080,7 +13392,8 @@
         targetNode &&
         !composer.contains(targetNode) &&
         !inEditModelMenu &&
-        !inEditModeMenu
+        !inEditModeMenu &&
+        !inEditSave
       ) {
         cancelEditingUserMessage();
       }
@@ -13190,7 +13503,14 @@
     });
   }
 
-  sendBtn.addEventListener("click", () => {
+  function activateSendButton(event) {
+    if (event && typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    if (Date.now() - harborEditSaveAt < 450) {
+      return;
+    }
+    harborEditSaveAt = Date.now();
     if (busy) {
       if (composerHasContent()) {
         sendPrompt();
@@ -13200,6 +13520,20 @@
       return;
     }
     sendPrompt();
+  }
+
+  sendBtn.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    activateSendButton(event);
+  });
+  sendBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activateSendButton(event);
   });
 
   if (messageQueueEl) {
@@ -13241,28 +13575,68 @@
   }
 
   if (composerPlusBtn) {
-    composerPlusBtn.addEventListener("click", (event) => {
+    let plusPointerHandled = false;
+    // JCEF OSR often skips `click` after pointerdown; open on pointerdown.
+    composerPlusBtn.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      plusPointerHandled = true;
       event.preventDefault();
       event.stopPropagation();
       togglePlusMenu();
+      setTimeout(() => {
+        plusPointerHandled = false;
+      }, 0);
+    });
+    composerPlusBtn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (plusPointerHandled || event.button !== 0) {
+        return;
+      }
+      togglePlusMenu();
+    });
+    composerPlusBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
     });
   }
 
   if (modeTrigger) {
+    let modePointerHandled = false;
+    modeTrigger.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      modePointerHandled = true;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleModeMenu();
+      setTimeout(() => {
+        modePointerHandled = false;
+      }, 0);
+    });
     modeTrigger.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (modePointerHandled || event.button !== 0) {
+        return;
+      }
+      toggleModeMenu();
     });
     modeTrigger.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      toggleModeMenu();
     });
   }
 
   if (modeMenu) {
     modeMenu.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      event.stopPropagation();
+    });
+    modeMenu.addEventListener("pointerdown", (event) => {
       event.stopPropagation();
     });
     modeMenu.addEventListener("click", (event) => {
@@ -13321,6 +13695,13 @@
   applySelectedReasoningEffort(selectedReasoningEffort, { notify: false });
 
   if (composerPlusMenu) {
+    composerPlusMenu.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    composerPlusMenu.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
     composerPlusMenu.addEventListener("click", (event) => {
       const item = event.target.closest(".composer-plus-item");
       if (!item || item.disabled || item.classList.contains("is-disabled")) {
@@ -13628,7 +14009,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModel, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModel, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
@@ -14726,6 +15107,14 @@
     });
   }
 
+  messagesEl.addEventListener(
+    "pointerdown",
+    (event) => {
+      trySubmitEditedUserMessageFromPointer(event);
+    },
+    true
+  );
+
   messagesEl.addEventListener("click", (event) => {
     const codeToggle = event.target.closest(".md-pre-toggle");
     if (
@@ -14836,7 +15225,10 @@
       toggleEditModelMenu();
       return;
     }
-    const saveEditBtn = event.target.closest(".msg-edit-save");
+    const saveEditTarget = eventTargetElement(event);
+    const saveEditBtn = saveEditTarget
+      ? saveEditTarget.closest(".msg-edit-save")
+      : null;
     if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
       event.preventDefault();
       event.stopPropagation();

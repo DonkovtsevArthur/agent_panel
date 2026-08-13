@@ -23,6 +23,10 @@ import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { initMcpManager } from "./mcpBundle";
 import { composeCommitMessageText } from "./commitMessage";
 import type * as vscode from "vscode";
+import {
+  setToolApprovalHook,
+  waitForToolApprovalResult,
+} from "./toolApproval";
 
 function writeNotification(method: string, params: unknown): void {
   process.stdout.write(
@@ -126,6 +130,15 @@ function main(): void {
   });
   HarborHeadless.setOpenExternalHook(async (url) => {
     writeNotification("host.openExternal", { url });
+  });
+  setToolApprovalHook(async (request) => {
+    const requestId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    writeNotification("host.requestToolApproval", {
+      requestId,
+      toolName: request.toolName,
+      preview: request.preview || "",
+    });
+    return waitForToolApprovalResult(requestId);
   });
   // Before Cline/undici touch the network — honor Advanced → Validate TLS.
   applyHarborTlsPolicy(rejectUnauthorizedFromSettings(settings));

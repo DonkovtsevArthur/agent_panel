@@ -98,7 +98,8 @@ class HarborUiServer(
 
   companion object {
     fun materializeRoot(): File {
-      val base = File(FileUtil.getTempDirectory(), "harbor-agents-ui")
+      val version = HarborPluginInfo.version().replace(Regex("[^A-Za-z0-9._-]"), "_")
+      val base = File(FileUtil.getTempDirectory(), "harbor-agents-ui-$version")
       if (!base.exists()) base.mkdirs()
       return base
     }

@@ -7,6 +7,7 @@
 import * as https from "https";
 import * as http from "http";
 import { getConfig } from "./config";
+import { injectTurnImagesIntoFetch } from "./turnImageInject";
 
 let applied: boolean | undefined;
 let insecureAgent: https.Agent | undefined;
@@ -84,6 +85,15 @@ export function harborFetch(
   init?: RequestInit
 ): Promise<Response> {
   applyHarborTlsPolicy();
+  return injectTurnImagesIntoFetch(input, init).then(({ input: nextInput, init: nextInit }) =>
+    dispatchHarborFetch(nextInput, nextInit)
+  );
+}
+
+function dispatchHarborFetch(
+  input: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> {
   if (getConfig().rejectUnauthorized === true || !insecureAgent) {
     return nativeFetch(input, init);
   }

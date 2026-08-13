@@ -267,6 +267,37 @@ export function modeThinkingLabel(mode: AgentModeDef): string {
   return lang === "ru" ? "Думаю..." : "Thinking...";
 }
 
+/** Localized busy-line for Harbor `onPhase` (VS Code + JetBrains webview). */
+export function modePhaseStatusLabel(
+  phase: string,
+  mode?: AgentModeDef
+): string {
+  const lang = currentUiLanguage();
+  if (phase === "done") {
+    return lang === "ru" ? "Готово" : "Done";
+  }
+  if (phase === "editing") {
+    return lang === "ru" ? "Редактирую..." : "Editing...";
+  }
+  if (phase === "verifying") {
+    return lang === "ru" ? "Проверяю..." : "Verifying...";
+  }
+  if (phase === "reading") {
+    return lang === "ru" ? "Читаю..." : "Reading...";
+  }
+  if (phase === "listing") {
+    return lang === "ru" ? "Просматриваю..." : "Listing...";
+  }
+  if (phase === "running") {
+    return lang === "ru" ? "Запускаю..." : "Running...";
+  }
+  return mode
+    ? modeThinkingLabel(mode)
+    : lang === "ru"
+      ? "Думаю..."
+      : "Thinking...";
+}
+
 export function modeTitle(mode: AgentModeDef): string {
   if (mode.description) {
     return `${mode.label}: ${mode.description}`;

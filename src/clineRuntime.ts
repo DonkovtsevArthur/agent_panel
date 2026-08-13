@@ -31,6 +31,9 @@ import type { MessageAttachment } from "./attachments";
 import {
   attachmentPreviewDataUrl,
   buildInlinedAttachmentsPrompt,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  stripAttachmentPayload,
 } from "./attachments";
 import {
   enabledSkillNames,
@@ -59,6 +62,12 @@ import {
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
+import { withTurnImages } from "./turnImageInject";
+import {
+  harborClineToolPolicies,
+  isToolsAutoApproveEnabled,
+  requestHarborToolApproval,
+} from "./toolApproval";
 
 type ClineMode = "act" | "plan";
 
@@ -135,6 +144,12 @@ type ClineCoreInstance = {
   }) => Promise<ClineStartResult["result"] | undefined>;
   abort: (sessionId: string, reason?: unknown) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
+  restore?: (input: {
+    sessionId: string;
+    checkpointRunCount: number;
+    cwd?: string;
+    restore?: { messages?: boolean; workspace?: boolean };
+  }) => Promise<unknown>;
   dispose?: () => Promise<void>;
   subscribe: (listener: (event: CoreSessionEvent) => void) => () => void;
 };
@@ -142,6 +157,7 @@ type ClineCoreInstance = {
 type LiveClineChat = {
   sessionId: string;
   fingerprint: string;
+  lastCheckpointRunCount?: number;
 };
 
 /** Harbor chatId → live interactive Cline session (in-memory; lost on reload). */
@@ -159,6 +175,7 @@ const liveClineByChatId = new Map<string, LiveClineChat>();
  */
 type ClineKnownModelInfo = {
   id: string;
+  name?: string;
   maxTokens?: number;
   contextWindow?: number;
   maxInputTokens?: number;
@@ -189,7 +206,11 @@ function buildClineModelInfo(modelId: string): {
     supportsVision: stored?.supportsVision,
   });
   const capabilities: string[] = ["tools"];
-  if (resolveModelSupportsVision(modelId) || caps.supportsVision) {
+  if (
+    resolveModelSupportsVision(modelId) ||
+    caps.supportsVision ||
+    resolveModelCapabilities(modelId).supportsVision
+  ) {
     capabilities.push("images");
   }
   // NOTE: не объявляем capability "reasoning"/"reasoning-effort" в catalog.
@@ -211,6 +232,7 @@ function buildClineModelInfo(modelId: string): {
   // (no "reasoning") forces the portable OpenAI-style path instead.
   const modelEntry: ClineKnownModelInfo = {
     id: modelId,
+    name: stored?.label || modelId,
     ...(Number.isFinite(contextWindow) && contextWindow > 0
       ? {
           contextWindow,
@@ -287,9 +309,14 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
       // Never wire PostHog / OTEL / live sinks; keep vendor telemetry trees intact for re-forks.
       telemetry: createHarborNoopTelemetry(),
       distinctId: HARBOR_CLINE_DISTINCT_ID,
-      toolPolicies: bundle.createToolPoliciesWithPreset("yolo"),
+      // Cline's "default" preset is `{}` and treats missing autoApprove as
+      // allow. Harbor must set autoApprove:false so requestToolApproval runs.
+      toolPolicies: harborClineToolPolicies(isToolsAutoApproveEnabled()),
       capabilities: {
-        requestToolApproval: async () => ({ approved: true }),
+        requestToolApproval: async (request: {
+          toolName?: string;
+          input?: unknown;
+        }) => requestHarborToolApproval(request),
       },
       prepare: async () => ({
         applyToStartSessionInput: async (input: {
@@ -595,9 +622,242 @@ function reasoningFromMessageContent(
     .join("");
 }
 
-function harborHistoryToClineMessages(
+const MAX_HISTORY_IMAGES = MAX_ATTACHMENTS;
+/** data: URL length for a MAX_IMAGE_BYTES payload (base64 + header). */
+const MAX_HISTORY_IMAGE_CHARS = Math.ceil(MAX_IMAGE_BYTES * (4 / 3)) + 128;
+
+function isUsableImageDataUrl(url: string | undefined): url is string {
+  return Boolean(
+    url &&
+      url.startsWith("data:image/") &&
+      url.length <= MAX_HISTORY_IMAGE_CHARS
+  );
+}
+
+function imageDedupKey(att: MessageAttachment | undefined, url: string): string {
+  return att?.storageKey || att?.id || url.slice(-96);
+}
+
+function isImageAttachmentLike(
+  att: { kind?: string; mime?: string } | undefined
+): boolean {
+  if (!att) {
+    return false;
+  }
+  if (att.kind === "image") {
+    return true;
+  }
+  return String(att.mime || "")
+    .toLowerCase()
+    .startsWith("image/");
+}
+
+function harborTurnHasImages(
+  history: ChatMessage[],
+  current?: MessageAttachment[]
+): boolean {
+  if ((current || []).some((att) => isImageAttachmentLike(att))) {
+    return true;
+  }
+  for (const msg of history) {
+    if (msg.role !== "user") {
+      continue;
+    }
+    if ((msg.attachments || []).some((att) => isImageAttachmentLike(att))) {
+      return true;
+    }
+    if (!Array.isArray(msg.content)) {
+      continue;
+    }
+    if (
+      msg.content.some(
+        (part) => part && typeof part === "object" && part.type === "image_url"
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function pushImageDataUrl(
+  att: MessageAttachment | undefined,
+  url: string | undefined,
+  out: string[],
+  seen: Set<string>
+): Promise<void> {
+  if (!isUsableImageDataUrl(url) || out.length >= MAX_HISTORY_IMAGES) {
+    return;
+  }
+  const key = imageDedupKey(att, url);
+  if (seen.has(key) || seen.has(url.slice(-96))) {
+    return;
+  }
+  seen.add(key);
+  seen.add(url.slice(-96));
+  out.push(url);
+}
+
+/**
+ * Current-turn images first, then earlier chat attachments.
+ * OpenAI-compatible gateways (and Cline compact) often keep pixels only on
+ * the latest user message — follow-ups like «что на картинке?» otherwise
+ * get no image and the model invents a scene.
+ */
+async function collectTurnImageDataUrls(
+  current: MessageAttachment[] | undefined,
+  history: ChatMessage[],
+  storageUri: vscode.Uri | undefined
+): Promise<{ urls: string[]; fromHistory: number }> {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const att of current || []) {
+    if (!isImageAttachmentLike(att)) {
+      continue;
+    }
+    await pushImageDataUrl(
+      att,
+      await attachmentPreviewDataUrl(att, storageUri),
+      urls,
+      seen
+    );
+  }
+  const fromCurrent = urls.length;
+  for (const msg of history) {
+    if (msg.role !== "user") {
+      continue;
+    }
+    for (const att of msg.attachments || []) {
+      if (!isImageAttachmentLike(att)) {
+        continue;
+      }
+      await pushImageDataUrl(
+        att,
+        await attachmentPreviewDataUrl(att, storageUri),
+        urls,
+        seen
+      );
+    }
+    if (!Array.isArray(msg.content)) {
+      continue;
+    }
+    for (const part of msg.content) {
+      if (!part || typeof part !== "object" || part.type !== "image_url") {
+        continue;
+      }
+      await pushImageDataUrl(
+        undefined,
+        String(part.image_url?.url || "").trim(),
+        urls,
+        seen
+      );
+    }
+  }
+  return { urls, fromHistory: Math.max(0, urls.length - fromCurrent) };
+}
+
+function historyVisionNudge(lang: "en" | "ru"): string {
+  return lang === "ru"
+    ? "К этому сообщению снова приложены изображения из более ранних реплик чата. Если вопрос про картинку — смотри их, не выдумывай другую сцену."
+    : "Images from earlier in this conversation are attached again. If the question refers to a picture, use those images; do not invent a different scene.";
+}
+
+const HISTORY_VISION_NUDGE_PREFIX =
+  /^(?:К этому сообщению снова приложены изображения[\s\S]*?\n\n|Images from earlier in this conversation are attached again\.[\s\S]*?\n\n)/;
+
+/** Drop per-turn IDE dump from stored Cline user rows so a fork is not 50k+ tokens of app.tsx before the pixels. */
+function harborUserTextForClineHistory(text: string): string {
+  let s = String(text || "").trim();
+  s = s.replace(HISTORY_VISION_NUDGE_PREFIX, "");
+  const marker = "[Harbor turn context]";
+  const idx = s.indexOf(marker);
+  if (idx >= 0) {
+    s = s.slice(0, idx).trim();
+  }
+  return s;
+}
+
+function harborUserHadImage(msg: ChatMessage): boolean {
+  if ((msg.attachments || []).some((att) => isImageAttachmentLike(att))) {
+    return true;
+  }
+  if (!Array.isArray(msg.content)) {
+    return false;
+  }
+  return msg.content.some(
+    (part) => part && typeof part === "object" && part.type === "image_url"
+  );
+}
+
+function lastHistoryImageAttachments(
   history: ChatMessage[]
-): ClineHistoryMessage[] {
+): MessageAttachment[] | undefined {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const msg = history[i];
+    if (msg?.role !== "user") {
+      continue;
+    }
+    const atts = (msg.attachments || []).filter((att) =>
+      isImageAttachmentLike(att)
+    );
+    if (atts.length) {
+      return atts;
+    }
+  }
+  return undefined;
+}
+
+/** Cline ImageContent: `{ type:"image", data: rawBase64, mediaType }` — not `{ image: dataUrl }`. */
+function clineImageFromDataUrl(
+  url: string | undefined
+): { type: "image"; mediaType: string; data: string } | undefined {
+  const value = String(url || "").trim();
+  const match = value.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match?.[1] || !match[2] || !isUsableImageDataUrl(value)) {
+    return undefined;
+  }
+  return { type: "image", mediaType: match[1], data: match[2] };
+}
+
+async function clineImageBlocksForHarborUser(
+  msg: ChatMessage,
+  storageUri: vscode.Uri | undefined
+): Promise<Array<{ type: "image"; mediaType: string; data: string }>> {
+  const blocks: Array<{ type: "image"; mediaType: string; data: string }> = [];
+  const seen = new Set<string>();
+  const push = (url: string | undefined) => {
+    const block = clineImageFromDataUrl(url);
+    if (!block || seen.has(block.data) || blocks.length >= MAX_HISTORY_IMAGES) {
+      return;
+    }
+    seen.add(block.data);
+    blocks.push(block);
+  };
+  for (const att of msg.attachments || []) {
+    if (!isImageAttachmentLike(att)) {
+      continue;
+    }
+    push(await attachmentPreviewDataUrl(att, storageUri));
+  }
+  if (!Array.isArray(msg.content)) {
+    return blocks;
+  }
+  for (const part of msg.content) {
+    if (!part || typeof part !== "object" || part.type !== "image_url") {
+      continue;
+    }
+    push(String(part.image_url?.url || "").trim());
+  }
+  return blocks;
+}
+
+async function harborHistoryToClineMessages(
+  history: ChatMessage[],
+  storageUri?: vscode.Uri
+): Promise<ClineHistoryMessage[]> {
+  // Put pixels on the original user rows in Cline's ImageContent shape.
+  // A fork / model-switch starts a *new* Cline session; without this, GLM
+  // only sees images on the latest prompt (often after a huge text dump).
   const out: ClineHistoryMessage[] = [];
   let n = 0;
   for (const msg of history) {
@@ -617,17 +877,30 @@ function harborHistoryToClineMessages(
               .join("")
           : "";
     const trimmed = text.trim();
-    if (!trimmed) {
+    const images =
+      msg.role === "user"
+        ? await clineImageBlocksForHarborUser(msg, storageUri)
+        : [];
+    const textForHistory =
+      msg.role === "user"
+        ? harborUserTextForClineHistory(trimmed) ||
+          (images.length || harborUserHadImage(msg) ? "(image)" : "")
+        : trimmed;
+    if (!textForHistory && !images.length) {
       continue;
     }
     n += 1;
-    const content: ClineMessageContent =
-      msg.role === "assistant" && msg.reasoning_content
-        ? [
-            { type: "thinking", thinking: String(msg.reasoning_content) },
-            { type: "text", text: trimmed },
-          ]
-        : trimmed;
+    let content: ClineMessageContent;
+    if (msg.role === "assistant" && msg.reasoning_content) {
+      content = [
+        { type: "thinking", thinking: String(msg.reasoning_content) },
+        { type: "text", text: textForHistory },
+      ];
+    } else if (images.length) {
+      content = [...images, { type: "text", text: textForHistory || "(image)" }];
+    } else {
+      content = textForHistory;
+    }
     out.push({
       role: msg.role,
       content,
@@ -638,6 +911,47 @@ function harborHistoryToClineMessages(
   return out;
 }
 
+function mergeUserAttachmentsOntoHistory(
+  mapped: ChatMessage[],
+  prior: ChatMessage[],
+  current?: MessageAttachment[]
+): ChatMessage[] {
+  const priorUsers = prior.filter((m) => m.role === "user");
+  const userIndexes = mapped
+    .map((m, i) => (m.role === "user" ? i : -1))
+    .filter((i) => i >= 0);
+  const lastUserIndex = userIndexes[userIndexes.length - 1];
+  let u = 0;
+  return mapped.map((msg, index) => {
+    if (msg.role !== "user") {
+      return msg;
+    }
+    const fromPrior = priorUsers[u]?.attachments;
+    u += 1;
+    const atts =
+      index === lastUserIndex && current?.length ? current : fromPrior;
+    if (!atts?.length) {
+      return msg;
+    }
+    return {
+      ...msg,
+      attachments: atts.map((a) => stripAttachmentPayload(a)),
+    };
+  });
+}
+
+function clineContentHasImages(content: ClineMessageContent | undefined): boolean {
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  return content.some((part) => {
+    if (!part || typeof part !== "object") {
+      return false;
+    }
+    return part.type === "image" || part.type === "image_url";
+  });
+}
+
 function clineMessagesToHarborHistory(
   messages: readonly ClineHistoryMessage[]
 ): ChatMessage[] {
@@ -645,7 +959,7 @@ function clineMessagesToHarborHistory(
   for (const msg of messages) {
     if (msg.role === "user") {
       const text = textFromMessageContent(msg.content).trim();
-      if (text) {
+      if (text || clineContentHasImages(msg.content)) {
         out.push({ role: "user", content: text });
       }
       continue;
@@ -959,6 +1273,8 @@ function clineSessionFingerprint(parts: {
   compact: boolean;
   reasoning: string;
   mcp: string;
+  autoApprove: boolean;
+  checkpoints: boolean;
 }): string {
   return [
     parts.mode,
@@ -969,6 +1285,8 @@ function clineSessionFingerprint(parts: {
     parts.compact ? "1" : "0",
     parts.reasoning,
     parts.mcp,
+    parts.autoApprove ? "1" : "0",
+    parts.checkpoints ? "1" : "0",
   ].join("|");
 }
 
@@ -1021,6 +1339,42 @@ export async function discardAllClineChatSessions(): Promise<void> {
   await discardClineChatSessions(ids);
 }
 
+/** Restore workspace files from a Cline checkpoint for this Harbor chat. */
+export async function restoreClineChatCheckpoint(
+  chatId: string,
+  options?: { checkpointRunCount?: number }
+): Promise<{ ok: boolean; error?: string }> {
+  const id = String(chatId || "").trim();
+  const live = id ? liveClineByChatId.get(id) : undefined;
+  if (!live?.sessionId) {
+    return { ok: false, error: "No live session checkpoint" };
+  }
+  const runCount =
+    Number(options?.checkpointRunCount) > 0
+      ? Number(options?.checkpointRunCount)
+      : live.lastCheckpointRunCount;
+  if (!runCount) {
+    return { ok: false, error: "No checkpoint yet in this chat" };
+  }
+  try {
+    const bundle = loadClineBundle();
+    const core = await getClineCore(bundle);
+    if (typeof core.restore !== "function") {
+      return { ok: false, error: "Checkpoints are not available in this runtime" };
+    }
+    await core.restore({
+      sessionId: live.sessionId,
+      checkpointRunCount: runCount,
+      cwd: workspaceCwd(),
+      restore: { messages: false, workspace: true },
+    });
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
 /** Extension shutdown: stop chats and dispose the shared ClineCore host. */
 export async function disposeClineRuntime(): Promise<void> {
   await discardAllClineChatSessions();
@@ -1043,9 +1397,11 @@ export async function disposeClineRuntime(): Promise<void> {
  * as bare "Request failed with status code 400" and the real cause is invisible —
  * especially painful for spawn_agent children.
  */
-function buildHarborProviderConfig(): {
+function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
   providerId: string;
   fetch: typeof fetch;
+  modelInfo?: ClineKnownModelInfo;
+  knownModels?: Record<string, ClineKnownModelInfo>;
   options: {
     onResponseError: (response: {
       status: number;
@@ -1056,6 +1412,12 @@ function buildHarborProviderConfig(): {
   return {
     providerId: "openai-compatible",
     fetch: harborFetch as typeof fetch,
+    ...(modelInfo
+      ? {
+          modelInfo,
+          knownModels: { [modelInfo.id]: modelInfo },
+        }
+      : {}),
     options: {
       onResponseError: async (response) => {
         if (response.status < 400) {
@@ -1165,6 +1527,8 @@ export async function runClineAgentTurn(options: {
   const core = await getClineCore(bundle);
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
+  const enableCheckpoints = config.checkpoints.enabled !== false;
+  const autoApproveTools = isToolsAutoApproveEnabled();
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
@@ -1184,6 +1548,8 @@ export async function runClineAgentTurn(options: {
     compact: enableAutoCompact,
     reasoning: reasoningKey,
     mcp: mcpFingerprint,
+    autoApprove: autoApproveTools,
+    checkpoints: enableCheckpoints,
   });
 
   if (persistSession && options.resetSession) {
@@ -1203,6 +1569,7 @@ export async function runClineAgentTurn(options: {
   let reasoningText = "";
   let submitSummary = "";
   let stepSeq = 0;
+  let turnCheckpointRunCount: number | undefined;
   const toolInputs = new Map<string, unknown>();
   /** Sum turn deltas so parent + forwarded child usage both count. */
   let usagePromptTokens = 0;
@@ -1422,6 +1789,32 @@ export async function runClineAgentTurn(options: {
             text: label,
           });
         }
+        if (
+          /checkpoint/i.test(noticeReason) ||
+          /checkpoint/i.test(String(event.message || ""))
+        ) {
+          const metaCount = Number(
+            event.metadata?.runCount ?? event.metadata?.checkpointRunCount ?? 0
+          );
+          turnCheckpointRunCount =
+            Number.isFinite(metaCount) && metaCount > 0
+              ? metaCount
+              : (turnCheckpointRunCount || live?.lastCheckpointRunCount || 0) +
+                1;
+          if (persistSession) {
+            const row = liveClineByChatId.get(chatId);
+            if (row) {
+              row.lastCheckpointRunCount = turnCheckpointRunCount;
+            }
+          }
+          stepSeq += 1;
+          emitStep(callbacks, {
+            stepId: `checkpoint-${stepSeq}`,
+            kind: "checkpoint",
+            text: "Workspace checkpoint saved — click to restore files",
+            checkpointRunCount: turnCheckpointRunCount,
+          });
+        }
         break;
       }
       case "done": {
@@ -1476,6 +1869,16 @@ export async function runClineAgentTurn(options: {
     }
   }
 
+  const imageBundle = await collectTurnImageDataUrls(
+    options.attachments,
+    options.history,
+    options.storageUri
+  );
+  const userImages = imageBundle.urls;
+  const currentHasImage = (options.attachments || []).some((att) =>
+    isImageAttachmentLike(att)
+  );
+
   let userPrompt = String(options.userText || "").trim();
   const inlined = await buildInlinedAttachmentsPrompt(
     options.userText,
@@ -1486,10 +1889,13 @@ export async function runClineAgentTurn(options: {
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
-  const turnContext = await buildTurnContextBlock({
-    skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
-    lastAgentEditedPaths: options.lastAgentEditedPaths,
-  });
+  const turnContext =
+    userImages.length > 0
+      ? ""
+      : await buildTurnContextBlock({
+          skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
+          lastAgentEditedPaths: options.lastAgentEditedPaths,
+        });
   if (turnContext) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${turnContext}`
@@ -1504,19 +1910,14 @@ export async function runClineAgentTurn(options: {
     enableSpawnAgent,
     uiLang
   );
-
-  const userImages: string[] = [];
-  for (const att of options.attachments || []) {
-    if (att.kind !== "image") {
-      continue;
-    }
-    const dataUrl = await attachmentPreviewDataUrl(att, options.storageUri);
-    if (dataUrl) {
-      userImages.push(dataUrl);
-    }
+  if (imageBundle.fromHistory > 0 && !currentHasImage) {
+    userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
-  const initialMessages = harborHistoryToClineMessages(options.history);
+  const initialMessages = await harborHistoryToClineMessages(
+    options.history,
+    options.storageUri
+  );
 
   const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
     ? toClineReasoningOptions(
@@ -1527,6 +1928,20 @@ export async function runClineAgentTurn(options: {
   // Resolve real context window / max output so Cline budgets auto-compact and
   // output caps against the model's actual limits instead of a blind default.
   const modelInfoData = buildClineModelInfo(options.model);
+  // Harbor always sends capabilities:["tools"] (so Cline does not emit
+  // Anthropic-shaped thinking). Missing "images" then fail-closes: Cline
+  // replaces pixels with "[Image attached — this model cannot view images]".
+  // Advertise image input when the catalog says vision, this turn has
+  // pixels, or earlier chat rows still have image attachments (fork).
+  if (
+    userImages.length ||
+    harborTurnHasImages(options.history, options.attachments)
+  ) {
+    const entry = modelInfoData.knownModels[options.model];
+    if (entry && !entry.capabilities?.includes("images")) {
+      entry.capabilities = [...(entry.capabilities || ["tools"]), "images"];
+    }
+  }
 
   const skillsConfig = config.skills;
   const hasSkillsFactory =
@@ -1557,31 +1972,32 @@ export async function runClineAgentTurn(options: {
 
   try {
     let result: ClineStartResult["result"];
-    if (reusedSession) {
-      try {
-        result = await core.send({
-          sessionId,
+    const runTurn = async (): Promise<void> => {
+      if (reusedSession) {
+        try {
+          result = await core.send({
+            sessionId,
+            prompt: userPrompt,
+            ...(userImages.length ? { userImages } : {}),
+            mode: clineMode,
+          });
+        } catch (error) {
+          if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
+            throw error;
+          }
+          liveClineByChatId.delete(chatId);
+          reusedSession = false;
+          sessionId = newSessionId();
+        }
+      }
+
+      if (!reusedSession) {
+        const startResult = await core.start({
+          source: "vscode",
+          interactive: persistSession,
           prompt: userPrompt,
           ...(userImages.length ? { userImages } : {}),
-          mode: clineMode,
-        });
-      } catch (error) {
-        if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
-          throw error;
-        }
-        liveClineByChatId.delete(chatId);
-        reusedSession = false;
-        sessionId = newSessionId();
-      }
-    }
-
-    if (!reusedSession) {
-      const startResult = await core.start({
-        source: "vscode",
-        interactive: persistSession,
-        prompt: userPrompt,
-        ...(userImages.length ? { userImages } : {}),
-        ...(initialMessages.length ? { initialMessages } : {}),
+          ...(initialMessages.length ? { initialMessages } : {}),
         ...(userInstructionService
           ? {
               localRuntime: {
@@ -1619,6 +2035,8 @@ export async function runClineAgentTurn(options: {
                 },
               }
             : {}),
+          ...(enableCheckpoints ? { checkpoint: { enabled: true } } : {}),
+          toolPolicies: harborClineToolPolicies(autoApproveTools),
           // Iteration budget: leave unset so Cline treats it as unlimited
           // (Harbor maxToolRounds no longer caps the turn).
           systemPrompt: baseSystemPrompt,
@@ -1631,15 +2049,25 @@ export async function runClineAgentTurn(options: {
           ...modelInfoData,
           // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
           // "Request failed with status code N" — critical for spawn_agent children.
-          providerConfig: buildHarborProviderConfig(),
+          providerConfig: buildHarborProviderConfig(
+            modelInfoData.knownModels[options.model]
+          ),
         },
       });
       sessionId = String(startResult.sessionId || sessionId);
       result = startResult.result;
     }
+    };
+    await withTurnImages(userImages, runTurn);
 
     if (persistSession) {
-      liveClineByChatId.set(chatId, { sessionId, fingerprint });
+      const prev = liveClineByChatId.get(chatId);
+      liveClineByChatId.set(chatId, {
+        sessionId,
+        fingerprint,
+        lastCheckpointRunCount:
+          turnCheckpointRunCount ?? prev?.lastCheckpointRunCount,
+      });
     }
 
     unsubscribe();
@@ -1672,18 +2100,31 @@ export async function runClineAgentTurn(options: {
     });
     await callbacks.onReview(edits);
 
+    const attachmentsForHistory =
+      options.attachments?.length
+        ? options.attachments
+        : lastHistoryImageAttachments(options.history);
+
     if (result?.messages?.length) {
-      return clineMessagesToHarborHistory(result.messages);
+      return mergeUserAttachmentsOntoHistory(
+        clineMessagesToHarborHistory(result.messages),
+        options.history,
+        attachmentsForHistory
+      );
     }
-    return [
-      ...options.history,
-      { role: "user", content: userPrompt },
-      {
-        role: "assistant",
-        content: finalText,
-        ...(reasoningText ? { reasoning_content: reasoningText } : {}),
-      },
-    ];
+    return mergeUserAttachmentsOntoHistory(
+      [
+        ...options.history,
+        { role: "user", content: userPrompt },
+        {
+          role: "assistant",
+          content: finalText,
+          ...(reasoningText ? { reasoning_content: reasoningText } : {}),
+        },
+      ],
+      options.history,
+      attachmentsForHistory
+    );
   } catch (error) {
     unsubscribe();
     options.signal?.removeEventListener("abort", onAbort);

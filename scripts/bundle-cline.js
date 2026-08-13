@@ -62,7 +62,7 @@ esbuild
     // is spawn-tool.ts; this keeps the running CJS bundle aligned when the
     // bundled factory still matches the Harbor-patched shape.
     const outfile = path.join(__dirname, "..", "out", "clineBundle.js");
-    const source = fs.readFileSync(outfile, "utf8");
+    let source = fs.readFileSync(outfile, "utf8");
     const oldSnippet = `createSubAgentTools: () => {
     let Y10 = Z10.enableTools ? G63({ cwd: Z10.cwd, telemetry: Z10.telemetry, ...z12[B$2({ mode: Z10.mode })], enableAskQuestion: false, executors: J10 }) : [];
     return J$3(Y10);
@@ -73,7 +73,24 @@ esbuild
     return J$3(Y10.concat(extras));
   }`;
     if (source.includes(oldSnippet) && !source.includes("Y10.concat(extras)")) {
-      fs.writeFileSync(outfile, source.replace(oldSnippet, newSnippet));
+      source = source.replace(oldSnippet, newSnippet);
     }
+    // Running Cline puts text first, then userImages. GLM often only reads the
+    // first content part — keep pixels ahead of the prompt.
+    const oldImageOrder = "let Y10 = [{ type: \"text\", text: $10 }, ...W10];";
+    const newImageOrder = "let Y10 = [...W10, { type: \"text\", text: $10 }];";
+    if (source.includes(oldImageOrder)) {
+      source = source.replace(oldImageOrder, newImageOrder);
+    }
+    // Cline catalogs list z-ai/glm-5.2 without "images"; modelSupportsImageInput
+    // then fail-closes and strips pixels. Advertise vision on those entries.
+    const patchedGlm = source.replace(
+      /("z-ai\/glm-5\.2":\s*\{id:\s*"z-ai\/glm-5\.2"[^[]*?capabilities:\s*\[)(?![^\]]*"images")/g,
+      '$1"images", '
+    );
+    if (patchedGlm !== source) {
+      source = patchedGlm;
+    }
+    fs.writeFileSync(outfile, source);
   })
   .catch(() => process.exit(1));

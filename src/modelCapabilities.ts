@@ -117,6 +117,15 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     capabilities: { supportsVision: false },
   },
   {
+    // GLM-4V / 4.5V / 4.6V / 5 / 5.2 (z-ai, zai-org, OpenRouter z-ai/glm-*).
+    // Harbor knownModels always send capabilities:["tools"]; missing "images"
+    // makes Cline fail-close and replace pixels with a placeholder — first
+    // turn still works (userImages patch), fork/follow-up does not.
+    pattern:
+      /(?:^|[\/._-])glm[-_.]?(?:4v|[4-9])|z-ai\/glm|zai\/glm|zai-org\/glm/i,
+    capabilities: { supportsVision: true },
+  },
+  {
     pattern:
       /gpt-4o|gpt-4\.1|gpt-5|o[1-9]|claude|gemini|llava|vision|pixtral|gpt-image/i,
     capabilities: { supportsVision: true },

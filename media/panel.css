@@ -267,6 +267,7 @@ body {
 .msg-actions .icon-btn.msg-branch .material-symbols-outlined {
   font-size: 13px;
   line-height: 1;
+  pointer-events: none;
 }
 
 .msg-edit-composer {
@@ -316,6 +317,7 @@ body {
   gap: 4px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .msg-edit-footer-left .model-picker {
@@ -346,6 +348,8 @@ body {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .msg.assistant .md-code {
@@ -2463,6 +2467,7 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 4px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .composer-footer-left > .mode-picker {
@@ -2501,17 +2506,23 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--mode-ask);
 }
 
-.mode-picker .model-option[data-mode="plan"] .model-option-label {
+.mode-picker .model-option[data-mode="plan"] .model-option-label,
+#modeMenu .model-option[data-mode="plan"] .model-option-label,
+.msg-edit-mode-menu .model-option[data-mode="plan"] .model-option-label {
   color: var(--mode-plan);
   font-weight: 500;
 }
 
-.mode-picker .model-option[data-mode="ask"] .model-option-label {
+.mode-picker .model-option[data-mode="ask"] .model-option-label,
+#modeMenu .model-option[data-mode="ask"] .model-option-label,
+.msg-edit-mode-menu .model-option[data-mode="ask"] .model-option-label {
   color: var(--mode-ask);
   font-weight: 500;
 }
 
-.mode-picker .model-option {
+.mode-picker .model-option,
+#modeMenu .model-option,
+.msg-edit-mode-menu .model-option {
   align-items: flex-start;
 }
 
@@ -2523,7 +2534,9 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 2px;
 }
 
-.mode-picker .model-option-label {
+.mode-picker .model-option-label,
+#modeMenu .model-option-label,
+.msg-edit-mode-menu .model-option-label {
   flex: 0 1 auto;
 }
 
@@ -2534,7 +2547,9 @@ body.vscode-dark .md-pre .syntax-property {
   white-space: normal;
 }
 
-.mode-picker .model-check {
+.mode-picker .model-check,
+#modeMenu .model-check,
+.msg-edit-mode-menu .model-check {
   margin-top: 1px;
 }
 
@@ -2542,7 +2557,8 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--vscode-textLink-foreground, #006ab1);
 }
 
-.mode-picker .model-menu {
+.mode-picker .model-menu,
+#modeMenu.model-menu {
   min-width: 240px;
 }
 
@@ -2661,6 +2677,17 @@ body.vscode-dark .md-pre .syntax-property {
   z-index: 1000;
 }
 
+.composer-plus-menu.is-fixed {
+  position: fixed;
+  right: auto;
+  z-index: 10000;
+}
+
+.composer-plus-menu.opens-down {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
 .composer-plus-menu[hidden] {
   display: none !important;
 }
@@ -2713,6 +2740,8 @@ body.vscode-dark .md-pre .syntax-property {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .icon-btn {
@@ -2752,6 +2781,7 @@ body.vscode-dark .md-pre .syntax-property {
 
 .icon-btn .material-symbols-outlined {
   font-size: 16px;
+  pointer-events: none;
 }
 
 .row-action .material-symbols-outlined {
@@ -2966,6 +2996,7 @@ button.primary .icon-queue,
 button.primary .icon-stop {
   display: inline-block;
   font-size: 16px;
+  pointer-events: none;
 }
 
 button.primary .icon-queue,
@@ -3034,12 +3065,9 @@ button.primary:disabled {
   min-width: 0;
 }
 
-.agents-rail .agent-time {
-  display: none;
-}
-
-.agents-rail .agent-meta {
-  gap: 4px;
+.agents-rail .agent-trailing {
+  flex-basis: 4.8em;
+  min-width: 4.8em;
 }
 
 .workspace-shell.is-narrow.is-rail-open .agents-rail-backdrop {
@@ -3336,7 +3364,7 @@ html[data-surface="settings"] .settings-layout {
 .agents-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 6px 12px;
+  padding: 4px 8px 12px;
   min-height: 0;
 }
 
@@ -4677,7 +4705,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 
 .agent-block {
   border-radius: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .agent-block.is-open {
@@ -4694,7 +4722,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 
 .agent-row-wrap {
   border-radius: 8px;
-  padding-right: 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .agent-row-wrap:hover {
@@ -4707,7 +4735,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   grid-template-columns: 1fr auto auto;
   gap: 8px;
   align-items: start;
-  padding: 8px;
+  padding: 9px 10px;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -4733,8 +4761,8 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 
 .agent-block.is-active > .agent-row-wrap,
 .agent-block.is-active > .agent-row-wrap:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
-  box-shadow: inset 2px 0 0 0 var(--vscode-focusBorder, #007fd4);
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
 }
 
 .agent-block.is-active > .agent-row-wrap > .agent-row {
@@ -4776,8 +4804,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   height: 12px;
   position: absolute;
   left: 0;
-  top: 44%;
-  transform: translateY(-50%);
+  top: 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4791,12 +4818,28 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 .agent-name-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.agent-name-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.agent-trailing {
+  position: relative;
+  flex: 0 0 5.5em;
+  min-width: 5.5em;
+  height: 22px;
 }
 
 .agent-name {
   display: inline-block;
+  flex: 1;
+  min-width: 0;
   max-width: 100%;
   font-size: 13px;
   font-weight: 600;
@@ -4965,6 +5008,12 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   appearance: none;
 }
 
+.agent-name-wrap .agent-name-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .agent-name-input.is-chat {
   color: var(--vscode-foreground);
 }
@@ -5038,29 +5087,44 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 }
 
 .agent-meta {
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #888);
-  display: flex;
-  gap: 6px;
-  align-items: center;
   min-width: 0;
 }
 
 .agent-chip {
-  flex-shrink: 0;
+  display: inline-block;
+  margin-top: 4px;
+  max-width: 100%;
   padding: 1px 6px;
+  border: none;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
   font-size: 10px;
   color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-chip:empty {
+  display: none;
 }
 
 .agent-preview {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+.agent-preview:empty {
+  display: none;
 }
 
 .agent-preview .md-link,
@@ -5083,17 +5147,50 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   color: var(--vscode-descriptionForeground, #888);
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 4.5em;
+  min-width: 0;
   text-align: right;
   padding-top: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .row-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   flex-shrink: 0;
-  order: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.agent-row-wrap:hover .agent-time,
+.agent-row-wrap:focus-within .agent-time,
+.agent-block.is-active > .agent-row-wrap .agent-time {
+  visibility: hidden;
+}
+
+.archive-row-wrap .agent-trailing {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.archive-row-wrap .agent-time,
+.archive-row-wrap .row-actions,
+.archive-row-wrap:hover .agent-time,
+.archive-row-wrap:focus-within .agent-time,
+.archive-block .agent-time {
+  position: static;
+  transform: none;
+  visibility: visible;
 }
 
 .row-action {
