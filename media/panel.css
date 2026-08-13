@@ -4322,8 +4322,10 @@ html[data-surface="settings"] .settings-layout {
 
 .settings-select-picker {
   position: relative;
-  display: block;
-  width: 100%;
+  display: inline-flex;
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -4344,10 +4346,10 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .settings-select-picker .model-trigger {
-  width: 100%;
+  width: auto;
   max-width: 100%;
   box-sizing: border-box;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 4px 10px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
@@ -4355,13 +4357,9 @@ html[data-surface="settings"] .settings-layout {
   color: var(--vscode-foreground);
 }
 
-.settings-select-picker .model-trigger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
-  color: var(--vscode-foreground);
-}
-
+.settings-select-picker .model-trigger:hover:not(:disabled),
 .settings-select-picker.is-open .model-trigger {
-  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
   color: var(--vscode-foreground);
 }
 
@@ -4371,13 +4369,12 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .settings-select-picker .model-label {
-  flex: 1;
+  flex: 0 1 auto;
   text-align: left;
 }
 
-.settings-select-picker .model-menu,
 .settings-select-menu.model-menu {
-  min-width: 100%;
+  min-width: 240px;
 }
 
 /* JetBrains OSR: custom listbox instead of native <select> popup */

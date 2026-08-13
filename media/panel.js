@@ -3556,19 +3556,6 @@
         return;
       }
       placeModelMenu(picker, menu, document.documentElement);
-      const triggerRect = trigger.getBoundingClientRect();
-      const width = Math.round(triggerRect.width);
-      menu.style.minWidth = `${width}px`;
-      menu.style.width = `${width}px`;
-      const maxLeft = window.innerWidth - width - 8;
-      let left = triggerRect.left;
-      if (left > maxLeft) {
-        left = Math.max(8, maxLeft);
-      }
-      if (left < 8) {
-        left = 8;
-      }
-      menu.style.left = `${Math.round(left)}px`;
     }
 
     function openPicker(picker) {
