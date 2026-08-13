@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.5.136"
+version = "1.5.141"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,18 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.5.141</b>
+            <ul>
+              <li>Настройки: селекты как выбор режима в композе; попап не закрывается сразу</li>
+            </ul>
+            <b>1.5.138</b>
+            <ul>
+              <li>WebStorm: убран JS-скролл — снова нативное колесо JCEF, без задержки</li>
+            </ul>
+            <b>1.5.137</b>
+            <ul>
+              <li>WebStorm: скролл без замедления — полная дельта за кадр, без доезда</li>
+            </ul>
             <b>1.5.136</b>
             <ul>
               <li>WebStorm: скролл мягче, но без «низкого FPS» — шаг сразу, короткий доезд</li>

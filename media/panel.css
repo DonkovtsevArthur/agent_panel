@@ -4371,17 +4371,6 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   display: none !important;
 }
 
-/* JCEF OSR: keep wheel inside the panel; JS eases the actual motion. */
-html[data-harbor-host="jetbrains"] #messages,
-html[data-harbor-host="jetbrains"] .settings-body,
-html[data-harbor-host="jetbrains"] .agents-list,
-html[data-harbor-host="jetbrains"] .model-menu,
-html[data-harbor-host="jetbrains"] .mention-menu,
-html[data-harbor-host="jetbrains"] .composer-plus-menu,
-html[data-harbor-host="jetbrains"] .harbor-select-menu {
-  overscroll-behavior: contain;
-}
-
 .settings-tab-autocomplete-block .settings-input {
   border: none;
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
