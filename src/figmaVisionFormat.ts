@@ -22,6 +22,50 @@ export const MAX_DESCRIPTION_CHARS = 8_000;
 /** Marker in tool-result text — context budget must not compact these payloads. */
 export const HARBOR_VISION_HELPER_MARKER = "[Harbor vision helper";
 
+const CHAT_VISION_DESCRIBE_SYSTEM = `You describe screenshots for a coding assistant that cannot view images.
+Say what is depicted: product, window, UI, diagram, or photo. Quote visible text exactly.
+Do not invent labels. No plan, no code. Match the language of the user's question.`;
+
+export function buildChatVisionDescribeMessages(
+  imageDataUrls: string[],
+  userQuestion?: string
+): ChatMessage[] {
+  const images = imageDataUrls
+    .map((url) => String(url || "").trim())
+    .filter(Boolean)
+    .slice(0, MAX_VISION_IMAGES);
+  const question = String(userQuestion || "").trim().slice(0, MAX_ACCOMPANYING_CHARS);
+  const parts: ContentPart[] = [
+    {
+      type: "text",
+      text: question
+        ? `The user asked:\n${question}\n\nDescribe the attached image(s) so another model can answer that question.`
+        : "Describe the attached image(s) so another model can answer the user.",
+    },
+  ];
+  for (const url of images) {
+    parts.push({ type: "image_url", image_url: { url } });
+  }
+  return [
+    { role: "system", content: CHAT_VISION_DESCRIBE_SYSTEM },
+    { role: "user", content: parts },
+  ];
+}
+
+export function formatChatVisionHelperPrompt(options: {
+  visionModelId: string;
+  description: string;
+}): string {
+  const description = String(options.description || "").trim();
+  return [
+    `${HARBOR_VISION_HELPER_MARKER} · ${options.visionModelId}]`,
+    "The selected chat model cannot view images. Treat the description below as what you would see on the screenshot. Answer the user from it; do not say you cannot see the picture.",
+    "",
+    "## What is in the image",
+    description || "(Vision helper returned an empty description.)",
+  ].join("\n");
+}
+
 export function buildVisionDescribeMessages(
   imageDataUrls: string[],
   accompanyingText?: string

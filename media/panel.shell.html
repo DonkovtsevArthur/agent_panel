@@ -312,49 +312,109 @@
 
         <section class="settings-panel" data-settings-panel="agent" hidden>
           <h3 class="settings-section-title" id="settingsAgentTitle">Agent behavior</h3>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsSystemPromptLabel">System prompt</span>
-            <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
-            <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsMaxResponseCharsLabel">Max response length (chars)</span>
-            <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsSoundNotificationsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsSubagentsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSubagentsLabel">Parallel agents</span>
-          </label>
-          <p class="settings-hint" id="settingsSubagentsNote">Agent, Plan, and Ask. Children follow the current mode (Plan/Ask stay read-only).</p>
-          <label class="settings-field settings-check">
-            <input id="settingsParallelToolCallsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsParallelToolCallsLabel">Parallel tool calls</span>
-          </label>
-          <p class="settings-hint" id="settingsParallelToolCallsNote">Run independent tools from one model response at the same time.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoCompactEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
-          </label>
-          <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsToolsAutoApprove" type="checkbox" />
-            <span class="settings-label" id="settingsToolsAutoApproveLabel">Auto-approve tools</span>
-          </label>
-          <p class="settings-hint" id="settingsToolsAutoApproveNote">Off — confirm each tool before it runs.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsCheckpointsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsCheckpointsLabel">Workspace checkpoints</span>
-          </label>
-          <p class="settings-hint" id="settingsCheckpointsNote">Git snapshot at the start of each run. Click the checkpoint card in chat to restore files.</p>
+          <div class="settings-prompt-card" id="settingsSystemPromptCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsSystemPromptToggle" aria-expanded="false" aria-controls="settingsSystemPromptBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsSystemPromptLabel">System prompt</span>
+                <span class="settings-prompt-preview" id="settingsSystemPromptPreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsSystemPromptBody" hidden>
+              <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
+            </div>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsLimitsTitle">Limits</h4>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsMaxTokensLabel">Response limit</span>
+              <span class="settings-field-hint" id="settingsMaxTokensHint">tokens</span>
+              <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsMaxResponseCharsLabel">Max length</span>
+              <span class="settings-field-hint" id="settingsMaxResponseCharsHint">characters</span>
+              <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsExecutionTitle">Execution</h4>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSubagentsLabel">Parallel agents</span>
+                <span class="settings-toggle-hint" id="settingsSubagentsNote">Child agents. In Plan and Ask they only read.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSubagentsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsParallelToolCallsLabel">Parallel tool calls</span>
+                <span class="settings-toggle-hint" id="settingsParallelToolCallsNote">Independent tools from one response run together.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsParallelToolCallsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoCompactLabel">Auto compact</span>
+                <span class="settings-toggle-hint" id="settingsAutoCompactNote">Compress the chat near the model window limit.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoCompactEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsToolsAutoApproveLabel">Auto-approve tools</span>
+                <span class="settings-toggle-hint" id="settingsToolsAutoApproveNote">No prompt. Off — ask every time.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsToolsAutoApprove" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsCheckpointsLabel">Workspace checkpoints</span>
+                <span class="settings-toggle-hint" id="settingsCheckpointsNote">Git snapshot at the start of a turn. The card rolls back files.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsCheckpointsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsInterfaceTitle">Interface</h4>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSoundNotificationsLabel">Sound notifications</span>
+                <span class="settings-toggle-hint" id="settingsSoundNotificationsNote">Signal when the agent finishes a turn.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSoundNotificationsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSelectionHintsLabel">Selection hints</span>
+                <span class="settings-toggle-hint" id="settingsSelectionHintsNote">Action chip over selected code.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSelectionHintsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
-          <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
+          <h3 class="settings-section-title settings-group-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
           <label class="settings-field settings-check">
             <input id="settingsTabAutocompleteEnabled" type="checkbox" />
             <span class="settings-label" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
@@ -407,10 +467,6 @@
           <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           </div>
-          <label class="settings-field settings-check">
-            <input id="settingsSelectionHintsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
-          </label>
         </section>
 
         <section class="settings-panel" data-settings-panel="advanced" hidden>

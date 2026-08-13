@@ -18,7 +18,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Harbor MCP → Cline tools | `src/clineMcpTools.ts` — Figma/custom MCP via `listOpenAiTools` + `createTool` |
 | Step events (UI cards) | `src/agentSteps.ts` |
 | Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
-| Vision (images) | Attachments → Cline `userImages` on session start (`clineRuntime.ts`). No Harbor model swap — Cline keeps/omits pixels by model capabilities. |
+| Vision (images) | Attachments → Cline `userImages` when the chat model has vision. If not (e.g. GLM-5.2), Harbor runs a Settings vision model under the hood and injects a text description (`figmaVisionHelper.ts`). |
 | Plan → Agent (Build) UI | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`, Plan.md helpers, strip wrapper for cards |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |

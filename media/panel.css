@@ -4038,6 +4038,162 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   color: var(--vscode-errorForeground, #f14c4c);
 }
 
+.settings-group-title {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.settings-panel .settings-group-title {
+  margin-top: 16px;
+}
+
+.settings-limits-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.settings-limits-row .settings-field {
+  margin-bottom: 0;
+}
+
+.settings-limits-row .settings-field-hint {
+  margin-top: -2px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.settings-toggle-row + .settings-toggle-row {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.settings-toggle-row:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.settings-toggle-row:focus-within {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.settings-toggle-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.settings-toggle-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.settings-prompt-card {
+  margin: 0 0 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-prompt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-prompt-toggle:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.settings-prompt-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.settings-prompt-toggle-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-prompt-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-prompt-preview {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-prompt-card.is-open .settings-prompt-preview {
+  display: none;
+}
+
+.settings-prompt-chevron {
+  flex-shrink: 0;
+  font-size: 20px;
+  opacity: 0.55;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+
+.settings-prompt-card.is-open .settings-prompt-chevron {
+  transform: rotate(0deg);
+}
+
+.settings-prompt-body {
+  padding: 0 12px 12px;
+}
+
+.settings-prompt-body .settings-textarea {
+  min-height: 120px;
+}
+
 .mode-color-row {
   display: flex;
   flex-wrap: wrap;

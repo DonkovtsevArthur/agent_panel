@@ -51,7 +51,7 @@
   "config.maxToolRounds.description": "Устарело. Ходы чата больше не режутся этим лимитом Harbor — бюджет итераций у runtime агента.",
   "config.maxToolRounds.deprecation": "Не используется для чата. Лимиты итераций задаёт runtime агента.",
   "config.maxTokens.description": "max_tokens для chat/completions",
-  "config.visionRouting.preferredModelIds.description": "Устарело. Harbor больше не подменяет модель чата для картинок; изображение уходит выбранной модели как multimodal.",
+  "config.visionRouting.preferredModelIds.description": "Предпочитаемые vision-модели, если выбранная модель чата не видит картинки (и для скриншотов Figma). Берётся первая включённая.",
   "config.visionRouting.preferredModelId.description": "Устарело. См. agentPanel.visionRouting.preferredModelIds (для чата тоже не используется).",
   "config.maxResponseChars.description": "Максимальная длина ответа в чате; сверх того — обрезка. Также режутся зацикленные повторы.",
   "config.soundNotifications.enabled.description": "Проигрывать звук при успешном завершении или ошибке агента.",

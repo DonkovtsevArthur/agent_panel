@@ -139,12 +139,12 @@ export interface AgentPanelConfig {
   maxTokens: number;
   maxResponseChars: number;
   /**
-   * Deprecated: Harbor no longer swaps chat models for image attachments.
-   * Images go to Cline as `image` parts; vision is left to the selected model.
-   * Kept for config backward compatibility.
+   * Preferred vision models for under-the-hood image describe when the
+   * selected chat model cannot view images (e.g. GLM-5.2). Also used for
+   * Figma MCP screenshots.
    */
   visionRouting: {
-    /** Ordered preferred vision model ids; unused by chat turns. */
+    /** Ordered preferred vision model ids. */
     preferredModelIds: string[];
   };
   soundNotifications: {

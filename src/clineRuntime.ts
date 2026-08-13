@@ -63,6 +63,7 @@ import {
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { withTurnImages } from "./turnImageInject";
+import { describeChatImagesForMainModel } from "./figmaVisionHelper";
 import {
   harborClineToolPolicies,
   isToolsAutoApproveEnabled,
@@ -1874,10 +1875,11 @@ export async function runClineAgentTurn(options: {
     options.history,
     options.storageUri
   );
-  const userImages = imageBundle.urls;
+  let userImages = imageBundle.urls;
   const currentHasImage = (options.attachments || []).some((att) =>
     isImageAttachmentLike(att)
   );
+  const chatSeesImages = resolveModelSupportsVision(options.model);
 
   let userPrompt = String(options.userText || "").trim();
   const inlined = await buildInlinedAttachmentsPrompt(
@@ -1903,6 +1905,45 @@ export async function runClineAgentTurn(options: {
   }
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
+  }
+  if (userImages.length && !chatSeesImages) {
+    emitStep(callbacks, {
+      stepId: "vision-helper",
+      kind: "tool",
+      name: "vision",
+      status: "running",
+      argsPreview: options.model,
+    });
+    try {
+      const helper = await describeChatImagesForMainModel({
+        imageDataUrls: userImages,
+        userQuestion: String(options.userText || "").trim(),
+        chatModelId: options.model,
+        signal: options.signal,
+      });
+      emitStep(callbacks, {
+        stepId: "vision-helper",
+        kind: "tool",
+        name: "vision",
+        status: helper.text ? "done" : "error",
+        argsPreview: helper.visionModelId || options.model,
+        resultPreview: (helper.text || "").slice(0, 400),
+      });
+      if (helper.text) {
+        userPrompt = `${helper.text}\n\n${userPrompt}`;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emitStep(callbacks, {
+        stepId: "vision-helper",
+        kind: "tool",
+        name: "vision",
+        status: "error",
+        resultPreview: message.slice(0, 400),
+      });
+    }
+    // Text model cannot use pixels; sending them only makes it deny the image.
+    userImages = [];
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
   userPrompt = appendSubagentsRuntimeNudge(
@@ -1931,11 +1972,13 @@ export async function runClineAgentTurn(options: {
   // Harbor always sends capabilities:["tools"] (so Cline does not emit
   // Anthropic-shaped thinking). Missing "images" then fail-closes: Cline
   // replaces pixels with "[Image attached — this model cannot view images]".
-  // Advertise image input when the catalog says vision, this turn has
-  // pixels, or earlier chat rows still have image attachments (fork).
+  // Advertise image input only when this chat model can actually view pixels.
+  // GLM-5.2 is text-only: sending `"images"` makes Cline attach bytes the
+  // model ignores, then it answers «не вижу картинку».
   if (
-    userImages.length ||
-    harborTurnHasImages(options.history, options.attachments)
+    chatSeesImages &&
+    (userImages.length ||
+      harborTurnHasImages(options.history, options.attachments))
   ) {
     const entry = modelInfoData.knownModels[options.model];
     if (entry && !entry.capabilities?.includes("images")) {
