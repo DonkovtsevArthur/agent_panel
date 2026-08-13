@@ -2136,7 +2136,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "archiveAgent":
-        this.archiveAgent(message.agentId);
+        await this.archiveAgent(message.agentId);
         break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
@@ -2391,6 +2391,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this.syncClineSessionForChatSwitch(chat.id);
     agent.chatId = chat.id;
     agent.chatIds = ids;
     this.store.activeAgentId = agentId;
@@ -2433,6 +2434,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       );
       return;
     }
+    onClineActiveChatChanged({
+      previousChatId: fromChatId,
+      nextChatId: created.id,
+      previousStillRunning: this.isChatRunning(fromChatId),
+    });
 
     this.setScreen("chat");
     this.hydrateActiveChat();
@@ -2448,9 +2454,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     this.persistActiveChat();
+    const previousChatId = this.store.activeChatId;
     if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
       return;
     }
+    onClineActiveChatChanged({
+      previousChatId,
+      nextChatId: chatId,
+      previousStillRunning: this.isChatRunning(previousChatId),
+    });
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2491,6 +2503,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!deleteAgentBranch(this.store, agent.id, chatId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2509,6 +2522,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       "";
     const created = createEmptyAgent(model);
     this.persistActiveChat();
+    this.syncClineSessionForChatSwitch(created.chat.id);
     this.store.agents.unshift(created.agent);
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
@@ -2521,19 +2535,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /** Archive immediately — no confirm modal (restore stays in Archive screen). */
-  private archiveAgent(agentId: string): void {
+  private async archiveAgent(agentId: string): Promise<void> {
     const agent = this.store.agents.find((a) => a.id === agentId);
     if (!agent || agent.archivedAt) {
       return;
     }
 
-    for (const chatId of getAgentChatIds(agent)) {
+    const chatIds = getAgentChatIds(agent);
+    for (const chatId of chatIds) {
       this.abortChatRun(chatId);
     }
+    await discardClineChatSessions(chatIds);
     this.persistActiveChat();
     if (!archiveAgentInStore(this.store, agentId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2595,6 +2612,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!deleteAgentFromStore(this.store, agentId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.hydrateActiveChat();
     this.saveStore();
     if (this.store.screen === "archive") {
@@ -2645,6 +2663,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await discardClineChatSessions(ids);
     this.persistActiveChat();
     deleteAllArchivedAgentsFromStore(this.store);
+    retainClineChatSession(this.store.activeChatId);
     this.hydrateActiveChat();
     this.saveStore();
     this.setScreen("archive");
