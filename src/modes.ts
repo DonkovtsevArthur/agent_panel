@@ -11,7 +11,7 @@ export interface AgentModeDef {
   tools: ModeToolsPolicy;
   /**
    * Optional per-mode instructions stored in Settings for custom modes.
-   * Not injected into Cline turns (Cline owns the system prompt; Harbor may pass Settings `systemPrompt` only).
+   * Injected into the Cline system-prompt rules slot for that mode.
    */
   prompt?: string;
   /** Accent color for composer border + user bubbles (`#rgb` / `#rrggbb`). */

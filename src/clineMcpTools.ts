@@ -269,4 +269,24 @@ export function shouldNotifyFigmaNeedsConnect(userText: string): boolean {
   return status.state !== "connected";
 }
 
+/** Stable fingerprint of connected MCP tools — session restart when this changes. */
+export async function harborMcpToolFingerprint(
+  readonlyOnly: boolean
+): Promise<string> {
+  const mcp = getMcpManager();
+  if (!mcp) {
+    return "";
+  }
+  try {
+    const tools = await mcp.listOpenAiTools(readonlyOnly);
+    return tools
+      .map((tool) => String(tool.function?.name || "").trim())
+      .filter(Boolean)
+      .sort()
+      .join(",");
+  } catch {
+    return "";
+  }
+}
+
 export { messageHasFigmaUrl, parseFigmaUrl, qualifyToolName };

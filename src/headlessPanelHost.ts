@@ -6,6 +6,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { runAgentTurn } from "./agentLoop";
 import {
+  discardClineChatSession,
+  discardClineChatSessions,
+} from "./clineRuntime";
+import {
   getConfig,
   getContextWindow,
   getEnabledModels,
@@ -1070,6 +1074,10 @@ export class HeadlessPanelHost {
       return { ok: false };
     }
     const preferArchive = this.store.screen === "archive";
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (agent) {
+      await discardClineChatSessions(getAgentChatIds(agent));
+    }
     if (!deleteAgentFromStore(this.store, agentId)) {
       return { ok: false };
     }
@@ -1109,6 +1117,7 @@ export class HeadlessPanelHost {
       this.post({ type: "idle", chatId });
     }
     this.flushActiveChatToStore();
+    await discardClineChatSession(chatId);
     if (!deleteAgentBranch(this.store, agentId, chatId)) {
       return { ok: false };
     }
@@ -1682,6 +1691,7 @@ export class HeadlessPanelHost {
       reasoningEffort: msg.reasoningEffort,
       attachments,
       hideUser: true,
+      resetSession: true,
     });
   }
 
@@ -1725,6 +1735,7 @@ export class HeadlessPanelHost {
       reasoningEffort: msg.reasoningEffort,
       attachments: state.attachments,
       hideUser: true,
+      resetSession: true,
     });
   }
 
@@ -1735,6 +1746,7 @@ export class HeadlessPanelHost {
     reasoningEffort?: unknown;
     attachments?: unknown;
     hideUser?: unknown;
+    resetSession?: unknown;
   }): Promise<unknown> {
     const text = String(msg.text || "").trim();
     if (!text) {
@@ -1849,6 +1861,8 @@ export class HeadlessPanelHost {
         reasoningEffort: reasoningEffort || undefined,
         lastAgentEditedPaths:
           this.store.chats[runChatId]?.lastAgentEditedPaths || [],
+        chatId: runChatId,
+        resetSession: Boolean(msg.resetSession),
         callbacks: {
           onPhase: (phase, detail) => {
             postToRun({

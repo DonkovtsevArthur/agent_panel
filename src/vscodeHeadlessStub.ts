@@ -604,6 +604,11 @@ export const window = {
   activeTextEditor: undefined,
   visibleTextEditors: [],
   onDidChangeActiveTextEditor: () => ({ dispose: () => undefined }),
+  onDidChangeTextEditorSelection: () => ({ dispose: () => undefined }),
+};
+
+export const languages = {
+  getDiagnostics: () => [] as Array<[unknown, unknown[]]>,
 };
 
 export const commands = {

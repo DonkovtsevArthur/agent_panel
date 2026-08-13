@@ -11,6 +11,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Extension entry | `src/extension.ts` |
 | Webview host / UI messages | `src/agentPanelProvider.ts` |
 | Agent turn entry | `src/agentLoop.ts` → `runClineAgentTurn` (`src/clineRuntime.ts`) |
+| Turn context (editor/git/diagnostics) | `src/turnContext.ts` |
 | Cline fork (runtime source) | `vendor/cline/` — see `vendor/README.md` |
 | Cline CJS bundle | `scripts/bundle-cline.js` → `out/clineBundle.js` |
 | Harbor UI + ClineCore session host | `docs/cline-full-runtime-migration.md` |
@@ -54,10 +55,11 @@ After panel UI/logic changes: bump `version` in `package.json`, package with vsc
 
 All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` → `@cline/sdk` / fork in `vendor/cline`):
 
-- Host: `ClineCore.create({ backendMode: "local" })`; one Harbor chat turn = one Cline session (`interactive: false`).
-- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard.
+- Host: `ClineCore.create({ backendMode: "local" })`; one Harbor **chat** = one interactive Cline session (`interactive: true`, `core.send` on follow-ups). New session on regenerate/edit, mode/model/MCP fingerprint change, or workspace switch. Turns without `chatId` stay one-shot (`interactive: false`).
+- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard. Custom mode `prompt` is injected into the Cline rules slot.
 - Tools: Cline builtins via runtime-builder; Harbor MCP as `extraTools` (`disableMcpSettingsTools`). See `docs/cline-full-runtime-migration.md`.
-- Sub-agents: setting `agentPanel.subagents.enabled` (default on) → Cline `enableSpawnAgent: true` (`spawn_agent`) in **Agent, Plan, and Ask**, plus Harbor rules that tell the model to delegate independent parts via `spawn_agent`. When off: no tool and no rules. Children inherit the parent mode preset (Plan/Ask = read-focused + command-guard; Agent = act) and parent thinking/reasoning_effort (openai-compatible path); Harbor strips catalog `reasoning` capability so Anthropic-shaped thinking is not emitted. Harbor MCP is not passed to children. `enableAgentTeams: true` (multi-agent teams for complex tasks).
+- Turn context: each user prompt gets editor state (active file/cursor/selection/tabs + optional prefetch), git snapshot, IDE diagnostics, recently edited paths, and inlined `@` / file attachments (`src/turnContext.ts`, `buildInlinedAttachmentsPrompt`).
+- Sub-agents: setting `agentPanel.subagents.enabled` (default on) → Cline `enableSpawnAgent: true` (`spawn_agent`) in **Agent, Plan, and Ask**, plus Harbor rules that tell the model to delegate independent parts via `spawn_agent`. When off: no tool and no rules. Children inherit the parent mode preset (Plan/Ask = read-focused + command-guard; Agent = act) and parent thinking/reasoning_effort (openai-compatible path); Harbor strips catalog `reasoning` capability so Anthropic-shaped thinking is not emitted. Harbor MCP `extraTools` are concatenated onto child tools (`vendor/cline/.../spawn-tool.ts`). `enableAgentTeams: true` (multi-agent teams for complex tasks).
 - Parallel tool calls: setting `agentPanel.parallelToolCalls.enabled` (default on) → Cline `maxParallelToolCalls: 8` (`toolExecution: "parallel"`). Off → `1` (sequential).
 - Auto compact: setting `agentPanel.autoCompact.enabled` (default on) → Cline `compaction: { enabled: true, strategy: "agentic" }`. UI shows compaction step cards from notice events.
 - Model info: Harbor resolves each model's `contextWindow` (Settings → capability registry → default) and `maxOutputTokens` (incl. Claude `minimumOutputTokens`), and passes them to Cline as `knownModels[modelId]` + `maxTokensPerTurn` so auto-compact / output caps match the real model. Catalog capabilities stay `tools` (+ `images` when vision); do **not** advertise `reasoning` — that makes Cline emit Anthropic-shaped `thinking` on openai-compatible, which corporate LiteLLM/OpenRouter rejects (`streaming_error`). Reasoning still goes as OpenAI-style `reasoning_effort` via `thinking` + `reasoningEffort` on start.

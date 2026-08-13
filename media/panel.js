@@ -253,6 +253,7 @@
       searchResults: "Search results",
       taskPlaceholder: "Task for the agent... (@ for file)",
       add: "Add",
+      file: "File",
       image: "Image",
       send: "Send",
       stop: "Stop",
@@ -374,6 +375,7 @@
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
       attachImage: "Attach image",
+      attachFile: "Attach file",
       currentModelNoImages: "Current model does not support images",
       addMode: "+ Add mode",
       modelNoImages: "This model does not support images",
@@ -695,6 +697,7 @@
       searchResults: "Результаты поиска",
       taskPlaceholder: "Задача для агента... (@ — файл)",
       add: "Добавить",
+      file: "Файл",
       image: "Изображение",
       send: "Отправить",
       stop: "Остановить",
@@ -816,6 +819,7 @@
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
       attachImage: "Прикрепить изображение",
+      attachFile: "Прикрепить файл",
       currentModelNoImages: "Текущая модель не поддерживает изображения",
       addMode: "+ Добавить режим",
       modelNoImages: "Модель не поддерживает изображения",
@@ -1522,7 +1526,20 @@
     }
     promptEl.placeholder = t("taskPlaceholder");
     composerPlusBtn.title = composerPlusBtn.setAttribute("aria-label", t("add")) || t("add");
-    composerPlusMenu.querySelector("span:last-child").textContent = t("image");
+    composerPlusMenu.querySelectorAll(".composer-plus-item").forEach((item) => {
+      const action = item.getAttribute("data-action");
+      const label = item.querySelector("span:last-child");
+      if (!label) {
+        return;
+      }
+      if (action === "file") {
+        label.textContent = t("file");
+        item.title = t("attachFile");
+      } else if (action === "image") {
+        label.textContent = t("image");
+        item.title = t("attachImage");
+      }
+    });
     modeTrigger.title = t("mode");
     modelTrigger.title = t("model");
     modeLabel.textContent = t("agent");
@@ -12228,6 +12245,12 @@
     if (!composerPlusMenu) {
       return;
     }
+    const fileItem = composerPlusMenu.querySelector(
+      '.composer-plus-item[data-action="file"]'
+    );
+    if (fileItem) {
+      fileItem.title = t("attachFile");
+    }
     const imageItem = composerPlusMenu.querySelector(
       '.composer-plus-item[data-action="image"]'
     );
@@ -13307,7 +13330,9 @@
       event.stopPropagation();
       const action = item.getAttribute("data-action");
       closePlusMenu();
-      if (action === "image") {
+      if (action === "file") {
+        host.postMessage({ type: "pickAttachments" });
+      } else if (action === "image") {
         host.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });

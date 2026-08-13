@@ -203,6 +203,60 @@ export function fileMentionPathFromUri(
   return undefined;
 }
 
+/** Uri из explorer/command palette может прийти как Uri, UriComponents или путь. */
+function asUri(value: unknown): vscode.Uri | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value instanceof vscode.Uri) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    try {
+      return trimmed.includes("://")
+        ? vscode.Uri.parse(trimmed)
+        : vscode.Uri.file(trimmed);
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof value === "object") {
+    const rec = value as {
+      scheme?: unknown;
+      authority?: unknown;
+      path?: unknown;
+      query?: unknown;
+      fragment?: unknown;
+      fsPath?: unknown;
+    };
+    if (typeof rec.scheme === "string" && rec.scheme) {
+      try {
+        return vscode.Uri.from({
+          scheme: rec.scheme,
+          authority: typeof rec.authority === "string" ? rec.authority : "",
+          path: typeof rec.path === "string" ? rec.path : "",
+          query: typeof rec.query === "string" ? rec.query : "",
+          fragment: typeof rec.fragment === "string" ? rec.fragment : "",
+        });
+      } catch {
+        // fall through
+      }
+    }
+    if (typeof rec.fsPath === "string" && rec.fsPath) {
+      try {
+        return vscode.Uri.file(rec.fsPath);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 /**
  * Файлы для Harbor: с диска — как вложения (любой тип), untitled — как @mention.
  * `uri` / `uris` — из explorer/context; иначе — активный (или последний) редактор.
@@ -214,16 +268,20 @@ export function resolveFilesForHarbor(
   const candidates: vscode.Uri[] = [];
   if (Array.isArray(uris) && uris.length) {
     for (const item of uris) {
-      if (item instanceof vscode.Uri) {
-        candidates.push(item);
+      const parsed = asUri(item);
+      if (parsed) {
+        candidates.push(parsed);
       }
     }
-  } else if (uri instanceof vscode.Uri) {
-    candidates.push(uri);
   } else {
-    const editor = resolveEditor();
-    if (editor && !editor.document.isClosed) {
-      candidates.push(editor.document.uri);
+    const parsed = asUri(uri);
+    if (parsed) {
+      candidates.push(parsed);
+    } else {
+      const editor = resolveEditor();
+      if (editor && !editor.document.isClosed) {
+        candidates.push(editor.document.uri);
+      }
     }
   }
 

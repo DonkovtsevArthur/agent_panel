@@ -229,7 +229,10 @@ export function createSessionSpawnTool(
 					executors: toolExecutors,
 				})
 			: [];
-		return filterDisabledTools(tools);
+		// Harbor MCP (and any other host extraTools) — parent-only until this
+		// concat; children otherwise cannot call Figma / custom MCP servers.
+		const extras = Array.isArray(config.extraTools) ? config.extraTools : [];
+		return filterDisabledTools([...tools, ...extras]);
 	};
 
 	const overlay = buildSubagentConnectionOverlay(config);
