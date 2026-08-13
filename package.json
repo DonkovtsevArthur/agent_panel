@@ -353,7 +353,7 @@
         },
         "agentPanel.baseUrl": {
           "type": "string",
-          "default": "https://ai-platform.kube.severstal.severstalgroup.com/openai",
+          "default": "",
           "description": "%config.baseUrl.description%"
         },
         "agentPanel.apiKey": {
