@@ -387,6 +387,30 @@ export type HeadlessExtensionContext = {
   logUri: ReturnType<typeof fileUri>;
 };
 
+type StubPosition = { line: number; character: number };
+type StubRange = { start: StubPosition; end: StubPosition };
+type StubSelection = StubRange & {
+  active: StubPosition;
+  anchor: StubPosition;
+  isEmpty: boolean;
+};
+type StubDocument = {
+  uri: StubUri;
+  languageId: string;
+  isClosed: boolean;
+  lineCount: number;
+  getText: (range?: StubRange) => string;
+};
+type StubEditor = {
+  document: StubDocument;
+  selection: StubSelection;
+};
+type StubDiagnostic = {
+  severity: number;
+  message: string;
+  range: StubRange;
+};
+
 const state: {
   workspaceRoot: string;
   settings: HeadlessSettings;
@@ -395,12 +419,16 @@ const state: {
   configListeners: ConfigChangeListener[];
   openExternalHook?: (url: string) => void | Promise<void>;
   extensionContext?: HeadlessExtensionContext;
+  ideEditors: StubEditor[];
+  ideDiagnostics: Array<[StubUri, StubDiagnostic[]]>;
 } = {
   workspaceRoot: process.cwd(),
   settings: {},
   settingsPath: "",
   storageDir: "",
   configListeners: [],
+  ideEditors: [],
+  ideDiagnostics: [],
 };
 
 function fireConfigChange(section: string): void {
@@ -419,6 +447,141 @@ function fireConfigChange(section: string): void {
   }
 }
 
+function asInt(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
+}
+
+function sliceDocumentText(
+  text: string,
+  start: StubPosition,
+  end: StubPosition
+): string {
+  if (start.line === end.line && start.character === end.character) {
+    return "";
+  }
+  const lines = text.split("\n");
+  if (start.line === end.line) {
+    return (lines[start.line] || "").slice(start.character, end.character);
+  }
+  const parts: string[] = [(lines[start.line] || "").slice(start.character)];
+  for (let i = start.line + 1; i < end.line; i++) {
+    parts.push(lines[i] || "");
+  }
+  parts.push((lines[end.line] || "").slice(0, end.character));
+  return parts.join("\n");
+}
+
+function makeStubEditor(raw: Record<string, unknown>): StubEditor | undefined {
+  const fsPath = String(raw.fsPath || "").trim();
+  if (!fsPath) {
+    return undefined;
+  }
+  const text = String(raw.text || "");
+  const uri = fileUri(fsPath);
+  const cursor: StubPosition = {
+    line: asInt(raw.cursorLine),
+    character: asInt(raw.cursorCharacter),
+  };
+  const start: StubPosition = {
+    line: asInt(raw.selectionStartLine, cursor.line),
+    character: asInt(raw.selectionStartCharacter, cursor.character),
+  };
+  const end: StubPosition = {
+    line: asInt(raw.selectionEndLine, cursor.line),
+    character: asInt(raw.selectionEndCharacter, cursor.character),
+  };
+  const isEmpty = raw.isEmptySelection !== false && start.line === end.line && start.character === end.character;
+  const selectedText = String(raw.selectedText || "");
+  const selection: StubSelection = {
+    start,
+    end,
+    active: cursor,
+    anchor: isEmpty ? cursor : start,
+    isEmpty,
+  };
+  const lineCount = Math.max(1, asInt(raw.lineCount, text.split("\n").length));
+  return {
+    document: {
+      uri,
+      languageId: String(raw.languageId || "plaintext"),
+      isClosed: false,
+      lineCount,
+      getText: (range) => {
+        if (!range) {
+          return text;
+        }
+        const sliced = sliceDocumentText(text, range.start, range.end);
+        if (sliced) {
+          return sliced;
+        }
+        if (
+          selectedText &&
+          range.start.line === start.line &&
+          range.start.character === start.character &&
+          range.end.line === end.line &&
+          range.end.character === end.character
+        ) {
+          return selectedText;
+        }
+        return sliced;
+      },
+    },
+    selection,
+  };
+}
+
+function applyIdeContextSnapshot(raw: unknown): void {
+  state.ideEditors = [];
+  state.ideDiagnostics = [];
+  if (!raw || typeof raw !== "object") {
+    return;
+  }
+  const rec = raw as { editors?: unknown; diagnostics?: unknown };
+  const editors: StubEditor[] = [];
+  if (Array.isArray(rec.editors)) {
+    for (const item of rec.editors) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const editor = makeStubEditor(item as Record<string, unknown>);
+      if (editor) {
+        editors.push(editor);
+      }
+    }
+  }
+  state.ideEditors = editors;
+
+  const grouped = new Map<string, { uri: StubUri; diags: StubDiagnostic[] }>();
+  if (Array.isArray(rec.diagnostics)) {
+    for (const item of rec.diagnostics) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const d = item as Record<string, unknown>;
+      const fsPath = String(d.fsPath || "").trim();
+      const message = String(d.message || "").trim();
+      if (!fsPath || !message) {
+        continue;
+      }
+      const line = asInt(d.line);
+      const character = asInt(d.character);
+      const pos: StubPosition = { line, character };
+      let bucket = grouped.get(fsPath);
+      if (!bucket) {
+        bucket = { uri: fileUri(fsPath), diags: [] };
+        grouped.set(fsPath, bucket);
+      }
+      bucket.diags.push({
+        severity: asInt(d.severity),
+        message,
+        range: { start: pos, end: pos },
+      });
+    }
+  }
+  state.ideDiagnostics = [...grouped.values()].map((b) => [b.uri, b.diags]);
+}
+
 export const HarborHeadless = {
   install(options: {
     workspaceRoot: string;
@@ -434,6 +597,10 @@ export const HarborHeadless = {
       path.join(state.workspaceRoot, ".idea", "harbor");
     fs.mkdirSync(state.storageDir, { recursive: true });
     state.extensionContext = undefined;
+  },
+  /** JetBrains host snapshot so turnContext/editorContext see the open editor. */
+  applyIdeContext(raw: unknown): void {
+    applyIdeContextSnapshot(raw);
   },
   getSettings(): HeadlessSettings {
     return state.settings;
@@ -601,14 +768,28 @@ export const window = {
     dispose: () => undefined,
     text: "",
   }),
-  activeTextEditor: undefined,
-  visibleTextEditors: [],
+  get activeTextEditor(): StubEditor | undefined {
+    return state.ideEditors[0];
+  },
+  get visibleTextEditors(): StubEditor[] {
+    return state.ideEditors;
+  },
   onDidChangeActiveTextEditor: () => ({ dispose: () => undefined }),
   onDidChangeTextEditorSelection: () => ({ dispose: () => undefined }),
 };
 
 export const languages = {
-  getDiagnostics: () => [] as Array<[unknown, unknown[]]>,
+  getDiagnostics: (resource?: { fsPath?: string; toString?: () => string }) => {
+    if (!resource) {
+      return state.ideDiagnostics;
+    }
+    const fsPath = String(resource.fsPath || "").trim();
+    const key = resource.toString?.() || "";
+    const hit = state.ideDiagnostics.find(
+      ([uri]) => uri.fsPath === fsPath || uri.toString() === key
+    );
+    return hit ? hit[1] : [];
+  },
 };
 
 export const commands = {
@@ -641,6 +822,7 @@ export default {
   workspace,
   env,
   window,
+  languages,
   commands,
   extensions,
   ProgressLocation,
