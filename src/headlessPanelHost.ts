@@ -8,6 +8,8 @@ import { runAgentTurn, type AgentPhase } from "./agentLoop";
 import {
   discardClineChatSession,
   discardClineChatSessions,
+  onClineActiveChatChanged,
+  retainClineChatSession,
   restoreClineChatCheckpoint,
 } from "./clineRuntime";
 import {

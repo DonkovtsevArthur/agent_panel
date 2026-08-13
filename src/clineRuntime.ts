@@ -165,6 +165,31 @@ type LiveClineChat = {
 const liveClineByChatId = new Map<string, LiveClineChat>();
 
 /**
+ * Unused interactive sessions are stopped after this idle so RSS can drop.
+ * Follow-up in that chat starts a new Cline session from Harbor history.
+ * Checkpoint restore needs a live session — it fails until the next turn.
+ */
+export const CLINE_SESSION_IDLE_EVICT_MS = 10 * 60 * 1000;
+
+const idleEvictTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearIdleEvictTimer(chatId: string): void {
+  const timer = idleEvictTimers.get(chatId);
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  idleEvictTimers.delete(chatId);
+}
+
+function clearAllIdleEvictTimers(): void {
+  for (const timer of idleEvictTimers.values()) {
+    clearTimeout(timer);
+  }
+  idleEvictTimers.clear();
+}
+
+/**
  * Subset of Cline's ModelInfo (vendor/.../shared/src/llms/model-info.ts) that
  * Harbor can supply from Settings + the capability registry. Lets Cline budget
  * auto-compact trigger/target tokens and cap output correctly per model.
@@ -1319,6 +1344,7 @@ export async function discardClineChatSession(
   if (!id) {
     return;
   }
+  clearIdleEvictTimer(id);
   const live = liveClineByChatId.get(id);
   if (!live) {
     return;
@@ -1336,8 +1362,64 @@ export async function discardClineChatSessions(
 }
 
 export async function discardAllClineChatSessions(): Promise<void> {
+  clearAllIdleEvictTimers();
   const ids = [...liveClineByChatId.keys()];
   await discardClineChatSessions(ids);
+}
+
+/** Keep the live session (chat is viewed or about to run). */
+export function retainClineChatSession(chatId: string | undefined): void {
+  const id = String(chatId || "").trim();
+  if (!id) {
+    return;
+  }
+  clearIdleEvictTimer(id);
+}
+
+/**
+ * Stop the Cline session after idle if the chat is not retained again.
+ * No-op when there is no live session.
+ */
+export function scheduleClineChatIdleEvict(
+  chatId: string | undefined,
+  delayMs: number = CLINE_SESSION_IDLE_EVICT_MS
+): void {
+  const id = String(chatId || "").trim();
+  if (!id || !liveClineByChatId.has(id)) {
+    return;
+  }
+  clearIdleEvictTimer(id);
+  const wait = Math.max(0, Math.floor(delayMs));
+  const timer = setTimeout(() => {
+    idleEvictTimers.delete(id);
+    void discardClineChatSession(id);
+  }, wait);
+  const nodeTimer = timer as NodeJS.Timeout;
+  if (typeof nodeTimer.unref === "function") {
+    nodeTimer.unref();
+  }
+  idleEvictTimers.set(id, timer);
+}
+
+/**
+ * User left `previousChatId` for `nextChatId`. Idle-evict the previous
+ * session unless a turn is still running there (host schedules after the run).
+ */
+export function onClineActiveChatChanged(input: {
+  previousChatId?: string;
+  nextChatId?: string;
+  previousStillRunning?: boolean;
+}): void {
+  const prev = String(input.previousChatId || "").trim();
+  const next = String(input.nextChatId || "").trim();
+  if (prev && prev !== next) {
+    if (!input.previousStillRunning) {
+      scheduleClineChatIdleEvict(prev);
+    }
+  }
+  if (next) {
+    retainClineChatSession(next);
+  }
 }
 
 /** Restore workspace files from a Cline checkpoint for this Harbor chat. */
@@ -1346,6 +1428,7 @@ export async function restoreClineChatCheckpoint(
   options?: { checkpointRunCount?: number }
 ): Promise<{ ok: boolean; error?: string }> {
   const id = String(chatId || "").trim();
+  retainClineChatSession(id);
   const live = id ? liveClineByChatId.get(id) : undefined;
   if (!live?.sessionId) {
     return { ok: false, error: "No live session checkpoint" };

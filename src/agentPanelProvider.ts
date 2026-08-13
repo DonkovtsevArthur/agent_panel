@@ -35,8 +35,10 @@ import {
   discardAllClineChatSessions,
   discardClineChatSession,
   discardClineChatSessions,
-  restoreClineChatCheckpoint,
   disposeClineRuntime,
+  onClineActiveChatChanged,
+  retainClineChatSession,
+  restoreClineChatCheckpoint,
 } from "./clineRuntime";
 import { reloadEditorsAfterCheckpointRestore } from "./checkpointEditors";
 import {
@@ -637,6 +639,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const created = createEmptyAgent(model);
     this.persistActiveChat();
+    this.syncClineSessionForChatSwitch(created.chat.id);
     this.store.agents.unshift(created.agent);
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
@@ -797,6 +800,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         enabled[0]?.id ||
         "";
       const created = createEmptyAgent(model);
+      this.syncClineSessionForChatSwitch(created.chat.id);
       this.store.agents.unshift(created.agent);
       this.store.chats[created.chat.id] = created.chat;
       this.store.activeAgentId = created.agent.id;
@@ -869,6 +873,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             history: this.history,
             uiMessages: this.uiMessages.slice(-200),
           }),
+    });
+  }
+
+  /**
+   * Call before changing `store.activeChatId`. Idle-evicts the previous
+   * Cline session unless a turn is still running there.
+   */
+  private syncClineSessionForChatSwitch(nextChatId: string): void {
+    onClineActiveChatChanged({
+      previousChatId: this.store.activeChatId,
+      nextChatId,
+      previousStillRunning: this.isChatRunning(this.store.activeChatId),
     });
   }
 
@@ -1286,6 +1302,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     workspaceGeneration: number;
   } {
     this.abortChatRun(chatId);
+    retainClineChatSession(chatId);
     const controller = new AbortController();
     const token = this.nextRunToken++;
     this.chatRuns.set(chatId, controller);
@@ -1346,6 +1363,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.chatRuns.delete(chatId);
     this.chatRunTokens.delete(chatId);
+    onClineActiveChatChanged({
+      previousChatId: chatId,
+      nextChatId: this.store.activeChatId,
+    });
   }
 
   /** Persist run UI/history without requiring !aborted (final error / stop). */
