@@ -3356,80 +3356,417 @@
   }
 
   /**
-   * OSR JCEF: native <select> gets :focus but the OS popup never appears.
-   * Replace open with an in-page listbox (JetBrains host only).
-   *
-   * Important: do not rely on `click` after `pointerdown.preventDefault` —
-   * OSR often never synthesizes click. Select on pointerdown instead.
+   * Settings <select> → composer mode-picker chrome (trigger + in-page listbox).
+   * Native select stays in the DOM (hidden) so existing value/change wiring works.
+   * JetBrains OSR: pick on pointerdown — click is often never synthesized.
    */
   function installHarborSelectPolyfill() {
-    if (!harborHostAvailable()) {
-      return;
-    }
-    let menuEl = null;
-    let activeSelect = null;
+    let activePicker = null;
+    let nativeMenuEl = null;
+    let nativeSelect = null;
     let pointerHandled = false;
+    let suppressDismiss = false;
+    const pickerMenus = new WeakMap();
 
-    function closeHarborSelectMenu() {
-      if (menuEl) {
-        menuEl.remove();
-        menuEl = null;
-      }
-      if (activeSelect) {
-        activeSelect.classList.remove("harbor-select-open");
-      }
-      activeSelect = null;
+    function armDismissGuard() {
+      suppressDismiss = true;
+      const clear = () => {
+        suppressDismiss = false;
+        document.removeEventListener("pointerup", clear, true);
+        document.removeEventListener("mouseup", clear, true);
+      };
+      document.addEventListener("pointerup", clear, true);
+      document.addEventListener("mouseup", clear, true);
+      setTimeout(clear, 400);
     }
 
-    function applyOption(select, value) {
+    function demoteFieldLabel(select) {
+      const field = select.closest("label.settings-field");
+      if (!field || field.tagName !== "LABEL") {
+        return;
+      }
+      const div = document.createElement("div");
+      div.className = field.className;
+      Array.from(field.attributes).forEach((attr) => {
+        if (attr.name === "class" || attr.name === "for") {
+          return;
+        }
+        div.setAttribute(attr.name, attr.value);
+      });
+      while (field.firstChild) {
+        div.appendChild(field.firstChild);
+      }
+      field.replaceWith(div);
+    }
+    const valueDesc = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value"
+    );
+    const indexDesc = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "selectedIndex"
+    );
+
+    function selectedOptionLabel(select) {
+      const opt =
+        (select && select.options && select.options[select.selectedIndex]) ||
+        null;
+      if (!opt) {
+        return "";
+      }
+      return String(opt.label || opt.textContent || opt.value || "").trim();
+    }
+
+    function syncPicker(select) {
+      const picker = select && select.closest(".settings-select-picker");
+      if (!picker) {
+        return;
+      }
+      const trigger = picker.querySelector(".model-trigger");
+      const label = picker.querySelector(".model-label");
+      if (label) {
+        label.textContent = selectedOptionLabel(select) || "\u00a0";
+      }
+      if (trigger) {
+        trigger.disabled = Boolean(select.disabled);
+        trigger.title = selectedOptionLabel(select);
+      }
+      if (select.disabled && picker.classList.contains("is-open")) {
+        closePicker(picker);
+      }
+    }
+
+    function patchSelectAccessors(select) {
+      if (!valueDesc || !valueDesc.get || !valueDesc.set) {
+        return;
+      }
+      Object.defineProperty(select, "value", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return valueDesc.get.call(this);
+        },
+        set(next) {
+          valueDesc.set.call(this, next);
+          syncPicker(this);
+        },
+      });
+      if (indexDesc && indexDesc.get && indexDesc.set) {
+        Object.defineProperty(select, "selectedIndex", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return indexDesc.get.call(this);
+          },
+          set(next) {
+            indexDesc.set.call(this, next);
+            syncPicker(this);
+          },
+        });
+      }
+    }
+
+    function applySelectValue(select, value) {
       if (!select) {
         return;
       }
       const previous = select.value;
       const wanted = value == null ? "" : String(value);
-      let matched = false;
-      for (let i = 0; i < select.options.length; i++) {
-        const opt = select.options[i];
-        const isMatch = String(opt.value) === wanted;
-        opt.selected = isMatch;
-        if (isMatch) {
-          select.selectedIndex = i;
-          matched = true;
-        }
-      }
-      if (!matched) {
-        select.value = wanted;
-      }
-      // OSR sometimes keeps stale label until a forced reflow.
-      select.blur();
-      try {
-        select.focus({ preventScroll: true });
-      } catch {
-        select.focus();
-      }
+      select.value = wanted;
       if (select.value !== previous || wanted !== previous) {
         select.dispatchEvent(new Event("input", { bubbles: true }));
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
     }
 
-    function openHarborSelectMenu(select) {
-      closeHarborSelectMenu();
+    function menuForPicker(picker) {
+      if (!picker) {
+        return null;
+      }
+      return (
+        pickerMenus.get(picker) ||
+        picker.querySelector(".settings-select-menu")
+      );
+    }
+
+    function closePicker(picker) {
+      if (!picker) {
+        return;
+      }
+      const trigger = picker.querySelector(".model-trigger");
+      const menu = menuForPicker(picker);
+      picker.classList.remove("is-open");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+      if (menu) {
+        menu.hidden = true;
+        if (typeof resetModelMenuPlacement === "function") {
+          resetModelMenuPlacement(picker, menu);
+        }
+      }
+      if (activePicker === picker) {
+        activePicker = null;
+      }
+    }
+
+    function closeActivePicker() {
+      if (activePicker) {
+        closePicker(activePicker);
+      }
+      closeNativeHarborSelectMenu();
+    }
+
+    function fillPickerMenu(select, menu) {
+      menu.innerHTML = "";
+      const options = Array.from(select.options || []);
+      for (const opt of options) {
+        if (opt.hidden || (opt.disabled && opt.hidden)) {
+          continue;
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const isActive = opt.selected || opt.value === select.value;
+        btn.className = "model-option" + (isActive ? " is-active" : "");
+        btn.setAttribute("role", "option");
+        btn.setAttribute("data-harbor-value", opt.value);
+        btn.dataset.value = opt.value;
+        if (opt.disabled) {
+          btn.disabled = true;
+        }
+        if (isActive) {
+          btn.setAttribute("aria-selected", "true");
+        }
+        const label = document.createElement("span");
+        label.className = "model-option-label";
+        label.textContent = opt.label || opt.textContent || opt.value || "";
+        btn.appendChild(label);
+        if (isActive) {
+          const check = document.createElement("span");
+          check.className = "model-check";
+          check.innerHTML = CHECK_ICON;
+          btn.appendChild(check);
+        }
+        menu.appendChild(btn);
+      }
+    }
+
+    function placeSettingsMenu(picker, menu, trigger) {
+      if (typeof placeModelMenu !== "function" || !picker || !menu || !trigger) {
+        return;
+      }
+      placeModelMenu(picker, menu, document.documentElement);
+      const triggerRect = trigger.getBoundingClientRect();
+      const width = Math.round(triggerRect.width);
+      menu.style.minWidth = `${width}px`;
+      menu.style.width = `${width}px`;
+      const maxLeft = window.innerWidth - width - 8;
+      let left = triggerRect.left;
+      if (left > maxLeft) {
+        left = Math.max(8, maxLeft);
+      }
+      if (left < 8) {
+        left = 8;
+      }
+      menu.style.left = `${Math.round(left)}px`;
+    }
+
+    function openPicker(picker) {
+      const select = picker.querySelector("select");
+      const trigger = picker.querySelector(".model-trigger");
+      const menu = menuForPicker(picker);
+      if (!select || !trigger || !menu || select.disabled) {
+        return;
+      }
+      if (activePicker && activePicker !== picker) {
+        closePicker(activePicker);
+      }
+      fillPickerMenu(select, menu);
+      picker.classList.add("is-open");
+      trigger.setAttribute("aria-expanded", "true");
+      menu.hidden = false;
+      activePicker = picker;
+      armDismissGuard();
+      placeSettingsMenu(picker, menu, trigger);
+      forceHarborUiRepaint();
+    }
+
+    function togglePicker(picker) {
+      if (!picker) {
+        return;
+      }
+      if (picker.classList.contains("is-open")) {
+        closePicker(picker);
+      } else {
+        openPicker(picker);
+      }
+    }
+
+    function wrapSelect(select) {
+      if (!select || select.closest(".settings-select-picker")) {
+        return;
+      }
+      demoteFieldLabel(select);
+      const picker = document.createElement("div");
+      picker.className = "model-picker settings-select-picker";
+      picker.dataset.selectId = select.id || `select-${Math.random().toString(36).slice(2, 9)}`;
+
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "model-trigger";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      const field = select.closest(".settings-field");
+      const fieldLabel = field && field.querySelector(".settings-label");
+      if (fieldLabel && fieldLabel.textContent) {
+        trigger.setAttribute("aria-label", fieldLabel.textContent.trim());
+      }
+
+      const label = document.createElement("span");
+      label.className = "model-label";
+
+      const chevron = document.createElement("span");
+      chevron.className = "material-symbols-outlined model-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.textContent = "expand_more";
+
+      trigger.appendChild(label);
+      trigger.appendChild(chevron);
+
+      const menu = document.createElement("div");
+      menu.className = "model-menu settings-select-menu";
+      menu.setAttribute("role", "listbox");
+      menu.dataset.selectId = picker.dataset.selectId;
+      menu.hidden = true;
+
+      select.classList.add("settings-select-native");
+      select.setAttribute("tabindex", "-1");
+      select.setAttribute("aria-hidden", "true");
+
+      const parent = select.parentNode;
+      parent.insertBefore(picker, select);
+      picker.appendChild(trigger);
+      picker.appendChild(select);
+      picker.appendChild(menu);
+      pickerMenus.set(picker, menu);
+
+      patchSelectAccessors(select);
+      syncPicker(select);
+
+      const observer = new MutationObserver(() => {
+        syncPicker(select);
+        if (picker.classList.contains("is-open")) {
+          const liveMenu = menuForPicker(picker);
+          if (liveMenu) {
+            fillPickerMenu(select, liveMenu);
+            placeSettingsMenu(picker, liveMenu, trigger);
+          }
+        }
+      });
+      observer.observe(select, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["disabled", "hidden"],
+        characterData: true,
+      });
+      select.addEventListener("change", () => syncPicker(select));
+
+      let triggerPointerHandled = false;
+      trigger.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        triggerPointerHandled = true;
+        event.preventDefault();
+        event.stopPropagation();
+        togglePicker(picker);
+        setTimeout(() => {
+          triggerPointerHandled = false;
+        }, 0);
+      });
+      trigger.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (triggerPointerHandled || event.button !== 0) {
+          return;
+        }
+        togglePicker(picker);
+      });
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      trigger.addEventListener("keydown", (event) => {
+        if (
+          event.key === "Enter" ||
+          event.key === " " ||
+          event.key === "ArrowDown"
+        ) {
+          event.preventDefault();
+          openPicker(picker);
+        } else if (event.key === "Escape" && picker.classList.contains("is-open")) {
+          event.preventDefault();
+          closePicker(picker);
+        }
+      });
+
+      const onMenuOption = (event) => {
+        const option = event.target && event.target.closest
+          ? event.target.closest(".model-option")
+          : null;
+        if (!option || !menu.contains(option) || option.disabled) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const value =
+          option.getAttribute("data-harbor-value") != null
+            ? option.getAttribute("data-harbor-value")
+            : option.dataset.value !== undefined
+              ? option.dataset.value
+              : "";
+        applySelectValue(select, value);
+        closePicker(picker);
+        forceHarborUiRepaint();
+      };
+      menu.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        onMenuOption(event);
+      });
+      menu.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      menu.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
+
+    document.querySelectorAll("select.settings-input").forEach(wrapSelect);
+
+    function closeNativeHarborSelectMenu() {
+      if (nativeMenuEl) {
+        nativeMenuEl.remove();
+        nativeMenuEl = null;
+      }
+      if (nativeSelect) {
+        nativeSelect.classList.remove("harbor-select-open");
+      }
+      nativeSelect = null;
+    }
+
+    function openNativeHarborSelectMenu(select) {
+      closeNativeHarborSelectMenu();
       if (!select || select.disabled) {
         return;
       }
-      activeSelect = select;
+      nativeSelect = select;
       select.classList.add("harbor-select-open");
-      try {
-        select.focus({ preventScroll: true });
-      } catch {
-        select.focus();
-      }
-
-      menuEl = document.createElement("div");
-      menuEl.className = "harbor-select-menu";
-      menuEl.setAttribute("role", "listbox");
-
+      nativeMenuEl = document.createElement("div");
+      nativeMenuEl.className = "harbor-select-menu";
+      nativeMenuEl.setAttribute("role", "listbox");
       const options = Array.from(select.options || []);
       for (const opt of options) {
         if (opt.disabled && opt.hidden) {
@@ -3439,7 +3776,6 @@
         btn.type = "button";
         btn.className = "harbor-select-option";
         btn.setAttribute("role", "option");
-        // data-value is unreliable for "" — keep explicit attribute.
         btn.setAttribute("data-harbor-value", opt.value);
         btn.dataset.value = opt.value;
         if (opt.selected || opt.value === select.value) {
@@ -3447,35 +3783,34 @@
           btn.setAttribute("aria-selected", "true");
         }
         btn.textContent = opt.label || opt.textContent || opt.value || "";
-        menuEl.appendChild(btn);
+        nativeMenuEl.appendChild(btn);
       }
-
-      document.body.appendChild(menuEl);
+      document.body.appendChild(nativeMenuEl);
       const rect = select.getBoundingClientRect();
       const maxH = Math.min(280, Math.max(120, window.innerHeight - 24));
-      menuEl.style.maxHeight = `${maxH}px`;
+      nativeMenuEl.style.maxHeight = `${maxH}px`;
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const spaceAbove = rect.top - 8;
       const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
       const width = Math.max(rect.width, 180);
-      menuEl.style.minWidth = `${Math.min(width, window.innerWidth - 16)}px`;
-      menuEl.style.left = `${Math.max(
+      nativeMenuEl.style.minWidth = `${Math.min(width, window.innerWidth - 16)}px`;
+      nativeMenuEl.style.left = `${Math.max(
         8,
         Math.min(rect.left, window.innerWidth - width - 8)
       )}px`;
       if (openUp) {
-        menuEl.classList.add("opens-up");
-        menuEl.style.bottom = `${Math.max(
+        nativeMenuEl.classList.add("opens-up");
+        nativeMenuEl.style.bottom = `${Math.max(
           8,
           window.innerHeight - rect.top + 4
         )}px`;
-        menuEl.style.top = "auto";
+        nativeMenuEl.style.top = "auto";
       } else {
-        menuEl.style.top = `${Math.min(
+        nativeMenuEl.style.top = `${Math.min(
           rect.bottom + 4,
           window.innerHeight - 40
         )}px`;
-        menuEl.style.bottom = "auto";
+        nativeMenuEl.style.bottom = "auto";
       }
       forceHarborUiRepaint();
     }
@@ -3486,44 +3821,71 @@
         return;
       }
 
-      // Pick option first (capture phase) — don't wait for click.
-      const option = target.closest(".harbor-select-option");
-      if (option && menuEl && menuEl.contains(option)) {
+      const pickerOption = target.closest(
+        ".settings-select-menu .model-option"
+      );
+      if (pickerOption) {
+        return;
+      }
+      if (target.closest(".settings-select-menu")) {
+        event.stopPropagation();
+        return;
+      }
+      if (target.closest(".settings-select-picker .model-trigger")) {
+        return;
+      }
+      if (target.closest(".settings-field > .settings-label")) {
+        return;
+      }
+
+      const nativeOption = target.closest(".harbor-select-option");
+      if (nativeOption && nativeMenuEl && nativeMenuEl.contains(nativeOption)) {
         event.preventDefault();
         event.stopPropagation();
-        const select = activeSelect;
+        const select = nativeSelect;
         const value =
-          option.getAttribute("data-harbor-value") != null
-            ? option.getAttribute("data-harbor-value")
-            : option.dataset.value !== undefined
-              ? option.dataset.value
+          nativeOption.getAttribute("data-harbor-value") != null
+            ? nativeOption.getAttribute("data-harbor-value")
+            : nativeOption.dataset.value !== undefined
+              ? nativeOption.dataset.value
               : "";
-        applyOption(select, value);
-        closeHarborSelectMenu();
+        applySelectValue(select, value);
+        closeNativeHarborSelectMenu();
         forceHarborUiRepaint();
         return;
       }
 
-      if (menuEl && menuEl.contains(target)) {
-        // Scrollbar / padding inside menu — keep open.
+      if (nativeMenuEl && nativeMenuEl.contains(target)) {
         event.stopPropagation();
         return;
       }
 
       const pathSelect = target.closest("select");
-      if (pathSelect) {
+      if (
+        pathSelect &&
+        harborHostAvailable() &&
+        !pathSelect.closest(".settings-select-picker")
+      ) {
         event.preventDefault();
         event.stopPropagation();
-        if (activeSelect === pathSelect && menuEl) {
-          closeHarborSelectMenu();
+        if (nativeSelect === pathSelect && nativeMenuEl) {
+          closeNativeHarborSelectMenu();
         } else {
-          openHarborSelectMenu(pathSelect);
+          closeActivePicker();
+          openNativeHarborSelectMenu(pathSelect);
         }
         return;
       }
 
-      if (menuEl) {
-        closeHarborSelectMenu();
+      if (
+        !suppressDismiss &&
+        activePicker &&
+        !target.closest(".settings-select-picker")
+      ) {
+        closePicker(activePicker);
+      }
+      if (nativeMenuEl) {
+        closeNativeHarborSelectMenu();
       }
     };
 
@@ -3551,35 +3913,44 @@
     document.addEventListener(
       "keydown",
       (event) => {
-        if (event.key === "Escape" && menuEl) {
-          closeHarborSelectMenu();
+        if (event.key === "Escape") {
+          closeActivePicker();
           return;
         }
         const el = document.activeElement;
         if (
+          harborHostAvailable() &&
           el &&
           el.tagName === "SELECT" &&
+          !el.closest(".settings-select-picker") &&
           (event.key === "Enter" ||
             event.key === " " ||
             event.key === "ArrowDown")
         ) {
           event.preventDefault();
-          openHarborSelectMenu(el);
+          openNativeHarborSelectMenu(el);
         }
       },
       true
     );
-    window.addEventListener("resize", closeHarborSelectMenu);
+    window.addEventListener("resize", closeActivePicker);
     document.addEventListener(
       "scroll",
       (event) => {
-        if (!menuEl) {
+        if (suppressDismiss || (!activePicker && !nativeMenuEl)) {
           return;
         }
-        if (event.target === menuEl || menuEl.contains(event.target)) {
+        const scrolled = event.target;
+        if (nativeMenuEl && (scrolled === nativeMenuEl || nativeMenuEl.contains(scrolled))) {
           return;
         }
-        closeHarborSelectMenu();
+        if (activePicker) {
+          const menu = menuForPicker(activePicker);
+          if (menu && (scrolled === menu || menu.contains(scrolled))) {
+            return;
+          }
+        }
+        closeActivePicker();
       },
       true
     );
