@@ -19,8 +19,10 @@ import {
 } from "./modelCapabilities";
 import {
   appendSubagentsRuntimeNudge,
+  appendVisionInspectRuntimeNudge,
   harborDefaultRulesForLanguage,
   harborSubagentsRulesForLanguage,
+  harborVisionInspectRulesForLanguage,
   isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
@@ -64,6 +66,8 @@ import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { withTurnImages } from "./turnImageInject";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
+import { withInspectableImages } from "./inspectImagesContext";
+import { createInspectImagesTool } from "./inspectImagesTool";
 import {
   harborClineToolPolicies,
   isToolsAutoApproveEnabled,
@@ -368,13 +372,21 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
           const priorExtra = Array.isArray(input.config.extraTools)
             ? (input.config.extraTools as unknown[])
             : [];
+          const inspectImages = createInspectImagesTool(
+            bundle.createTool,
+            plannerModelId
+          );
           return {
             ...input,
             config: {
               ...input.config,
               systemPrompt,
               disableMcpSettingsTools: true,
-              extraTools: [...priorExtra, ...mcp.tools],
+              extraTools: [
+                ...priorExtra,
+                ...(inspectImages ? [inspectImages] : []),
+                ...mcp.tools,
+              ],
             },
           };
         },
@@ -734,7 +746,7 @@ async function collectTurnImageDataUrls(
   current: MessageAttachment[] | undefined,
   history: ChatMessage[],
   storageUri: vscode.Uri | undefined
-): Promise<{ urls: string[]; fromHistory: number }> {
+): Promise<{ urls: string[]; fromCurrent: number; fromHistory: number }> {
   const urls: string[] = [];
   const seen = new Set<string>();
   for (const att of current || []) {
@@ -779,13 +791,24 @@ async function collectTurnImageDataUrls(
       );
     }
   }
-  return { urls, fromHistory: Math.max(0, urls.length - fromCurrent) };
+  return {
+    urls,
+    fromCurrent,
+    fromHistory: Math.max(0, urls.length - fromCurrent),
+  };
 }
 
 function historyVisionNudge(lang: "en" | "ru"): string {
   return lang === "ru"
     ? "К этому сообщению снова приложены изображения из более ранних реплик чата. Если вопрос про картинку — смотри их, не выдумывай другую сцену."
     : "Images from earlier in this conversation are attached again. If the question refers to a picture, use those images; do not invent a different scene.";
+}
+
+/** Follow-up like «что на скрине слева?» — not «какая версия у проекта». */
+function userQuestionRefersToPriorImages(text: string): boolean {
+  return /картинк|изображен|скрин(?:шот)?|вложен|макет|на фото|это фото|аттач|attachments?|screenshots?|mockups?|\bimages?\b|\bpictures?\b|\bphotos?\b|\bdiagrams?\b/i.test(
+    String(text || "")
+  );
 }
 
 const HISTORY_VISION_NUDGE_PREFIX =
@@ -1582,6 +1605,9 @@ export async function runClineAgentTurn(options: {
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
+    resolveModelSupportsVision(options.model)
+      ? ""
+      : harborVisionInspectRulesForLanguage(uiLang),
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
@@ -1958,10 +1984,9 @@ export async function runClineAgentTurn(options: {
     options.history,
     options.storageUri
   );
+  const currentImageUrls = imageBundle.urls.slice(0, imageBundle.fromCurrent);
+  const currentHasImage = currentImageUrls.length > 0;
   let userImages = imageBundle.urls;
-  const currentHasImage = (options.attachments || []).some((att) =>
-    isImageAttachmentLike(att)
-  );
   const chatSeesImages = resolveModelSupportsVision(options.model);
 
   let userPrompt = String(options.userText || "").trim();
@@ -1974,8 +1999,9 @@ export async function runClineAgentTurn(options: {
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
+  // Do not skip IDE context just because an earlier turn had a screenshot.
   const turnContext =
-    userImages.length > 0
+    currentHasImage
       ? ""
       : await buildTurnContextBlock({
           skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
@@ -1989,41 +2015,52 @@ export async function runClineAgentTurn(options: {
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
   }
-  if (userImages.length && !chatSeesImages) {
-    emitStep(callbacks, {
-      stepId: "vision-helper",
-      kind: "tool",
-      name: "vision",
-      status: "running",
-      argsPreview: options.model,
-    });
-    try {
-      const helper = await describeChatImagesForMainModel({
-        imageDataUrls: userImages,
-        userQuestion: String(options.userText || "").trim(),
-        chatModelId: options.model,
-        signal: options.signal,
-      });
+  if (!chatSeesImages) {
+    const describeHistoryFollowUp =
+      !currentHasImage &&
+      imageBundle.fromHistory > 0 &&
+      userQuestionRefersToPriorImages(String(options.userText || ""));
+    const describeUrls = currentHasImage
+      ? currentImageUrls
+      : describeHistoryFollowUp
+        ? imageBundle.urls
+        : [];
+    if (describeUrls.length) {
       emitStep(callbacks, {
         stepId: "vision-helper",
         kind: "tool",
         name: "vision",
-        status: helper.text ? "done" : "error",
-        argsPreview: helper.visionModelId || options.model,
-        resultPreview: (helper.text || "").slice(0, 400),
+        status: "running",
+        argsPreview: options.model,
       });
-      if (helper.text) {
-        userPrompt = `${helper.text}\n\n${userPrompt}`;
+      try {
+        const helper = await describeChatImagesForMainModel({
+          imageDataUrls: describeUrls,
+          userQuestion: String(options.userText || "").trim(),
+          chatModelId: options.model,
+          signal: options.signal,
+        });
+        emitStep(callbacks, {
+          stepId: "vision-helper",
+          kind: "tool",
+          name: "vision",
+          status: helper.text ? "done" : "error",
+          argsPreview: helper.visionModelId || options.model,
+          resultPreview: (helper.text || "").slice(0, 400),
+        });
+        if (helper.text) {
+          userPrompt = `${helper.text}\n\n${userPrompt}`;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emitStep(callbacks, {
+          stepId: "vision-helper",
+          kind: "tool",
+          name: "vision",
+          status: "error",
+          resultPreview: message.slice(0, 400),
+        });
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      emitStep(callbacks, {
-        stepId: "vision-helper",
-        kind: "tool",
-        name: "vision",
-        status: "error",
-        resultPreview: message.slice(0, 400),
-      });
     }
     // Text model cannot use pixels; sending them only makes it deny the image.
     userImages = [];
@@ -2034,7 +2071,16 @@ export async function runClineAgentTurn(options: {
     enableSpawnAgent,
     uiLang
   );
-  if (imageBundle.fromHistory > 0 && !currentHasImage) {
+  userPrompt = appendVisionInspectRuntimeNudge(
+    userPrompt,
+    !chatSeesImages && imageBundle.urls.length > 0,
+    uiLang
+  );
+  if (
+    chatSeesImages &&
+    imageBundle.fromHistory > 0 &&
+    !currentHasImage
+  ) {
     userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
@@ -2184,7 +2230,9 @@ export async function runClineAgentTurn(options: {
       result = startResult.result;
     }
     };
-    await withTurnImages(userImages, runTurn);
+    await withInspectableImages(imageBundle.urls, () =>
+      withTurnImages(userImages, runTurn)
+    );
 
     if (persistSession) {
       const prev = liveClineByChatId.get(chatId);

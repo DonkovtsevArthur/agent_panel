@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.4.113",
+  "version": "1.5.135",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -350,6 +350,13 @@
             "%config.language.enum.ru%"
           ],
           "description": "%config.language.description%"
+        },
+        "agentPanel.fontSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 11,
+          "maximum": 20,
+          "description": "%config.fontSize.description%"
         },
         "agentPanel.baseUrl": {
           "type": "string",

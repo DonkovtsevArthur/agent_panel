@@ -18,8 +18,8 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Harbor MCP → Cline tools | `src/clineMcpTools.ts` — Figma/custom MCP via `listOpenAiTools` + `createTool` |
 | Step events (UI cards) | `src/agentSteps.ts` |
 | Modes (Agent / Plan / Ask) | `src/modes.ts` — UI labels + mode ids; Cline maps Agent→`act`, Plan/Ask→`plan` |
-| Vision (images) | Attachments → Cline `userImages` when the chat model has vision. If not (e.g. GLM-5.2), Harbor runs a Settings vision model under the hood and injects a text description (`figmaVisionHelper.ts`). |
-| Plan → Agent (Build) UI | `src/planImplement.ts` — marker `[[harbor:implement_plan]]`, Plan.md helpers, strip wrapper for cards |
+| Vision (images) | Attachments → Cline `userImages` when the chat model has vision. If not (e.g. GLM-5.2), Harbor runs a Settings vision model under the hood and injects a text description (`figmaVisionHelper.ts`). If that is not enough, the text model calls `inspect_images` (not `spawn_agent` — children inherit the same model). |
+| Plan → Agent (Build) UI | `src/planImplement.ts` — Plan card only for implementation plans (`<proposed_plan>` / Goal+Steps); Q&A and status stay plain chat. Marker `[[harbor:implement_plan]]`, Plan.md helpers |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |
 | OpenAI-compatible client | `src/openaiClient.ts` (utility paths e.g. commit message; chat turns use Cline gateway) |
@@ -76,7 +76,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 | Mode | Harbor UI | Cline runtime |
 |------|-----------|---------------|
 | **Agent** | Full chrome | `act` — edits + shell; optional `spawn_agent` when Settings parallel agents is on |
-| **Plan** | Plan chrome / Build | `plan` — explore, no editor; optional read-focused `spawn_agent` |
+| **Plan** | Plan chrome / Build (card only when the finale is an implementation plan, not Q&A) | `plan` — explore, no editor; optional read-focused `spawn_agent` |
 | **Ask** | Ask chrome | `plan` — same read-focused tools; optional read-focused `spawn_agent` |
 
 **Never silently switch Agent → Ask** in the UI (`agentPanelProvider.ts` keeps `modeForRun = selectedMode`).

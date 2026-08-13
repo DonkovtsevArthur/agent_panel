@@ -107,6 +107,34 @@ export function newAttachmentId(): string {
     .slice(2, 8)}`;
 }
 
+const UUID_RE =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const LONG_HEX_RE = /[0-9a-f]{16,}/gi;
+
+/** Short label for chips: drop uuid/hash noise from dump filenames. */
+export function displayAttachmentName(
+  attachment: { name?: string; path?: string; kind?: string } | string
+): string {
+  const kind =
+    typeof attachment === "string" ? "" : String(attachment.kind || "");
+  const raw =
+    typeof attachment === "string"
+      ? attachment
+      : String(attachment.name || attachment.path || "").trim();
+  const base = raw.split(/[/\\]/).pop() || raw;
+  const extMatch = base.match(/(\.[a-z0-9]{1,8})$/i);
+  const ext = extMatch ? extMatch[1] : "";
+  let stem = ext ? base.slice(0, -ext.length) : base;
+  stem = stem.replace(UUID_RE, " ").replace(LONG_HEX_RE, " ");
+  stem = stem.replace(/^[_-\s]+|[_-\s]+$/g, "").replace(/[_-\s]{2,}/g, " ");
+  stem = stem.replace(/\s+/g, " ").trim();
+  if (!stem) {
+    return kind === "image" ? `image${ext || ".png"}` : ext ? `file${ext}` : "file";
+  }
+  const name = `${stem}${ext}`;
+  return name.length > 42 ? `${stem.slice(0, 28)}…${ext}` : name;
+}
+
 export function guessMime(fileName: string, fallback = "application/octet-stream"): string {
   const ext = path.extname(fileName).toLowerCase();
   switch (ext) {
@@ -353,14 +381,21 @@ export async function attachmentsFromUris(
     }
 
     if (rel !== undefined) {
-      result.push({
+      const row: MessageAttachment = {
         id: newAttachmentId(),
         kind,
         name,
         mime,
         path: rel,
         size,
-      });
+      };
+      if (kind === "image") {
+        const preview = await attachmentPreviewDataUrl(row, undefined);
+        if (preview) {
+          row.previewDataUrl = preview;
+        }
+      }
+      result.push(row);
       continue;
     }
 
@@ -461,12 +496,23 @@ async function readAttachmentBytes(
   return undefined;
 }
 
+export function attachmentLooksLikeImage(
+  attachment: Pick<MessageAttachment, "kind" | "name" | "path" | "mime">
+): boolean {
+  return (
+    attachment.kind === "image" ||
+    isImageAttachment(
+      attachment.name || attachment.path || "",
+      attachment.mime
+    )
+  );
+}
+
 export async function attachmentPreviewDataUrl(
   attachment: MessageAttachment,
   storageUri: vscode.Uri | undefined
 ): Promise<string | undefined> {
-  const mime = String(attachment.mime || "").toLowerCase();
-  if (attachment.kind !== "image" && !mime.startsWith("image/")) {
+  if (!attachmentLooksLikeImage(attachment)) {
     return undefined;
   }
   if (attachment.previewDataUrl) {
@@ -498,8 +544,12 @@ export async function enrichAttachmentsForUi(
   const out: MessageAttachment[] = [];
   for (const att of attachments) {
     const clean = stripAttachmentPayload(att);
-    if (clean.kind === "image") {
-      const preview = await attachmentPreviewDataUrl(att, storageUri);
+    if (attachmentLooksLikeImage(att)) {
+      clean.kind = "image";
+      const preview = await attachmentPreviewDataUrl(
+        { ...att, kind: "image" },
+        storageUri
+      );
       if (preview) {
         out.push({ ...clean, previewDataUrl: preview });
         continue;

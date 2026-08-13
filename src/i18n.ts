@@ -104,6 +104,46 @@ export function appendSubagentsRuntimeNudge(
   return base ? `${base}\n\n${nudge}` : nudge;
 }
 
+/**
+ * When the chat model cannot view images: use inspect_images, never spawn_agent.
+ */
+export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# inspect_images — ДОСТУПЕН",
+      "Выбранная модель чата не видит пиксели. Если описания скрина не хватает или ты «не видишь» картинку — вызови inspect_images с конкретным вопросом.",
+      "Не пиши, что не видишь изображение. Не вызывай spawn_agent, чтобы посмотреть картинку: субагент — та же текстовая модель без vision.",
+    ].join("\n");
+  }
+  return [
+    "# inspect_images — AVAILABLE",
+    "The selected chat model cannot view pixels. If the screenshot description is missing or incomplete, call inspect_images with a specific question.",
+    "Do not say you cannot see the image. Do not spawn_agent to look at a picture — the child inherits the same text model.",
+  ].join("\n");
+}
+
+export function harborVisionInspectUserNudgeForLanguage(
+  lang: UiLanguage
+): string {
+  if (lang === "ru") {
+    return "[Harbor] Если не хватает описания скрина — вызови inspect_images(question). Не spawn_agent ради vision.";
+  }
+  return "[Harbor] If the screenshot description is not enough, call inspect_images(question). Do not spawn_agent for vision.";
+}
+
+export function appendVisionInspectRuntimeNudge(
+  userText: string,
+  enabled: boolean,
+  lang: UiLanguage
+): string {
+  const base = String(userText || "").trim();
+  if (!enabled) {
+    return base;
+  }
+  const nudge = harborVisionInspectUserNudgeForLanguage(lang);
+  return base ? `${base}\n\n${nudge}` : nudge;
+}
+
 /** Built-in / legacy defaults — treat as «not customized» so UI language can swap them. */
 export function isBuiltinSystemPrompt(value: string): boolean {
   const text = String(value || "").trim();

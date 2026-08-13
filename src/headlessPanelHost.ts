@@ -47,10 +47,12 @@ import {
   getActiveChat,
   getAgentChatIds,
   getAgentDisplayName,
+  applyAgentName,
   restoreAgentInStore,
   switchAgentBranch,
   touchChat,
 } from "./sessionStore";
+import { maybeGenerateChatTitle } from "./chatTitle";
 import {
   getOpenAICompatibleClient,
   type ChatMessage,
@@ -59,6 +61,7 @@ import {
 import type { ChatSession } from "./sessionStore";
 import { HarborHeadless } from "./vscodeHeadlessStub";
 import {
+  enrichAttachmentsForUi,
   persistIncomingAttachments,
   stripAttachmentPayload,
   type IncomingAttachment,
@@ -74,8 +77,8 @@ import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import { discardPaths } from "./discardPaths";
 import {
-  ensureProposedPlanWrapper,
-  looksLikeImplementationPlan,
+  assistantFinaleDisplayText,
+  lastUiUserText,
 } from "./planImplement";
 import { getMcpManager } from "./mcpBundle";
 import { parseArgsInput, parseEnvLines } from "./mcpBundle";
@@ -210,6 +213,57 @@ export class HeadlessPanelHost {
 
   private persist(): void {
     writeJsonFile(this.opts.sessionPath, this.store);
+  }
+
+  private storageUri() {
+    return HarborHeadless.getExtensionContext().storageUri as never;
+  }
+
+  private async enrichUiMessages(list: UiMessage[]): Promise<UiMessage[]> {
+    const storage = this.storageUri();
+    const out: UiMessage[] = [];
+    for (const msg of list) {
+      if (!msg.attachments?.length) {
+        out.push(msg);
+        continue;
+      }
+      out.push({
+        ...msg,
+        attachments: await enrichAttachmentsForUi(msg.attachments, storage),
+      });
+    }
+    return out;
+  }
+
+  private scheduleChatTitle(chatId: string): void {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return;
+    }
+    const fallbackModelId =
+      this.store.chats[id]?.selectedModel || this.selectedModel;
+    void maybeGenerateChatTitle(this.store, id, { fallbackModelId }).then(
+      (name) => {
+        if (!name) {
+          return;
+        }
+        const agent = findAgentByChatId(this.store, id);
+        if (!agent) {
+          return;
+        }
+        this.persist();
+        this.postAgentsList();
+        const renamed: Record<string, unknown> = {
+          type: "agentRenamed",
+          agentId: agent.id,
+          name: agent.name,
+        };
+        if (agent.id === this.store.activeAgentId) {
+          renamed.branches = buildBranchesList(this.store, agent.id);
+        }
+        this.post(renamed);
+      }
+    );
   }
 
   private post(message: Record<string, unknown>): void {
@@ -354,6 +408,11 @@ export class HeadlessPanelHost {
         return this.onNewAgent();
       case "openAgent":
         return this.onOpenAgent(String(msg.agentId || ""));
+      case "renameAgent":
+        return this.onRenameAgent(
+          String(msg.agentId || ""),
+          String(msg.name || "")
+        );
       case "showAgents":
         this.postAgentsList();
         this.post({ type: "showAgents" });
@@ -419,6 +478,7 @@ export class HeadlessPanelHost {
         }
         this.providerConnStatuses.clear();
         this.postSettingsPayload();
+        this.postUiFontSize();
         this.postFigmaStatus();
         this.postMcpServersList();
         this.post({
@@ -546,6 +606,7 @@ export class HeadlessPanelHost {
       })),
       defaultModel: config.defaultModel,
       language: config.language,
+      fontSize: config.fontSize,
       resolvedLanguage: resolveUiLanguage(config.language),
       defaultContextWindow: config.defaultContextWindow,
       baseUrl: config.baseUrl,
@@ -887,6 +948,13 @@ export class HeadlessPanelHost {
     });
   }
 
+  private postUiFontSize(): void {
+    this.post({
+      type: "uiFontSize",
+      fontSize: getConfig().fontSize,
+    });
+  }
+
   private readySeq = 0;
   private lastReadyAt = 0;
   /** Chat id last fully painted by onReady — debounce only same-chat repeats. */
@@ -932,9 +1000,11 @@ export class HeadlessPanelHost {
       this.chatRunState.get(this.store.activeChatId || "") === "running";
     // Prefer store transcript for paint — live this.uiMessages can lag after a
     // rapid agent switch if hydrate and a background sync raced.
-    const paintUi = (
-      getActiveChat(this.store)?.uiMessages || this.uiMessages || []
-    ).slice();
+    const paintUi = await this.enrichUiMessages(
+      (
+        getActiveChat(this.store)?.uiMessages || this.uiMessages || []
+      ).slice()
+    );
     this.post({
       type: "init",
       models,
@@ -950,6 +1020,7 @@ export class HeadlessPanelHost {
       contextMax: getContextWindow(this.selectedModel),
       modes: this.serializeModes(),
       harborHost: "jetbrains",
+      fontSize: getConfig().fontSize,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
     });
@@ -971,6 +1042,7 @@ export class HeadlessPanelHost {
       contextMax: getContextWindow(this.selectedModel),
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+      fontSize: getConfig().fontSize,
     });
     this.ensureAllProvidersProbed();
     this.scheduleScmRefresh([200, 800]);
@@ -1287,6 +1359,7 @@ export class HeadlessPanelHost {
     this.postAgentsList();
     this.lastReadyAt = 0;
     await this.onReady("panel");
+    this.scheduleChatTitle(created.id);
     return { ok: true, chatId: created.id };
   }
 
@@ -1592,7 +1665,7 @@ export class HeadlessPanelHost {
   }
 
   private isChatRunning(chatId: string | undefined): boolean {
-    return Boolean(chatId) && this.chatRunState.get(chatId) === "running";
+    return Boolean(chatId) && this.chatRunState.get(chatId || "") === "running";
   }
 
   /**
@@ -1622,6 +1695,27 @@ export class HeadlessPanelHost {
     this.lastReadyAt = 0;
     this.lastReadyChatId = "";
     await this.onReady("panel");
+    return { ok: true };
+  }
+
+  private async onRenameAgent(agentId: string, name: string): Promise<unknown> {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    const next = String(name || "").trim();
+    if (!agent || !next) {
+      return { ok: false };
+    }
+    applyAgentName(this.store, agent.id, next, "user");
+    this.persist();
+    this.postAgentsList();
+    const renamed: Record<string, unknown> = {
+      type: "agentRenamed",
+      agentId: agent.id,
+      name: agent.name,
+    };
+    if (agent.id === this.store.activeAgentId) {
+      renamed.branches = buildBranchesList(this.store, agent.id);
+    }
+    this.post(renamed);
     return { ok: true };
   }
 
@@ -2119,11 +2213,11 @@ export class HeadlessPanelHost {
           },
           onAssistant: (full, meta) => {
             const raw = full || assistantText;
-            // Plan card / Build chip: same wrap as VS Code agentPanelProvider.
-            const displayText =
-              agentMode === "plan" || looksLikeImplementationPlan(raw)
-                ? ensureProposedPlanWrapper(raw)
-                : raw;
+            const displayText = assistantFinaleDisplayText(raw, {
+              modeId: agentMode,
+              hadFileEdits: editedPaths.length > 0,
+              previousUserText: lastUiUserText(runUiMessages),
+            });
             assistantText = displayText;
             this.lastTurnModel = model;
             runUiMessages = [
@@ -2205,6 +2299,7 @@ export class HeadlessPanelHost {
       }
       this.setRunStateForChat(runChatId, "success");
       postToRun({ type: "runFinished", outcome: "success" });
+      this.scheduleChatTitle(runChatId);
       this.scheduleScmRefresh([500, 1500]);
       return { ok: true };
     } catch (err) {

@@ -26,6 +26,7 @@
   "config.language.enum.auto": "Как в VS Code",
   "config.language.enum.en": "Английский",
   "config.language.enum.ru": "Русский",
+  "config.fontSize.description": "Размер шрифта панели в пикселях (сообщения чата и поле ввода).",
   "config.baseUrl.description": "Legacy: зеркало baseUrl основного провайдера (лучше задавать в agentPanel.providers)",
   "config.apiKey.description": "Legacy: зеркало apiKey основного провайдера (лучше задавать в agentPanel.providers). Не коммитьте ключ в git.",
   "config.providers.description": "OpenAI-compatible провайдеры (base URL + API key). Если пусто — создаётся из legacy baseUrl/apiKey.",

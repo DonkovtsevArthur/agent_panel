@@ -11,17 +11,13 @@ export const PLAN_IMPLEMENT_PREFIX_RU = "Реализуй следующий п�
 
 /**
  * Appended to the system prompt in Harbor Plan mode so Cline wraps the finale
- * for the proposed-plan card (Build / Plan.md).
+ * for the proposed-plan card (Build / Plan.md) — only real implementation plans.
  */
 export const HARBOR_PLAN_MODE_CARD_HINT = [
-  "Harbor Plan UI: when you deliver an implementation plan (not a short Q&A answer), wrap the ENTIRE final plan in exactly one block:",
-  "<proposed_plan>",
-  "…markdown plan…",
-  "</proposed_plan>",
-  "Use those tags with no attributes. Put Goal/Steps/Affected files (or the equivalent) inside the block.",
-  "If you finish with submit_and_exit, put that same <proposed_plan>…</proposed_plan> block in the summary field — Harbor shows the Plan card from that summary.",
+  "Harbor Plan UI: wrap a finale in <proposed_plan>…</proposed_plan> ONLY when you are proposing an implementation plan for a change the user asked to make (Goal/Steps/Affected files or the equivalent inside the block).",
+  "Do NOT wrap greetings, status checks (e.g. «как там?», «how's it going?»), acknowledgements, clarifying questions, workspace/git/file status reports, or ordinary Q&A about existing code — those stay plain chat text with no tags. Never invent a plan just because Plan mode is on.",
+  "Use those tags with no attributes. If you finish with submit_and_exit, put that same <proposed_plan>…</proposed_plan> block in the summary field only when it is an implementation plan — Harbor shows the Plan card from that summary.",
   "Do not write PLAN.md via tools. Do not put clarifying questions inside <proposed_plan>.",
-  "Short factual answers to code questions (no implementation plan) stay outside the tags as plain text.",
 ].join(" ");
 
 const PROPOSED_PLAN_RE =
@@ -81,6 +77,7 @@ export function looksLikeImplementationPlan(text: string): boolean {
 /**
  * If the model forgot <proposed_plan> tags, wrap the whole finale so the Harbor
  * plan card / Build chip still appear. No-op when tags already exist or empty.
+ * Callers must already decide the text is an implementation plan.
  */
 export function ensureProposedPlanWrapper(text: string): string {
   const value = String(text || "").trim();
@@ -95,6 +92,130 @@ export function ensureProposedPlanWrapper(text: string): string {
     return value;
   }
   return `<proposed_plan>\n${value}\n</proposed_plan>`;
+}
+
+const PROPOSED_PLAN_CAPTURE_RE =
+  /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*?)\s*(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi;
+
+/** Drop <proposed_plan> chrome so Q&A / status answers render as plain chat. */
+export function stripProposedPlanTags(text: string): string {
+  let value = String(text || "");
+  if (!value) {
+    return "";
+  }
+  value = value.replace(PROPOSED_PLAN_CAPTURE_RE, (_, inner: string) =>
+    String(inner || "").trim()
+  );
+  value = value.replace(/(?:<proposed_plan>|&lt;proposed_plan&gt;)/gi, "");
+  value = value.replace(/(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/gi, "");
+  return value.trim();
+}
+
+/** 3+ markdown/plain numbered steps — forgotten-tags fallback in Plan mode. */
+function hasNumberedPlanSteps(text: string): boolean {
+  const matches = String(text || "").match(
+    /^[ \t]{0,3}(?:\d+[.)]|\d+\s+[-–—])\s+\S/gm
+  );
+  return (matches?.length || 0) >= 3;
+}
+
+/**
+ * Greetings / status checks / acks — not a request to draft a plan.
+ * Keep this conservative so real plan prompts are never classified as casual.
+ */
+export function looksLikeCasualUserTurn(text: string): boolean {
+  const raw = String(text || "").trim();
+  if (!raw || looksLikePlanImplementRequest(raw)) {
+    return false;
+  }
+  const normalized = raw
+    .replace(/\s+/g, " ")
+    .replace(/[!?…]+$/g, "")
+    .trim()
+    .toLowerCase();
+  if (!normalized || normalized.length > 96) {
+    return false;
+  }
+  return (
+    /^(привет|здравствуй(?:те)?|хай|ку|hi|hello|hey|yo)(?:\s|$|,)/.test(
+      normalized
+    ) ||
+    /^(как\s+(?:там|дела|оно|жизнь)|чё\s+там|че\s+там|ну\s+что|что\s+нового|что\s+слышно)/.test(
+      normalized
+    ) ||
+    /^(?:how'?s\s+it\s+going|whats?\s+up|how\s+are\s+you|how\s+goes\s+it)(?:\s|$)/.test(
+      normalized
+    ) ||
+    /^(?:ok|ок|ладно|спасибо|thanks|thank you|понял|ясно|хорошо|lgtm|👍)$/.test(
+      normalized
+    )
+  );
+}
+
+function isReadFocusedMode(modeId: string): boolean {
+  const id = String(modeId || "").toLowerCase();
+  return id === "plan" || id === "ask";
+}
+
+/** Latest user bubble text in a UI transcript (for Build-handoff detection). */
+export function lastUiUserText(
+  messages: Array<{ role?: string; text?: string }> | undefined
+): string {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]?.role === "user") {
+      return String(list[i]?.text || "");
+    }
+  }
+  return "";
+}
+
+/**
+ * Finale text shown in chat. Show a Plan card only for an implementation plan
+ * (model tags, Goal+Steps, or Plan-mode numbered steps) — not for Q&A / status
+ * just because the picker is on Plan. Do not wrap Build/Agent recaps: that
+ * would resurrect the composer «Собрать» tag after the plan is already executed.
+ */
+export function assistantFinaleDisplayText(
+  text: string,
+  opts: {
+    modeId?: string;
+    hadFileEdits?: boolean;
+    previousUserText?: string;
+  } = {}
+): string {
+  const value = String(text || "");
+  if (!value.trim()) {
+    return value;
+  }
+  const modeId = String(opts.modeId || "");
+  const userText = opts.previousUserText || "";
+  if (!isReadFocusedMode(modeId)) {
+    if (looksLikePlanImplementRequest(userText)) {
+      return value;
+    }
+    if (opts.hadFileEdits) {
+      return value;
+    }
+  }
+  if (looksLikeCasualUserTurn(userText)) {
+    return stripProposedPlanTags(value);
+  }
+  if (hasProposedPlanTags(value)) {
+    return value;
+  }
+  if (looksLikeImplementationPlan(value)) {
+    return ensureProposedPlanWrapper(value);
+  }
+  // Plan mode: models sometimes omit tags; keep the card for a real outline.
+  if (
+    modeId === "plan" &&
+    value.trim().length >= 200 &&
+    hasNumberedPlanSteps(value)
+  ) {
+    return ensureProposedPlanWrapper(value);
+  }
+  return value;
 }
 
 /**

@@ -26,6 +26,7 @@
   "config.language.enum.auto": "Follow VS Code language",
   "config.language.enum.en": "English",
   "config.language.enum.ru": "Russian",
+  "config.fontSize.description": "Panel font size in pixels (chat messages and composer).",
   "config.baseUrl.description": "Legacy mirror of the primary provider baseUrl (prefer agentPanel.providers)",
   "config.apiKey.description": "Legacy mirror of the primary provider apiKey (prefer agentPanel.providers). Do not commit keys to git.",
   "config.providers.description": "OpenAI-compatible providers (base URL + API key). If empty, built from legacy baseUrl/apiKey.",

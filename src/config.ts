@@ -93,6 +93,19 @@ export function resolveProviderProbeUrl(provider: {
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
+
+export const UI_FONT_SIZE_MIN = 11;
+export const UI_FONT_SIZE_MAX = 20;
+export const UI_FONT_SIZE_DEFAULT = 13;
+
+export function clampUiFontSize(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    return UI_FONT_SIZE_DEFAULT;
+  }
+  return Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, Math.round(n)));
+}
+
 export const DEFAULT_PROVIDER_ID = "default";
 
 const DEFAULT_MODELS: AgentModel[] = [
@@ -124,6 +137,8 @@ const DEFAULT_MODELS: AgentModel[] = [
 
 export interface AgentPanelConfig {
   language: "auto" | "en" | "ru";
+  /** Panel chat + composer font size in pixels. */
+  fontSize: number;
   /** @deprecated legacy mirror of primary provider.baseUrl */
   baseUrl: string;
   /** @deprecated legacy mirror of primary provider.apiKey */
@@ -518,6 +533,7 @@ export function getConfig(): AgentPanelConfig {
 
   return {
     language,
+    fontSize: clampUiFontSize(cfg.get<number>("fontSize")),
     baseUrl: primary?.baseUrl || legacyBaseUrl,
     apiKey: primary?.apiKey || legacyApiKey,
     providers,

@@ -42,7 +42,7 @@ object HarborWebviewHtml {
 
     val html = """
 <!DOCTYPE html>
-<html lang="$lang" data-surface="$surfaceAttr" data-harbor-host="jetbrains">
+<html lang="$lang" data-surface="$surfaceAttr" data-harbor-host="jetbrains" style="scrollbar-color: unset; scrollbar-width: unset">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />

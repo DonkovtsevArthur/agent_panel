@@ -16,6 +16,7 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  clampUiFontSize,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
@@ -82,8 +83,8 @@ import {
   type ListedProviderModel,
 } from "./openaiClient";
 import {
-  ensureProposedPlanWrapper,
-  looksLikeImplementationPlan,
+  assistantFinaleDisplayText,
+  lastUiUserText,
   planMarkdownFileName,
   stripPlanImplementWrapper,
 } from "./planImplement";
@@ -110,6 +111,7 @@ import {
   getActiveChat,
   getAgentDisplayName,
   getAgentChatIds,
+  applyAgentName,
   migrateToStoreV2,
   restoreAgentInStore,
   searchChatMessages,
@@ -122,6 +124,7 @@ import {
   type ChatSearchRole,
   type ChatSearchScope,
 } from "./sessionStore";
+import { maybeGenerateChatTitle } from "./chatTitle";
 
 type SettingsPayload = {
   providers: Array<{
@@ -145,6 +148,7 @@ type SettingsPayload = {
     reasoningEffortDefault?: string;
   }>;
   language: string;
+  fontSize?: number;
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -433,6 +437,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           if (e.affectsConfiguration("agentPanel.providers")) {
             this.providerConnStatuses.clear();
             this.ensureProviderProbe(this.selectedModel, true);
+          }
+          if (e.affectsConfiguration("agentPanel.fontSize")) {
+            this.postUiFontSize();
           }
           // Не перезатираем форму настроек: webview сам автосохраняет.
         }
@@ -1104,6 +1111,37 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private saveStore(): Promise<void> {
     this.persistActiveChat();
     return this.writeStoreOnly();
+  }
+
+  private scheduleChatTitle(chatId: string): void {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return;
+    }
+    const fallbackModelId =
+      this.store.chats[id]?.selectedModel || this.selectedModel;
+    void maybeGenerateChatTitle(this.store, id, { fallbackModelId }).then(
+      (name) => {
+        if (!name) {
+          return;
+        }
+        const agent = findAgentByChatId(this.store, id);
+        if (!agent) {
+          return;
+        }
+        void this.saveStore();
+        this.postAgentsList();
+        const renamed: Record<string, unknown> = {
+          type: "agentRenamed",
+          agentId: agent.id,
+          name: agent.name,
+        };
+        if (agent.id === this.store.activeAgentId) {
+          renamed.branches = buildBranchesList(this.store, agent.id);
+        }
+        this.view?.webview.postMessage(renamed);
+      }
+    );
   }
 
   private writeStoreOnly(): Promise<void> {
@@ -1918,6 +1956,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       scrollTop: this.store.chats[this.store.activeChatId || ""]?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus,
+      fontSize: getConfig().fontSize,
     };
     if (
       typeof highlightMessageIndex === "number" &&
@@ -2123,15 +2162,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "renameAgent": {
         const agent = this.store.agents.find((a) => a.id === message.agentId);
         if (agent && message.name.trim()) {
-          agent.name = message.name.trim().slice(0, 80);
-          agent.updatedAt = Date.now();
+          applyAgentName(
+            this.store,
+            agent.id,
+            message.name.trim(),
+            "user"
+          );
           this.saveStore();
           this.postAgentsList();
-          this.view?.webview.postMessage({
+          const renamed: Record<string, unknown> = {
             type: "agentRenamed",
             agentId: agent.id,
             name: agent.name,
-          });
+          };
+          if (agent.id === this.store.activeAgentId) {
+            renamed.branches = buildBranchesList(this.store, agent.id);
+          }
+          this.view?.webview.postMessage(renamed);
         }
         break;
       }
@@ -2444,6 +2491,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.hydrateActiveChat();
     this.saveStore();
     void this.postChatScreen();
+    this.scheduleChatTitle(created.id);
   }
 
   private switchBranch(chatId: string): void {
@@ -3243,13 +3291,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             turnHadAssistantOutput = true;
             runLastTurnModel = activeTurnModel;
-            // Plan card: wrap in Plan mode, or when the finale clearly is a
-            // plan (Agent often drafts Figma/impl plans without switching mode).
-            const displayText =
-              mode.id === "plan" ||
-              looksLikeImplementationPlan(assistantText)
-                ? ensureProposedPlanWrapper(assistantText)
-                : assistantText;
+            const displayText = assistantFinaleDisplayText(assistantText, {
+              modeId: mode.id,
+              hadFileEdits: turnEdits.length > 0,
+              previousUserText: lastUiUserText(runUiMessages),
+            });
             const uiMsg: UiMessage = { role: "assistant", text: displayText };
             if (meta?.reasoning) {
               uiMsg.reasoning = meta.reasoning;
@@ -3422,6 +3468,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         !currentRun.signal.aborted
       ) {
         this.postRunFinished(runChatId, "success");
+        this.scheduleChatTitle(runChatId);
       }
     } catch (error) {
       const owned = this.isChatRunOwned(runChatId, runRef);
@@ -4285,6 +4332,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         })),
         defaultModel: config.defaultModel,
         language: config.language,
+        fontSize: config.fontSize,
         resolvedLanguage: resolveUiLanguage(config.language),
         defaultContextWindow: config.defaultContextWindow,
         baseUrl: config.baseUrl,
@@ -4337,6 +4385,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.settingsPanel?.webview.postMessage(payload);
     this.ensureAllProvidersProbed();
     this.syncProviderConnPolling();
+  }
+
+  private postUiFontSize(): void {
+    const fontSize = getConfig().fontSize;
+    const payload = { type: "uiFontSize" as const, fontSize };
+    this.view?.webview.postMessage(payload);
+    this.settingsPanel?.webview.postMessage(payload);
   }
 
   private getFigmaStatusPayload(): FigmaStatusPayload {
@@ -4889,6 +4944,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("models", models, target);
     await cfg.update("defaultModel", resolvedDefault, target);
     await cfg.update("language", nextLanguage, target);
+    await cfg.update("fontSize", clampUiFontSize(raw.fontSize), target);
     await cfg.update(
       "defaultContextWindow",
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
@@ -5086,6 +5142,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.postModels();
     this.postModes();
     this.postSettings();
+    this.postUiFontSize();
     this.providerConnStatuses.clear();
     this.ensureProviderProbe(this.selectedModel, true);
 
@@ -5230,6 +5287,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       scrollTop: getActiveChat(this.store)?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       modes: this.serializeModesForUi(),
+      fontSize: config.fontSize,
     });
 
     this.postAgentsList();
@@ -5254,6 +5312,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     surface: "panel" | "settings" = "panel"
   ): string {
     const lang = resolveUiLanguage(getConfig().language);
+    const fontSize = getConfig().fontSize;
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
         ?.version ?? "0";
@@ -5292,7 +5351,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : "Harbor Agents";
 
     return `<!DOCTYPE html>
-<html lang="${lang}" data-surface="${surface}">
+<html lang="${lang}" data-surface="${surface}" style="scrollbar-color: unset; scrollbar-width: unset">
 <head>
   <meta charset="UTF-8" />
   <meta
@@ -5316,6 +5375,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       font-display: swap;
       src: url("${jetbrainsMonoUri}") format("truetype");
     }
+    :root { --harbor-font-size: ${fontSize}px; }
   </style>
   <title>${pageTitle}</title>
 </head>
@@ -5469,6 +5529,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <span class="material-symbols-outlined" aria-hidden="true">language</span>
           <span class="settings-nav-label" data-i18n-nav="languageSection">Language</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="appearance">
+          <span class="material-symbols-outlined" aria-hidden="true">format_size</span>
+          <span class="settings-nav-label" data-i18n-nav="appearanceSection">Appearance</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="commit">
           <span class="material-symbols-outlined" aria-hidden="true">commit</span>
           <span class="settings-nav-label" data-i18n-nav="commitMessages">Commit messages</span>
@@ -5526,32 +5590,58 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </label>
         </section>
 
+        <section class="settings-panel" data-settings-panel="appearance" hidden>
+          <h3 class="settings-section-title" id="settingsAppearanceTitle">Appearance</h3>
+          <p class="settings-section-note" id="settingsAppearanceNote">Chat text and composer size in the panel.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsFontSizeLabel">Font size</span>
+            <div class="settings-font-size-row">
+              <input id="settingsFontSize" class="settings-range" type="range" min="11" max="20" step="1" value="13" />
+              <span class="settings-font-size-value" id="settingsFontSizeValue">13 px</span>
+            </div>
+            <span class="settings-field-hint" id="settingsFontSizeHint">Applies to messages and the input field.</span>
+          </label>
+          <p class="settings-font-preview" id="settingsFontPreview">The agent will reply at this size.</p>
+        </section>
+
         <section class="settings-panel" data-settings-panel="commit" hidden>
           <h3 class="settings-section-title" id="settingsCommitTitle">Commit messages</h3>
-          <p class="settings-section-note" id="settingsCommitNote">Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.</p>
+          <p class="settings-section-note" id="settingsCommitNote">Generate SCM commit messages from the diff.</p>
+          <h4 class="settings-section-title settings-group-title" id="settingsCommitGenerationTitle">Generation</h4>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsCommitModelLabel">Model</span>
+              <select id="settingsCommitModel" class="settings-input"></select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsCommitLanguageLabel">Language</span>
+              <select id="settingsCommitLanguage" class="settings-input">
+                <option value="auto">Auto (follow UI language)</option>
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-prompt-card" id="settingsCommitPromptCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsCommitPromptToggle" aria-expanded="false" aria-controls="settingsCommitPromptBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsCommitPromptLabel">Prompt / rule</span>
+                <span class="settings-prompt-preview" id="settingsCommitPromptPreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsCommitPromptBody" hidden>
+              <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short English commit messages focused on why."></textarea>
+            </div>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsCommitStorageTitle">Save location</h4>
           <label class="settings-field">
             <span class="settings-label" id="settingsCommitScopeLabel">Apply to</span>
             <select id="settingsCommitScope" class="settings-input">
               <option value="global">All workspaces</option>
-              <option value="workspace">Workspace</option>
+              <option value="workspace">This workspace</option>
             </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitModelLabel">Commit model</span>
-            <select id="settingsCommitModel" class="settings-input"></select>
-          </label>
-          <p class="settings-hint" id="settingsCommitModelHint">Empty = automatic light model. Otherwise uses the selected model from your catalog.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
-            <select id="settingsCommitLanguage" class="settings-input">
-              <option value="auto">Auto (follow UI language)</option>
-              <option value="en">English</option>
-              <option value="ru">Русский</option>
-            </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitPromptLabel">Commit prompt / rule</span>
-            <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short Russian commit messages focused on why."></textarea>
+            <span class="settings-field-hint" id="settingsCommitScopeHint">Where these settings are saved.</span>
           </label>
         </section>
 
@@ -5608,28 +5698,44 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </section>
 
         <section class="settings-panel" data-settings-panel="browser" hidden>
-          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent (AutoGLM)</h3>
-          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your real Chrome or Edge via AutoGLM (<code>browser_task</code>). Headless <code>browser_*</code> tools stay available for localhost checks. Requires the AutoGLM CLI and browser extension.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoglmEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsAutoglmEnabledLabel">Enable browser_task</span>
-          </label>
+          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent</h3>
+          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your Chrome or Edge.</p>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoglmEnabledLabel">Enable browser agent</span>
+                <span class="settings-toggle-hint" id="settingsAutoglmEnabledNote">The browser_task tool. Needs AutoGLM CLI and the extension.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoglmEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
+                <span class="settings-toggle-hint" id="settingsAutoglmAutoApproveNote">No prompt for sensitive steps. Login and captcha still need you.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoglmAutoApprove" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsAutoglmConnectionTitle">Connection</h4>
           <label class="settings-field">
             <span class="settings-label" id="settingsAutoglmBrowserLabel">Browser</span>
             <select id="settingsAutoglmBrowser" class="settings-input">
               <option value="chrome">Chrome</option>
               <option value="edge">Edge</option>
             </select>
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoglmAutoApprove" type="checkbox" />
-            <span class="settings-label" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
+            <span class="settings-field-hint" id="settingsAutoglmBrowserHint">Install the AutoGLM extension and enable it.</span>
           </label>
           <label class="settings-field">
-            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">Binary path (optional)</span>
+            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">CLI path</span>
             <input id="settingsAutoglmBinaryPath" class="settings-input" type="text" autocomplete="off" placeholder="autoglm on PATH, or full path" />
+            <span class="settings-field-hint" id="settingsAutoglmBinaryPathHint">Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json</span>
           </label>
-          <p class="settings-hint" id="settingsAutoglmExtensionHint">Install the AutoGLM extension for Chrome or Edge, then enable it. Saving these settings writes ~/.openclaw-autoclaw/config.json when enabled.</p>
         </section>
 
         <section class="settings-panel" data-settings-panel="agent" hidden>
@@ -5737,56 +5843,85 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </div>
           <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
           <h3 class="settings-section-title settings-group-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteNote">Prefetch while typing (ghost stays hidden). Ctrl+Enter / ⌘⏎ shows the suggestion; Tab accepts. Prefer coder models.</p>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteNote">Quiet prefetch. ⌘⏎ to show, Tab to accept.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <label class="settings-field">
             <span class="settings-label" id="settingsTabAutocompleteModelLabel">Tab model</span>
             <select id="settingsTabAutocompleteModel" class="settings-input"></select>
+            <span class="settings-field-hint" id="settingsTabAutocompleteModelHint">Coder models usually beat chat/flash for Tab.</span>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteModelHint">Coder models usually give better inline fills than chat/flash models.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
-            <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
-            <select id="settingsTabAutocompleteAlternatives" class="settings-input">
-              <option value="1">1</option>
-              <option value="2" selected>2</option>
-              <option value="3">3</option>
-            </select>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Up to N distinct ghost texts per request. Cycle Alt+[ / Alt+]; Tab accepts the current one.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
-            <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches (dist, generated, …). Clear all lines to allow every path.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteNextEditHint">After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.</p>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
+              <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
+              <select id="settingsTabAutocompleteAlternatives" class="settings-input">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+              </select>
+            </label>
+          </div>
+          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Distinct ghost texts in one request. Cycle Alt+[ / Alt+].</p>
+          <div class="settings-prompt-card" id="settingsTabExcludeCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsTabExcludeToggle" aria-expanded="false" aria-controls="settingsTabExcludeBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
+                <span class="settings-prompt-preview" id="settingsTabExcludePreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsTabExcludeBody" hidden>
+              <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
+              <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches.</p>
+            </div>
+          </div>
           <label class="settings-field">
             <span class="settings-label" id="settingsTabAutocompleteShowModeLabel">Show mode</span>
             <select id="settingsTabAutocompleteShowMode" class="settings-input">
               <option value="chip" selected>Chip</option>
               <option value="inline">Inline</option>
             </select>
+            <span class="settings-field-hint" id="settingsTabAutocompleteShowModeHint">Chip = shortcut. Inline = ghost appears by itself.</span>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteShowModeHint">Chip = silent prefetch + ⌘⏎. Inline = ghost text appears automatically.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteFim" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteNextEditHint">After Tab, a Next chip at the likely next edit.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteFimHint">prompt+suffix if the provider supports it.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteFim" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           </div>
         </section>

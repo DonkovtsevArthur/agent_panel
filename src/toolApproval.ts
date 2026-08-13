@@ -64,6 +64,9 @@ export async function requestHarborToolApproval(request: {
     return { approved: true };
   }
   const toolName = String(request.toolName || "tool").trim() || "tool";
+  if (toolName === "inspect_images") {
+    return { approved: true };
+  }
   const preview = previewText(request.input);
   if (externalHook) {
     const approved = await externalHook({ toolName, preview });
