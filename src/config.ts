@@ -489,10 +489,7 @@ function resolveCommitMessageScope(
 
 export function getConfig(): AgentPanelConfig {
   const cfg = vscode.workspace.getConfiguration("agentPanel");
-  const legacyBaseUrl = normalizeBaseUrl(
-    cfg.get<string>("baseUrl") ??
-      ""
-  );
+  const legacyBaseUrl = normalizeBaseUrl(cfg.get<string>("baseUrl") ?? "");
   const legacyApiKey = cfg.get<string>("apiKey") ?? "";
   const language =
     cfg.get<"auto" | "en" | "ru">("language") === "ru"
