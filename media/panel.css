@@ -328,14 +328,16 @@ body {
   width: 100%;
   padding: 12px 12px 10px;
   border-radius: var(--radius-sm);
-  background: var(--harbor-bubble-bg);
+  background: var(--vscode-input-background, var(--harbor-chat-bg));
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .msg-edit-input {
   width: 100%;
-  min-height: 56px;
-  max-height: 180px;
+  /* Match #prompt sizing so the edit box reads as the same composer. */
+  min-height: calc(1.45em * 3);
+  max-height: calc(1.45em * 15);
+  overflow-y: auto;
   resize: none;
   background: transparent;
   color: var(--vscode-input-foreground);
@@ -345,6 +347,11 @@ body {
   font-family: inherit;
   font-size: var(--harbor-font-size);
   line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.msg-edit-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, rgba(127, 127, 127, 0.8));
 }
 
 .msg-edit-footer {
@@ -363,14 +370,67 @@ body {
   overflow: hidden;
 }
 
-.msg-edit-footer-left .model-picker {
-  flex: 1;
+/* Footer mirrors the main composer: left = "+" + mode, right = model +
+   intelligence + send. Same pill/round styles as .composer-footer. */
+.msg-edit-footer-left > .mode-picker {
+  flex-shrink: 0;
+}
+
+.msg-edit-footer-left > .composer-plus {
+  flex-shrink: 0;
+}
+
+.msg-edit-footer-left > .composer-plus .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.msg-edit-footer-left > .mode-picker .model-trigger,
+.msg-edit-footer-right > .msg-edit-model-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-foreground);
+}
+
+.msg-edit-footer-left > .mode-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-left > .mode-picker.is-open .model-trigger,
+.msg-edit-footer-right > .msg-edit-model-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-right > .msg-edit-model-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.msg-edit-footer-right > .msg-edit-model-picker {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
-.msg-edit-footer-left .msg-edit-mode-picker {
-  flex: 0 1 auto;
-  max-width: 42%;
+.msg-edit-footer-right > .reason-picker {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.msg-edit-footer-right > .reason-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  color: var(--vscode-foreground);
+}
+
+.msg-edit-footer-right > .reason-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-right > .reason-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  outline-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  color: var(--vscode-foreground);
 }
 
 .msg-edit-model-menu,
@@ -2535,6 +2595,12 @@ button.msg-attach-image {
   margin: 8px 8px 0;
 }
 
+/* Removable chips (edit mode) sit inside the composer padding, like the
+   main composer's #attachPreview. */
+.msg-edit-composer .msg-attachments.msg-edit-attach-preview {
+  margin: 0;
+}
+
 /* Context ring floats in the composer's top-right corner, above the prompt
    textarea, so it stays clear of the footer buttons (mode/model/send). */
 .composer > .context-meter {
@@ -2761,6 +2827,7 @@ button.msg-attach-image {
 .composer-footer-right > .reason-picker.is-open .model-trigger {
   background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
   outline-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  color: var(--vscode-foreground);
 }
 
 .reason-picker .model-trigger {

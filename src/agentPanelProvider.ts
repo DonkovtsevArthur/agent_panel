@@ -5447,10 +5447,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
                   <span>File</span>
                 </button>
-                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
-                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
-                  <span>Image</span>
-                </button>
               </div>
             </div>
             <div class="model-picker mode-picker" id="modePicker" data-mode="agent">

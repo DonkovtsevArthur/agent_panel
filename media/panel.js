@@ -2390,9 +2390,14 @@
   let editingUserText = "";
   let editingModelId = "";
   let editingModeId = "";
+  let editingReasoningEffort = "";
   let editingAttachments = [];
   let editModelMenuOpen = false;
   let editModeMenuOpen = false;
+  let editPlusMenuOpen = false;
+  let editReasonMenuOpen = false;
+  /** True while a host file picker was opened from the edit-composer "+" button. */
+  let pickAttachmentsForEdit = false;
   let harborEditPickerOpenedAt = 0;
   /** Timestamp of last edit-save / regenerate / branch pointer or submit. */
   let harborEditSaveAt = 0;
@@ -3950,9 +3955,9 @@
       return;
     }
     const SELECTOR =
-      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .composer-plan-build";
+      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build";
     const POINTER_ACTION_SELECTOR =
-      ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .composer-plan-build, #sendBtn";
+      ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .composer-plan-build, #sendBtn";
     let downEl = null;
     let clickSeen = false;
 
@@ -3974,6 +3979,22 @@
         }
         harborEditPickerOpenedAt = Date.now();
         toggleEditModelMenu();
+        return true;
+      }
+      if (el.classList.contains("msg-edit-plus-btn")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditPlusMenu();
+        return true;
+      }
+      if (el.classList.contains("msg-edit-reason-trigger")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditReasonMenu();
         return true;
       }
       if (el.classList.contains("msg-edit-save")) {
@@ -5231,10 +5252,17 @@
     closeMenu();
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
     editingModeId = normalizeAgentModeUi(item.mode || agentMode || "agent");
+    editingReasoningEffort = modelSupportsReasoning(editingModelId)
+      ? normalizeReasonLevel(selectedReasoningEffort) ||
+        defaultReasonForModel(editingModelId)
+      : "";
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
@@ -5245,10 +5273,14 @@
     const preservedScrollTop = messagesEl.scrollTop;
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
     editingModeId = "";
+    editingReasoningEffort = "";
     editingAttachments = [];
     renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
@@ -5290,6 +5322,9 @@
     }
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
     harborEditSaveAt = Date.now();
     stickToBottom = true;
     setBusy(true);
@@ -5299,13 +5334,15 @@
       text: nextText,
       model,
       agentMode: mode,
-      reasoningEffort: selectedReasoningEffort || undefined,
+      reasoningEffort:
+        editingReasoningEffort || selectedReasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
     editingModeId = "";
+    editingReasoningEffort = "";
     editingAttachments = [];
   }
 
@@ -5639,13 +5676,28 @@
       return;
     }
     editingModelId = next;
+    if (modelSupportsReasoning(editingModelId)) {
+      editingReasoningEffort =
+        normalizeReasonLevel(editingReasoningEffort) ||
+        defaultReasonForModel(editingModelId);
+    } else {
+      editingReasoningEffort = "";
+    }
     const picker = getEditModelPicker();
     const label = picker
       ? picker.querySelector(".msg-edit-model-label")
       : null;
+    const trigger = picker
+      ? picker.querySelector(".msg-edit-model-trigger")
+      : null;
+    const full = modelDisplayName(editingModelId);
     if (label) {
-      label.textContent = modelDisplayName(editingModelId);
+      label.textContent = shortModelChip(full);
     }
+    if (trigger) {
+      trigger.title = full;
+    }
+    updateEditReasonPickerUI();
     closeEditModelMenu();
   }
 
@@ -5828,6 +5880,345 @@
       return false;
     }
     selectEditingMode(modeId);
+    return true;
+  }
+
+  /* --- Edit-composer "+" (attachments) picker — mirrors composerPlus. --- */
+
+  function getEditPlusPicker() {
+    return messagesEl.querySelector(".msg-edit-plus");
+  }
+
+  function findEditPlusMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-plus-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-plus-menu");
+  }
+
+  function closeEditPlusMenu() {
+    editPlusMenuOpen = false;
+    const picker = getEditPlusPicker();
+    const menu = findEditPlusMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-plus-btn");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditPlusMenu() {
+    const picker = getEditPlusPicker();
+    if (!picker) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeReasonMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
+    closeEditReasonMenu();
+    editPlusMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-plus-btn");
+    const menu = findEditPlusMenu(picker);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditPlusMenu() {
+    if (editPlusMenuOpen) {
+      closeEditPlusMenu();
+    } else {
+      openEditPlusMenu();
+    }
+  }
+
+  /* --- Edit-composer reason (Intelligence) picker — mirrors reasonPicker. --- */
+
+  function getEditReasonPicker() {
+    return messagesEl.querySelector(".msg-edit-reason-picker");
+  }
+
+  function findEditReasonMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-reason-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-reason-menu");
+  }
+
+  function updateEditReasonPickerUI() {
+    const picker = getEditReasonPicker();
+    if (!picker) {
+      return;
+    }
+    const supported = modelSupportsReasoning(
+      editingModelId || selectedModelId
+    );
+    picker.hidden = !supported;
+    if (!supported) {
+      closeEditReasonMenu();
+      return;
+    }
+    const level =
+      normalizeReasonLevel(editingReasoningEffort) ||
+      defaultReasonForModel(editingModelId || selectedModelId);
+    const label = picker.querySelector(".msg-edit-reason-label");
+    const trigger = picker.querySelector(".msg-edit-reason-trigger");
+    if (label) {
+      label.textContent = reasonLevelLabel(level);
+    }
+    if (trigger) {
+      trigger.title = `${t("intelligence")}: ${reasonLevelLabel(level)}`;
+    }
+  }
+
+  function renderEditReasonMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    const activeLevel = normalizeReasonLevel(editingReasoningEffort);
+    for (const level of REASON_LEVELS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (level.id === activeLevel ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.dataset.reason = level.id;
+      const label = document.createElement("span");
+      label.className = "model-option-label";
+      label.textContent = t(level.labelKey);
+      btn.appendChild(label);
+      if (level.id === activeLevel) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function closeEditReasonMenu() {
+    editReasonMenuOpen = false;
+    const picker = getEditReasonPicker();
+    const menu = findEditReasonMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-reason-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditReasonMenu() {
+    const picker = getEditReasonPicker();
+    if (!picker || picker.hidden) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeReasonMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
+    closeEditPlusMenu();
+    editReasonMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-reason-trigger");
+    const menu = findEditReasonMenu(picker);
+    renderEditReasonMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditReasonMenu() {
+    if (editReasonMenuOpen) {
+      closeEditReasonMenu();
+    } else {
+      openEditReasonMenu();
+    }
+  }
+
+  function selectEditingReasoningEffort(id) {
+    const next = normalizeReasonLevel(id);
+    if (!modelSupportsReasoning(editingModelId || selectedModelId)) {
+      editingReasoningEffort = "";
+      updateEditReasonPickerUI();
+      closeEditReasonMenu();
+      return;
+    }
+    editingReasoningEffort =
+      next || defaultReasonForModel(editingModelId || selectedModelId);
+    updateEditReasonPickerUI();
+    closeEditReasonMenu();
+  }
+
+  /* --- Edit-composer attachments — mirrors pendingAttachments flow. --- */
+
+  function refreshEditingAttachmentsPreview() {
+    const composer = messagesEl.querySelector(".msg-edit-composer");
+    if (!composer) {
+      return;
+    }
+    // Replace the read-only render (plain .msg-attachments) — edit mode
+    // shows removable chips instead.
+    composer
+      .querySelectorAll(
+        ".msg-attachments:not(.msg-edit-attach-preview)"
+      )
+      .forEach((el) => el.remove());
+    let container = composer.querySelector(
+      ".msg-attachments.msg-edit-attach-preview"
+    );
+    if (!editingAttachments.length) {
+      if (container) {
+        container.remove();
+      }
+      return;
+    }
+    if (!container) {
+      container = document.createElement("div");
+      container.className = "msg-attachments msg-edit-attach-preview";
+      const textarea = composer.querySelector(".msg-edit-input");
+      if (textarea) {
+        composer.insertBefore(container, textarea);
+      } else {
+        composer.prepend(container);
+      }
+    }
+    container.innerHTML = editingAttachments
+      .map((att) => {
+        const full = String(att.path || att.name || "file");
+        const title = escapeHtml(full);
+        const src = attachmentPreviewSrc(att);
+        const remove =
+          `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+            att.id
+          )}" title="${t("remove")}" aria-label="${t("remove")}">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+          `</button>`;
+        if (attachmentLooksLikeImage(att) && src) {
+          return (
+            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(
+              att.id
+            )}" title="${title}">` +
+            `<img class="attach-thumb" src="${src}" alt="" decoding="sync" />` +
+            `<span class="msg-attach-image-badge" aria-hidden="true">` +
+            `<span class="material-symbols-outlined">image</span>` +
+            `</span>` +
+            remove +
+            `</div>`
+          );
+        }
+        return renderFileTypeChip(att, "attach-chip", remove);
+      })
+      .join("");
+  }
+
+  function mergeEditingAttachments(list) {
+    if (!Array.isArray(list) || !list.length) {
+      return;
+    }
+    let changed = false;
+    for (const item of list) {
+      if (editingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      const id =
+        item.id ||
+        `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      if (editingAttachments.some((a) => a.id === id)) {
+        continue;
+      }
+      const kind = attachmentLooksLikeImage(item)
+        ? "image"
+        : item.kind || "file";
+      editingAttachments.push({
+        id,
+        kind,
+        name: item.name || "file",
+        mime: item.mime || "application/octet-stream",
+        path: item.path,
+        storageKey: item.storageKey,
+        size: item.size,
+        dataBase64: item.dataBase64,
+        previewDataUrl: item.previewDataUrl,
+      });
+      changed = true;
+    }
+    if (changed) {
+      refreshEditingAttachmentsPreview();
+    }
+  }
+
+  function removeEditingAttachment(id) {
+    const before = editingAttachments.length;
+    editingAttachments = editingAttachments.filter((a) => a.id !== id);
+    if (editingAttachments.length !== before) {
+      refreshEditingAttachmentsPreview();
+    }
+  }
+
+  function selectEditingReasonFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-reason-menu .model-option")
+        : null;
+    if (!option) {
+      return false;
+    }
+    selectEditingReasoningEffort(String(option.dataset.reason || ""));
+    return true;
+  }
+
+  function selectEditPlusItemFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const item =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-plus-menu .composer-plus-item")
+        : null;
+    if (!item || item.disabled || item.classList.contains("is-disabled")) {
+      return false;
+    }
+    const action = item.getAttribute("data-action");
+    closeEditPlusMenu();
+    if (action === "file") {
+      pickAttachmentsForEdit = true;
+      host.postMessage({ type: "pickAttachments" });
+    }
     return true;
   }
 
@@ -13418,9 +13809,19 @@
         el.classList.add("is-editing");
         const editModeId = normalizeAgentModeUi(editingModeId || agentMode);
         const editModeLabel = modeDisplayName(editModeId);
-        const editModelLabel = modelDisplayName(
+        const editModelFull = modelDisplayName(
           editingModelId || selectedModelId
         );
+        const editModelLabel = shortModelChip(editModelFull);
+        const editReasonSupported = modelSupportsReasoning(
+          editingModelId || selectedModelId
+        );
+        const editReasonLabel = editReasonSupported
+          ? reasonLevelLabel(
+              normalizeReasonLevel(editingReasoningEffort) ||
+                defaultReasonForModel(editingModelId || selectedModelId)
+            )
+          : "";
         body.innerHTML =
           `<div class="msg-edit-composer">` +
           (msgAttachments.length
@@ -13429,6 +13830,17 @@
           `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="${t("editMessage")}"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
+          `<div class="composer-plus msg-edit-plus">` +
+          `<button type="button" class="icon-btn msg-edit-plus-btn" aria-haspopup="menu" aria-expanded="false" title="${t("add")}" aria-label="${t("add")}">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">add</span>` +
+          `</button>` +
+          `<div class="composer-plus-menu msg-edit-plus-menu" role="menu" hidden>` +
+          `<button type="button" class="composer-plus-item" data-action="file" role="menuitem">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">attach_file</span>` +
+          `<span>${escapeHtml(t("file"))}</span>` +
+          `</button>` +
+          `</div>` +
+          `</div>` +
           `<div class="model-picker mode-picker msg-edit-mode-picker" data-mode="${escapeHtml(
             editModeId
           )}">` +
@@ -13440,8 +13852,12 @@
           `</button>` +
           `<div class="model-menu msg-edit-mode-menu" role="listbox" hidden></div>` +
           `</div>` +
+          `</div>` +
+          `<div class="msg-edit-footer-right">` +
           `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
-          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("model")}">` +
+          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${escapeHtml(
+            editModelFull
+          )}">` +
           `<span class="model-label msg-edit-model-label">${escapeHtml(
             editModelLabel
           )}</span>` +
@@ -13449,8 +13865,20 @@
           `</button>` +
           `<div class="model-menu msg-edit-model-menu" role="listbox" hidden></div>` +
           `</div>` +
-          `</div>` +
-          `<div class="msg-edit-footer-right">` +
+          (editReasonSupported
+            ? `<div class="model-picker reason-picker msg-edit-reason-picker">` +
+              `<button type="button" class="model-trigger msg-edit-reason-trigger" aria-haspopup="listbox" aria-expanded="false" title="${escapeHtml(
+                t("intelligence")
+              )}">` +
+              `<span class="material-symbols-outlined reason-icon" aria-hidden="true">neurology</span>` +
+              `<span class="model-label msg-edit-reason-label">${escapeHtml(
+                editReasonLabel
+              )}</span>` +
+              `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+              `</button>` +
+              `<div class="model-menu msg-edit-reason-menu" role="listbox" hidden></div>` +
+              `</div>`
+            : "") +
           `<button type="button" class="primary msg-edit-save" data-index="${index}" title="${t("saveAndResend")}" aria-label="${t("saveAndResend")}">` +
           `<span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>` +
           `</button>` +
@@ -13468,6 +13896,10 @@
         const input = body.querySelector(".msg-edit-input");
         if (input) {
           input.value = editingUserText;
+        }
+        // Removable attachment chips replace the read-only preview in edit mode.
+        if (msgAttachments.length) {
+          refreshEditingAttachmentsPreview();
         }
         const saveBtn = body.querySelector(".msg-edit-save");
         if (saveBtn) {
@@ -13792,6 +14224,8 @@
     closeReasonMenu();
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
     plusMenuOpen = true;
     if (composerPlusEl) {
       composerPlusEl.classList.add("is-open");
@@ -14324,6 +14758,16 @@
       event.stopPropagation();
       return;
     }
+    if (editReasonMenuOpen && selectEditingReasonFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (editPlusMenuOpen && selectEditPlusItemFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (!editModelMenuOpen) {
       return;
     }
@@ -14344,6 +14788,24 @@
         selectEditingMode(String(editModeOption.dataset.mode || "").trim());
         return;
       }
+    }
+    if (editReasonMenuOpen) {
+      const editReasonOption = event.target.closest(
+        ".msg-edit-reason-menu .model-option"
+      );
+      if (editReasonOption) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectEditingReasoningEffort(
+          String(editReasonOption.dataset.reason || "")
+        );
+        return;
+      }
+    }
+    if (editPlusMenuOpen && selectEditPlusItemFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
     }
     if (!editModelMenuOpen) {
       return;
@@ -14421,6 +14883,10 @@
     const editModelMenuEl = findEditModelMenu(editModelPickerEl);
     const editModePickerEl = getEditModePicker();
     const editModeMenuEl = findEditModeMenu(editModePickerEl);
+    const editPlusPickerEl = getEditPlusPicker();
+    const editPlusMenuEl = findEditPlusMenu(editPlusPickerEl);
+    const editReasonPickerEl = getEditReasonPicker();
+    const editReasonMenuEl = findEditReasonMenu(editReasonPickerEl);
     const inEditModelMenu =
       Boolean(
         editModelMenuEl && targetNode && editModelMenuEl.contains(targetNode)
@@ -14434,6 +14900,20 @@
       ) ||
       Boolean(
         target instanceof Element && target.closest(".msg-edit-mode-menu")
+      );
+    const inEditPlusMenu =
+      Boolean(
+        editPlusMenuEl && targetNode && editPlusMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-plus-menu")
+      );
+    const inEditReasonMenu =
+      Boolean(
+        editReasonMenuEl && targetNode && editReasonMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-reason-menu")
       );
     if (editModelMenuOpen) {
       const inPicker =
@@ -14453,6 +14933,24 @@
         closeEditModeMenu();
       }
     }
+    if (editPlusMenuOpen) {
+      const inPicker =
+        editPlusPickerEl &&
+        targetNode &&
+        editPlusPickerEl.contains(targetNode);
+      if (!inPicker && !inEditPlusMenu) {
+        closeEditPlusMenu();
+      }
+    }
+    if (editReasonMenuOpen) {
+      const inPicker =
+        editReasonPickerEl &&
+        targetNode &&
+        editReasonPickerEl.contains(targetNode);
+      if (!inPicker && !inEditReasonMenu) {
+        closeEditReasonMenu();
+      }
+    }
     // Floated edit menus live on document.body — must not cancel the edit.
     // Save/resend is inside the composer; still exclude it explicitly so a
     // VS Code webview retarget (sticky user bubble) cannot abort the click.
@@ -14467,6 +14965,8 @@
         !composer.contains(targetNode) &&
         !inEditModelMenu &&
         !inEditModeMenu &&
+        !inEditPlusMenu &&
+        !inEditReasonMenu &&
         !inEditSave
       ) {
         cancelEditingUserMessage();
@@ -14499,6 +14999,12 @@
     }
     if (event.key === "Escape" && editModeMenuOpen) {
       closeEditModeMenu();
+    }
+    if (event.key === "Escape" && editPlusMenuOpen) {
+      closeEditPlusMenu();
+    }
+    if (event.key === "Escape" && editReasonMenuOpen) {
+      closeEditReasonMenu();
     }
   });
 
@@ -14793,6 +15299,7 @@
       const action = item.getAttribute("data-action");
       closePlusMenu();
       if (action === "file") {
+        pickAttachmentsForEdit = false;
         host.postMessage({ type: "pickAttachments" });
       }
     });
@@ -16390,6 +16897,35 @@
       toggleEditModelMenu();
       return;
     }
+    const editPlusTrigger = event.target.closest(".msg-edit-plus-btn");
+    if (editPlusTrigger && messagesEl.contains(editPlusTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
+      toggleEditPlusMenu();
+      return;
+    }
+    const editReasonTrigger = event.target.closest(".msg-edit-reason-trigger");
+    if (editReasonTrigger && messagesEl.contains(editReasonTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
+      toggleEditReasonMenu();
+      return;
+    }
+    const editAttachRemove = event.target.closest(
+      ".msg-edit-attach-preview .attach-chip-remove"
+    );
+    if (editAttachRemove && messagesEl.contains(editAttachRemove)) {
+      event.preventDefault();
+      event.stopPropagation();
+      removeEditingAttachment(editAttachRemove.getAttribute("data-id"));
+      return;
+    }
     const saveEditTarget = eventTargetElement(event);
     const saveEditBtn = saveEditTarget
       ? saveEditTarget.closest(".msg-edit-save")
@@ -16646,7 +17182,9 @@
         editingUserText = "";
         editingModelId = "";
         editingModeId = "";
+        editingReasoningEffort = "";
         editingAttachments = [];
+        pickAttachmentsForEdit = false;
         clearPendingAttachments();
         clearPendingMentions();
         setCanRegenerate(msg.canRegenerate);
@@ -16675,7 +17213,14 @@
         renderMessageQueue();
         break;
       case "attachmentsAdded":
-        mergePendingAttachments(msg.attachments || []);
+        if (pickAttachmentsForEdit) {
+          // Picker was opened from the edit-composer "+" — attachments go to
+          // the message being edited, not the main composer draft.
+          pickAttachmentsForEdit = false;
+          mergeEditingAttachments(msg.attachments || []);
+        } else {
+          mergePendingAttachments(msg.attachments || []);
+        }
         break;
       case "fileSearchResults":
         handleMentionResults(msg);
@@ -16897,7 +17442,9 @@
         editingUserText = "";
         editingModelId = "";
         editingModeId = "";
+        editingReasoningEffort = "";
         editingAttachments = [];
+        pickAttachmentsForEdit = false;
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;

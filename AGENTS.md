@@ -30,7 +30,8 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) — used by commit utility path |
 | Agent Skills | `src/harborSkills.ts` + Settings → Skills; dirs `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus `agentPanel.skills.extraDirectories`. Per-source toggles: `workspaceEnabled` / `globalEnabled` / `disabledExtraDirectories`. No auto-scan of `.agents` / `.cline` / `.cursor` skill trees. Runtime: Cline `skills` tool via `clineRuntime` `localRuntime.userInstructionService`. |
 | MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
-| Webview UI | `media/panel.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
+| Webview UI (generated) | `media/panel.js` — built from `media/src/panel/NN-*.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
+| Webview UI sources | `media/src/panel/NN-*.js` — edit these, not `media/panel.js` directly. Rebuild with `node scripts/build-panel.js` (plain concatenation in fixed module order, no minification/esbuild — tests and the JetBrains plugin depend on exact function names/text in the built `media/panel.js`). Not wired into `npm run compile`; run it explicitly after editing a module. |
 | Host protocol (shared) | `packages/harbor-host-protocol/` (+ `src/hostProtocol.ts` for VS Code) |
 | Harbor core / sidecar | `packages/harbor-core/` → `out/harborSidecar.js` (`npm run build:sidecar`) |
 | JetBrains / WebStorm plugin | `jetbrains/` — JCEF Tool Window + Kotlin host; see `docs/jetbrains-port.md` |
