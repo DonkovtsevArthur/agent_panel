@@ -281,7 +281,6 @@
       taskPlaceholder: "Task for the agent... (@ for file)",
       add: "Add",
       file: "File",
-      image: "Image",
       send: "Send",
       stop: "Stop",
       queue: "Queue",
@@ -402,7 +401,6 @@
       openSourceControl: "Open Source Control",
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
-      attachImage: "Attach image",
       attachFile: "Attach file",
       currentModelNoImages: "Current model does not support images",
       addMode: "+ Add mode",
@@ -743,11 +741,11 @@
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
-      intelligence: "Интеллект",
-      reasonLow: "Низкий",
-      reasonMedium: "Средний",
-      reasonHigh: "Высокий",
-      reasonExtraHigh: "Очень высокий",
+      intelligence: "Intelligence",
+      reasonLow: "Low",
+      reasonMedium: "Medium",
+      reasonHigh: "High",
+      reasonExtraHigh: "Extra high",
       close: "Закрыть",
       cancel: "Отмена",
       done: "Готово",
@@ -878,7 +876,6 @@
       openSourceControl: "Открыть Source Control",
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
-      attachImage: "Прикрепить изображение",
       attachFile: "Прикрепить файл",
       currentModelNoImages: "Текущая модель не поддерживает изображения",
       addMode: "+ Добавить режим",
@@ -1738,9 +1735,6 @@
       if (action === "file") {
         label.textContent = t("file");
         item.title = t("attachFile");
-      } else if (action === "image") {
-        label.textContent = t("image");
-        item.title = t("attachImage");
       }
     });
     modeTrigger.title = t("mode");
@@ -6053,11 +6047,23 @@
     let path = "";
     const rawArgs = String(argsPreview || "").trim();
     if (rawArgs) {
+      // Scalar field: "path":"...", "command":"...", etc.
       const pathMatch = rawArgs.match(
         /"(?:relativePath|path|file_path|command|query|queries)"\s*:\s*"((?:\\.|[^"\\])*)"/
       );
       if (pathMatch) {
         path = pathMatch[1].replace(/\\"/g, '"');
+      }
+      // Array field: "commands":["..."], "paths":["..."], "files":["..."], etc.
+      // Take the first element so two cards for the same tool_use collapse into
+      // one (onStep + onTool both produce the same non-empty key → merge).
+      if (!path) {
+        const arrayMatch = rawArgs.match(
+          /"(?:commands|paths|file_paths|files|queries)"\s*:\s*\["((?:\\.|[^"\\])*)"/
+        );
+        if (arrayMatch) {
+          path = arrayMatch[1].replace(/\\"/g, '"');
+        }
       }
     }
     if (!path && label) {
@@ -7680,6 +7686,16 @@
     applyAgentsRailVisibility();
   }
 
+  /** On narrow panels, collapse model + intelligence chips to icons so they
+   *  never get clipped off the composer's right edge. */
+  function updateComposerCompact() {
+    if (!composerEl) {
+      return;
+    }
+    const w = composerEl.getBoundingClientRect().width;
+    composerEl.classList.toggle("is-compact", w > 0 && w < 360);
+  }
+
   function showScreen(name) {
     let screen =
       name === "chat" ||
@@ -7697,6 +7713,9 @@
     mcpScreenOpen = screen === "mcp";
     if (workspaceShell) {
       workspaceShell.hidden = screen !== "chat";
+    }
+    if (screen === "chat") {
+      updateComposerCompact();
     }
     if (archiveScreen) {
       archiveScreen.hidden = screen !== "archive";
@@ -11200,9 +11219,9 @@
         chunks.push(`:root{--mode-ask:${accent};}`);
       }
       chunks.push(
-        `.composer[data-mode="${attr}"],` +
-          `.msg.user[data-mode="${attr}"],` +
-          `.msg-edit-composer[data-mode="${attr}"]{border-color:${accent};}` +
+        `.msg.user[data-mode="${attr}"]{background:color-mix(in srgb,${accent} 14%,var(--harbor-chat-bg));}` +
+          `.composer[data-mode="${attr}"],` +
+          `.msg-edit-composer[data-mode="${attr}"]{border-color:color-mix(in srgb,${accent} var(--mode-border-composer),transparent);}` +
           `.mode-picker[data-mode="${attr}"] .model-trigger,` +
           `.mode-picker[data-mode="${attr}"] .model-trigger:hover:not(:disabled),` +
           `.mode-picker[data-mode="${attr}"].is-open .model-trigger,` +
@@ -13605,16 +13624,6 @@
     if (fileItem) {
       fileItem.title = t("attachFile");
     }
-    const imageItem = composerPlusMenu.querySelector(
-      '.composer-plus-item[data-action="image"]'
-    );
-    if (!imageItem) {
-      return;
-    }
-    imageItem.disabled = false;
-    imageItem.classList.remove("is-disabled");
-    imageItem.setAttribute("aria-disabled", "false");
-    imageItem.title = t("attachImage");
   }
 
   /** Ignore briefly-stale host selectedModel after a local picker change. */
@@ -14785,8 +14794,6 @@
       closePlusMenu();
       if (action === "file") {
         host.postMessage({ type: "pickAttachments" });
-      } else if (action === "image") {
-        host.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });
   }
@@ -15827,10 +15834,12 @@
   if (workspaceShell && typeof ResizeObserver === "function") {
     const shellRo = new ResizeObserver(() => {
       updateWorkspaceNarrow();
+      updateComposerCompact();
     });
     shellRo.observe(workspaceShell);
   }
   updateWorkspaceNarrow();
+  updateComposerCompact();
   applyAgentsRailVisibility();
 
   if (chatBranchesEl) {

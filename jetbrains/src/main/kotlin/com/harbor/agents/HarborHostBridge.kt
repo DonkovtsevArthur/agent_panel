@@ -68,6 +68,22 @@ class HarborHostBridge(
     }, browser.cefBrowser)
 
     removeListener = sidecar.addNotificationListener { method, params ->
+      // Diagnostic: confirm turn-lifecycle notifications reach the host.
+      // Grep the IDE log for "Harbor sidecar→host" — expect status →
+      // assistantDone → idle per turn (and agentsList with runState changes).
+      if (method == "hostToWebview" && params != null) {
+        val inner = params.get("type")?.asString ?: ""
+        if (inner == "status" || inner == "step" || inner == "assistantDone" ||
+          inner == "runFinished" || inner == "runFailed" || inner == "idle" ||
+          inner == "stopped" || inner == "agentsList"
+        ) {
+          log.info("Harbor sidecar→host hostToWebview type=$inner")
+        }
+      } else if (method.startsWith("turn.")) {
+        // Raw core events — if these appear instead of hostToWebview, the
+        // bundled sidecar is stale (emits turn.* instead of hostToWebview).
+        log.warn("Harbor sidecar→host raw $method (expected hostToWebview)")
+      }
       when (method) {
         "hostToWebview" -> postToWebview(gson.toJson(params))
         "host.openExternal" -> {

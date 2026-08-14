@@ -27,6 +27,30 @@ If a Marketplace TabCoder extension is also installed, disable one of them — t
 
 Версия форка должна совпадать с `@cline/sdk` в корневом `package.json`.
 
+### Сборка без bun (esbuild)
+
+Штатный билд SDK требует `bun` (`bun run build:sdk`). Если `bun` не установлен, правки в `vendor/cline/.../*.ts` **не попадают в рантайм** — Extension грузит `out/clineBundle.js`, который собирается из `node_modules/@cline/*/dist` (опубликованная копия), а не из исходников форка. Повторите шаг билда `agents` (а при необходимости — `core`/`llms`/`shared`) на **esbuild** (есть в корне репо как dep):
+
+```bash
+# 1. Собрать agents из правленного исходника (повтор bun.mts):
+node_modules/.bin/esbuild \
+  vendor/cline/sdk/packages/agents/src/index.ts \
+  --bundle --format=esm --target=node22 --packages=bundle \
+  --external:@cline/llms --external:nanoid \
+  --outfile=vendor/cline/sdk/packages/agents/dist/index.js
+
+# 2. Синхронизировать свежий dist в node_modules (оригинал — в .orig):
+cp node_modules/@cline/agents/dist/index.js node_modules/@cline/agents/dist/index.js.orig
+cp vendor/cline/sdk/packages/agents/dist/index.js node_modules/@cline/agents/dist/index.js
+
+# 3. Пересобрать бандл:
+node scripts/bundle-cline.js
+
+# 4. Reload Window в VS Code (host держит старый бандл в памяти).
+```
+
+Проверка, что патч «лёг»: `grep -c "ваш-маркер" out/clineBundle.js` — должен вернуть > 0. После сборки держите `node_modules/@cline/*/dist/index.js.orig` бэкапы и при `npm install` / смене версии `@cline/sdk` повторяйте синхронизацию dist (или переведите deps на `file:./vendor/cline/sdk/packages/...`, тогда ручная синхронизация не нужна — `@cline/agents` указывает на собранный форк напрямую).
+
 ## Harbor notes (edit soft-fail)
 
 Cline `editor` / `apply_patch` return `{ success: false, error }` without throwing.
@@ -57,7 +81,7 @@ Harbor глушит телеметрию **вне** vendor:
 
 1. Заменить дерево `vendor/cline` нужной версией Cline (wholesale).
 2. Выровнять `@cline/sdk` (и связанные `@cline/*`) в корневом `package.json`.
-3. При необходимости `bun run build:sdk` в vendor и/или `file:` deps.
+3. При необходимости `bun run build:sdk` в vendor и/или `file:` deps. Без bun — esbuild-обход (см. «Сборка без bun» выше).
 4. Пересобрать `out/clineBundle.js` (`npm run compile` / `scripts/bundle-cline.js`).
 
 Harbor-патчи телеметрии живут только в `src/` и `scripts/` — их не нужно заново вносить в vendor после sync.

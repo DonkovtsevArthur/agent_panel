@@ -20,6 +20,7 @@ import {
 import {
   appendSubagentsRuntimeNudge,
   appendVisionInspectRuntimeNudge,
+  harborAskModeRulesForLanguage,
   harborDefaultRulesForLanguage,
   harborSubagentsRulesForLanguage,
   harborVisionInspectRulesForLanguage,
@@ -1611,6 +1612,12 @@ export async function runClineAgentTurn(options: {
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
+      : "",
+    // Ask shares Cline's "plan" mode under the hood (see mapHarborModeToCline),
+    // so Cline's base prompt always says "Plan mode" / "toggle to Act mode".
+    // Override that framing so the model calls itself "Ask" to the user.
+    String(options.agentMode || "").toLowerCase() === "ask"
+      ? harborAskModeRulesForLanguage(uiLang)
       : "",
     modePrompt
       ? `# Mode: ${modeDef.label || modeDef.id}\n${modePrompt}`

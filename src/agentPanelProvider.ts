@@ -5433,7 +5433,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div class="composer" id="composer" data-mode="agent">
         <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
-        <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
+        <div class="composer-input-row">
+          <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
+        </div>
         <div class="composer-footer">
           <div class="composer-footer-left">
             <div class="composer-plus" id="composerPlus">
@@ -5458,8 +5460,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               </button>
               <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
             </div>
+          </div>
+          <div class="composer-footer-right">
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Model">
+                <span class="material-symbols-outlined model-icon-compact" aria-hidden="true">smart_toy</span>
                 <span class="model-label" id="modelLabel">Model</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
@@ -5467,14 +5472,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="model-picker reason-picker" id="reasonPicker" hidden>
               <button type="button" class="model-trigger" id="reasonTrigger" aria-haspopup="listbox" aria-expanded="false" title="Intelligence">
-                <span class="material-symbols-outlined reason-icon" aria-hidden="true">psychology</span>
+                <span class="material-symbols-outlined reason-icon" aria-hidden="true">neurology</span>
                 <span class="model-label" id="reasonLabel">Medium</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="reasonMenu" role="listbox" hidden></div>
             </div>
-          </div>
-          <div class="composer-footer-right">
             <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
               <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
               <span class="material-symbols-outlined icon-queue" aria-hidden="true">schedule</span>
@@ -5485,8 +5488,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div id="composerDropHint" class="composer-drop-hint" hidden>
           <span class="composer-drop-hint-text">Drop file to attach</span>
         </div>
-      </div>
-      <div class="composer-meta">
         <button type="button" class="context-meter" id="contextRing" aria-label="Context usage">
           <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
             <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>

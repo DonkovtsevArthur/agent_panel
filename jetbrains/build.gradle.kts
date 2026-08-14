@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.5.143"
+version = "1.10.3"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,10 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>1.5.145</b>
+            <ul>
+              <li>Мягкие цветные бордеры пузыря пользователя и композа по режиму; фон пузыря без изменений</li>
+            </ul>
             <b>1.5.143</b>
             <ul>
               <li>Интеллект (reasoning) для Kimi и GLM-4.5+/5.x, не только Claude</li>

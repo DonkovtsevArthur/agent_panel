@@ -328,6 +328,75 @@ function cloneUsage(usage: AgentUsage): AgentUsage {
 	return { ...usage };
 }
 
+/**
+ * Deterministic JSON serialization: recursively sorts object keys so two
+ * inputs with the same shape produce the same string regardless of key
+ * order. Drops `undefined` fields to match JSON.stringify semantics, keeps
+ * arrays as-is, and guards against circular references.
+ *
+ * Used to build a stable signature for duplicate tool-call detection — the
+ * same tool name + same arguments must collapse to one execution.
+ */
+function stableStringify(value: unknown): string {
+	const seen = new WeakSet<object>();
+	const recurse = (input: unknown): string => {
+		if (input === null || typeof input !== "object") {
+			return typeof input === "bigint"
+				? input.toString()
+				: JSON.stringify(input ?? null);
+		}
+		if (seen.has(input as object)) {
+			return "[Circular]";
+		}
+		seen.add(input as object);
+		if (Array.isArray(input)) {
+			return `[${input.map((item) => recurse(item)).join(",")}]`;
+		}
+		const entries = Object.entries(input as Record<string, unknown>).filter(
+			([, v]) => v !== undefined,
+		);
+		entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+		return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${recurse(v)}`).join(",")}}`;
+	};
+	return recurse(value);
+}
+
+/**
+ * Stable signature for a tool call: `toolName` + canonical serialization of
+ * `input`. Two calls with identical name and arguments produce the same
+ * signature, so duplicates can be detected within a single assistant turn.
+ */
+function toolCallSignature(toolCall: AgentToolCallPart): string {
+	return `${toolCall.toolName}\u0000${stableStringify(toolCall.input)}`;
+}
+
+/**
+ * Synthesize a non-error tool-result message for a duplicate tool call.
+ *
+ * Marked `isError:false` so the model treats the duplicate as harmless and
+ * does not retry it, with `output.deduplicated:true` as an audit trail.
+ * The message is emitted without `tool-started`/`tool-finished` events (no
+ * `executePreparedTool` call), so it stays invisible in the UI while keeping
+ * the 1:1 `tool_use`/`tool_result` pairing required by OpenAI-compatible
+ * providers.
+ */
+function synthesizeDuplicateToolResultMessage(
+	toolCall: AgentToolCallPart,
+): AgentMessage {
+	return createMessage("tool", [
+		{
+			type: "tool-result",
+			toolCallId: toolCall.toolCallId,
+			toolName: toolCall.toolName,
+			output: {
+				deduplicated: true,
+				note: "Duplicate tool call (same name and input) in this turn; skipped.",
+			},
+			isError: false,
+		},
+	]);
+}
+
 function cloneMessages(messages: readonly AgentMessage[]): AgentMessage[] {
 	return messages.map((message) => ({
 		...message,
@@ -1493,20 +1562,51 @@ export class AgentRuntime {
 	private async executeToolCalls(
 		toolCalls: AgentToolCallPart[],
 	): Promise<AgentMessage[]> {
-		const prepared: PreparedToolExecution[] = [];
-		for (const toolCall of toolCalls) {
-			prepared.push(await this.prepareToolExecution(toolCall));
-		}
+		// Deduplicate identical tool calls within the same assistant turn:
+		// models (notably GLM-5.2) occasionally emit two tool_use blocks with
+		// the same name + input but distinct toolCallIds. Parallel execution
+		// would run both → double work and duplicate UI cards. We keep the
+		// first occurrence and synthesize a non-error tool-result for the
+		// duplicate (no tool-started/finished events → invisible in the UI),
+		// preserving the 1:1 tool_use/tool_result pairing and array order that
+		// callers (e.g. findCompletingToolMessage) rely on.
+		const seenSignatures = new Set<string>();
+		const isDuplicate = toolCalls.map((toolCall) => {
+			const signature = toolCallSignature(toolCall);
+			if (seenSignatures.has(signature)) {
+				return true;
+			}
+			seenSignatures.add(signature);
+			return false;
+		});
+
+		// HARBOR-DEDUP diagnostic removed — root cause was a UI merge bug
+		// (toolStepMatchKey), not duplicate tool_use. The dedup below stays as a
+		// safety net for future model regressions.
 
 		if (this.config.toolExecution === "parallel") {
 			return Promise.all(
-				prepared.map((execution) => this.executePreparedTool(execution)),
+				toolCalls.map((toolCall, index) =>
+					isDuplicate[index]
+						? Promise.resolve(
+								synthesizeDuplicateToolResultMessage(toolCall),
+							)
+						: this.prepareToolExecution(toolCall).then((execution) =>
+								this.executePreparedTool(execution),
+							),
+				),
 			);
 		}
 
 		const results: AgentMessage[] = [];
-		for (const execution of prepared) {
-			results.push(await this.executePreparedTool(execution));
+		for (let index = 0; index < toolCalls.length; index += 1) {
+			const toolCall = toolCalls[index];
+			if (isDuplicate[index]) {
+				results.push(synthesizeDuplicateToolResultMessage(toolCall));
+				continue;
+			}
+			const prepared = await this.prepareToolExecution(toolCall);
+			results.push(await this.executePreparedTool(prepared));
 		}
 		return results;
 	}

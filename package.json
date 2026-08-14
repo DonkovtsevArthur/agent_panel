@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.5.143",
+  "version": "1.13.120",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -696,7 +696,11 @@
         "agentPanel.tabAutocomplete.alternatives": {
           "type": "number",
           "default": 2,
-          "enum": [1, 2, 3],
+          "enum": [
+            1,
+            2,
+            3
+          ],
           "enumDescriptions": [
             "%config.tabAutocomplete.alternatives.enum.1%",
             "%config.tabAutocomplete.alternatives.enum.2%",

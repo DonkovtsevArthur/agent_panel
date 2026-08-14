@@ -122,6 +122,30 @@ export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
   ].join("\n");
 }
 
+/**
+ * Injected into Cline rules only for Harbor's Ask mode. Ask and Plan share the
+ * same underlying Cline `plan` mode (read-only tools), so Cline's base prompt
+ * always says "You are in Plan mode" / "toggle to Act mode" — this overrides
+ * that framing so the model calls the mode "Ask" (what the user actually sees
+ * in the UI) and doesn't tell the user to "switch to Act mode".
+ */
+export function harborAskModeRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Режим: Ask",
+      "Ты сейчас в режиме Ask интерфейса Harbor Agents (не Plan). Под капотом это тот же read-only движок, что у Plan (поэтому базовый системный промпт говорит «Plan mode»), но в интерфейсе и в общении с пользователем этот режим называется именно «Ask».",
+      "Если пользователь спрашивает, в каком режиме ты — отвечай «Ask», а не «Plan».",
+      "Не предлагай пользователю «переключиться в Act mode» и не упоминай тумблер Act — в Ask это неприменимо, просто отвечай на вопросы и не предлагай план изменений.",
+    ].join("\n");
+  }
+  return [
+    "# Mode: Ask",
+    "You are currently in Harbor Agents' Ask mode (not Plan). Under the hood it shares the same read-only engine as Plan (so the base system prompt says \"Plan mode\"), but in the UI and to the user this mode is called \"Ask\".",
+    "If the user asks what mode you're in, answer \"Ask\", not \"Plan\".",
+    "Do not tell the user to \"switch to Act mode\" or mention the Act toggle — that doesn't apply in Ask; just answer questions and don't propose an implementation plan.",
+  ].join("\n");
+}
+
 export function harborVisionInspectUserNudgeForLanguage(
   lang: UiLanguage
 ): string {
