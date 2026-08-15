@@ -1947,20 +1947,14 @@ export async function runClineAgentTurn(options: {
         break;
       }
       case "usage": {
-        // totalInputTokens/totalOutputTokens are cumulative within one Cline
-        // session (agent-runtime.ts state.usage). inputTokens/outputTokens are
-        // per-API-call deltas that carry the FULL prompt size each time —
-        // summing them would massively over-count context. Take the monotonic
-        // max of the cumulative totals; with sub-agents the parent's total
-        // stays ≥ the child's, so max gives the real context-window fill.
-        usagePromptTokens = Math.max(
-          usagePromptTokens,
-          Number(event.totalInputTokens ?? 0)
-        );
-        usageCompletionTokens = Math.max(
-          usageCompletionTokens,
-          Number(event.totalOutputTokens ?? 0)
-        );
+        // inputTokens/outputTokens are per-API-call deltas (just this
+        // iteration's tokens).  totalInputTokens/totalOutputTokens are
+        // cumulative sums across all iterations — useful for billing but
+        // NOT for context-window fill (which is what the UI ring shows).
+        // Use the latest delta to match what Cline native displays:
+        // context-window occupancy of the last API call.
+        usagePromptTokens = Number(event.inputTokens ?? 0);
+        usageCompletionTokens = Number(event.outputTokens ?? 0);
         callbacks.onUsage?.({
           used: usagePromptTokens + usageCompletionTokens,
           promptTokens: usagePromptTokens,

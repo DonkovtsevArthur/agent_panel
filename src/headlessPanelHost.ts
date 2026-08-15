@@ -566,7 +566,7 @@ export class HeadlessPanelHost {
     }
   }
 
-  /** Map VS Code settings UI payload → `.idea/harbor/settings.json`. */
+  /** Map VS Code settings UI payload → global settings file. */
   private persistUiSettings(settings: Record<string, unknown>): void {
     const existing =
       (readJsonFile(this.opts.settingsPath) as Record<string, unknown>) || {};

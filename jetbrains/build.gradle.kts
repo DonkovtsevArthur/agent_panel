@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.0.4"
+version = "2.0.6"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,11 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>2.0.6</b>
+            <ul>
+              <li>Провайдеры и модели хранятся глобально (<code>~/.harbor/settings.json</code>) — доступны всем проектам</li>
+              <li>Чаты остаются per-project в <code>.idea/harbor</code></li>
+            </ul>
             <b>1.5.145</b>
             <ul>
               <li>Мягкие цветные бордеры пузыря пользователя и композа по режиму; фон пузыря без изменений</li>

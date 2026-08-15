@@ -69,8 +69,24 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       env["HARBOR_OUT_DIR"] = script.parentFile.absolutePath
       env["HARBOR_PLUGIN_VERSION"] = HarborPluginInfo.version()
       val ideaHarbor = File(workspace, ".idea/harbor")
-      val settingsFile = File(ideaHarbor, "settings.json")
-      env["HARBOR_SESSION_PATH"] = File(ideaHarbor, "session.v2.json").absolutePath
+      // Chats stay per-project; settings are global (like VS Code globalState).
+      val sessionFile = File(ideaHarbor, "session.v2.json")
+      env["HARBOR_SESSION_PATH"] = sessionFile.absolutePath
+      val homeDir = System.getProperty("user.home") ?: ""
+      val settingsFile = if (homeDir.isNotEmpty()) {
+        val globalDir = File(homeDir, ".harbor")
+        val globalFile = File(globalDir, "settings.json")
+        // Migrate project settings to global on first run.
+        val projectFile = File(ideaHarbor, "settings.json")
+        if (!globalFile.exists() && projectFile.exists()) {
+          globalDir.mkdirs()
+          projectFile.copyTo(globalFile, overwrite = true)
+          log.info("Harbor: migrated project settings to ${globalFile.absolutePath}")
+        }
+        globalFile
+      } else {
+        File(ideaHarbor, "settings.json")  // fallback
+      }
       env["HARBOR_SETTINGS_PATH"] = settingsFile.absolutePath
       env["HARBOR_LANG"] = HarborUiLanguage.resolve(project)
       // Match Harbor Advanced → Validate TLS (default off). Must be set before
@@ -193,7 +209,7 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
 
   /**
    * Harbor default is Validate TLS = off. Only enforce certs when the user
-   * explicitly set rejectUnauthorized:true in .idea/harbor/settings.json.
+   * explicitly set rejectUnauthorized:true in ~/.harbor/settings.json.
    */
   private fun readRejectUnauthorized(settingsFile: File): Boolean {
     if (!settingsFile.isFile) return false
