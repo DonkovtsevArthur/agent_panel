@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "agents": [
+    {
+      "id": "agent_msufhq3j_e2p84w",
+      "name": "Прочитай api.md и скажи, какие опции принимает C…",
+      "chatId": "chat_msufhq3j_6b1m15",
+      "chatIds": [
+        "chat_msufhq3j_6b1m15"
+      ],
+      "createdAt": 1786801522015,
+      "updatedAt": 1786801539416,
+      "nameSource": "first_message"
+    }
+  ],
+  "chats": {
+    "chat_msufhq3j_6b1m15": {
+      "id": "chat_msufhq3j_6b1m15",
+      "title": "Прочитай api.md и скажи, какие опции принимает C…",
+      "selectedModel": "DeepSeek-V4-Flash",
+      "selectedMode": "agent",
+      "history": [],
+      "uiMessages": [
+        {
+          "role": "user",
+          "text": "Прочитай api.md и скажи, какие опции принимает ClineCore.create()",
+          "mode": "agent"
+        },
+        {
+          "role": "error",
+          "text": "Нет провайдера для модели. Откройте Settings → Providers."
+        }
+      ],
+      "createdAt": 1786801522015,
+      "updatedAt": 1786801539416,
+      "contextTokens": 0
+    }
+  },
+  "activeAgentId": "agent_msufhq3j_e2p84w",
+  "activeChatId": "chat_msufhq3j_6b1m15",
+  "screen": "chat"
+}

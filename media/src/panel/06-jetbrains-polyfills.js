@@ -870,7 +870,10 @@
         return true;
       }
       if (el.classList.contains("composer-plan-build") || el.id === "sendBtn") {
-        harborEditSaveAt = Date.now();
+        // Do NOT set harborEditSaveAt here — activateSendButton() sets it
+        // internally. Setting it before el.click() causes the < 450 ms guard
+        // inside activateSendButton to bail immediately, making Send inert
+        // on JetBrains (OSR pointerdown → polyfill → el.click → guard fires).
         try {
           el.click();
         } catch {

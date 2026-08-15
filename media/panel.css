@@ -1234,12 +1234,12 @@ body.vscode-dark .md-pre .syntax-property {
   border-radius: 4px;
   background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
-  /* Прилипает к верху при скролле. Когда есть user-сообщение, оба элемента
-     оборачиваются в .todo-sticky-group — единый sticky-блок — и этот
-     position:static переопределяется ниже. Без обёртки (нет user-сообщения)
-     карточка прилипает к top:0 самостоятельно. */
+  /* Прилипает к верху при скролле. top задаётся через CSS-переменную
+     --harbor-todo-top, которая равна высоте user-пузыря (выставляется из JS
+     через ResizeObserver). Если переменной нет (нет user-сообщения) —
+     карточка прилипает к top:0. */
   position: sticky;
-  top: 0;
+  top: var(--harbor-todo-top, 0px);
   z-index: 5;
 }
 
@@ -1248,44 +1248,6 @@ body.vscode-dark .md-pre .syntax-property {
    agent-step[data-status="running"] rule that would otherwise spin it. */
 .agent-step.agent-step-todo .agent-step-icon {
   animation: none;
-}
-
-/* Wrapper that pins user message + todo card together at the top.
-   Created by JS in positionTodoPlanAfterUser when both elements exist;
-   removed when the last todo card is gone. The wrapper owns the opaque
-   background, box-shadow, padding and the sticky/z-index — children
-   lose their individual sticky positioning inside it. */
-.todo-sticky-group {
-  position: sticky;
-  top: 0;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  background: var(--harbor-chat-bg);
-  padding-top: 4px;
-  padding-bottom: 2px;
-  box-shadow: 0 -2px 0 1px var(--harbor-chat-bg);
-}
-
-.chat-turn:first-child .todo-sticky-group {
-  padding-top: 8px;
-}
-
-.todo-sticky-group > .msg-wrap.msg-wrap-user {
-  position: static;
-  top: auto;
-  z-index: auto;
-  background: transparent;
-  padding-top: 0;
-  padding-bottom: 0;
-  box-shadow: none;
-}
-
-.todo-sticky-group > .agent-step.agent-step-todo {
-  position: static;
-  top: auto;
-  z-index: auto;
 }
 
 .todo-plan-head {

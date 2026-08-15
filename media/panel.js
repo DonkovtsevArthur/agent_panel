@@ -4170,7 +4170,10 @@
         return true;
       }
       if (el.classList.contains("composer-plan-build") || el.id === "sendBtn") {
-        harborEditSaveAt = Date.now();
+        // Do NOT set harborEditSaveAt here — activateSendButton() sets it
+        // internally. Setting it before el.click() causes the < 450 ms guard
+        // inside activateSendButton to bail immediately, making Send inert
+        // on JetBrains (OSR pointerdown → polyfill → el.click → guard fires).
         try {
           el.click();
         } catch {
@@ -6672,6 +6675,18 @@
     return `${tool}::${fileBase(path)}`;
   }
 
+  /** Format a single command entry — string or {command, args?} object. */
+  function formatCmdEntry(entry) {
+    if (typeof entry === "string") return entry;
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (typeof entry.command === "string") {
+        const a = Array.isArray(entry.args) ? entry.args.map(String) : [];
+        return a.length > 0 ? `${entry.command} ${a.join(" ")}` : entry.command;
+      }
+    }
+    return String(entry);
+  }
+
   function formatToolHumanLabel(name, argsPreview, metrics, status, resultPreview) {
     const toolName = canonicalToolName(name);
     let args = {};
@@ -6681,9 +6696,14 @@
         args = JSON.parse(rawArgs);
       } catch {
         // Truncated JSON from step preview — try to pull common fields by regex.
-        const pathMatch = rawArgs.match(
+        let pathMatch = rawArgs.match(
           /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/
         );
+        if (!pathMatch) {
+          pathMatch = rawArgs.match(
+            /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)/
+          );
+        }
         if (pathMatch) {
           args.path = pathMatch[1].replace(/\\"/g, '"');
           args.relativePath = args.path;
@@ -6691,6 +6711,38 @@
         const cmdMatch = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (cmdMatch) {
           args.command = cmdMatch[1].replace(/\\"/g, '"');
+        } else {
+          // Truncated mid-string: opening quote present but closing quote cut off.
+          const cmdPartial = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)/);
+          if (cmdPartial) {
+            args.command = cmdPartial[1].replace(/\\"/g, '"');
+          }
+        }
+        // Also try "commands" array for run_commands with truncated JSON.
+        if (!cmdMatch) {
+          const cmdsMatch = rawArgs.match(
+            /"commands"\s*:\s*\[((?:[^\]]{0,200}))/
+          );
+          if (cmdsMatch) {
+            const inner = cmdsMatch[1];
+            const items = [];
+            const re = /"((?:\\.|[^"\\])*)"/g;
+            let m;
+            while ((m = re.exec(inner)) !== null) {
+              items.push(m[1].replace(/\\"/g, '"'));
+            }
+            // If no complete quoted string matched (truncated mid-string),
+            // try to grab the first quoted prefix.
+            if (!items.length) {
+              const partial = inner.match(/"((?:\\.|[^"\\])*)/);
+              if (partial) {
+                items.push(partial[1].replace(/\\"/g, '"'));
+              }
+            }
+            if (items.length) {
+              args.commands = items;
+            }
+          }
         }
         const queryMatch = rawArgs.match(
           /"(?:query|queries)"\s*:\s*"((?:\\.|[^"\\])*)"/
@@ -6759,7 +6811,16 @@
         return t("toolHumanSearch", query) + countSuffix;
       }
       case "run_commands": {
-        const cmd = firstString(args.commands || args.command);
+        let cmd = "";
+        if (Array.isArray(args.commands) && args.commands.length) {
+          cmd = args.commands.map(formatCmdEntry).join(" && ");
+        } else if (typeof args.command === "string") {
+          cmd = args.command;
+        } else if (typeof args.cmd === "string") {
+          cmd = args.cmd;
+        } else if (typeof args === "string") {
+          cmd = args;
+        }
         const exitSuffix =
           status === "error" && typeof m.exitCode === "number"
             ? ` · ${t("toolMetricExit")} ${m.exitCode}`
@@ -8146,41 +8207,33 @@
     const users = turnScope.querySelectorAll(".msg-wrap-user");
     const user = users.length ? users[users.length - 1] : null;
     if (user) {
-      // Wrap user message + todo card in a single sticky group so they pin
-      // together at the top — no height measurement or z-index fighting.
-      let wrap = turnScope.querySelector(":scope > .todo-sticky-group");
-      if (!wrap) {
-        wrap = document.createElement("div");
-        wrap.className = "todo-sticky-group";
-        user.parentNode.insertBefore(wrap, user);
-        wrap.appendChild(user);
+      const after = user.nextSibling;
+      if (todoEl !== after) {
+        turnScope.insertBefore(todoEl, after);
       }
-      // Ensure todoEl is inside the wrapper, after the user message.
-      if (todoEl.parentNode !== wrap) {
-        wrap.appendChild(todoEl);
-      }
-      // User message must always be the first child.
-      if (wrap.firstElementChild !== user) {
-        wrap.insertBefore(user, wrap.firstChild);
-      }
+      harborSyncTodoTop(todoEl, user);
     } else if (turnScope.firstChild !== todoEl) {
-      // No user message rendered yet — keep the plan as the first card so it
-      // doesn't end up below steps that stream first.
       turnScope.insertBefore(todoEl, turnScope.firstChild);
+      todoEl.style.removeProperty("--harbor-todo-top");
     }
   }
 
-  /** Remove the sticky wrapper if it no longer contains any todo cards. */
-  function cleanupTodoGroup(turnScope) {
-    const wrap = turnScope.querySelector(":scope > .todo-sticky-group");
-    if (!wrap) return;
-    if (wrap.querySelector(".agent-step-todo")) return;
-    // Move user message back out and remove the empty wrapper.
-    const user = wrap.querySelector(".msg-wrap-user");
-    if (user) {
-      wrap.parentNode.insertBefore(user, wrap);
+  /**
+   * Set --harbor-todo-top = user bubble height so the sticky todo card pins
+   * directly below the (opaque, higher z-index) user message. A
+   * ResizeObserver keeps the variable in sync when the bubble reflows.
+   */
+  function harborSyncTodoTop(todoEl, userEl) {
+    if (!todoEl || !userEl) return;
+    const setTop = () => {
+      const h = userEl.offsetHeight || 0;
+      todoEl.style.setProperty("--harbor-todo-top", h + "px");
+    };
+    setTop();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(setTop);
+      ro.observe(userEl);
     }
-    wrap.remove();
   }
 
   /** update_todo plan card: «План · 1/4» header + collapsible step list. */
