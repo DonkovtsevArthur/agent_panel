@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.0.0",
+  "version": "2.6.2",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -29,18 +29,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onView:agentPanel.chat",
-    "onCommand:agentPanel.open",
-    "onCommand:agentPanel.openSettings",
-    "onCommand:agentPanel.newChat",
-    "onCommand:agentPanel.searchChat",
-    "onCommand:agentPanel.clearChat",
-    "onCommand:agentPanel.addSelectionToChat",
-    "onCommand:agentPanel.addSelectionToNewChat",
-    "onCommand:agentPanel.addFileToChat",
-    "onCommand:agentPanel.addFileToNewChat",
-    "onCommand:agentPanel.generateCommitMessage"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

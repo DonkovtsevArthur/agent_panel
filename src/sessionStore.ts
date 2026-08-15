@@ -555,15 +555,23 @@ function frozenCreatedAt(...candidates: Array<number | undefined>): number {
   return Date.now();
 }
 
+/** Убирает null/примитивы из сохранённых списков сообщений — стор могли писать старые версии схемы. */
+function sanitizeMessages<T>(list: unknown): T[] {
+  return Array.isArray(list)
+    ? (list.filter((m) => m && typeof m === "object") as T[])
+    : [];
+}
+
 function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
   const updatedAt = chat.updatedAt || Date.now();
+  const uiMessages = sanitizeMessages<UiMessage>(chat.uiMessages);
   const next: ChatSession = {
     ...chat,
-    title: chat.title || titleFromMessages(chat.uiMessages || []),
+    title: chat.title || titleFromMessages(uiMessages),
     selectedModel: chat.selectedModel || fallbackModel,
     selectedMode: normalizeSelectedMode(chat.selectedMode),
-    history: Array.isArray(chat.history) ? chat.history : [],
-    uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
+    history: sanitizeMessages<ChatMessage>(chat.history),
+    uiMessages,
     createdAt: frozenCreatedAt(chat.createdAt, updatedAt),
     updatedAt,
   };
@@ -713,13 +721,14 @@ export function migrateToStoreV2(
 
   const v1 = raw as PersistedSessionV1 | undefined;
   if (v1 && (Array.isArray(v1.history) || Array.isArray(v1.uiMessages))) {
+    const v1UiMessages = sanitizeMessages<UiMessage>(v1.uiMessages);
     const chat: ChatSession = {
       id: uid("chat"),
-      title: titleFromMessages(v1.uiMessages || []),
+      title: titleFromMessages(v1UiMessages),
       selectedModel: v1.selectedModel || fallbackModel,
       selectedMode: "agent",
-      history: Array.isArray(v1.history) ? v1.history : [],
-      uiMessages: Array.isArray(v1.uiMessages) ? v1.uiMessages : [],
+      history: sanitizeMessages<ChatMessage>(v1.history),
+      uiMessages: v1UiMessages,
       createdAt: v1.updatedAt || Date.now(),
       updatedAt: v1.updatedAt || Date.now(),
     };
