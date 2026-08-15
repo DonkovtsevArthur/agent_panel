@@ -353,6 +353,41 @@ export function selectUtilityModel(
 }
 
 /**
+ * Ordered candidate ids for an under-the-hood completion with runtime
+ * fallback: the {@link selectUtilityModel} pick first, then the fallback/main
+ * model, then the first enabled model — so an unavailable lightweight model
+ * degrades to the first available one. Duplicates are dropped, order kept.
+ */
+export function orderedUtilityModelIds(
+  models: readonly AgentModel[],
+  options: UtilityModelSelectionOptions = {}
+): string[] {
+  const enabled: AgentModel[] = [];
+  const byId = new Map<string, AgentModel>();
+  for (const model of models) {
+    const id = String(model.id || "").trim();
+    if (!id || model.enabled === false || byId.has(id)) {
+      continue;
+    }
+    const row = { ...model, id };
+    enabled.push(row);
+    byId.set(id, row);
+  }
+
+  const ids: string[] = [];
+  const push = (id: string | undefined): void => {
+    const trimmed = String(id || "").trim();
+    if (trimmed && byId.has(trimmed) && !ids.includes(trimmed)) {
+      ids.push(trimmed);
+    }
+  };
+  push(selectUtilityModel(enabled, options)?.modelId);
+  push(options.fallbackModelId);
+  push(enabled[0]?.id);
+  return ids;
+}
+
+/**
  * Pure, deterministic model selection. The function only examines its
  * arguments and the local capability registry; it never reads settings or
  * performs discovery/network requests.

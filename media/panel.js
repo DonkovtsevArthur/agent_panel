@@ -441,6 +441,7 @@
       hideThinking: "Hide thoughts",
       thinkingLabel: "Thoughts",
       thinkingWorking: "Thoughts…",
+      textStepLabel: "Note",
       zoomImage: "Zoom image",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
@@ -940,6 +941,7 @@
       hideThinking: "Скрыть мысли",
       thinkingLabel: "Мысли",
       thinkingWorking: "Мысли…",
+      textStepLabel: "Сообщение",
       zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
       stepsMany: (n) => `${n} шагов`,
@@ -8010,12 +8012,52 @@
     }
   }
 
+  /**
+   * Intermediate assistant text (a completed text block from an earlier
+   * model round of this turn). Rendered as a muted markdown card INSIDE the
+   * collapsed tool group so the finale-only bubble does not wipe mid-turn
+   * lists / answers the model keeps referring to.
+   */
+  function upsertTextBlockStep(step) {
+    const raw = String(step.text || "").trim();
+    if (!raw) {
+      return null;
+    }
+    const group = ensureActiveToolGroup();
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return null;
+    }
+    const stepId = String(step.stepId || "");
+    let el = body.querySelector(
+      `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "msg tool agent-step";
+      el.dataset.stepId = stepId;
+      body.appendChild(el);
+    }
+    el.dataset.stepKind = "text";
+    el.dataset.status = "done";
+    el.classList.add("agent-step-text");
+    el.innerHTML =
+      `<div class="agent-step-head">` +
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">subject</span>` +
+      `<span class="agent-step-label">${escapeHtml(t("textStepLabel"))}</span>` +
+      `</div>` +
+      `<div class="agent-step-text-body">${renderInlineMarkdown(raw)}</div>`;
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
+  }
+
   function upsertAgentStep(step) {
     if (!step || !step.stepId) {
       return null;
     }
     if (step.kind === "text") {
-      return null;
+      return upsertTextBlockStep(step);
     }
 
     // Plan card (update_todo) lives OUTSIDE the collapsed tool group — it must

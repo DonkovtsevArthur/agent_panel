@@ -149,6 +149,13 @@ body {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  /* Virtual-scroll-lite: не лейаутить/краситьTurnы вне вьюпорта —
+     в длинных чатах (100+ сообщений) DOM остаётся целиком, но рендер
+     за кадр стоит O(видимое окно), а не O(вся история).
+     contain-intrinsic-size с auto: до первого рендера высота — оценка,
+     после — браузер запоминает реальную. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
 }
 
 .msg {
@@ -1173,6 +1180,33 @@ body.vscode-dark .md-pre .syntax-property {
 
 .agent-step-thinking-toggle[hidden] {
   display: none;
+}
+
+/* Intermediate assistant text block inside the collapsed tool group. */
+.agent-step-text {
+  flex-direction: column;
+  gap: 2px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  background: transparent;
+}
+
+.agent-step-text .agent-step-text-body {
+  padding-left: 22px;
+  max-width: 100%;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: calc(var(--harbor-font-size) * 0.94);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-step-text .agent-step-text-body p,
+.agent-step-text .agent-step-text-body ul,
+.agent-step-text .agent-step-text-body ol {
+  margin: 0 0 4px;
+}
+
+.agent-step-text .agent-step-text-body > :last-child {
+  margin-bottom: 0;
 }
 
 .agent-step[data-step-kind="tool"] .agent-step-label {

@@ -700,6 +700,9 @@ function submitSummaryFromToolCalls(toolCalls: unknown): string {
  * payload). Keep streamed/result text only when it already has a longer
  * tagged plan.
  */
+/** `<proposed_plan>` marker (raw or entity-escaped) — Plan-card finale tag. */
+const PROPOSED_PLAN_TAGS_RE = /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i;
+
 function pickFinalAssistantText(options: {
   resultText: string;
   streamedText: string;
@@ -713,10 +716,8 @@ function pickFinalAssistantText(options: {
     options.messagesText.trim();
   const submit = options.submitSummary.trim();
   if (submit) {
-    const streamHasTags =
-      /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(stream);
-    const submitHasTags =
-      /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(submit);
+    const streamHasTags = PROPOSED_PLAN_TAGS_RE.test(stream);
+    const submitHasTags = PROPOSED_PLAN_TAGS_RE.test(submit);
     if (streamHasTags && !submitHasTags && stream.length > submit.length) {
       return stream;
     }
@@ -1884,6 +1885,15 @@ export async function runClineAgentTurn(options: {
 
   const edits: FileEditStat[] = [];
   let assistantText = "";
+  /**
+   * Assistant text blocks this turn, one per model round (`content_end`).
+   * Blocks that precede tool rounds are flushed as `text` step cards inside
+   * the collapsed tool group so mid-turn lists / answers are not wiped when
+   * the finale-only bubble replaces the stream.
+   */
+  const textBlocks: Array<{ text: string; flushed: boolean }> = [];
+  let currentTextBlock = "";
+  let textBlockSeq = 0;
   let reasoningText = "";
   let submitSummary = "";
   let stepSeq = 0;
@@ -1914,6 +1924,68 @@ export async function runClineAgentTurn(options: {
     callbacks.onPhase("cline", text);
   };
 
+  /**
+   * Flush completed text blocks that precede the current tool round as
+   * `text` step cards (rendered inside the collapsed tool group) and drop
+   * the streaming bubble so the block is not displayed twice. Called when a
+   * tool call starts — at that point the block is known to be intermediate,
+   * not the turn finale. Exception: before submit_and_exit a plan-tagged
+   * block stays pending so it can still become the Plan-card finale
+   * (pickFinalAssistantText prefers it over the submit summary).
+   */
+  const flushIntermediateTextBlocks = (keepPlanTaggedPending: boolean): void => {
+    let flushedAny = false;
+    for (const block of textBlocks) {
+      if (block.flushed) {
+        continue;
+      }
+      if (
+        keepPlanTaggedPending &&
+        PROPOSED_PLAN_TAGS_RE.test(block.text)
+      ) {
+        continue;
+      }
+      block.flushed = true;
+      textBlockSeq += 1;
+      emitStep(callbacks, {
+        stepId: `text-block-${textBlockSeq}`,
+        kind: "text",
+        status: "done",
+        text: block.text,
+      });
+      flushedAny = true;
+    }
+    if (flushedAny) {
+      callbacks.onAssistantStreamClear?.();
+    }
+  };
+
+  /** Text not yet shown as a card: pending blocks + the partial stream. */
+  const pendingTextTail = (): string =>
+    [
+      ...textBlocks.filter((block) => !block.flushed).map((block) => block.text),
+      currentTextBlock.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+  /** All assistant text this turn — the model-side history keeps everything. */
+  const fullTurnText = (): string =>
+    [...textBlocks.map((block) => block.text), currentTextBlock.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+
+  /** True when the candidate was already flushed to a `text` step card. */
+  const isFlushedTextBlock = (candidate: string): boolean => {
+    const value = String(candidate || "").trim();
+    if (!value) {
+      return false;
+    }
+    return textBlocks.some(
+      (block) => block.flushed && block.text.trim() === value
+    );
+  };
+
   const handleAgentEvent = (event: ClineAgentEvent) => {
     switch (event.type) {
       case "content_start": {
@@ -1921,6 +1993,11 @@ export async function runClineAgentTurn(options: {
           const chunk = String(event.text || "");
           if (chunk) {
             assistantText += chunk;
+            // `accumulated` is the per-message stream state from Cline;
+            // prefer it when present so missed chunks cannot desync us.
+            const accumulated =
+              typeof event.accumulated === "string" ? event.accumulated : "";
+            currentTextBlock = accumulated || currentTextBlock + chunk;
             callbacks.onAssistantDelta?.(chunk);
           }
           break;
@@ -1942,6 +2019,10 @@ export async function runClineAgentTurn(options: {
           stepSeq += 1;
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
+          // A tool call starting here proves earlier text blocks were
+          // intermediate (not the finale) — flush them as `text` cards.
+          // Before submit_and_exit keep plan-tagged blocks pending (finale).
+          flushIntermediateTextBlocks(isSubmitAndExitToolName(name));
           if (event.input !== undefined) {
             toolInputs.set(toolCallId, event.input);
           }
@@ -1972,8 +2053,13 @@ export async function runClineAgentTurn(options: {
       case "content_end": {
         if (event.contentType === "text") {
           const finalText = String(event.text || "").trim();
+          const blockText = finalText || currentTextBlock.trim();
+          currentTextBlock = "";
           if (finalText && !assistantText.trim()) {
             assistantText = finalText;
+          }
+          if (blockText) {
+            textBlocks.push({ text: blockText, flushed: false });
           }
           break;
         }
@@ -2503,19 +2589,24 @@ export async function runClineAgentTurn(options: {
       finishReason === "aborted" ||
       finishReason === "cancelled";
 
+    const resultText = String(result?.text || "");
+    const messagesText = lastAssistantTextFromMessages(result?.messages);
+    // Blocks already flushed to `text` step cards must not repeat in the
+    // finale; the finale comes from the still-pending tail instead.
     const finalText = pickFinalAssistantText({
-      resultText: String(result?.text || ""),
-      streamedText: assistantText,
+      resultText: isFlushedTextBlock(resultText) ? "" : resultText,
+      streamedText: pendingTextTail(),
       submitSummary:
         submitSummary ||
         submitSummaryFromToolCalls(result?.toolCalls) ||
         submitSummaryFromMessages(result?.messages),
-      messagesText: lastAssistantTextFromMessages(result?.messages),
+      messagesText: isFlushedTextBlock(messagesText) ? "" : messagesText,
       aborted,
     });
 
     // Do not clear the stream bubble first: if finalText were empty we would
-    // wipe a visible plan and never re-append. assistantDone updates in place.
+    // wipe a visible plan and never re-append. assistantDone updates in place
+    // (intermediate blocks were already flushed to `text` step cards).
     setClineStatus(
       aborted ? "aborted" : finishReason || "completed"
     );
@@ -2542,7 +2633,9 @@ export async function runClineAgentTurn(options: {
         { role: "user", content: userPrompt },
         {
           role: "assistant",
-          content: finalText,
+          // Model-side history keeps the whole turn (flushed blocks too);
+          // the finale bubble shows only the pending tail.
+          content: fullTurnText().trim() || finalText,
           ...(reasoningText ? { reasoning_content: reasoningText } : {}),
         },
       ],
@@ -2554,13 +2647,16 @@ export async function runClineAgentTurn(options: {
     options.signal?.removeEventListener("abort", onAbort);
     if (options.signal?.aborted) {
       setClineStatus("aborted");
-      const partial = assistantText.trim() || "(остановлено)";
+      // Flushed blocks are already on screen as `text` cards — the partial
+      // bubble keeps only the un-flushed tail so nothing is shown twice.
+      // The model-side history still gets the full turn text.
+      const partial = pendingTextTail().trim() || "(остановлено)";
       callbacks.onAssistant(partial);
       await callbacks.onReview(edits);
       return [
         ...options.history,
         { role: "user", content: userPrompt },
-        { role: "assistant", content: partial },
+        { role: "assistant", content: fullTurnText().trim() || partial },
       ];
     }
     const message = error instanceof Error ? error.message : String(error);

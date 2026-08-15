@@ -13,8 +13,8 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
-import { selectUtilityModel } from "./modelRouting";
-import { getOpenAICompatibleClient } from "./openaiClient";
+import { orderedUtilityModelIds } from "./modelRouting";
+import { completeWithModelFallback } from "./utilityCompletion";
 import {
   capWorkspaceRuleText,
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
@@ -399,19 +399,13 @@ export async function composeCommitMessageText(
     enabled[0]?.id ||
     "";
   const preferredModelId = String(config.commitMessage.modelId || "").trim();
-  // Явный выбор в Settings → иначе лёгкая/utility-модель, иначе основная.
-  const modelId =
-    (preferredModelId && enabled.some((m) => m.id === preferredModelId)
-      ? preferredModelId
-      : "") ||
-    selectUtilityModel(enabled, { fallbackModelId: mainModelId })?.modelId ||
-    mainModelId;
-  if (!modelId) {
-    return fallbackCommitMessage(paths, lang);
-  }
-
-  const endpoint = resolveModelEndpoint(modelId);
-  if (!endpoint.baseUrl || !endpoint.apiKey) {
+  // Явный выбор в Settings — единственная попытка (осознанный выбор модели).
+  // Иначе лёгкая/utility-модель с деградацией: основная → первая доступная.
+  const modelIds =
+    preferredModelId && enabled.some((m) => m.id === preferredModelId)
+      ? [preferredModelId]
+      : orderedUtilityModelIds(enabled, { fallbackModelId: mainModelId });
+  if (!modelIds.length) {
     return fallbackCommitMessage(paths, lang);
   }
 
@@ -434,37 +428,16 @@ export async function composeCommitMessageText(
     data.source,
     instruction
   );
-  const client = getOpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
-    rejectUnauthorized: config.rejectUnauthorized,
-    caBundlePath: config.caBundlePath,
-  });
-
-  const result = await client.chatCompletions(
+  const { text } = await completeWithModelFallback(
     {
-      model: modelId,
-      messages: [
-        { role: "system", content: prompts.system },
-        { role: "user", content: prompts.user },
-      ],
+      system: prompts.system,
+      user: prompts.user,
+      maxTokens: 256,
       temperature: 0.2,
-      max_tokens: 256,
     },
-    signal
+    { modelIds, signal }
   );
-  const content = result.message.content;
-  const raw =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((part) =>
-              part && typeof part === "object" && "text" in part
-                ? String(part.text || "")
-                : ""
-            )
-            .join("")
-        : "";
-  return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+  return cleanCommitMessage(text) || fallbackCommitMessage(paths, lang);
 }
 
 export async function generateCommitMessage(

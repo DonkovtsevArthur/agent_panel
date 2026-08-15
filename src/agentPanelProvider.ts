@@ -28,6 +28,7 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
+import { previewText } from "./agentSteps";
 import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
@@ -399,6 +400,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private storeRevision = 0;
   private persistedStoreRevision = 0;
   private storeWriteQueue: Promise<void> = Promise.resolve();
+  private storeWriteScheduled = false;
   private pendingComposerInsert = "";
   private pendingComposerMentions: string[] = [];
   private pendingComposerSelection:
@@ -780,6 +782,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.storeRevision = 0;
     this.persistedStoreRevision = 0;
     this.storeWriteQueue = Promise.resolve();
+    this.storeWriteScheduled = false;
     this.ensureChatReady(fallbackModel);
     this.hydrateActiveChat();
 
@@ -1159,16 +1162,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!this.hasWorkspaceFolder()) {
       return Promise.resolve();
     }
-    const revision = ++this.storeRevision;
-    const snapshot = cloneStore(this.store);
+    ++this.storeRevision;
+    // Запланированная запись клонирует стор в момент записи, а не в момент вызова,
+    // поэтому всплеск вызовов сохранения обходится одним клоном и одной записью.
+    if (this.storeWriteScheduled) {
+      return this.storeWriteQueue;
+    }
+    this.storeWriteScheduled = true;
     this.storeWriteQueue = this.storeWriteQueue
       .catch(() => undefined)
       .then(async () => {
-        if (revision < this.persistedStoreRevision) {
-          return;
+        this.storeWriteScheduled = false;
+        // Мутации могут прийти и во время await — цикл дописывает хвост.
+        while (this.persistedStoreRevision < this.storeRevision) {
+          const revision = this.storeRevision;
+          const snapshot = cloneStore(this.store);
+          await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
+          this.persistedStoreRevision = revision;
         }
-        await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
-        this.persistedStoreRevision = revision;
       });
     return this.storeWriteQueue;
   }
@@ -3404,6 +3415,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 runUiMessages.push(todoUiMsg);
               }
               syncRunChat();
+            } else if (event.kind === "text") {
+              // Intermediate assistant text (an earlier model round of this
+              // turn) — persist as a card inside the collapsed tool group so
+              // the finale-only bubble does not wipe mid-turn lists/answers.
+              if (event.text) {
+                const textUiMsg: import("./sessionStore").UiMessage = {
+                  role: "tool",
+                  text: previewText(event.text, 160),
+                  step: {
+                    stepId: event.stepId,
+                    kind: "text",
+                    status: event.status,
+                    text: event.text,
+                  },
+                };
+                const textIx = runUiMessages.findIndex(
+                  (m) => m.role === "tool" && m.step?.stepId === event.stepId
+                );
+                if (textIx >= 0) {
+                  runUiMessages[textIx] = textUiMsg;
+                } else {
+                  runUiMessages.push(textUiMsg);
+                }
+                syncRunChat();
+              }
             } else if (
               event.kind === "compaction" ||
               event.kind === "checkpoint" ||
