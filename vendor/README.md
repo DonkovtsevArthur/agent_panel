@@ -25,7 +25,15 @@ If a Marketplace TabCoder extension is also installed, disable one of them — t
 
 После правок в форке: собрать SDK (`bun run build:sdk` в `vendor/cline`), затем переключить зависимости Harbor на `file:./vendor/cline/sdk/packages/...` и пересобрать `out/clineBundle.js`.
 
-Версия форка должна совпадать с `@cline/sdk` в корневом `package.json`.
+Версия форка должна совпадать с `@cline/sdk` в корневом `package.json` (сейчас **0.0.75**).
+
+### Re-fork (обновлено для 0.0.75)
+
+Базовый процесс прежний, но после wholesale-замены дерева `vendor/cline` на свежую версию:
+1. Перенести патчи listed above на новые версии файлов. 4 из 9 файлов (subagent-prompts, spawn-tool, user-input-builder, types/config) были неизменны upstream 0.0.71→0.0.75 — правятся `git checkout`. Остальные 5 портируются вручную (agent-runtime дедуп, image-guard тройка, local-runtime-host forward, GLM-каталог).
+2. GLM-5.2 vision capability теперь патчится в `catalog.generated.ts` (раньше — regex-постобработкой минифицированного бандла). Когда апстрим обновит каталог, перепроверить количество и формат записей `"z-ai/glm-5.2"`.
+3. `scripts/bundle-cline.js` больше не делает пост-обработку минифицированного output — все патчи приходят из пересобранных dist-пакетов.
+4. Без bun: `esbuild` собирает `shared → llms → core → agents` по конфигу каждого `bun.mts`, затем `cp` в `node_modules/@cline/*/dist/index.js` (держать `.orig` бэкапы), затем `node scripts/bundle-cline.js`.
 
 ### Сборка без bun (esbuild)
 
@@ -61,10 +69,16 @@ review seeds) via `src/clineRuntime.ts`.
 
 ## Harbor patches in this fork
 
+Base upstream: **cline-sdk v0.0.75** (`sdk/core/v0.0.75` tag).
+
 | Patch | Where | Why |
 |-------|--------|-----|
 | Forward `maxParallelToolCalls` | `sdk/packages/core/.../local-runtime-host.ts`, `.../types/config.ts` | Session config field was dropped when building `AgentConfig`, so Harbor/`maxParallelToolCalls` never reached `toolExecution: "parallel"`. |
 | Subagent LiteLLM-safe model config | `sdk/packages/core/.../local/spawn-tool.ts`, `.../team/subagent-prompts.ts` | Strip catalog `reasoning` capabilities on spawn children; inherit parent thinking/effort; serialize spawns per root. Always wrap child system prompts in full Cline base (openai-compatible used to pass bare spawn text → Claude+tools `streaming_error`). No nested `spawn_agent` / ask_question on children. Parent `extraTools` (Harbor MCP) are concatenated onto child tools. |
+| Duplicate tool-call dedup | `sdk/packages/agents/src/agent-runtime.ts` | Models (notably GLM-5.2) sometimes emit two `tool_use` blocks with the same name + input. The first executes; the duplicate gets a synthesized non-error `tool-result` (`deduplicated:true`) so the 1:1 `tool_use`/`tool_result` pairing and array order stay intact. |
+| Image-first user content | `sdk/packages/core/.../orchestration/user-input-builder.ts` | Running Cline puts text first, then `userImages`. GLM often only reads the first content part — keep pixels ahead of the prompt. |
+| Empty-image guard | `sdk/packages/core/.../config/agent-message-codec.ts`, `sdk/packages/llms/.../providers/compat.ts`, `sdk/packages/shared/.../llms/ai-sdk-format.ts` | `image:null` / empty data paths return a text placeholder instead of a malformed image part. `compat.ts` accepts either `data` or `image` field and passes through `data:` URLs. |
+| GLM-5.2 vision capability | `sdk/packages/llms/src/catalog/catalog.generated.ts` | Cline catalogs list `z-ai/glm-5.2` without `images`; `modelSupportsImageInput` then fail-closes and strips pixels. Added `"images"` to the capabilities of all 8 catalog entries. |
 
 ## Телеметрия (не режем в форке)
 

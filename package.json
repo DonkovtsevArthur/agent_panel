@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.6.2",
+  "version": "2.6.8",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -613,6 +613,43 @@
           "default": true,
           "description": "%config.tools.autoApprove.description%"
         },
+        "agentPanel.tools.approvals": {
+          "type": "object",
+          "default": {},
+          "description": "%config.tools.approvals.description%",
+          "additionalProperties": false,
+          "properties": {
+            "reads": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.reads.description%"
+            },
+            "web": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.web.description%"
+            },
+            "edits": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.edits.description%"
+            },
+            "commands": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.commands.description%"
+            },
+            "mcp": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.mcp.description%"
+            },
+            "subagents": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.subagents.description%"
+            }
+          }
+        },
+        "agentPanel.focusChain.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.focusChain.enabled.description%"
+        },
         "agentPanel.checkpoints.enabled": {
           "type": "boolean",
           "default": true,
@@ -873,7 +910,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "@cline/sdk": "^0.0.71",
+    "@cline/sdk": "^0.0.75",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "marked": "^15.0.12",
     "playwright-core": "^1.62.1",

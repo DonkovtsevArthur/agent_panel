@@ -1,6 +1,6 @@
 import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiClient";
-import type { ToolStepMetrics } from "./agentSteps";
+import type { ToolStepMetrics, TodoStepItem } from "./agentSteps";
 
 export type UiMessageRole =
   | "user"
@@ -15,7 +15,7 @@ export type { MessageAttachment };
 /** Persisted structured step for tool / compaction / retry replay in the webview. */
 export interface UiMessageStep {
   stepId: string;
-  kind: "tool" | "compaction" | "checkpoint" | "retry" | "thinking" | "text";
+  kind: "tool" | "compaction" | "checkpoint" | "retry" | "thinking" | "text" | "todo";
   toolCallId?: string;
   name?: string;
   argsPreview?: string;
@@ -26,6 +26,8 @@ export interface UiMessageStep {
   maxAttempts?: number;
   metrics?: ToolStepMetrics;
   checkpointRunCount?: number;
+  /** `update_todo` plan items rendered as a progress card. */
+  steps?: TodoStepItem[];
 }
 
 export interface UiMessage {

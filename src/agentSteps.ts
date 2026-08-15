@@ -8,7 +8,8 @@ export type AgentStepKind =
   | "tool"
   | "compaction"
   | "checkpoint"
-  | "retry";
+  | "retry"
+  | "todo";
 
 export type AgentToolStepStatus = "queued" | "running" | "done" | "error";
 
@@ -30,6 +31,13 @@ export interface AgentStepEvent {
   metrics?: ToolStepMetrics;
   /** Cline checkpoint run index — used when the user clicks the restore card. */
   checkpointRunCount?: number;
+  /** `update_todo` plan items rendered as a progress card. */
+  steps?: TodoStepItem[];
+}
+
+export interface TodoStepItem {
+  title: string;
+  status: "pending" | "in_progress" | "done";
 }
 
 /**

@@ -1710,6 +1710,10 @@
       if (stickToBottom && !restoringChatScroll) {
         scrollToBottom();
       }
+      // user-пузырь мог поменять высоту при reflow — переприбить план-карточку.
+      try {
+        relpinAllTodoTops();
+      } catch (_) {}
     };
     const resizePin = new ResizeObserver(keepPinnedOnResize);
     resizePin.observe(messagesEl);

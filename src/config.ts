@@ -24,6 +24,29 @@ import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
 
+/** Tool groups for granular auto-approve (agentPanel.tools.approvals). */
+export type ToolApprovalGroup =
+  | "reads"
+  | "web"
+  | "edits"
+  | "commands"
+  | "mcp"
+  | "subagents";
+
+export const TOOL_APPROVAL_GROUPS: ToolApprovalGroup[] = [
+  "reads",
+  "web",
+  "edits",
+  "commands",
+  "mcp",
+  "subagents",
+];
+
+/** Explicit per-group override; unset groups follow the master autoApprove flag. */
+export type ToolApprovalsConfig = Partial<
+  Record<ToolApprovalGroup, boolean>
+>;
+
 export interface AgentProvider {
   id: string;
   name?: string;
@@ -188,9 +211,19 @@ export interface AgentPanelConfig {
   };
   /**
    * Auto-approve Cline tools (current Harbor default). Off → confirm each tool.
+   * `approvals` groups override the master flag per tool group
+   * (unset = follow the master flag).
    */
   tools: {
     autoApprove: boolean;
+    approvals: ToolApprovalsConfig;
+  };
+  /**
+   * Focus chain: the agent keeps a markdown task checklist and Harbor
+   * re-injects the latest one into follow-up turns.
+   */
+  focusChain: {
+    enabled: boolean;
   };
   /**
    * Cline git checkpoints at the start of each root-agent run (restore via UI).
@@ -580,8 +613,24 @@ export function getConfig(): AgentPanelConfig {
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
     },
-    tools: {
-      autoApprove: cfg.get<boolean>("tools.autoApprove") !== false,
+    tools: (() => {
+      const raw = cfg.get<unknown>("tools.approvals");
+      const approvals: ToolApprovalsConfig = {};
+      if (raw && typeof raw === "object") {
+        for (const group of TOOL_APPROVAL_GROUPS) {
+          const value = (raw as Record<string, unknown>)[group];
+          if (typeof value === "boolean") {
+            approvals[group] = value;
+          }
+        }
+      }
+      return {
+        autoApprove: cfg.get<boolean>("tools.autoApprove") !== false,
+        approvals,
+      };
+    })(),
+    focusChain: {
+      enabled: cfg.get<boolean>("focusChain.enabled") !== false,
     },
     checkpoints: {
       enabled: cfg.get<boolean>("checkpoints.enabled") !== false,

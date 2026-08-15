@@ -622,6 +622,8 @@ export class HeadlessPanelHost {
       parallelToolCallsEnabled: config.parallelToolCalls.enabled,
       autoCompactEnabled: config.autoCompact.enabled,
       toolsAutoApprove: config.tools.autoApprove,
+      toolsApprovals: config.tools.approvals,
+      focusChainEnabled: config.focusChain.enabled,
       checkpointsEnabled: config.checkpoints.enabled,
       skillsEnabled: config.skills.enabled,
       skillsWorkspaceEnabled: config.skills.workspaceEnabled,

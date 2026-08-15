@@ -123,6 +123,29 @@ export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
 }
 
 /**
+ * Focus chain (Settings → Focus chain, default on): ask the model to keep a
+ * markdown checklist for multi-step tasks. Harbor re-injects the latest
+ * checklist into follow-up turns (src/focusChain.ts), mirroring upstream
+ * Cline's Focus Chain behavior.
+ */
+export function harborFocusChainRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Focus chain — чеклист задачи",
+      "Для задачи из 3+ шагов начни ответ с компактного markdown-чеклиста (`- [ ]` / `- [x]`, одна строка = один шаг).",
+      "Отмечай выполненные шаги `[x]` в следующих ответах и обновляй список, когда план меняется.",
+      "Harbor будет подставлять твой последний чеклист в следующие ходы — сверяйся с ним и не повторяй сделанное.",
+    ].join("\n");
+  }
+  return [
+    "# Focus chain — task checklist",
+    "For any task with 3+ steps, start your reply with a compact markdown checklist (`- [ ]` / `- [x]`, one line per step).",
+    "Mark finished steps `[x]` in later replies and update the list when the plan changes.",
+    "Harbor re-injects your latest checklist into follow-up turns — follow it and do not redo finished items.",
+  ].join("\n");
+}
+
+/**
  * Injected into Cline rules only for Harbor's Ask mode. Ask and Plan share the
  * same underlying Cline `plan` mode (read-only tools), so Cline's base prompt
  * always says "You are in Plan mode" / "toggle to Act mode" — this overrides
@@ -166,6 +189,68 @@ export function appendVisionInspectRuntimeNudge(
   }
   const nudge = harborVisionInspectUserNudgeForLanguage(lang);
   return base ? `${base}\n\n${nudge}` : nudge;
+}
+
+/**
+ * Appended to the runtime user prompt in Agent/Plan when update_todo is
+ * registered — makes the model maintain the visible plan card.
+ */
+export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "[Harbor] Инструмент update_todo ДОСТУПЕН — вызывай его ВСЕГДА, на каждый запрос в режимах Agent и Plan, без исключений.",
+      "Сделай это САМЫМ ПЕРВЫМ инструментом: построй полный план задачи как список шагов (первый — 'in_progress', остальные 'pending').",
+      "Даже для одношаговой задачи передай один шаг. Затем обновляй статусы по мере выполнения (каждый вызов заменяет карточку целиком).",
+      "В конце — финальный вызов со всеми шагами 'done'.",
+    ].join(" ");
+  }
+  return [
+    "[Harbor] Tool update_todo is AVAILABLE — call it ALWAYS, on every user request in Agent and Plan modes, without exception.",
+    "Do it as your VERY FIRST tool: build the full task plan as a step list (first step 'in_progress', the rest 'pending').",
+    "Even a single-step task gets one step. Then update statuses as you go (each call replaces the whole card).",
+    "At the end, make a final call with every step 'done'.",
+  ].join(" ");
+}
+
+/** Append update_todo call instructions to the runtime user prompt. */
+export function appendTodoRuntimeNudge(
+  userText: string,
+  enabled: boolean,
+  lang: UiLanguage
+): string {
+  const base = String(userText || "").trim();
+  if (!enabled) {
+    return base;
+  }
+  const nudge = harborTodoUserNudgeForLanguage(lang);
+  return base ? `${base}\n\n${nudge}` : nudge;
+}
+
+/**
+ * Session rules for update_todo — the model maintains the visible plan card.
+ * Injected into the Cline rules slot for Agent/Plan sessions.
+ */
+export function harborTodoRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# update_todo — карточка плана",
+      "Инструмент update_todo показывает пользователю карточку «План · N/M» с шагами и прогрессом задачи.",
+      "Правила:",
+      "1) В режимах Agent и Plan вызывай update_todo ВСЕГДА, на каждый запрос пользователя — первый инструмент с полным списком шагов: все 'pending', первый — 'in_progress'. Даже для одношаговой задачи передай один шаг.",
+      "2) После завершения шага (или смены плана) вызови update_todo снова с ОБНОВЛЁННЫМ полным списком — вызов заменяет карточку целиком, это не append.",
+      "3) Закончив всё — последний вызов со всеми шагами 'done'.",
+      "4) Только main-агент: из spawn_agent-детей не вызывать.",
+    ].join("\n");
+  }
+  return [
+    "# update_todo — plan card",
+    "The update_todo tool shows the user a «Plan · N/M» card with task steps and progress.",
+    "Rules:",
+    "1) In Agent and Plan modes call update_todo ALWAYS, on every user request — call it as your FIRST tool with the full step list: all 'pending', the first one 'in_progress'. Even a single-step task gets one step.",
+    "2) After completing a step (or when the plan changes) call update_todo again with the FULL updated list — each call replaces the card, it is not an append.",
+    "3) When everything is done, make a final call with every step 'done'.",
+    "4) Main agent only: never call it from spawned sub-agents.",
+  ].join("\n");
 }
 
 /** Built-in / legacy defaults — treat as «not customized» so UI language can swap them. */

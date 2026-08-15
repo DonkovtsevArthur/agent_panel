@@ -188,6 +188,19 @@
     mentionMenuEl.innerHTML = mentionItems
       .map((item, index) => {
         const active = index === mentionActiveIndex ? " is-active" : "";
+        if (item.special) {
+          const hint = escapeHtml(item.hint || "");
+          return (
+            `<button type="button" class="mention-option${active}" role="option" data-index="${index}" data-special="${escapeHtml(item.special)}" aria-selected="${
+              index === mentionActiveIndex ? "true" : "false"
+            }">` +
+            `<span class="material-symbols-outlined mention-option-icon" aria-hidden="true">${item.icon || "draft"}</span>` +
+            `<span class="mention-option-text">` +
+            `<span class="mention-option-name">${escapeHtml(item.name)}</span>` +
+            `<span class="mention-option-path">${hint}</span>` +
+            `</span></button>`
+          );
+        }
         const name = escapeHtml(item.name || pathBasename(item.path));
         const filePath = escapeHtml(item.path || "");
         return (
@@ -322,6 +335,42 @@
     });
   }
 
+  function specialMentionItems(query) {
+    const q = String(query || "").toLowerCase();
+    const specials = [
+      {
+        special: "problems",
+        name: "@problems",
+        hint: UI_LANG === "ru"
+          ? "Все ошибки и предупреждения workspace"
+          : "All workspace errors and warnings",
+        icon: "error",
+      },
+      {
+        special: "terminal",
+        name: "@terminal",
+        hint: UI_LANG === "ru"
+          ? "Последний вывод терминала / Run"
+          : "Last terminal / Run output",
+        icon: "terminal",
+      },
+      {
+        special: "url",
+        name: "@url",
+        hint: UI_LANG === "ru"
+          ? "Вставить страницу: @url https://…"
+          : "Fetch a page: @url https://…",
+        icon: "language",
+      },
+    ];
+    return specials.filter(
+      (item) =>
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.special.includes(q)
+    );
+  }
+
   function openMentionMenu(textarea, start, query) {
     mentionOpen = true;
     mentionTarget = textarea;
@@ -337,6 +386,11 @@
       mentionMenuEl.innerHTML =
         `<div class="mention-empty">Searching...</div>`;
     }
+    const specials = specialMentionItems(query);
+    if (specials.length) {
+      mentionItems = specials;
+      renderMentionMenu();
+    }
     if (mentionSearchTimer) {
       clearTimeout(mentionSearchTimer);
     }
@@ -350,6 +404,23 @@
     const item = mentionItems[index];
     const textarea = mentionTarget;
     if (!item || !(textarea instanceof HTMLTextAreaElement) || mentionStart < 0) {
+      closeMentionMenu();
+      return;
+    }
+    if (item.special) {
+      const value = textarea.value;
+      const cursor = textarea.selectionStart;
+      const insert = item.special === "url" ? "@url " : `${item.name} `;
+      const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
+      const caret = mentionStart + insert.length;
+      textarea.value = next;
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+      if (textarea.classList.contains("msg-edit-input")) {
+        editingUserText = next;
+      }
+      autoResizePrompt();
+      persistDraftPrompt();
       closeMentionMenu();
       return;
     }
@@ -385,7 +456,10 @@
     if (String(msg.requestId || "") !== String(mentionRequestId)) {
       return;
     }
-    mentionItems = Array.isArray(msg.files) ? msg.files : [];
+    mentionItems = [
+      ...specialMentionItems(mentionQuery),
+      ...(Array.isArray(msg.files) ? msg.files : []),
+    ];
     mentionActiveIndex = 0;
     renderMentionMenu();
   }

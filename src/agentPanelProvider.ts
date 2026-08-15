@@ -28,6 +28,7 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
+import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
@@ -40,8 +41,13 @@ import {
   onClineActiveChatChanged,
   retainClineChatSession,
   restoreClineChatCheckpoint,
+  compareClineChatCheckpoint,
 } from "./clineRuntime";
 import { reloadEditorsAfterCheckpointRestore } from "./checkpointEditors";
+import {
+  expandUserSlashCommand,
+  listHarborUserCommands,
+} from "./harborCommands";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
@@ -164,6 +170,9 @@ type SettingsPayload = {
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
   toolsAutoApprove?: boolean;
+  /** Per-group overrides; only explicit true/false are sent. */
+  toolsApprovals?: Record<string, boolean>;
+  focusChainEnabled?: boolean;
   checkpointsEnabled?: boolean;
   skillsEnabled?: boolean;
   skillsWorkspaceEnabled?: boolean;
@@ -323,7 +332,9 @@ type WebviewToHost =
       caBundlePath?: string;
     }
   | { type: "toolApprovalResult"; requestId: string; approved: boolean }
-  | { type: "restoreCheckpoint"; chatId?: string; checkpointRunCount?: number };
+  | { type: "restoreCheckpoint"; chatId?: string; checkpointRunCount?: number }
+  | { type: "compareCheckpoint"; chatId?: string; checkpointRunCount?: number }
+  | { type: "slashCommandsRefresh" };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -1970,6 +1981,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.scheduleScmRefresh();
   }
 
+  private async postSlashCommandsList(): Promise<void> {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const commands = await listHarborUserCommands(cwd);
+    this.view?.webview.postMessage({
+      type: "slashCommandsList",
+      commands: commands.map((c) => ({
+        name: c.name,
+        description: c.description,
+        source: c.source,
+      })),
+    });
+  }
+
   private async onMessage(message: WebviewToHost): Promise<void> {
     switch (message.type) {
       case "ready":
@@ -1983,7 +2007,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           this.pendingSettingsOpenMcp = false;
         } else {
           void this.postInit();
+          void this.postSlashCommandsList();
         }
+        break;
+      case "slashCommandsRefresh":
+        await this.postSlashCommandsList();
         break;
       case "modelChanged": {
         // Guard against stale modelChanged arriving after a chat switch:
@@ -2412,6 +2440,81 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         });
         break;
       }
+      case "compareCheckpoint": {
+        const chatId = String(message.chatId || this.store.activeChatId || "");
+        const runCount = Number(message.checkpointRunCount);
+        const result = await compareClineChatCheckpoint(chatId, {
+          checkpointRunCount: Number.isFinite(runCount) && runCount > 0
+            ? runCount
+            : undefined,
+        });
+        if (!result.ok) {
+          this.view?.webview.postMessage({
+            type: "runFailed",
+            text: result.error || "Checkpoint compare failed",
+            chatId,
+          });
+          break;
+        }
+        const diffs = result.diffs || [];
+        if (!diffs.length) {
+          this.view?.webview.postMessage({
+            type: "status",
+            text: "Checkpoint matches the workspace — no changes",
+            chatId,
+          });
+          break;
+        }
+        await this.openCheckpointDiffEditors(diffs);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Open checkpoint-vs-workspace diffs: a single file opens directly,
+   * several files go through a QuickPick first.
+   */
+  private async openCheckpointDiffEditors(
+    diffs: Array<{ filePath: string; leftContent: string; rightContent: string }>
+  ): Promise<void> {
+    const openOne = async (diff: {
+      filePath: string;
+      leftContent: string;
+      rightContent: string;
+    }) => {
+      const right = vscode.Uri.file(diff.filePath);
+      const name = path.basename(diff.filePath);
+      const left = vscode.Uri.parse(`checkpoint:${name}`).with({
+        scheme: "untitled",
+        path: `/${name} (checkpoint)`,
+      });
+      const doc = await vscode.workspace.openTextDocument(left);
+      const editor = await vscode.window.showTextDocument(doc, { preview: true });
+      await editor.edit((edit) =>
+        edit.insert(new vscode.Position(0, 0), diff.leftContent)
+      );
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        left,
+        right,
+        `${name} (checkpoint ↔ workspace)`
+      );
+    };
+    if (diffs.length === 1) {
+      await openOne(diffs[0]);
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      diffs.map((d) => ({
+        label: path.basename(d.filePath),
+        description: vscode.workspace.asRelativePath(d.filePath, false),
+        diff: d,
+      })),
+      { placeHolder: "Changed files since checkpoint" }
+    );
+    if (picked) {
+      await openOne(picked.diff);
     }
   }
 
@@ -3146,6 +3249,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     // Tool-статусы этого запуска временные до успешного финала.
     runTransientStart = runUiMessages.length;
 
+    // `/name args` from .harbor/commands/*.md expands host-side; the chat
+    // keeps showing what the user typed.
+    const slashExpansion = await expandUserSlashCommand(
+      trimmed,
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    );
+    const promptText = slashExpansion?.prompt ?? trimmed;
+
     this.setRunStateForChat(runChatId, "running");
     const mode = modeForRun;
     const agentMode = mode.id;
@@ -3168,7 +3279,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           runHistory = await runAgentTurn({
             model: activeTurnModel,
             history: runHistory,
-            userText: trimmed,
+            userText: promptText,
             attachments,
             storageUri: this.storageUri(),
             signal: currentRun.signal,
@@ -3256,6 +3367,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 runUiMessages[existingIx] = uiMsg;
               } else {
                 runUiMessages.push(uiMsg);
+              }
+              syncRunChat();
+            } else if (event.kind === "todo") {
+              // Plan card (update_todo) — upsert by stable stepId so repeated
+              // tool calls update the single card instead of stacking clones.
+              const todoUiMsg: import("./sessionStore").UiMessage = {
+                role: "tool",
+                text: `⚙ plan ${event.argsPreview || ""}`.trim(),
+                step: {
+                  stepId: event.stepId,
+                  kind: "todo",
+                  name: event.name,
+                  status: event.status,
+                  argsPreview: event.argsPreview,
+                  steps: event.steps,
+                },
+              };
+              const todoIx = runUiMessages.findIndex(
+                (m) => m.role === "tool" && m.step?.stepId === event.stepId
+              );
+              if (todoIx >= 0) {
+                runUiMessages[todoIx] = todoUiMsg;
+              } else {
+                runUiMessages.push(todoUiMsg);
               }
               syncRunChat();
             } else if (
@@ -3489,9 +3624,60 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
 
       if (aborted) {
+        // The todo plan card is a persistent progress card, not a transient
+        // tool row — pull it out BEFORE splicing transient tool rows so it
+        // survives Stop and can be re-rendered with an "error" status.
+        const todoBeforeAbortIx = runUiMessages.findIndex(
+          (m) =>
+            m.role === "tool" &&
+            m.step?.kind === "todo" &&
+            m.step.stepId === TODO_STEP_ID
+        );
+        const todoBeforeAbort =
+          todoBeforeAbortIx >= 0 ? runUiMessages[todoBeforeAbortIx] : undefined;
+        if (todoBeforeAbortIx >= 0) {
+          runUiMessages.splice(todoBeforeAbortIx, 1);
+        }
+
         // Не оставляем в истории незавершённые tool-строки после Stop.
         // abortChatRun already removed us from chatRuns — persist directly.
         runUiMessages.splice(runTransientStart);
+
+        // Re-append the todo plan card as cancelled so the in_progress step
+        // spinner stops and the user sees the run was aborted.
+        if (todoBeforeAbort?.step) {
+          const todoStep = todoBeforeAbort.step;
+          const lang = resolveUiLanguage(getConfig().language);
+          const cancelledPreview =
+            lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
+          const cancelledMsg: UiMessage = {
+            ...todoBeforeAbort,
+            step: {
+              ...todoStep,
+              status: "error",
+              resultPreview: cancelledPreview,
+            },
+          };
+          runUiMessages.push(cancelledMsg);
+          // postToRunChat is gated on isChatRunCurrent, which is false after
+          // Stop (signal.aborted). The user is still viewing this chat though,
+          // so post the todo card's new "error" state directly — otherwise the
+          // in_progress step spinner keeps spinning after abort.
+          if (this.isActiveChat(runChatId)) {
+            this.view?.webview.postMessage({
+              type: "step",
+              chatId: runChatId,
+              stepId: TODO_STEP_ID,
+              kind: "todo",
+              name: TODO_TOOL,
+              status: "error",
+              argsPreview: todoStep.argsPreview,
+              steps: todoStep.steps,
+              resultPreview: cancelledPreview,
+            });
+          }
+        }
+
         this.persistRunChatSnapshot(runChatId, {
           history: runHistory,
           uiMessages: runUiMessages,
@@ -4348,6 +4534,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
         toolsAutoApprove: config.tools.autoApprove,
+        toolsApprovals: config.tools.approvals,
+        focusChainEnabled: config.focusChain.enabled,
         checkpointsEnabled: config.checkpoints.enabled,
         skillsEnabled: config.skills.enabled,
         skillsWorkspaceEnabled: config.skills.workspaceEnabled,
@@ -4998,6 +5186,31 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "tools.autoApprove",
       raw.toolsAutoApprove !== false,
+      target
+    );
+    const approvalGroups = [
+      "reads",
+      "web",
+      "edits",
+      "commands",
+      "mcp",
+      "subagents",
+    ] as const;
+    const approvals: Record<string, boolean> = {};
+    const approvalsRaw =
+      raw.toolsApprovals && typeof raw.toolsApprovals === "object"
+        ? raw.toolsApprovals
+        : {};
+    for (const group of approvalGroups) {
+      const value = approvalsRaw[group];
+      if (typeof value === "boolean") {
+        approvals[group] = value;
+      }
+    }
+    await cfg.update("tools.approvals", approvals, target);
+    await cfg.update(
+      "focusChain.enabled",
+      raw.focusChainEnabled !== false,
       target
     );
     await cfg.update(
@@ -5801,6 +6014,84 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               </span>
               <span class="mcp-switch">
                 <input id="settingsToolsAutoApprove" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <div id="settingsApprovalsBlock" class="settings-approvals-block">
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalReadsLabel">Reads</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalReadsNote">read_files, search_codebase, skills</span>
+                </span>
+                <select id="settingsApprovalReads" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalReadsInherit"></option>
+                  <option value="auto" id="settingsApprovalReadsAuto"></option>
+                  <option value="ask" id="settingsApprovalReadsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalWebLabel">Web fetch</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalWebNote">fetch_web_content</span>
+                </span>
+                <select id="settingsApprovalWeb" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalWebInherit"></option>
+                  <option value="auto" id="settingsApprovalWebAuto"></option>
+                  <option value="ask" id="settingsApprovalWebAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalEditsLabel">Edits</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalEditsNote">editor, apply_patch</span>
+                </span>
+                <select id="settingsApprovalEdits" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalEditsInherit"></option>
+                  <option value="auto" id="settingsApprovalEditsAuto"></option>
+                  <option value="ask" id="settingsApprovalEditsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalCommandsLabel">Commands</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalCommandsNote">run_commands (terminal)</span>
+                </span>
+                <select id="settingsApprovalCommands" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalCommandsInherit"></option>
+                  <option value="auto" id="settingsApprovalCommandsAuto"></option>
+                  <option value="ask" id="settingsApprovalCommandsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalMcpLabel">MCP tools</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalMcpNote">Figma and custom MCP servers</span>
+                </span>
+                <select id="settingsApprovalMcp" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalMcpInherit"></option>
+                  <option value="auto" id="settingsApprovalMcpAuto"></option>
+                  <option value="ask" id="settingsApprovalMcpAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalSubagentsLabel">Subagents</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalSubagentsNote">spawn_agent</span>
+                </span>
+                <select id="settingsApprovalSubagents" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalSubagentsInherit"></option>
+                  <option value="auto" id="settingsApprovalSubagentsAuto"></option>
+                  <option value="ask" id="settingsApprovalSubagentsAsk"></option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
+                <span class="settings-toggle-hint" id="settingsFocusChainNote">Agent keeps a task checklist; re-injected each turn.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsFocusChainEnabled" type="checkbox" />
                 <span class="mcp-switch-track"></span>
               </span>
             </label>

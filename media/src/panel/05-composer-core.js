@@ -34,12 +34,20 @@
           sendText: buildSlashCompactPrompt(args),
         };
       default:
+        // User command from .harbor/commands/*.md — send as-is; the host
+        // expands the template. Keep the current mode.
+        if (
+          Array.isArray(userSlashCommands) &&
+          userSlashCommands.some((c) => c.name === name)
+        ) {
+          return { kind: "user", mode: "inherit", sendText: text };
+        }
         return null;
     }
   }
 
   function getSlashCommands() {
-    return [
+    const builtins = [
       {
         id: "agent",
         label: "/agent",
@@ -86,6 +94,14 @@
         kind: "prompt",
       },
     ];
+    const users = (Array.isArray(userSlashCommands) ? userSlashCommands : [])
+      .map((c) => ({
+        id: String(c.name || "").toLowerCase(),
+        label: `/${c.name}`,
+        description: String(c.description || "").slice(0, 80),
+        kind: "user",
+      }));
+    return [...builtins, ...users];
   }
 
   function attachmentPayload(att) {

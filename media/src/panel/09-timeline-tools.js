@@ -1022,6 +1022,58 @@
     ) {
       uiMessagesCache.pop();
     }
+
+    // Stop button: the host may not succeed in re-posting the todo card with
+    // an "error" status (postToRunChat is gated on isChatRunCurrent, which is
+    // false after abort). As a client-side fallback, force any still-running
+    // todo plan cards into a cancelled state so the header spinner and the
+    // in_progress item spinners stop immediately.
+    cancelRunningTodoPlans();
+  }
+
+  /**
+   * Force every visible todo plan card that's still "running" into a
+   * cancelled/error state. Recovers the step list from the rendered item DOM
+   * (data attributes) so it doesn't depend on the host re-posting anything.
+   */
+  function cancelRunningTodoPlans() {
+    const cards = messagesEl.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    if (!cards.length) {
+      return;
+    }
+    const cancelledText = t("cancelledByUser") || "Cancelled by user";
+    for (const el of cards) {
+      // Rebuild steps[] from rendered item DOM: data-todo-status / title.
+      const items = el.querySelectorAll(".todo-plan-item");
+      const steps = [];
+      items.forEach((row) => {
+        const titleEl = row.querySelector(".todo-plan-item-title");
+        const rawStatus =
+          row.getAttribute("data-todo-status") || "pending";
+        const status =
+          rawStatus === "done"
+            ? "done"
+            : rawStatus === "in_progress"
+              ? "pending" // turn the in_progress one into pending on cancel
+              : "pending";
+        steps.push({
+          title: titleEl ? titleEl.textContent || "" : "",
+          status,
+        });
+      });
+      el.dataset.status = "error";
+      el.dataset.cancelled = "1";
+      renderTodoStep(el, {
+        stepId: el.getAttribute("data-step-id") || "",
+        kind: "todo",
+        name: "update_todo",
+        status: "error",
+        steps,
+        resultPreview: cancelledText,
+      });
+    }
   }
 
   function toolGroupHasContent(group) {
@@ -1068,13 +1120,13 @@
     }
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
-      if (group.dataset.failed === "1") {
-        summary.textContent = t("runFailedSummary");
-      } else if (group.dataset.sealed === "1") {
-        summary.textContent = t("runDone");
-      } else {
-        summary.textContent = t("runWorking");
-      }
+      const types = toolTypesSummary(group);
+      const base = group.dataset.failed === "1"
+        ? t("runFailedSummary")
+        : group.dataset.sealed === "1"
+          ? t("runDone")
+          : t("runWorking");
+      summary.textContent = types ? `${base} · ${types}` : base;
     }
     if (toggle) {
       toggle.title = !hasSteps
@@ -1164,6 +1216,9 @@
     if (kind === "retry") {
       return "replay";
     }
+    if (kind === "todo") {
+      return "checklist";
+    }
     if (kind === "tool" || !kind) {
       const nameHint = "";
       void nameHint;
@@ -1239,6 +1294,48 @@
     }
     if (step.kind === "text") {
       return null;
+    }
+
+    // Plan card (update_todo) lives OUTSIDE the collapsed tool group — it must
+    // stay visible while the steps timeline is folded. Upsert into the turn.
+    if (step.kind === "todo") {
+      const turnScope = currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+      const todoSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+      let todoEl = turnScope.querySelector(todoSel);
+      // No tasks → no plan card. Avoids an empty «План» placeholder
+      // (e.g. a failed update_todo that carried no step items).
+      const todoSteps = Array.isArray(step.steps) ? step.steps : [];
+      if (todoSteps.length === 0) {
+        if (todoEl) {
+          todoEl.remove();
+        }
+        return null;
+      }
+      if (!todoEl) {
+        todoEl = document.createElement("div");
+        todoEl.className = "msg tool agent-step";
+        todoEl.dataset.stepId = step.stepId;
+        ensureChatTurn().appendChild(todoEl);
+      }
+      // A plan card cancelled by Stop must not be revived by a late/queued
+      // "step" message still in the host pipe after the abort.
+      if (todoEl.dataset.cancelled === "1") {
+        return todoEl;
+      }
+      todoEl.dataset.stepKind = "todo";
+      if (step.status) {
+        todoEl.dataset.status = step.status;
+      }
+      todoEl.classList.add("agent-step-todo");
+      renderTodoStep(todoEl, step);
+      // Pin the plan card right under the user's prompt, above the step /
+      // thinking timeline, regardless of the order events arrive in.
+      positionTodoPlanAfterUser(turnScope, todoEl);
+      keepStatusAtEnd();
+      scrollToBottom();
+      return todoEl;
     }
 
     // Thinking: resolve target node BEFORE opening a new timeline group.
@@ -1403,6 +1500,23 @@
       el.classList.add("agent-step-checkpoint");
       el.style.cursor = "pointer";
       el.title = t("checkpointRestore");
+      if (!el.querySelector(".agent-step-checkpoint-compare")) {
+        const compareBtn = document.createElement("button");
+        compareBtn.type = "button";
+        compareBtn.className = "agent-step-checkpoint-compare";
+        compareBtn.title = t("checkpointCompare");
+        compareBtn.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">difference</span>';
+        compareBtn.onclick = (event) => {
+          event.stopPropagation();
+          host.postMessage({
+            type: "compareCheckpoint",
+            chatId: activeChatId || "",
+            checkpointRunCount: Number(step.checkpointRunCount) || undefined,
+          });
+        };
+        el.appendChild(compareBtn);
+      }
       el.onclick = () => {
         if (!window.confirm(t("checkpointRestore"))) {
           return;
@@ -1420,6 +1534,156 @@
     keepStatusAtEnd();
     scrollToBottom();
     return el;
+  }
+
+  /**
+   * Keep the update_todo plan card pinned as the first element of the turn's
+   * work area — directly under the user prompt and above the tool/thinking
+   * timeline. Repeated calls are safe (same-position moves are no-ops) and the
+   * card is re-pinned on every update so an assistant message or tool group
+   * appended later never pushes it down.
+   */
+  function positionTodoPlanAfterUser(turnScope, todoEl) {
+    const users = turnScope.querySelectorAll(".msg-wrap-user");
+    const user = users.length ? users[users.length - 1] : null;
+    if (user) {
+      // Wrap user message + todo card in a single sticky group so they pin
+      // together at the top — no height measurement or z-index fighting.
+      let wrap = turnScope.querySelector(":scope > .todo-sticky-group");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.className = "todo-sticky-group";
+        user.parentNode.insertBefore(wrap, user);
+        wrap.appendChild(user);
+      }
+      // Ensure todoEl is inside the wrapper, after the user message.
+      if (todoEl.parentNode !== wrap) {
+        wrap.appendChild(todoEl);
+      }
+      // User message must always be the first child.
+      if (wrap.firstElementChild !== user) {
+        wrap.insertBefore(user, wrap.firstChild);
+      }
+    } else if (turnScope.firstChild !== todoEl) {
+      // No user message rendered yet — keep the plan as the first card so it
+      // doesn't end up below steps that stream first.
+      turnScope.insertBefore(todoEl, turnScope.firstChild);
+    }
+  }
+
+  /** Remove the sticky wrapper if it no longer contains any todo cards. */
+  function cleanupTodoGroup(turnScope) {
+    const wrap = turnScope.querySelector(":scope > .todo-sticky-group");
+    if (!wrap) return;
+    if (wrap.querySelector(".agent-step-todo")) return;
+    // Move user message back out and remove the empty wrapper.
+    const user = wrap.querySelector(".msg-wrap-user");
+    if (user) {
+      wrap.parentNode.insertBefore(user, wrap);
+    }
+    wrap.remove();
+  }
+
+  /** update_todo plan card: «План · 1/4» header + collapsible step list. */
+  function renderTodoStep(el, step) {
+    const steps = Array.isArray(step.steps) ? step.steps : [];
+    const prevOpen = el.dataset.todoOpen === "1";
+    const open = prevOpen || steps.length <= 3;
+    const failed = String(step.status || "") === "error";
+
+    let doneCount = 0;
+    let currentTitle = "";
+    for (const item of steps) {
+      if (String(item.status || "") === "done") {
+        doneCount += 1;
+      } else if (!currentTitle && String(item.status || "") === "in_progress") {
+        currentTitle = String(item.title || "");
+      }
+    }
+    if (!currentTitle) {
+      const next = steps.find(
+        (item) => String(item.status || "") !== "done" && item.title
+      );
+      currentTitle = next ? String(next.title) : "";
+    }
+
+    const counter = steps.length ? `${doneCount}/${steps.length}` : "";
+    el.dataset.todoOpen = open ? "1" : "0";
+
+    const head = document.createElement("div");
+    head.className = "todo-plan-head";
+    const statusIcon = failed
+      ? "error"
+      : steps.length && doneCount === steps.length
+        ? "check"
+        : "checklist";
+    head.innerHTML =
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
+      `<span class="todo-plan-title"></span>` +
+      `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
+    const titleEl = head.querySelector(".todo-plan-title");
+    if (titleEl) {
+      titleEl.textContent = t("todoPlanTitle");
+    }
+    const counterEl = head.querySelector(".todo-plan-counter");
+    if (counterEl) {
+      counterEl.textContent = counter;
+    }
+    head.addEventListener("click", () => {
+      el.dataset.todoOpen = el.dataset.todoOpen === "1" ? "0" : "1";
+      renderTodoStep(el, { steps, status: step.status });
+    });
+
+    const list = document.createElement("div");
+    list.className = "todo-plan-list";
+    if (!open) {
+      list.setAttribute("hidden", "");
+    }
+    steps.forEach((item) => {
+      const status = failed ? "pending" : String(item.status || "pending");
+      const icon = failed
+        ? "schedule"
+        : status === "done"
+          ? "check"
+          : status === "in_progress"
+            ? "progress_activity"
+            : "schedule";
+      const row = document.createElement("div");
+      row.className = "todo-plan-item";
+      row.dataset.todoStatus = status;
+      row.title = t(
+        status === "done"
+          ? "todoPlanStepDone"
+          : status === "in_progress"
+            ? "todoPlanStepInProgress"
+            : "todoPlanStepPending"
+      );
+      row.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-item-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="todo-plan-item-title"></span>`;
+      const rowTitle = row.querySelector(".todo-plan-item-title");
+      if (rowTitle) {
+        rowTitle.textContent = String(item.title || "");
+      }
+      list.appendChild(row);
+    });
+
+    el.innerHTML = "";
+    el.appendChild(head);
+    if (!open && currentTitle) {
+      const current = document.createElement("div");
+      current.className = "todo-plan-current";
+      current.textContent = currentTitle;
+      el.appendChild(current);
+    }
+    if (failed && step.resultPreview) {
+      const err = document.createElement("div");
+      err.className = "todo-plan-error";
+      err.textContent = String(step.resultPreview);
+      el.appendChild(err);
+    }
+    el.appendChild(list);
   }
 
   function renderThinkingStep(el, incoming) {

@@ -985,8 +985,10 @@
     let typed = rawInput.trim();
     let modeForSend = agentMode;
     if (command) {
-      setAgentMode(command.mode, { close: true });
-      modeForSend = normalizeAgentModeUi(command.mode);
+      if (command.mode !== "inherit") {
+        setAgentMode(command.mode, { close: true });
+        modeForSend = normalizeAgentModeUi(command.mode);
+      }
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
         autoResizePrompt();

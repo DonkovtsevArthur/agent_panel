@@ -141,6 +141,9 @@
         };
         renderSkillsSettings();
         break;
+      case "slashCommandsList":
+        userSlashCommands = Array.isArray(msg.commands) ? msg.commands : [];
+        break;
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;

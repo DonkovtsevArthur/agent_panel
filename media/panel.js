@@ -222,10 +222,34 @@
       autoCompactNote: "Compress the chat near the model window limit.",
       toolsAutoApprove: "Auto-approve tools",
       toolsAutoApproveNote: "No prompt. Off — ask every time.",
+      approvalReads: "Reads",
+      approvalReadsNote: "read_files, search_codebase, skills",
+      approvalWeb: "Web fetch",
+      approvalWebNote: "fetch_web_content",
+      approvalEdits: "Edits",
+      approvalEditsNote: "editor, apply_patch",
+      approvalCommands: "Commands",
+      approvalCommandsNote: "run_commands (terminal)",
+      approvalMcp: "MCP tools",
+      approvalMcpNote: "Figma and custom MCP servers",
+      approvalSubagents: "Subagents",
+      approvalSubagentsNote: "spawn_agent",
+      approvalInherit: "Like master",
+      approvalAuto: "Auto",
+      approvalAsk: "Ask",
+      focusChain: "Focus chain",
+      focusChainNote:
+        "Agent keeps a task checklist; re-injected each turn.",
       checkpoints: "Workspace checkpoints",
       checkpointsNote:
         "Git snapshot at the start of a turn. The card rolls back files.",
       checkpointRestore: "Restore workspace files from this checkpoint?",
+      checkpointCompare: "Compare checkpoint with workspace",
+      todoPlanTitle: "Plan",
+      todoPlanStepDone: "done",
+      todoPlanStepInProgress: "in progress",
+      todoPlanStepPending: "pending",
+      cancelledByUser: "Cancelled by user",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Enable Tab autocomplete",
       tabAutocompleteNote:
@@ -696,10 +720,34 @@
       autoCompactNote: "Сжимать диалог у лимита окна модели.",
       toolsAutoApprove: "Автоподтверждение tools",
       toolsAutoApproveNote: "Без запроса. Выкл. — спрашивать каждый раз.",
+      approvalReads: "Чтение",
+      approvalReadsNote: "read_files, search_codebase, skills",
+      approvalWeb: "Веб-запросы",
+      approvalWebNote: "fetch_web_content",
+      approvalEdits: "Правки",
+      approvalEditsNote: "editor, apply_patch",
+      approvalCommands: "Команды",
+      approvalCommandsNote: "run_commands (терминал)",
+      approvalMcp: "MCP-инструменты",
+      approvalMcpNote: "Figma и кастомные MCP-серверы",
+      approvalSubagents: "Субагенты",
+      approvalSubagentsNote: "spawn_agent",
+      approvalInherit: "Как общий",
+      approvalAuto: "Авто",
+      approvalAsk: "Спрашивать",
+      focusChain: "Focus chain",
+      focusChainNote:
+        "Агент ведёт чеклист задач; подставляется в каждый ход.",
       checkpoints: "Чекпоинты workspace",
       checkpointsNote:
         "Git-снимок в начале хода. Карточка откатывает файлы.",
       checkpointRestore: "Восстановить файлы из этого чекпоинта?",
+      checkpointCompare: "Сравнить чекпоинт с текущими файлами",
+      todoPlanTitle: "План",
+      todoPlanStepDone: "выполнено",
+      todoPlanStepInProgress: "выполняется",
+      todoPlanStepPending: "в очереди",
+      cancelledByUser: "Отменено пользователем",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Включить Tab autocomplete",
       tabAutocompleteNote:
@@ -1253,6 +1301,17 @@
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
+  const settingsApprovalSelects = {
+    reads: document.getElementById("settingsApprovalReads"),
+    web: document.getElementById("settingsApprovalWeb"),
+    edits: document.getElementById("settingsApprovalEdits"),
+    commands: document.getElementById("settingsApprovalCommands"),
+    mcp: document.getElementById("settingsApprovalMcp"),
+    subagents: document.getElementById("settingsApprovalSubagents"),
+  };
+  const settingsFocusChainEnabled = document.getElementById(
+    "settingsFocusChainEnabled"
+  );
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
   );
@@ -1462,6 +1521,8 @@
   const skillsRefreshBtn = document.getElementById("skillsRefreshBtn");
   const skillsFoldersList = document.getElementById("skillsFoldersList");
   let skillsCache = { enabled: true, directories: [], skills: [] };
+  /** User slash commands from .harbor/commands/*.md (host-side). */
+  let userSlashCommands = [];
   const settingsFigmaEnabled = null;
   const settingsFigmaEnabledLabel = null;
   const settingsFigmaStatus = mcpEditStatus;
@@ -1973,6 +2034,60 @@
     if (settingsToolsAutoApproveNote) {
       settingsToolsAutoApproveNote.textContent = t("toolsAutoApproveNote");
     }
+    const approvalGroups = [
+      "Reads",
+      "Web",
+      "Edits",
+      "Commands",
+      "Mcp",
+      "Subagents",
+    ];
+    const approvalKeyByGroup = {
+      Reads: "approvalReads",
+      Web: "approvalWeb",
+      Edits: "approvalEdits",
+      Commands: "approvalCommands",
+      Mcp: "approvalMcp",
+      Subagents: "approvalSubagents",
+    };
+    const approvalOptionLabels = {
+      inherit: t("approvalInherit"),
+      auto: t("approvalAuto"),
+      ask: t("approvalAsk"),
+    };
+    for (const group of approvalGroups) {
+      const label = document.getElementById(`settingsApproval${group}Label`);
+      if (label) {
+        label.textContent = t(approvalKeyByGroup[group]);
+      }
+      const note = document.getElementById(`settingsApproval${group}Note`);
+      if (note) {
+        note.textContent = t(`${approvalKeyByGroup[group]}Note`);
+      }
+      const select = document.getElementById(
+        `settingsApproval${group}`
+      );
+      if (select) {
+        for (const option of select.options || []) {
+          const optionLabel = approvalOptionLabels[option.value];
+          if (optionLabel) {
+            option.textContent = optionLabel;
+          }
+        }
+      }
+    }
+    const settingsFocusChainLabel = document.getElementById(
+      "settingsFocusChainLabel"
+    );
+    if (settingsFocusChainLabel) {
+      settingsFocusChainLabel.textContent = t("focusChain");
+    }
+    const settingsFocusChainNote = document.getElementById(
+      "settingsFocusChainNote"
+    );
+    if (settingsFocusChainNote) {
+      settingsFocusChainNote.textContent = t("focusChainNote");
+    }
     const settingsCheckpointsLabel = document.getElementById(
       "settingsCheckpointsLabel"
     );
@@ -2463,12 +2578,20 @@
           sendText: buildSlashCompactPrompt(args),
         };
       default:
+        // User command from .harbor/commands/*.md — send as-is; the host
+        // expands the template. Keep the current mode.
+        if (
+          Array.isArray(userSlashCommands) &&
+          userSlashCommands.some((c) => c.name === name)
+        ) {
+          return { kind: "user", mode: "inherit", sendText: text };
+        }
         return null;
     }
   }
 
   function getSlashCommands() {
-    return [
+    const builtins = [
       {
         id: "agent",
         label: "/agent",
@@ -2515,6 +2638,14 @@
         kind: "prompt",
       },
     ];
+    const users = (Array.isArray(userSlashCommands) ? userSlashCommands : [])
+      .map((c) => ({
+        id: String(c.name || "").toLowerCase(),
+        label: `/${c.name}`,
+        description: String(c.description || "").slice(0, 80),
+        kind: "user",
+      }));
+    return [...builtins, ...users];
   }
 
   function attachmentPayload(att) {
@@ -4315,6 +4446,19 @@
     mentionMenuEl.innerHTML = mentionItems
       .map((item, index) => {
         const active = index === mentionActiveIndex ? " is-active" : "";
+        if (item.special) {
+          const hint = escapeHtml(item.hint || "");
+          return (
+            `<button type="button" class="mention-option${active}" role="option" data-index="${index}" data-special="${escapeHtml(item.special)}" aria-selected="${
+              index === mentionActiveIndex ? "true" : "false"
+            }">` +
+            `<span class="material-symbols-outlined mention-option-icon" aria-hidden="true">${item.icon || "draft"}</span>` +
+            `<span class="mention-option-text">` +
+            `<span class="mention-option-name">${escapeHtml(item.name)}</span>` +
+            `<span class="mention-option-path">${hint}</span>` +
+            `</span></button>`
+          );
+        }
         const name = escapeHtml(item.name || pathBasename(item.path));
         const filePath = escapeHtml(item.path || "");
         return (
@@ -4449,6 +4593,42 @@
     });
   }
 
+  function specialMentionItems(query) {
+    const q = String(query || "").toLowerCase();
+    const specials = [
+      {
+        special: "problems",
+        name: "@problems",
+        hint: UI_LANG === "ru"
+          ? "Все ошибки и предупреждения workspace"
+          : "All workspace errors and warnings",
+        icon: "error",
+      },
+      {
+        special: "terminal",
+        name: "@terminal",
+        hint: UI_LANG === "ru"
+          ? "Последний вывод терминала / Run"
+          : "Last terminal / Run output",
+        icon: "terminal",
+      },
+      {
+        special: "url",
+        name: "@url",
+        hint: UI_LANG === "ru"
+          ? "Вставить страницу: @url https://…"
+          : "Fetch a page: @url https://…",
+        icon: "language",
+      },
+    ];
+    return specials.filter(
+      (item) =>
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.special.includes(q)
+    );
+  }
+
   function openMentionMenu(textarea, start, query) {
     mentionOpen = true;
     mentionTarget = textarea;
@@ -4464,6 +4644,11 @@
       mentionMenuEl.innerHTML =
         `<div class="mention-empty">Searching...</div>`;
     }
+    const specials = specialMentionItems(query);
+    if (specials.length) {
+      mentionItems = specials;
+      renderMentionMenu();
+    }
     if (mentionSearchTimer) {
       clearTimeout(mentionSearchTimer);
     }
@@ -4477,6 +4662,23 @@
     const item = mentionItems[index];
     const textarea = mentionTarget;
     if (!item || !(textarea instanceof HTMLTextAreaElement) || mentionStart < 0) {
+      closeMentionMenu();
+      return;
+    }
+    if (item.special) {
+      const value = textarea.value;
+      const cursor = textarea.selectionStart;
+      const insert = item.special === "url" ? "@url " : `${item.name} `;
+      const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
+      const caret = mentionStart + insert.length;
+      textarea.value = next;
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+      if (textarea.classList.contains("msg-edit-input")) {
+        editingUserText = next;
+      }
+      autoResizePrompt();
+      persistDraftPrompt();
       closeMentionMenu();
       return;
     }
@@ -4512,7 +4714,10 @@
     if (String(msg.requestId || "") !== String(mentionRequestId)) {
       return;
     }
-    mentionItems = Array.isArray(msg.files) ? msg.files : [];
+    mentionItems = [
+      ...specialMentionItems(mentionQuery),
+      ...(Array.isArray(msg.files) ? msg.files : []),
+    ];
     mentionActiveIndex = 0;
     renderMentionMenu();
   }
@@ -7416,6 +7621,58 @@
     ) {
       uiMessagesCache.pop();
     }
+
+    // Stop button: the host may not succeed in re-posting the todo card with
+    // an "error" status (postToRunChat is gated on isChatRunCurrent, which is
+    // false after abort). As a client-side fallback, force any still-running
+    // todo plan cards into a cancelled state so the header spinner and the
+    // in_progress item spinners stop immediately.
+    cancelRunningTodoPlans();
+  }
+
+  /**
+   * Force every visible todo plan card that's still "running" into a
+   * cancelled/error state. Recovers the step list from the rendered item DOM
+   * (data attributes) so it doesn't depend on the host re-posting anything.
+   */
+  function cancelRunningTodoPlans() {
+    const cards = messagesEl.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    if (!cards.length) {
+      return;
+    }
+    const cancelledText = t("cancelledByUser") || "Cancelled by user";
+    for (const el of cards) {
+      // Rebuild steps[] from rendered item DOM: data-todo-status / title.
+      const items = el.querySelectorAll(".todo-plan-item");
+      const steps = [];
+      items.forEach((row) => {
+        const titleEl = row.querySelector(".todo-plan-item-title");
+        const rawStatus =
+          row.getAttribute("data-todo-status") || "pending";
+        const status =
+          rawStatus === "done"
+            ? "done"
+            : rawStatus === "in_progress"
+              ? "pending" // turn the in_progress one into pending on cancel
+              : "pending";
+        steps.push({
+          title: titleEl ? titleEl.textContent || "" : "",
+          status,
+        });
+      });
+      el.dataset.status = "error";
+      el.dataset.cancelled = "1";
+      renderTodoStep(el, {
+        stepId: el.getAttribute("data-step-id") || "",
+        kind: "todo",
+        name: "update_todo",
+        status: "error",
+        steps,
+        resultPreview: cancelledText,
+      });
+    }
   }
 
   function toolGroupHasContent(group) {
@@ -7462,13 +7719,13 @@
     }
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
-      if (group.dataset.failed === "1") {
-        summary.textContent = t("runFailedSummary");
-      } else if (group.dataset.sealed === "1") {
-        summary.textContent = t("runDone");
-      } else {
-        summary.textContent = t("runWorking");
-      }
+      const types = toolTypesSummary(group);
+      const base = group.dataset.failed === "1"
+        ? t("runFailedSummary")
+        : group.dataset.sealed === "1"
+          ? t("runDone")
+          : t("runWorking");
+      summary.textContent = types ? `${base} · ${types}` : base;
     }
     if (toggle) {
       toggle.title = !hasSteps
@@ -7558,6 +7815,9 @@
     if (kind === "retry") {
       return "replay";
     }
+    if (kind === "todo") {
+      return "checklist";
+    }
     if (kind === "tool" || !kind) {
       const nameHint = "";
       void nameHint;
@@ -7633,6 +7893,48 @@
     }
     if (step.kind === "text") {
       return null;
+    }
+
+    // Plan card (update_todo) lives OUTSIDE the collapsed tool group — it must
+    // stay visible while the steps timeline is folded. Upsert into the turn.
+    if (step.kind === "todo") {
+      const turnScope = currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+      const todoSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+      let todoEl = turnScope.querySelector(todoSel);
+      // No tasks → no plan card. Avoids an empty «План» placeholder
+      // (e.g. a failed update_todo that carried no step items).
+      const todoSteps = Array.isArray(step.steps) ? step.steps : [];
+      if (todoSteps.length === 0) {
+        if (todoEl) {
+          todoEl.remove();
+        }
+        return null;
+      }
+      if (!todoEl) {
+        todoEl = document.createElement("div");
+        todoEl.className = "msg tool agent-step";
+        todoEl.dataset.stepId = step.stepId;
+        ensureChatTurn().appendChild(todoEl);
+      }
+      // A plan card cancelled by Stop must not be revived by a late/queued
+      // "step" message still in the host pipe after the abort.
+      if (todoEl.dataset.cancelled === "1") {
+        return todoEl;
+      }
+      todoEl.dataset.stepKind = "todo";
+      if (step.status) {
+        todoEl.dataset.status = step.status;
+      }
+      todoEl.classList.add("agent-step-todo");
+      renderTodoStep(todoEl, step);
+      // Pin the plan card right under the user's prompt, above the step /
+      // thinking timeline, regardless of the order events arrive in.
+      positionTodoPlanAfterUser(turnScope, todoEl);
+      keepStatusAtEnd();
+      scrollToBottom();
+      return todoEl;
     }
 
     // Thinking: resolve target node BEFORE opening a new timeline group.
@@ -7797,6 +8099,23 @@
       el.classList.add("agent-step-checkpoint");
       el.style.cursor = "pointer";
       el.title = t("checkpointRestore");
+      if (!el.querySelector(".agent-step-checkpoint-compare")) {
+        const compareBtn = document.createElement("button");
+        compareBtn.type = "button";
+        compareBtn.className = "agent-step-checkpoint-compare";
+        compareBtn.title = t("checkpointCompare");
+        compareBtn.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">difference</span>';
+        compareBtn.onclick = (event) => {
+          event.stopPropagation();
+          host.postMessage({
+            type: "compareCheckpoint",
+            chatId: activeChatId || "",
+            checkpointRunCount: Number(step.checkpointRunCount) || undefined,
+          });
+        };
+        el.appendChild(compareBtn);
+      }
       el.onclick = () => {
         if (!window.confirm(t("checkpointRestore"))) {
           return;
@@ -7814,6 +8133,156 @@
     keepStatusAtEnd();
     scrollToBottom();
     return el;
+  }
+
+  /**
+   * Keep the update_todo plan card pinned as the first element of the turn's
+   * work area — directly under the user prompt and above the tool/thinking
+   * timeline. Repeated calls are safe (same-position moves are no-ops) and the
+   * card is re-pinned on every update so an assistant message or tool group
+   * appended later never pushes it down.
+   */
+  function positionTodoPlanAfterUser(turnScope, todoEl) {
+    const users = turnScope.querySelectorAll(".msg-wrap-user");
+    const user = users.length ? users[users.length - 1] : null;
+    if (user) {
+      // Wrap user message + todo card in a single sticky group so they pin
+      // together at the top — no height measurement or z-index fighting.
+      let wrap = turnScope.querySelector(":scope > .todo-sticky-group");
+      if (!wrap) {
+        wrap = document.createElement("div");
+        wrap.className = "todo-sticky-group";
+        user.parentNode.insertBefore(wrap, user);
+        wrap.appendChild(user);
+      }
+      // Ensure todoEl is inside the wrapper, after the user message.
+      if (todoEl.parentNode !== wrap) {
+        wrap.appendChild(todoEl);
+      }
+      // User message must always be the first child.
+      if (wrap.firstElementChild !== user) {
+        wrap.insertBefore(user, wrap.firstChild);
+      }
+    } else if (turnScope.firstChild !== todoEl) {
+      // No user message rendered yet — keep the plan as the first card so it
+      // doesn't end up below steps that stream first.
+      turnScope.insertBefore(todoEl, turnScope.firstChild);
+    }
+  }
+
+  /** Remove the sticky wrapper if it no longer contains any todo cards. */
+  function cleanupTodoGroup(turnScope) {
+    const wrap = turnScope.querySelector(":scope > .todo-sticky-group");
+    if (!wrap) return;
+    if (wrap.querySelector(".agent-step-todo")) return;
+    // Move user message back out and remove the empty wrapper.
+    const user = wrap.querySelector(".msg-wrap-user");
+    if (user) {
+      wrap.parentNode.insertBefore(user, wrap);
+    }
+    wrap.remove();
+  }
+
+  /** update_todo plan card: «План · 1/4» header + collapsible step list. */
+  function renderTodoStep(el, step) {
+    const steps = Array.isArray(step.steps) ? step.steps : [];
+    const prevOpen = el.dataset.todoOpen === "1";
+    const open = prevOpen || steps.length <= 3;
+    const failed = String(step.status || "") === "error";
+
+    let doneCount = 0;
+    let currentTitle = "";
+    for (const item of steps) {
+      if (String(item.status || "") === "done") {
+        doneCount += 1;
+      } else if (!currentTitle && String(item.status || "") === "in_progress") {
+        currentTitle = String(item.title || "");
+      }
+    }
+    if (!currentTitle) {
+      const next = steps.find(
+        (item) => String(item.status || "") !== "done" && item.title
+      );
+      currentTitle = next ? String(next.title) : "";
+    }
+
+    const counter = steps.length ? `${doneCount}/${steps.length}` : "";
+    el.dataset.todoOpen = open ? "1" : "0";
+
+    const head = document.createElement("div");
+    head.className = "todo-plan-head";
+    const statusIcon = failed
+      ? "error"
+      : steps.length && doneCount === steps.length
+        ? "check"
+        : "checklist";
+    head.innerHTML =
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
+      `<span class="todo-plan-title"></span>` +
+      `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
+    const titleEl = head.querySelector(".todo-plan-title");
+    if (titleEl) {
+      titleEl.textContent = t("todoPlanTitle");
+    }
+    const counterEl = head.querySelector(".todo-plan-counter");
+    if (counterEl) {
+      counterEl.textContent = counter;
+    }
+    head.addEventListener("click", () => {
+      el.dataset.todoOpen = el.dataset.todoOpen === "1" ? "0" : "1";
+      renderTodoStep(el, { steps, status: step.status });
+    });
+
+    const list = document.createElement("div");
+    list.className = "todo-plan-list";
+    if (!open) {
+      list.setAttribute("hidden", "");
+    }
+    steps.forEach((item) => {
+      const status = failed ? "pending" : String(item.status || "pending");
+      const icon = failed
+        ? "schedule"
+        : status === "done"
+          ? "check"
+          : status === "in_progress"
+            ? "progress_activity"
+            : "schedule";
+      const row = document.createElement("div");
+      row.className = "todo-plan-item";
+      row.dataset.todoStatus = status;
+      row.title = t(
+        status === "done"
+          ? "todoPlanStepDone"
+          : status === "in_progress"
+            ? "todoPlanStepInProgress"
+            : "todoPlanStepPending"
+      );
+      row.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-item-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="todo-plan-item-title"></span>`;
+      const rowTitle = row.querySelector(".todo-plan-item-title");
+      if (rowTitle) {
+        rowTitle.textContent = String(item.title || "");
+      }
+      list.appendChild(row);
+    });
+
+    el.innerHTML = "";
+    el.appendChild(head);
+    if (!open && currentTitle) {
+      const current = document.createElement("div");
+      current.className = "todo-plan-current";
+      current.textContent = currentTitle;
+      el.appendChild(current);
+    }
+    if (failed && step.resultPreview) {
+      const err = document.createElement("div");
+      err.className = "todo-plan-error";
+      err.textContent = String(step.resultPreview);
+      el.appendChild(err);
+    }
+    el.appendChild(list);
   }
 
   function renderThinkingStep(el, incoming) {
@@ -11049,6 +11518,22 @@
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
+    const approvalOverrides =
+      settings.toolsApprovals &&
+      typeof settings.toolsApprovals === "object"
+        ? settings.toolsApprovals
+        : {};
+    for (const [group, select] of Object.entries(settingsApprovalSelects)) {
+      if (!select) {
+        continue;
+      }
+      const value = approvalOverrides[group];
+      select.value =
+        value === true ? "auto" : value === false ? "ask" : "inherit";
+    }
+    if (settingsFocusChainEnabled) {
+      settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
+    }
     if (settingsCheckpointsEnabled) {
       settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
     }
@@ -11225,6 +11710,14 @@
         : true,
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked
+        : true,
+      toolsApprovals: Object.fromEntries(
+        Object.entries(settingsApprovalSelects)
+          .filter(([, select]) => select && select.value !== "inherit")
+          .map(([group, select]) => [group, select.value === "auto"])
+      ),
+      focusChainEnabled: settingsFocusChainEnabled
+        ? settingsFocusChainEnabled.checked
         : true,
       checkpointsEnabled: settingsCheckpointsEnabled
         ? settingsCheckpointsEnabled.checked
@@ -15015,8 +15508,10 @@
     let typed = rawInput.trim();
     let modeForSend = agentMode;
     if (command) {
-      setAgentMode(command.mode, { close: true });
-      modeForSend = normalizeAgentModeUi(command.mode);
+      if (command.mode !== "inherit") {
+        setAgentMode(command.mode, { close: true });
+        modeForSend = normalizeAgentModeUi(command.mode);
+      }
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
         autoResizePrompt();
@@ -17123,6 +17618,10 @@
       if (stickToBottom && !restoringChatScroll) {
         scrollToBottom();
       }
+      // user-пузырь мог поменять высоту при reflow — переприбить план-карточку.
+      try {
+        relpinAllTodoTops();
+      } catch (_) {}
     };
     const resizePin = new ResizeObserver(keepPinnedOnResize);
     resizePin.observe(messagesEl);
@@ -17302,6 +17801,9 @@
           skills: Array.isArray(msg.skills) ? msg.skills : [],
         };
         renderSkillsSettings();
+        break;
+      case "slashCommandsList":
+        userSlashCommands = Array.isArray(msg.commands) ? msg.commands : [];
         break;
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));

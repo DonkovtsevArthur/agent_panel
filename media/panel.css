@@ -1223,6 +1223,161 @@ body.vscode-dark .md-pre .syntax-property {
   }
 }
 
+/* update_todo plan card (kind "todo") */
+.tool-group .agent-step.msg.tool.agent-step-todo,
+.agent-step.agent-step-todo {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  /* Прилипает к верху при скролле. Когда есть user-сообщение, оба элемента
+     оборачиваются в .todo-sticky-group — единый sticky-блок — и этот
+     position:static переопределяется ниже. Без обёртки (нет user-сообщения)
+     карточка прилипает к top:0 самостоятельно. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+/* The plan card's header icon must NOT spin — only the in_progress step item
+   gets a spinner (todo-plan-item-icon below). Override the generic
+   agent-step[data-status="running"] rule that would otherwise spin it. */
+.agent-step.agent-step-todo .agent-step-icon {
+  animation: none;
+}
+
+/* Wrapper that pins user message + todo card together at the top.
+   Created by JS in positionTodoPlanAfterUser when both elements exist;
+   removed when the last todo card is gone. The wrapper owns the opaque
+   background, box-shadow, padding and the sticky/z-index — children
+   lose their individual sticky positioning inside it. */
+.todo-sticky-group {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--harbor-chat-bg);
+  padding-top: 4px;
+  padding-bottom: 2px;
+  box-shadow: 0 -2px 0 1px var(--harbor-chat-bg);
+}
+
+.chat-turn:first-child .todo-sticky-group {
+  padding-top: 8px;
+}
+
+.todo-sticky-group > .msg-wrap.msg-wrap-user {
+  position: static;
+  top: auto;
+  z-index: auto;
+  background: transparent;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-shadow: none;
+}
+
+.todo-sticky-group > .agent-step.agent-step-todo {
+  position: static;
+  top: auto;
+  z-index: auto;
+}
+
+.todo-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+
+.todo-plan-title {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex-shrink: 0;
+}
+
+.todo-plan-counter {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.todo-plan-chevron {
+  font-size: 15px;
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground, #888);
+  flex-shrink: 0;
+}
+
+.todo-plan-current {
+  color: var(--vscode-descriptionForeground, #888);
+  overflow-wrap: anywhere;
+  padding-left: 21px;
+}
+
+.todo-plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.todo-plan-list[hidden] {
+  display: none;
+}
+
+.todo-plan-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.todo-plan-item-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.todo-plan-item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.todo-plan-item[data-todo-status="done"] .todo-plan-item-title {
+  color: var(--vscode-descriptionForeground, #888);
+  text-decoration: line-through;
+  text-decoration-color: var(--vscode-descriptionForeground, #888);
+}
+
+.todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-icon {
+  animation: agent-step-spin 0.9s linear infinite;
+}
+
+.agent-step-todo[data-status="error"] .todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-icon {
+  animation: none;
+}
+
+.todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-title {
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.todo-plan-item[data-todo-status="pending"] {
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.todo-plan-error {
+  color: var(--vscode-errorForeground, #f44747);
+  overflow-wrap: anywhere;
+}
+
 .reasoning-group {
   display: flex;
   flex-direction: column;
@@ -6329,4 +6484,43 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 #chatSearchInput::selection {
   background: #5a5a5a;
   color: #f3f3f3;
+}
+
+/* Granular auto-approve groups (Settings → Agent behavior). */
+.settings-approvals-block {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-approval-row .settings-approval-select {
+  width: auto;
+  min-width: 118px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* Checkpoint card: compare-with-workspace button. */
+.agent-step-checkpoint-compare {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 1px 2px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.7;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.agent-step-checkpoint-compare:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.agent-step-checkpoint-compare .material-symbols-outlined {
+  font-size: 14px;
+  line-height: 1;
 }

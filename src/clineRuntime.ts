@@ -19,11 +19,14 @@ import {
 } from "./modelCapabilities";
 import {
   appendSubagentsRuntimeNudge,
+  appendTodoRuntimeNudge,
   appendVisionInspectRuntimeNudge,
   harborAskModeRulesForLanguage,
   harborDefaultRulesForLanguage,
   harborSubagentsRulesForLanguage,
+  harborTodoRulesForLanguage,
   harborVisionInspectRulesForLanguage,
+  harborFocusChainRulesForLanguage,
   isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
@@ -66,12 +69,16 @@ import {
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { withTurnImages } from "./turnImageInject";
+import { buildSpecialMentionsPrompt } from "./mentions";
+import { buildFocusChainBlock } from "./focusChain";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
 import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
+import { withTodoStepEmitter } from "./todoStepContext";
+import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import {
   harborClineToolPolicies,
-  isToolsAutoApproveEnabled,
+  harborToolApprovalsFingerprint,
   requestHarborToolApproval,
 } from "./toolApproval";
 
@@ -156,6 +163,13 @@ type ClineCoreInstance = {
     cwd?: string;
     restore?: { messages?: boolean; workspace?: boolean };
   }) => Promise<unknown>;
+  compareCheckpoint?: (input: {
+    sessionId: string;
+    checkpointRunCount: number;
+    cwd?: string;
+  }) => Promise<{
+    diffs: Array<{ filePath: string; leftContent: string; rightContent: string }>;
+  }>;
   dispose?: () => Promise<void>;
   subscribe: (listener: (event: CoreSessionEvent) => void) => () => void;
 };
@@ -341,8 +355,9 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
       telemetry: createHarborNoopTelemetry(),
       distinctId: HARBOR_CLINE_DISTINCT_ID,
       // Cline's "default" preset is `{}` and treats missing autoApprove as
-      // allow. Harbor must set autoApprove:false so requestToolApproval runs.
-      toolPolicies: harborClineToolPolicies(isToolsAutoApproveEnabled()),
+      // allow. Harbor always emits explicit policies so requestToolApproval
+      // runs for groups the user wants to confirm.
+      toolPolicies: harborClineToolPolicies(),
       capabilities: {
         requestToolApproval: async (request: {
           toolName?: string;
@@ -1323,7 +1338,7 @@ function clineSessionFingerprint(parts: {
   compact: boolean;
   reasoning: string;
   mcp: string;
-  autoApprove: boolean;
+  approvals: string;
   checkpoints: boolean;
 }): string {
   return [
@@ -1335,7 +1350,7 @@ function clineSessionFingerprint(parts: {
     parts.compact ? "1" : "0",
     parts.reasoning,
     parts.mcp,
-    parts.autoApprove ? "1" : "0",
+    parts.approvals,
     parts.checkpoints ? "1" : "0",
   ].join("|");
 }
@@ -1483,6 +1498,49 @@ export async function restoreClineChatCheckpoint(
   }
 }
 
+/**
+ * Compare a Cline checkpoint against the current workspace: returns per-file
+ * content diffs (checkpoint snapshot on the left, worktree on the right).
+ */
+export async function compareClineChatCheckpoint(
+  chatId: string,
+  options?: { checkpointRunCount?: number }
+): Promise<{
+  ok: boolean;
+  diffs?: Array<{ filePath: string; leftContent: string; rightContent: string }>;
+  error?: string;
+}> {
+  const id = String(chatId || "").trim();
+  retainClineChatSession(id);
+  const live = id ? liveClineByChatId.get(id) : undefined;
+  if (!live?.sessionId) {
+    return { ok: false, error: "No live session checkpoint" };
+  }
+  const runCount =
+    Number(options?.checkpointRunCount) > 0
+      ? Number(options?.checkpointRunCount)
+      : live.lastCheckpointRunCount;
+  if (!runCount) {
+    return { ok: false, error: "No checkpoint yet in this chat" };
+  }
+  try {
+    const bundle = loadClineBundle();
+    const core = await getClineCore(bundle);
+    if (typeof core.compareCheckpoint !== "function") {
+      return { ok: false, error: "Checkpoint compare is not available in this runtime" };
+    }
+    const result = await core.compareCheckpoint({
+      sessionId: live.sessionId,
+      checkpointRunCount: runCount,
+      cwd: workspaceCwd(),
+    });
+    return { ok: true, diffs: result.diffs || [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
 /** Extension shutdown: stop chats and dispose the shared ClineCore host. */
 export async function disposeClineRuntime(): Promise<void> {
   await discardAllClineChatSessions();
@@ -1594,6 +1652,9 @@ export async function runClineAgentTurn(options: {
   // stays intact instead of being replaced wholesale.
   const uiLang = resolveUiLanguage(getConfig().language);
   const enableSpawnAgent = config.subagents.enabled !== false;
+  /** update_todo plan card — Agent/Plan only (Ask is Q&A, not multi-step work). */
+  const harborModeId = String(options.agentMode || "agent").toLowerCase();
+  const enableTodoTool = harborModeId !== "ask";
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
@@ -1606,12 +1667,19 @@ export async function runClineAgentTurn(options: {
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
+    // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
+    enableTodoTool ? harborTodoRulesForLanguage(uiLang) : "",
     resolveModelSupportsVision(options.model)
       ? ""
       : harborVisionInspectRulesForLanguage(uiLang),
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
+      : "",
+    // Focus chain: checklist rules for Agent/Plan when enabled (Ask is Q&A).
+    config.focusChain.enabled !== false &&
+    String(options.agentMode || "").toLowerCase() !== "ask"
+      ? harborFocusChainRulesForLanguage(uiLang)
       : "",
     // Ask shares Cline's "plan" mode under the hood (see mapHarborModeToCline),
     // so Cline's base prompt always says "Plan mode" / "toggle to Act mode".
@@ -1645,7 +1713,6 @@ export async function runClineAgentTurn(options: {
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
   const enableCheckpoints = config.checkpoints.enabled !== false;
-  const autoApproveTools = isToolsAutoApproveEnabled();
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
@@ -1665,7 +1732,7 @@ export async function runClineAgentTurn(options: {
     compact: enableAutoCompact,
     reasoning: reasoningKey,
     mcp: mcpFingerprint,
-    autoApprove: autoApproveTools,
+    approvals: harborToolApprovalsFingerprint(),
     checkpoints: enableCheckpoints,
   });
 
@@ -1750,6 +1817,11 @@ export async function runClineAgentTurn(options: {
               submitSummary = summary;
             }
           }
+          // update_todo renders as the dedicated plan card (emitted by the
+          // tool's execute) — skip the generic tool row to avoid duplicates.
+          if (name === TODO_TOOL) {
+            break;
+          }
           const argsPreview = previewJson(event.input);
           emitStep(callbacks, {
             stepId: toolCallId,
@@ -1801,6 +1873,20 @@ export async function runClineAgentTurn(options: {
                   : "";
           const failed = Boolean(errMsg) || toolOutputIsSoftFail(event.output);
           const metrics = parseToolMetrics(name, event.output, input);
+          if (name === TODO_TOOL) {
+            // Plan card is rendered from the execute-side event; on failure
+            // surface the error there instead of a duplicate tool row.
+            if (failed) {
+              emitStep(callbacks, {
+                stepId: TODO_STEP_ID,
+                kind: "todo",
+                name: TODO_TOOL,
+                status: "error",
+                resultPreview: errMsg.slice(0, 200),
+              });
+            }
+            break;
+          }
           emitStep(callbacks, {
             stepId: toolCallId,
             kind: "tool",
@@ -1861,22 +1947,20 @@ export async function runClineAgentTurn(options: {
         break;
       }
       case "usage": {
-        // Prefer per-turn deltas so parent + child (forwarded to root) sum.
-        const inDelta = Number(event.inputTokens ?? 0);
-        const outDelta = Number(event.outputTokens ?? 0);
-        if (inDelta > 0 || outDelta > 0) {
-          usagePromptTokens += inDelta;
-          usageCompletionTokens += outDelta;
-        } else {
-          usagePromptTokens = Math.max(
-            usagePromptTokens,
-            Number(event.totalInputTokens ?? 0)
-          );
-          usageCompletionTokens = Math.max(
-            usageCompletionTokens,
-            Number(event.totalOutputTokens ?? 0)
-          );
-        }
+        // totalInputTokens/totalOutputTokens are cumulative within one Cline
+        // session (agent-runtime.ts state.usage). inputTokens/outputTokens are
+        // per-API-call deltas that carry the FULL prompt size each time —
+        // summing them would massively over-count context. Take the monotonic
+        // max of the cumulative totals; with sub-agents the parent's total
+        // stays ≥ the child's, so max gives the real context-window fill.
+        usagePromptTokens = Math.max(
+          usagePromptTokens,
+          Number(event.totalInputTokens ?? 0)
+        );
+        usageCompletionTokens = Math.max(
+          usageCompletionTokens,
+          Number(event.totalOutputTokens ?? 0)
+        );
         callbacks.onUsage?.({
           used: usagePromptTokens + usageCompletionTokens,
           promptTokens: usagePromptTokens,
@@ -2006,6 +2090,15 @@ export async function runClineAgentTurn(options: {
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
+  // Special @problems / @terminal / @url mentions inject live snapshots.
+  const specialMentions = await buildSpecialMentionsPrompt(
+    String(options.userText || "")
+  );
+  if (specialMentions) {
+    userPrompt = userPrompt
+      ? `${userPrompt}\n\n${specialMentions}`
+      : specialMentions;
+  }
   // Do not skip IDE context just because an earlier turn had a screenshot.
   const turnContext =
     currentHasImage
@@ -2018,6 +2111,15 @@ export async function runClineAgentTurn(options: {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${turnContext}`
       : turnContext;
+  }
+  // Focus chain: re-inject the latest assistant checklist on follow-up turns.
+  if (config.focusChain.enabled !== false && options.history?.length) {
+    const focusChain = buildFocusChainBlock(options.history);
+    if (focusChain) {
+      userPrompt = userPrompt
+        ? `${userPrompt}\n\n${focusChain}`
+        : focusChain;
+    }
   }
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
@@ -2073,6 +2175,8 @@ export async function runClineAgentTurn(options: {
     userImages = [];
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
+  // update_todo plan card — build it at the very start of every Agent/Plan turn.
+  userPrompt = appendTodoRuntimeNudge(userPrompt, enableTodoTool, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(
     userPrompt,
     enableSpawnAgent,
@@ -2203,6 +2307,10 @@ export async function runClineAgentTurn(options: {
           enableAgentTeams: true,
           disableMcpSettingsTools: true,
           maxParallelToolCalls,
+          // Harbor plan card (Cline focus_chain analog) — Agent/Plan only.
+          ...(enableTodoTool
+            ? { extraTools: [createTodoTool(bundle.createTool)] }
+            : {}),
           // TLS: pass Harbor fetch so corporate self-signed proxies work when
           // Advanced → Validate TLS is off (default).
           fetch: harborFetch as typeof fetch,
@@ -2215,7 +2323,7 @@ export async function runClineAgentTurn(options: {
               }
             : {}),
           ...(enableCheckpoints ? { checkpoint: { enabled: true } } : {}),
-          toolPolicies: harborClineToolPolicies(autoApproveTools),
+          toolPolicies: harborClineToolPolicies(),
           // Iteration budget: leave unset so Cline treats it as unlimited
           // (Harbor maxToolRounds no longer caps the turn).
           systemPrompt: baseSystemPrompt,
@@ -2238,7 +2346,12 @@ export async function runClineAgentTurn(options: {
     }
     };
     await withInspectableImages(imageBundle.urls, () =>
-      withTurnImages(userImages, runTurn)
+      // update_todo executes inside the Cline session; bridge its step events
+      // to this turn's Harbor callbacks (ALS, same as inspect_images).
+      withTodoStepEmitter(
+        (step) => emitStep(callbacks, step),
+        () => withTurnImages(userImages, runTurn)
+      )
     );
 
     if (persistSession) {

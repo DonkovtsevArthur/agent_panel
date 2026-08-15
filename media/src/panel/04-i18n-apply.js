@@ -355,6 +355,60 @@
     if (settingsToolsAutoApproveNote) {
       settingsToolsAutoApproveNote.textContent = t("toolsAutoApproveNote");
     }
+    const approvalGroups = [
+      "Reads",
+      "Web",
+      "Edits",
+      "Commands",
+      "Mcp",
+      "Subagents",
+    ];
+    const approvalKeyByGroup = {
+      Reads: "approvalReads",
+      Web: "approvalWeb",
+      Edits: "approvalEdits",
+      Commands: "approvalCommands",
+      Mcp: "approvalMcp",
+      Subagents: "approvalSubagents",
+    };
+    const approvalOptionLabels = {
+      inherit: t("approvalInherit"),
+      auto: t("approvalAuto"),
+      ask: t("approvalAsk"),
+    };
+    for (const group of approvalGroups) {
+      const label = document.getElementById(`settingsApproval${group}Label`);
+      if (label) {
+        label.textContent = t(approvalKeyByGroup[group]);
+      }
+      const note = document.getElementById(`settingsApproval${group}Note`);
+      if (note) {
+        note.textContent = t(`${approvalKeyByGroup[group]}Note`);
+      }
+      const select = document.getElementById(
+        `settingsApproval${group}`
+      );
+      if (select) {
+        for (const option of select.options || []) {
+          const optionLabel = approvalOptionLabels[option.value];
+          if (optionLabel) {
+            option.textContent = optionLabel;
+          }
+        }
+      }
+    }
+    const settingsFocusChainLabel = document.getElementById(
+      "settingsFocusChainLabel"
+    );
+    if (settingsFocusChainLabel) {
+      settingsFocusChainLabel.textContent = t("focusChain");
+    }
+    const settingsFocusChainNote = document.getElementById(
+      "settingsFocusChainNote"
+    );
+    if (settingsFocusChainNote) {
+      settingsFocusChainNote.textContent = t("focusChainNote");
+    }
     const settingsCheckpointsLabel = document.getElementById(
       "settingsCheckpointsLabel"
     );

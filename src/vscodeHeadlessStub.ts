@@ -168,6 +168,8 @@ class HeadlessConfiguration {
     "parallelToolCalls.enabled": ["parallelToolCallsEnabled"],
     "autoCompact.enabled": ["autoCompactEnabled"],
     "tools.autoApprove": ["toolsAutoApprove"],
+    "tools.approvals": ["toolsApprovals"],
+    "focusChain.enabled": ["focusChainEnabled"],
     "checkpoints.enabled": ["checkpointsEnabled"],
     "skills.enabled": ["skillsEnabled"],
     "skills.workspaceEnabled": ["skillsWorkspaceEnabled"],

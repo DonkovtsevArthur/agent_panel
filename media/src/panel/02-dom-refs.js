@@ -202,6 +202,17 @@
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
+  const settingsApprovalSelects = {
+    reads: document.getElementById("settingsApprovalReads"),
+    web: document.getElementById("settingsApprovalWeb"),
+    edits: document.getElementById("settingsApprovalEdits"),
+    commands: document.getElementById("settingsApprovalCommands"),
+    mcp: document.getElementById("settingsApprovalMcp"),
+    subagents: document.getElementById("settingsApprovalSubagents"),
+  };
+  const settingsFocusChainEnabled = document.getElementById(
+    "settingsFocusChainEnabled"
+  );
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
   );
@@ -411,6 +422,8 @@
   const skillsRefreshBtn = document.getElementById("skillsRefreshBtn");
   const skillsFoldersList = document.getElementById("skillsFoldersList");
   let skillsCache = { enabled: true, directories: [], skills: [] };
+  /** User slash commands from .harbor/commands/*.md (host-side). */
+  let userSlashCommands = [];
   const settingsFigmaEnabled = null;
   const settingsFigmaEnabledLabel = null;
   const settingsFigmaStatus = mcpEditStatus;

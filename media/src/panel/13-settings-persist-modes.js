@@ -164,6 +164,22 @@
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
+    const approvalOverrides =
+      settings.toolsApprovals &&
+      typeof settings.toolsApprovals === "object"
+        ? settings.toolsApprovals
+        : {};
+    for (const [group, select] of Object.entries(settingsApprovalSelects)) {
+      if (!select) {
+        continue;
+      }
+      const value = approvalOverrides[group];
+      select.value =
+        value === true ? "auto" : value === false ? "ask" : "inherit";
+    }
+    if (settingsFocusChainEnabled) {
+      settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
+    }
     if (settingsCheckpointsEnabled) {
       settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
     }
@@ -340,6 +356,14 @@
         : true,
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked
+        : true,
+      toolsApprovals: Object.fromEntries(
+        Object.entries(settingsApprovalSelects)
+          .filter(([, select]) => select && select.value !== "inherit")
+          .map(([group, select]) => [group, select.value === "auto"])
+      ),
+      focusChainEnabled: settingsFocusChainEnabled
+        ? settingsFocusChainEnabled.checked
         : true,
       checkpointsEnabled: settingsCheckpointsEnabled
         ? settingsCheckpointsEnabled.checked

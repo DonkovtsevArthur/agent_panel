@@ -422,6 +422,84 @@
                 <span class="mcp-switch-track"></span>
               </span>
             </label>
+            <div id="settingsApprovalsBlock" class="settings-approvals-block">
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalReadsLabel">Reads</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalReadsNote">read_files, search_codebase, skills</span>
+                </span>
+                <select id="settingsApprovalReads" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalReadsInherit"></option>
+                  <option value="auto" id="settingsApprovalReadsAuto"></option>
+                  <option value="ask" id="settingsApprovalReadsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalWebLabel">Web fetch</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalWebNote">fetch_web_content</span>
+                </span>
+                <select id="settingsApprovalWeb" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalWebInherit"></option>
+                  <option value="auto" id="settingsApprovalWebAuto"></option>
+                  <option value="ask" id="settingsApprovalWebAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalEditsLabel">Edits</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalEditsNote">editor, apply_patch</span>
+                </span>
+                <select id="settingsApprovalEdits" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalEditsInherit"></option>
+                  <option value="auto" id="settingsApprovalEditsAuto"></option>
+                  <option value="ask" id="settingsApprovalEditsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalCommandsLabel">Commands</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalCommandsNote">run_commands (terminal)</span>
+                </span>
+                <select id="settingsApprovalCommands" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalCommandsInherit"></option>
+                  <option value="auto" id="settingsApprovalCommandsAuto"></option>
+                  <option value="ask" id="settingsApprovalCommandsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalMcpLabel">MCP tools</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalMcpNote">Figma and custom MCP servers</span>
+                </span>
+                <select id="settingsApprovalMcp" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalMcpInherit"></option>
+                  <option value="auto" id="settingsApprovalMcpAuto"></option>
+                  <option value="ask" id="settingsApprovalMcpAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalSubagentsLabel">Subagents</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalSubagentsNote">spawn_agent</span>
+                </span>
+                <select id="settingsApprovalSubagents" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalSubagentsInherit"></option>
+                  <option value="auto" id="settingsApprovalSubagentsAuto"></option>
+                  <option value="ask" id="settingsApprovalSubagentsAsk"></option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
+                <span class="settings-toggle-hint" id="settingsFocusChainNote">Agent keeps a task checklist; re-injected each turn.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsFocusChainEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
             <label class="settings-toggle-row">
               <span class="settings-toggle-text">
                 <span class="settings-toggle-title" id="settingsCheckpointsLabel">Workspace checkpoints</span>
