@@ -190,6 +190,16 @@ const liveClineByChatId = new Map<string, LiveClineChat>();
  */
 export const CLINE_SESSION_IDLE_EVICT_MS = 10 * 60 * 1000;
 
+/**
+ * Hard cap on simultaneously live chat sessions (LRU). Idle evict only runs
+ * after the user switches away from a chat, so rapid switching or many
+ * parallel turns could otherwise keep an unbounded number of Cline sessions
+ * inside the shared core. Over cap: stop the least-recently-used idle session
+ * via the same discard path as idle evict. Running turns and the active chat
+ * are never evicted — while only those remain, the cap is soft.
+ */
+export const CLINE_MAX_LIVE_SESSIONS = 12;
+
 const idleEvictTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function clearIdleEvictTimer(chatId: string): void {
@@ -206,6 +216,41 @@ function clearAllIdleEvictTimers(): void {
     clearTimeout(timer);
   }
   idleEvictTimers.clear();
+}
+
+/** Chats with a turn in flight — cap eviction must never stop these. */
+const liveClineBusyChatIds = new Set<string>();
+
+/** Last chat retained by the host — proxy for the chat the user is viewing. */
+let lastRetainedChatId: string | undefined;
+
+/** Map preserves insertion order: delete+set moves the chat to the MRU end. */
+function touchLiveClineChat(chatId: string): void {
+  const entry = liveClineByChatId.get(chatId);
+  if (entry) {
+    liveClineByChatId.delete(chatId);
+    liveClineByChatId.set(chatId, entry);
+  }
+}
+
+/**
+ * Stop least-recently-used idle sessions while above the cap. Fire-and-forget:
+ * discardClineChatSession removes the map entry synchronously, the actual
+ * core.stop continues in the background (same as idle evict).
+ */
+function enforceLiveClineSessionCap(protectedChatId: string): void {
+  while (liveClineByChatId.size > CLINE_MAX_LIVE_SESSIONS) {
+    const victim = [...liveClineByChatId.keys()].find(
+      (id) =>
+        id !== protectedChatId &&
+        id !== lastRetainedChatId &&
+        !liveClineBusyChatIds.has(id)
+    );
+    if (!victim) {
+      break;
+    }
+    void discardClineChatSession(victim);
+  }
 }
 
 /**
@@ -357,7 +402,7 @@ function loadClineBundle(): ClineBundle {
 
 function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
   if (!corePromise) {
-    corePromise = bundle.ClineCore.create({
+    const created = bundle.ClineCore.create({
       clientName: "harbor-agents",
       backendMode: "local",
       // Never wire PostHog / OTEL / live sinks; keep vendor telemetry trees intact for re-forks.
@@ -416,6 +461,16 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
           };
         },
       }),
+    });
+    corePromise = created;
+    // A rejected creation must not poison the memo: without this, every later
+    // call replays the same rejected promise until the extension host restarts.
+    // Identity check so a concurrently recreated promise (dispose + new call)
+    // is never wiped by a stale rejection.
+    void created.catch(() => {
+      if (corePromise === created) {
+        corePromise = undefined;
+      }
     });
   }
   return corePromise;
@@ -1446,6 +1501,8 @@ export function retainClineChatSession(chatId: string | undefined): void {
     return;
   }
   clearIdleEvictTimer(id);
+  lastRetainedChatId = id;
+  touchLiveClineChat(id);
 }
 
 /**
@@ -1787,6 +1844,9 @@ export async function runClineAgentTurn(options: {
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
   const persistSession = Boolean(chatId);
+  if (persistSession) {
+    liveClineBusyChatIds.add(chatId);
+  }
   const reasoningKey = resolveModelSupportsReasoningEffort(options.model)
     ? String(
         options.reasoningEffort || resolveModelReasoningEffort(options.model) || ""
@@ -1815,6 +1875,9 @@ export async function runClineAgentTurn(options: {
     liveClineByChatId.delete(chatId);
     await stopLiveClineSession(live);
     live = undefined;
+  }
+  if (live) {
+    touchLiveClineChat(chatId);
   }
   let sessionId = live?.sessionId || newSessionId();
   let reusedSession = Boolean(live);
@@ -2421,12 +2484,14 @@ export async function runClineAgentTurn(options: {
 
     if (persistSession) {
       const prev = liveClineByChatId.get(chatId);
+      liveClineByChatId.delete(chatId);
       liveClineByChatId.set(chatId, {
         sessionId,
         fingerprint,
         lastCheckpointRunCount:
           turnCheckpointRunCount ?? prev?.lastCheckpointRunCount,
       });
+      enforceLiveClineSessionCap(chatId);
     }
 
     unsubscribe();
@@ -2502,7 +2567,9 @@ export async function runClineAgentTurn(options: {
     setClineStatus(message || "failed");
     throw error;
   } finally {
-    if (!persistSession) {
+    if (persistSession) {
+      liveClineBusyChatIds.delete(chatId);
+    } else {
       try {
         await core.stop(sessionId);
       } catch {

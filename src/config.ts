@@ -802,10 +802,14 @@ export function resolveModelSupportsVision(
  * undefined — модель не поддерживает reasoning_effort (не отправляем поле).
  */
 export function resolveModelReasoningEffort(
-  modelId: string
+  modelOrId: string | AgentModel
 ): string | undefined {
-  const fromConfig = getConfig().models.find((m) => m.id === modelId);
-  const capabilities = resolveModelCapabilities(modelId, {
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  const fromConfig =
+    typeof modelOrId === "string"
+      ? getConfig().models.find((m) => m.id === id)
+      : modelOrId;
+  const capabilities = resolveModelCapabilities(id, {
     reasoningEffort: fromConfig?.reasoningEffort,
   });
   if (!capabilities.supportsReasoningEffort) {
@@ -832,9 +836,38 @@ export function resolveModelSupportsReasoningEffort(
   }).supportsReasoningEffort;
 }
 
-/** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
+/**
+ * Сырой ключ настроек, от которых зависит getEnabledModels(): models/providers
+ * (providerId моделей) + legacy baseUrl/apiKey (fallback-провайдер). Смена
+ * любого значения → пересчёт; чтение четырёх значений и сравнение строк дешевле
+ * полного парса конфига, поэтому инвалидация по событиям не нужна.
+ */
+let enabledModelsCache: AgentModel[] | undefined;
+let enabledModelsCacheKey: string | undefined;
+
+function enabledModelsSettingsKey(
+  cfg: vscode.WorkspaceConfiguration
+): string {
+  return JSON.stringify([
+    cfg.get<unknown>("models"),
+    cfg.get<unknown>("providers"),
+    cfg.get<unknown>("baseUrl"),
+    cfg.get<unknown>("apiKey"),
+  ]);
+}
+
+/**
+ * Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху.
+ * Мемоизировано: до смены models/providers возвращается тот же массив —
+ * результат read-only, не сортировать и не мутировать на месте.
+ */
 export function getEnabledModels(): AgentModel[] {
-  return getConfig()
+  const cfg = vscode.workspace.getConfiguration("agentPanel");
+  const key = enabledModelsSettingsKey(cfg);
+  if (enabledModelsCache && key === enabledModelsCacheKey) {
+    return enabledModelsCache;
+  }
+  const models = getConfig()
     .models.filter((m) => m.enabled !== false)
     .slice()
     .sort(compareModelsByFavoriteThenLabel)
@@ -842,8 +875,11 @@ export function getEnabledModels(): AgentModel[] {
       ...m,
       supportsVision: resolveModelSupportsVision(m),
       supportsReasoningEffort: resolveModelSupportsReasoningEffort(m),
-      reasoningEffortDefault: resolveModelReasoningEffort(m.id),
+      reasoningEffortDefault: resolveModelReasoningEffort(m),
     }));
+  enabledModelsCache = models;
+  enabledModelsCacheKey = key;
+  return models;
 }
 
 /**
