@@ -10,6 +10,7 @@ import type {
 	AgentModel,
 	BasicLogger,
 	GatewayModelDefinition,
+	GatewayProviderMetadata,
 	ITelemetryService,
 	ModelInfo,
 } from "@cline/shared";
@@ -232,6 +233,17 @@ export function createAgentModelFromConfig(
 		);
 	}
 
+	// Session providerConfig may carry gateway routing metadata (e.g. a host's
+	// opt-in promptCache routes for OpenAI-compatible upstreams that accept
+	// Anthropic-style cache_control). ProviderConfig has no `metadata` field,
+	// so read it structurally and forward it — without this the gateway
+	// registry never sees per-session routing overrides.
+	const routingMetadata = (
+		normalizedProviderConfig as ProviderConfig & {
+			metadata?: GatewayProviderMetadata;
+		}
+	).metadata;
+
 	return createGateway({
 		// Forward the host-provided fetch so inference honors proxy/CA config on
 		// JetBrains and CLI, where the global fetch is not proxy-aware. Without
@@ -247,6 +259,7 @@ export function createAgentModelFromConfig(
 				timeoutMs: normalizedProviderConfig.timeoutMs,
 				fetch: normalizedProviderConfig.fetch,
 				options: buildGatewayProviderOptions(normalizedProviderConfig),
+				...(routingMetadata ? { metadata: routingMetadata } : {}),
 				models: normalizedProviderConfig.knownModels
 					? Object.entries(normalizedProviderConfig.knownModels).map(
 							([id, model]) => toGatewayConfiguredModel(id, model),

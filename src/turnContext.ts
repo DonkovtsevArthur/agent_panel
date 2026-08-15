@@ -287,7 +287,26 @@ export async function buildTurnContextBlock(options: {
     }
   }
 
-  const git = await buildGitSnapshotMessage();
+  // Git snapshot, enclosing symbol and workspace rules are independent —
+  // started together here, awaited in their original positions below so the
+  // part order (and thus the prompt layout) stays stable.
+  const gitPromise = buildGitSnapshotMessage().catch(() => "");
+  const symbolPromise = buildEnclosingSymbolMessage().catch(() => "");
+  let rulesPromise: Promise<string | undefined> | undefined;
+  try {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (folder) {
+      rulesPromise = loadWorkspaceRules(folder.uri.fsPath, {
+        omitAgentsMd: true,
+        targetPaths: openFileTargetPaths(),
+        charCap: 6_000,
+      }).catch(() => undefined);
+    }
+  } catch {
+    /* no rules dir */
+  }
+
+  const git = await gitPromise;
   if (git.trim()) {
     parts.push(git.trim());
   }
@@ -297,10 +316,11 @@ export async function buildTurnContextBlock(options: {
     parts.push(diagnostics.trim());
   }
 
+  const extras = harborIdeExtras();
+
   try {
-    const extras = harborIdeExtras();
     const symbol =
-      (await buildEnclosingSymbolMessage()) ||
+      (await symbolPromise) ||
       formatEnclosingSymbolMessage(
         extras.enclosingSymbol?.name
           ? {
@@ -319,7 +339,6 @@ export async function buildTurnContextBlock(options: {
   }
 
   try {
-    const extras = harborIdeExtras();
     const terminal = buildTerminalSnapshotMessage(
       extras.terminal?.output
         ? {
@@ -338,7 +357,6 @@ export async function buildTurnContextBlock(options: {
     /* no terminal API */
   }
 
-  const extras = harborIdeExtras();
   const recentViewed = buildRecentlyViewedMessage(extras.recentFiles || []);
   if (recentViewed) {
     parts.push(recentViewed);
@@ -349,25 +367,14 @@ export async function buildTurnContextBlock(options: {
     parts.push(recent);
   }
 
-  try {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (folder) {
-      const rules = await loadWorkspaceRules(folder.uri.fsPath, {
-        omitAgentsMd: true,
-        targetPaths: openFileTargetPaths(),
-        charCap: 6_000,
-      });
-      if (rules?.trim()) {
-        parts.push(
-          [
-            "Matching workspace rules for the current file(s) (glob / alwaysApply; AGENTS.md is already in session rules):",
-            rules.trim(),
-          ].join("\n")
-        );
-      }
-    }
-  } catch {
-    /* no rules dir */
+  const rules = await rulesPromise;
+  if (rules?.trim()) {
+    parts.push(
+      [
+        "Matching workspace rules for the current file(s) (glob / alwaysApply; AGENTS.md is already in session rules):",
+        rules.trim(),
+      ].join("\n")
+    );
   }
 
   if (!parts.length) {

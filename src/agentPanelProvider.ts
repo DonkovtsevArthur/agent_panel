@@ -3333,9 +3333,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             turnHadToolSideEffects = true;
-            runUiMessages.push({ role: "tool", text: toolText });
-            syncRunChat();
-            postToRunChat({ type: "append", role: "tool", text: toolText });
+            // Each "⚙ name(args)" line is emitted right after its structured
+            // step with identical text — skip the text-only twin so it is not
+            // persisted/rendered as a duplicate card.
+            const hasStepTwin = runUiMessages.some(
+              (m) =>
+                m.role === "tool" &&
+                Boolean(m.step?.stepId) &&
+                m.text === toolText
+            );
+            if (!hasStepTwin) {
+              runUiMessages.push({ role: "tool", text: toolText });
+              syncRunChat();
+              postToRunChat({ type: "append", role: "tool", text: toolText });
+            }
           },
           onStep: (event) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {

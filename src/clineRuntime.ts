@@ -275,6 +275,15 @@ function buildClineModelInfo(modelId: string): {
   // shouldEmitAnthropicReasoning treats that as "emit Anthropic thinking" —
   // which is exactly the LiteLLM 400 path above. Passing capabilities:["tools"]
   // (no "reasoning") forces the portable OpenAI-style path instead.
+  //
+  // Opt-in prompt-cache markers (agentPanel.promptCache.enabled): this
+  // capability plus the provider routing metadata (buildHarborProviderConfig)
+  // make the Cline gateway annotate the last user message with Anthropic-style
+  // cache_control. Unlike "reasoning" above, "prompt-cache" never switches the
+  // wire format, so the portable reasoning_effort path is unaffected.
+  if (config.promptCache.enabled) {
+    capabilities.push("prompt-cache");
+  }
   const modelEntry: ClineKnownModelInfo = {
     id: modelId,
     name: stored?.label || modelId,
@@ -1161,6 +1170,28 @@ function spawnAgentResultPreview(
   return previewJson(output, 240);
 }
 
+/**
+ * spawn_agent input starts with a long systemPrompt, so a plain 180-char
+ * previewJson truncation loses the task and every step card renders as an
+ * anonymous "Субагент". Keep the task first and cap it so it survives.
+ */
+function spawnAgentArgsPreview(toolName: string, input: unknown): string {
+  if (toolName === "spawn_agent" && input && typeof input === "object") {
+    const row = input as { task?: unknown; prompt?: unknown };
+    const task =
+      typeof row.task === "string"
+        ? row.task.trim()
+        : typeof row.prompt === "string"
+          ? row.prompt.trim()
+          : "";
+    if (task) {
+      const capped = task.length > 150 ? `${task.slice(0, 147)}…` : task;
+      return JSON.stringify({ task: capped });
+    }
+  }
+  return previewJson(input);
+}
+
 type ToolResultRow = {
   query?: unknown;
   result?: unknown;
@@ -1340,6 +1371,7 @@ function clineSessionFingerprint(parts: {
   mcp: string;
   approvals: string;
   checkpoints: boolean;
+  promptCache: boolean;
 }): string {
   return [
     parts.mode,
@@ -1352,6 +1384,7 @@ function clineSessionFingerprint(parts: {
     parts.mcp,
     parts.approvals,
     parts.checkpoints ? "1" : "0",
+    parts.promptCache ? "1" : "0",
   ].join("|");
 }
 
@@ -1562,12 +1595,29 @@ export async function disposeClineRuntime(): Promise<void> {
  * bodies. Without this, openai-compatible / LiteLLM/OpenRouter rejections arrive
  * as bare "Request failed with status code 400" and the real cause is invisible —
  * especially painful for spawn_agent children.
+ *
+ * With agentPanel.promptCache.enabled also carries gateway routing metadata so
+ * the Cline gateway emits Anthropic-style cache_control markers for this model
+ * (the session providerConfig.metadata is forwarded into the gateway by the
+ * vendor handler-factory patch; without it the metadata is silently dropped).
  */
 function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
   providerId: string;
   fetch: typeof fetch;
   modelInfo?: ClineKnownModelInfo;
   knownModels?: Record<string, ClineKnownModelInfo>;
+  metadata?: {
+    routing: {
+      promptCache: {
+        format: "anthropic-cache-control";
+        routes: Array<{
+          matcher: "model-id";
+          modelId: string;
+          requiredCapability: "prompt-cache";
+        }>;
+      };
+    };
+  };
   options: {
     onResponseError: (response: {
       status: number;
@@ -1575,6 +1625,7 @@ function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
     }) => Promise<void>;
   };
 } {
+  const promptCacheEnabled = getConfig().promptCache.enabled === true;
   return {
     providerId: "openai-compatible",
     fetch: harborFetch as typeof fetch,
@@ -1582,6 +1633,24 @@ function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
       ? {
           modelInfo,
           knownModels: { [modelInfo.id]: modelInfo },
+        }
+      : {}),
+    ...(promptCacheEnabled && modelInfo
+      ? {
+          metadata: {
+            routing: {
+              promptCache: {
+                format: "anthropic-cache-control" as const,
+                routes: [
+                  {
+                    matcher: "model-id" as const,
+                    modelId: modelInfo.id,
+                    requiredCapability: "prompt-cache" as const,
+                  },
+                ],
+              },
+            },
+          },
         }
       : {}),
     options: {
@@ -1713,6 +1782,7 @@ export async function runClineAgentTurn(options: {
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
   const enableCheckpoints = config.checkpoints.enabled !== false;
+  const enablePromptCache = config.promptCache.enabled === true;
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
@@ -1734,6 +1804,7 @@ export async function runClineAgentTurn(options: {
     mcp: mcpFingerprint,
     approvals: harborToolApprovalsFingerprint(),
     checkpoints: enableCheckpoints,
+    promptCache: enablePromptCache,
   });
 
   if (persistSession && options.resetSession) {
@@ -1822,7 +1893,7 @@ export async function runClineAgentTurn(options: {
           if (name === TODO_TOOL) {
             break;
           }
-          const argsPreview = previewJson(event.input);
+          const argsPreview = spawnAgentArgsPreview(name, event.input);
           emitStep(callbacks, {
             stepId: toolCallId,
             kind: "tool",
@@ -1892,7 +1963,7 @@ export async function runClineAgentTurn(options: {
             kind: "tool",
             toolCallId,
             name,
-            argsPreview: previewJson(input),
+            argsPreview: spawnAgentArgsPreview(name, input),
             status: failed ? "error" : "done",
             resultPreview: spawnAgentResultPreview(name, event.output, errMsg),
             ...(metrics ? { metrics } : {}),

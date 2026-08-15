@@ -483,6 +483,7 @@
         }
         streamingEl = null;
         streamingRenderScheduled = false;
+        completeRunningTodoPlans();
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -556,6 +557,7 @@
             break;
           }
         }
+        completeRunningTodoPlans();
         setAgentStatus("", true);
         setIdleAndDrain();
         break;

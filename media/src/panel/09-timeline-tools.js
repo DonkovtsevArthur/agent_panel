@@ -44,10 +44,19 @@
     let path = "";
     const rawArgs = String(argsPreview || "").trim();
     if (rawArgs) {
-      // Scalar field: "path":"...", "command":"...", etc.
-      const pathMatch = rawArgs.match(
-        /"(?:relativePath|path|file_path|command|query|queries)"\s*:\s*"((?:\\.|[^"\\])*)"/
+      // Scalar field: "path":"...", "command":"...", "url":"...", etc.
+      // url/task/skill/question cover fetch/open/skills/ask/spawn cards whose
+      // args carry no path — with an empty key their "⚙ name(args)" text twin
+      // renders as a duplicate card instead of merging into the step.
+      let pathMatch = rawArgs.match(
+        /"(?:relativePath|path|file_path|command|query|queries|url|task|skill|question)"\s*:\s*"((?:\\.|[^"\\])*)"/
       );
+      // Truncated preview: opening quote present, closing quote cut off.
+      if (!pathMatch) {
+        pathMatch = rawArgs.match(
+          /"(?:relativePath|path|file_path|command|query|queries|url|task|skill|question)"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+      }
       if (pathMatch) {
         path = pathMatch[1].replace(/\\"/g, '"');
       }
@@ -60,6 +69,15 @@
         );
         if (arrayMatch) {
           path = arrayMatch[1].replace(/\\"/g, '"');
+        }
+      }
+      // fetch_web_content ships urls as "requests":[{"url":"..."}].
+      if (!path) {
+        const requestMatch = rawArgs.match(
+          /"requests"\s*:\s*\[\s*\{\s*"url"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+        if (requestMatch) {
+          path = requestMatch[1].replace(/\\"/g, '"');
         }
       }
     }
@@ -148,9 +166,17 @@
         if (queryMatch) {
           args.query = queryMatch[1].replace(/\\"/g, '"');
         }
-        const taskMatch = rawArgs.match(/"task"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        // No trailing quote requirement: task is often truncated mid-string.
+        const taskMatch = rawArgs.match(/"task"\s*:\s*"((?:\\.|[^"\\])*)/);
         if (taskMatch) {
           args.task = taskMatch[1].replace(/\\"/g, '"');
+        }
+        // Legacy previews truncated inside systemPrompt before task appeared.
+        const systemPromptMatch = rawArgs.match(
+          /"systemPrompt"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+        if (systemPromptMatch) {
+          args.systemPrompt = systemPromptMatch[1].replace(/\\"/g, '"');
         }
         const urlMatch = rawArgs.match(/"url"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (urlMatch) {
@@ -253,7 +279,9 @@
       case "apply_patch":
         return t("toolHumanApplyPatch");
       case "spawn_agent": {
-        const task = String(args.task || args.prompt || "").trim();
+        const task = String(
+          args.task || args.prompt || args.systemPrompt || ""
+        ).trim();
         const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
         const base = t("toolHumanSpawn", short);
         if (status === "error") {
@@ -1134,6 +1162,40 @@
     }
   }
 
+  /**
+   * When the assistant finishes successfully without a final update_todo call
+   * that marks every step "done", auto-complete any still-running todo plan
+   * cards so the user sees a finished checklist instead of a stuck spinner.
+   */
+  function completeRunningTodoPlans() {
+    const cards = messagesEl.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    if (!cards.length) {
+      return;
+    }
+    for (const el of cards) {
+      const items = el.querySelectorAll(".todo-plan-item");
+      const steps = [];
+      items.forEach((row) => {
+        const titleEl = row.querySelector(".todo-plan-item-title");
+        steps.push({
+          title: titleEl ? titleEl.textContent || "" : "",
+          status: "done",
+        });
+      });
+      el.dataset.status = "done";
+      el.dataset.todoOpen = "0";
+      renderTodoStep(el, {
+        stepId: el.getAttribute("data-step-id") || "",
+        kind: "todo",
+        name: "update_todo",
+        status: "done",
+        steps,
+      });
+    }
+  }
+
   function toolGroupHasContent(group) {
     const body = group?.querySelector(".tool-group-body");
     if (!body) {
@@ -1471,7 +1533,16 @@
       el.dataset.toolMatchKey = toolStepMatchKey(
         step.name,
         step.argsPreview,
-        ""
+        // Same label the "⚙ name(args)" text line derives its key from —
+        // without it url/skill/mcp tools get an empty key and never merge
+        // with their text twin.
+        formatToolHumanLabel(
+          step.name,
+          step.argsPreview,
+          step.metrics,
+          step.status,
+          step.resultPreview || ""
+        )
       );
     }
 
@@ -1496,13 +1567,23 @@
           let task = "";
           try {
             const args = JSON.parse(String(step.argsPreview || "{}"));
-            task = String(args.task || args.prompt || "").trim();
+            task = String(
+              args.task || args.prompt || args.systemPrompt || ""
+            ).trim();
           } catch {
             const m = String(step.argsPreview || "").match(
-              /"task"\s*:\s*"((?:\\.|[^"\\])*)"/
+              /"task"\s*:\s*"((?:\\.|[^"\\])*)/
             );
             if (m) {
               task = m[1].replace(/\\"/g, '"');
+            }
+            if (!task) {
+              const sp = String(step.argsPreview || "").match(
+                /"systemPrompt"\s*:\s*"((?:\\.|[^"\\])*)/
+              );
+              if (sp) {
+                task = sp[1].replace(/\\"/g, '"');
+              }
             }
           }
           const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
@@ -1638,7 +1719,7 @@
   function renderTodoStep(el, step) {
     const steps = Array.isArray(step.steps) ? step.steps : [];
     const prevOpen = el.dataset.todoOpen === "1";
-    const open = prevOpen || steps.length <= 3;
+    const open = prevOpen;
     const failed = String(step.status || "") === "error";
 
     let doneCount = 0;
@@ -1660,6 +1741,30 @@
     const counter = steps.length ? `${doneCount}/${steps.length}` : "";
     el.dataset.todoOpen = open ? "1" : "0";
 
+    // Full card collapse: when data-todo-card-collapsed="1", only a compact
+    // chip is visible — click it to restore the card.
+    const cardCollapsed = el.dataset.todoCardCollapsed === "1";
+    if (cardCollapsed) {
+      el.innerHTML = "";
+      const chip = document.createElement("div");
+      chip.className = "todo-plan-chip";
+      const chipIcon = failed
+        ? "error"
+        : steps.length && doneCount === steps.length
+          ? "check"
+          : "checklist";
+      chip.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-chip-icon" aria-hidden="true">${chipIcon}</span>` +
+        `<span class="todo-plan-chip-label">${t("todoPlanTitle")}</span>` +
+        (counter ? `<span class="todo-plan-chip-counter">${counter}</span>` : "");
+      chip.addEventListener("click", () => {
+        el.dataset.todoCardCollapsed = "0";
+        renderTodoStep(el, { steps, status: step.status });
+      });
+      el.appendChild(chip);
+      return;
+    }
+
     const head = document.createElement("div");
     head.className = "todo-plan-head";
     const statusIcon = failed
@@ -1671,6 +1776,7 @@
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
       `<span class="todo-plan-title"></span>` +
       `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-minimize" title="Свернуть панель" aria-hidden="true">minimize</span>` +
       `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
     const titleEl = head.querySelector(".todo-plan-title");
     if (titleEl) {
@@ -1680,7 +1786,14 @@
     if (counterEl) {
       counterEl.textContent = counter;
     }
-    head.addEventListener("click", () => {
+    head.addEventListener("click", (e) => {
+      // Minimize button: collapse entire card into compact chip.
+      if (e.target.closest(".todo-plan-minimize")) {
+        e.stopPropagation();
+        el.dataset.todoCardCollapsed = "1";
+        renderTodoStep(el, { steps, status: step.status });
+        return;
+      }
       el.dataset.todoOpen = el.dataset.todoOpen === "1" ? "0" : "1";
       renderTodoStep(el, { steps, status: step.status });
     });

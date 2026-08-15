@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.7.5",
+  "version": "2.7.9",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -607,6 +607,11 @@
           "type": "boolean",
           "default": true,
           "description": "%config.autoCompact.enabled.description%"
+        },
+        "agentPanel.promptCache.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.promptCache.enabled.description%"
         },
         "agentPanel.tools.autoApprove": {
           "type": "boolean",

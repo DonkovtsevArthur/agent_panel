@@ -210,6 +210,15 @@ export interface AgentPanelConfig {
     enabled: boolean;
   };
   /**
+   * Emit Anthropic-style prompt-cache markers (`cache_control`) on chat turns
+   * for OpenAI-compatible upstreams that accept them (LiteLLM/OpenRouter with
+   * Claude/Qwen upstreams, Anthropic-compatible endpoints). Off by default:
+   * strict OpenAI endpoints reject the unknown content-part field.
+   */
+  promptCache: {
+    enabled: boolean;
+  };
+  /**
    * Auto-approve Cline tools (current Harbor default). Off → confirm each tool.
    * `approvals` groups override the master flag per tool group
    * (unset = follow the master flag).
@@ -612,6 +621,9 @@ export function getConfig(): AgentPanelConfig {
     },
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
+    },
+    promptCache: {
+      enabled: cfg.get<boolean>("promptCache.enabled") === true,
     },
     tools: (() => {
       const raw = cfg.get<unknown>("tools.approvals");
