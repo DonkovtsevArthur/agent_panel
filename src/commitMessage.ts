@@ -230,7 +230,9 @@ function cleanCommitMessage(raw: string): string {
   }
   // Иногда модели добавляют заголовок
   text = text.replace(/^(commit message|сообщение коммита)\s*:\s*/i, "").trim();
-  return text;
+  // Conventional commit — одна строка; берём первую непустую
+  const firstLine = text.split("\n").find((l) => l.trim().length > 0);
+  return (firstLine || text).trim();
 }
 
 /**
@@ -355,8 +357,8 @@ function buildPrompts(
 ): { system: string; user: string } {
   const baseSystem =
     lang === "ru"
-      ? "Ты помогаешь писать сообщения git-коммитов. Ответь только текстом сообщения коммита: 1–2 предложения, кратко, по сути изменений. Без кавычек, без markdown, без префикса «Commit message:»."
-      : "You write git commit messages. Reply with the commit message text only: 1–2 sentences, concise, focused on why. No quotes, no markdown, no 'Commit message:' prefix.";
+      ? "Ты помогаешь писать сообщения git-коммитов. Используй формат: <тип>(<область>): <описание> — одно краткое предложение на русском. Типы: feat/fix/docs/style/refactor/test/chore/perf. Ответь ТОЛЬКО текстом сообщения — без кавычек, без markdown, без префикса."
+      : "You write git commit messages. Use the format: <type>(<scope>): <description> — one concise sentence. Types: feat/fix/docs/style/refactor/test/chore/perf. Reply with the commit message text only — no quotes, no markdown, no prefix.";
 
   // Если передан кастомный промпт — используем его как основной system prompt,
   // а дефолтный добавляем только как «без markdown/кавычек»约束 в конце.
@@ -391,14 +393,22 @@ export function fallbackCommitMessage(
 ): string {
   const list = normalizeRelPaths(paths);
   if (!list.length) {
-    return lang === "ru" ? "Обновить изменения" : "Update changes";
+    return lang === "ru" ? "chore: обновить изменения" : "chore: update changes";
   }
   if (list.length === 1) {
-    return lang === "ru" ? `Обновить ${list[0]}` : `Update ${list[0]}`;
+    return lang === "ru"
+      ? `chore: обновить ${list[0]}`
+      : `chore: update ${list[0]}`;
+  }
+  if (list.length <= 3) {
+    const names = list.map((p) => path.basename(p)).join(", ");
+    return lang === "ru"
+      ? `chore: обновить ${names}`
+      : `chore: update ${names}`;
   }
   return lang === "ru"
-    ? `Обновить ${list.length} файлов`
-    : `Update ${list.length} files`;
+    ? `chore: обновить ${list.length} файлов`
+    : `chore: update ${list.length} files`;
 }
 
 /**
@@ -441,7 +451,6 @@ export async function composeCommitMessageText(
   const configuredIds = config.commitMessage.modelIds.filter((id) =>
     enabled.some((m) => m.id === id)
   );
-  console.warn("[Harbor commit] modelIds:", config.commitMessage.modelIds, "configuredIds:", configuredIds, "enabled:", enabled.map(m => m.id));
   const candidates =
     configuredIds.length > 0
       ? sortCommitModelCandidates(configuredIds, enabled)
