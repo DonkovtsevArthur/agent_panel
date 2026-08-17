@@ -113,6 +113,7 @@
       commitLanguage: "Language",
       commitLanguageAuto: "Auto (follow UI language)",
       commitModel: "Model",
+      commitModels: "Models",
       commitModelEmpty: "Auto (light model)",
       commitPrompt: "Prompt / rule",
       commitPromptEmpty: "Empty — project rules, then the built-in default.",
@@ -609,6 +610,7 @@
       commitLanguage: "Язык",
       commitLanguageAuto: "Авто (как язык интерфейса)",
       commitModel: "Модель",
+      commitModels: "Модели",
       commitModelEmpty: "Авто (лёгкая модель)",
       commitPrompt: "Промпт / правило",
       commitPromptEmpty: "Пусто — правила проекта, затем встроенный дефолт.",
@@ -1408,7 +1410,7 @@
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
   );
-  const settingsCommitModel = document.getElementById("settingsCommitModel");
+  const settingsCommitModelList = document.getElementById("settingsCommitModelList");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
   const settingsCommitPromptToggle = document.getElementById(
     "settingsCommitPromptToggle"
@@ -1429,8 +1431,8 @@
   const settingsCommitLanguageLabel = document.getElementById(
     "settingsCommitLanguageLabel"
   );
-  const settingsCommitModelLabel = document.getElementById(
-    "settingsCommitModelLabel"
+  const settingsCommitModelsLabel = document.getElementById(
+    "settingsCommitModelsLabel"
   );
   const settingsCommitPromptLabel = document.getElementById(
     "settingsCommitPromptLabel"
@@ -2331,8 +2333,8 @@
     if (settingsCommitLanguageLabel) {
       settingsCommitLanguageLabel.textContent = t("commitLanguage");
     }
-    if (settingsCommitModelLabel) {
-      settingsCommitModelLabel.textContent = t("commitModel");
+    if (settingsCommitModelsLabel) {
+      settingsCommitModelsLabel.textContent = t("commitModels");
     }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
@@ -9674,8 +9676,12 @@
         ? settingsTabAutocompleteModel.value
         : ""
     );
-    fillCommitMessageModelSelect(
-      settingsCommitModel ? settingsCommitModel.value : ""
+    fillCommitMessageModelCheckboxes(
+      settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : []
     );
   }
 
@@ -9725,36 +9731,37 @@
     }
   }
 
-  function fillCommitMessageModelSelect(selectedId) {
-    if (!settingsCommitModel) {
+  function fillCommitMessageModelCheckboxes(selectedIds) {
+    if (!settingsCommitModelList) {
       return;
     }
-    const previous = String(
-      selectedId != null && selectedId !== ""
-        ? selectedId
-        : settingsCommitModel.value || ""
-    ).trim();
+    const selected = new Set(
+      (Array.isArray(selectedIds) ? selectedIds : [])
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    );
     const enabled = settingsModels
       .filter((m) => m && m.id && m.enabled !== false)
       .slice()
       .sort((a, b) =>
         String(a.label || a.id).localeCompare(String(b.label || b.id))
       );
-    settingsCommitModel.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = t("commitModelEmpty");
-    settingsCommitModel.appendChild(empty);
+    settingsCommitModelList.innerHTML = "";
     for (const model of enabled) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      opt.textContent = model.label || model.id;
-      settingsCommitModel.appendChild(opt);
-    }
-    if (previous && enabled.some((m) => m.id === previous)) {
-      settingsCommitModel.value = previous;
-    } else {
-      settingsCommitModel.value = "";
+      const label = document.createElement("label");
+      label.className = "settings-fetch-model-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.modelId = model.id;
+      if (selected.has(model.id)) {
+        cb.checked = true;
+      }
+      const span = document.createElement("span");
+      span.className = "settings-fetch-model-id";
+      span.textContent = model.label || model.id;
+      label.appendChild(cb);
+      label.appendChild(span);
+      settingsCommitModelList.appendChild(label);
     }
   }
 
@@ -11684,7 +11691,7 @@
       settingsCommitPrompt.value = settings.commitMessagePrompt || "";
       updateCommitPromptPreview();
     }
-    fillCommitMessageModelSelect(settings.commitMessageModelId || "");
+    fillCommitMessageModelCheckboxes(settings.commitMessageModelIds || []);
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -11892,9 +11899,11 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
-      commitMessageModelId: settingsCommitModel
-        ? settingsCommitModel.value.trim()
-        : "",
+      commitMessageModelIds: settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : [],
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
@@ -16374,7 +16383,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsTabAutocompleteNextEdit, #settingsTabAutocompleteShowMode, #settingsTabAutocompleteFim, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModel, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsTabAutocompleteNextEdit, #settingsTabAutocompleteShowMode, #settingsTabAutocompleteFim, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();

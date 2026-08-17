@@ -122,7 +122,7 @@
       settingsCommitPrompt.value = settings.commitMessagePrompt || "";
       updateCommitPromptPreview();
     }
-    fillCommitMessageModelSelect(settings.commitMessageModelId || "");
+    fillCommitMessageModelCheckboxes(settings.commitMessageModelIds || []);
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -330,9 +330,11 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
-      commitMessageModelId: settingsCommitModel
-        ? settingsCommitModel.value.trim()
-        : "",
+      commitMessageModelIds: settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : [],
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"

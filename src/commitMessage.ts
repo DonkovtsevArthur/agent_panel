@@ -13,8 +13,8 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
-import { orderedUtilityModelIds } from "./modelRouting";
-import { completeWithModelFallback } from "./utilityCompletion";
+import { selectUtilityModel } from "./modelRouting";
+import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   capWorkspaceRuleText,
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
@@ -398,14 +398,21 @@ export async function composeCommitMessageText(
       : "") ||
     enabled[0]?.id ||
     "";
-  const preferredModelId = String(config.commitMessage.modelId || "").trim();
-  // Явный выбор в Settings — единственная попытка (осознанный выбор модели).
-  // Иначе лёгкая/utility-модель с деградацией: основная → первая доступная.
-  const modelIds =
-    preferredModelId && enabled.some((m) => m.id === preferredModelId)
-      ? [preferredModelId]
-      : orderedUtilityModelIds(enabled, { fallbackModelId: mainModelId });
-  if (!modelIds.length) {
+
+  // Кандидаты: явный список из Settings → иначе utility-цепочка.
+  const configuredIds = config.commitMessage.modelIds.filter((id) =>
+    enabled.some((m) => m.id === id)
+  );
+  const candidates =
+    configuredIds.length > 0
+      ? configuredIds
+      : (() => {
+          const sel = selectUtilityModel(enabled, {
+            fallbackModelId: mainModelId,
+          });
+          return sel ? [sel.modelId] : mainModelId ? [mainModelId] : [];
+        })();
+  if (!candidates.length) {
     return fallbackCommitMessage(paths, lang);
   }
 
@@ -428,16 +435,74 @@ export async function composeCommitMessageText(
     data.source,
     instruction
   );
-  const { text } = await completeWithModelFallback(
-    {
-      system: prompts.system,
-      user: prompts.user,
-      maxTokens: 256,
-      temperature: 0.2,
-    },
-    { modelIds, signal }
-  );
-  return cleanCommitMessage(text) || fallbackCommitMessage(paths, lang);
+
+  const COMMIT_MODEL_TIMEOUT_MS = 10_000;
+  const tlsOptions = {
+    rejectUnauthorized: config.rejectUnauthorized,
+    caBundlePath: config.caBundlePath,
+  };
+
+  let lastError: unknown;
+  for (const modelId of candidates) {
+    if (signal?.aborted) {
+      throw new Error("aborted");
+    }
+    const endpoint = resolveModelEndpoint(modelId);
+    if (!endpoint.baseUrl || !endpoint.apiKey) {
+      continue;
+    }
+    const client = getOpenAICompatibleClient(
+      endpoint.baseUrl,
+      endpoint.apiKey,
+      tlsOptions
+    );
+
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), COMMIT_MODEL_TIMEOUT_MS);
+    const signals: AbortSignal[] = [deadline.signal];
+    if (signal) {
+      signals.push(signal);
+    }
+    const combined = AbortSignal.any(signals);
+
+    try {
+      const result = await client.chatCompletions(
+        {
+          model: modelId,
+          messages: [
+            { role: "system", content: prompts.system },
+            { role: "user", content: prompts.user },
+          ],
+          temperature: 0.2,
+          max_tokens: 256,
+        },
+        combined
+      );
+      const content = result.message.content;
+      const raw =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content
+                .map((part) =>
+                  part && typeof part === "object" && "text" in part
+                    ? String(part.text || "")
+                    : ""
+                )
+                .join("")
+            : "";
+      return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new Error("aborted");
+      }
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return fallbackCommitMessage(paths, lang);
 }
 
 export async function generateCommitMessage(

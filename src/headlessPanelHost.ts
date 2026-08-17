@@ -643,7 +643,7 @@ export class HeadlessPanelHost {
       modes: this.serializeModes(),
       commitMessagePrompt: config.commitMessage.prompt,
       commitMessageLanguage: config.commitMessage.language,
-      commitMessageModelId: config.commitMessage.modelId,
+      commitMessageModelIds: config.commitMessage.modelIds,
       commitMessageScope: config.commitMessage.scope,
       workspaceName: path.basename(this.opts.workspaceRoot),
       figmaEnabled: config.figma.enabled,

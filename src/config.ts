@@ -302,8 +302,8 @@ export interface AgentPanelConfig {
   caBundlePath: string;
   commitMessage: {
     prompt: string;
-    /** Empty = auto light/utility model. */
-    modelId: string;
+    /** Ordered model ids for commit generation. Empty = auto light/utility model. */
+    modelIds: string[];
     language: "auto" | "en" | "ru";
     /** Откуда сейчас действуют настройки commit message. */
     scope: "global" | "workspace";
@@ -533,6 +533,7 @@ function resolveCommitMessageScope(
   for (const key of [
     "commitMessage.prompt",
     "commitMessage.language",
+    "commitMessage.modelIds",
     "commitMessage.modelId",
   ]) {
     const info = cfg.inspect(key);
@@ -723,11 +724,22 @@ export function getConfig(): AgentPanelConfig {
       const storedPrompt = String(
         cfg.get<string>("commitMessage.prompt") || ""
       ).trim();
+      const rawModelIds = cfg.get<unknown>("commitMessage.modelIds");
+      const modelIds = Array.isArray(rawModelIds)
+        ? rawModelIds
+            .map((v) => String(v || "").trim())
+            .filter(Boolean)
+            .filter((id, i, all) => all.indexOf(id) === i)
+        : [];
+      // Backward compat: if modelIds is empty, try the old single-modelId string.
+      const legacyModelId = String(
+        cfg.get<string>("commitMessage.modelId") || ""
+      ).trim();
       return {
         prompt: isBuiltinCommitMessagePrompt(storedPrompt)
           ? defaultCommitMessagePromptForLanguage(commitLangResolved)
           : storedPrompt,
-        modelId: String(cfg.get<string>("commitMessage.modelId") || "").trim(),
+        modelIds: modelIds.length > 0 ? modelIds : legacyModelId ? [legacyModelId] : [],
         language: commitLanguage,
         scope: resolveCommitMessageScope(cfg),
       };

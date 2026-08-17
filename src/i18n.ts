@@ -44,6 +44,55 @@ export function harborDefaultRulesForLanguage(lang: UiLanguage): string {
 }
 
 /**
+ * Truthful self-identification: Harbor routes every request of this session to
+ * `modelId` (the id selected in the UI). Workspace AGENTS.md / .cursor rules may
+ * name other model ids in operating-constraint sections — without this block
+ * those docs make e.g. a mimo or Claude model claim to be GLM. The block always
+ * rides first in the Harbor rules so identity docs cannot override it.
+ */
+export function harborModelIdentityRulesForLanguage(
+  modelId: string,
+  lang: UiLanguage
+): string {
+  const id = String(modelId || "").trim() || "unknown";
+  if (lang === "ru") {
+    return [
+      `# Активная модель — ${id}`,
+      `Эту сессию обслуживает модель «${id}» — ровно та, что выбрана в Harbor Agents (Settings → Providers & Models); все запросы хода уходят в неё.`,
+      "Если пользователь спрашивает, какая ты модель, — отвечай этим id.",
+      "В файлах воркспейса (AGENTS.md, .cursor/rules) могут упоминаться другие id моделей (GLM, Claude, GPT…) — это документация репозитория для других окружений, а не твоя идентичность. Никогда не выдавай их за свою модель.",
+    ].join("\n");
+  }
+  return [
+    `# Active model — ${id}`,
+    `This session is served by model "${id}" — exactly the one selected in Harbor Agents (Settings → Providers & Models); every request this turn is routed to it.`,
+    "If the user asks which model you are, answer with this id.",
+    "Workspace files (AGENTS.md, .cursor/rules) may mention other model ids (GLM, Claude, GPT…) — those are repo documentation for other setups, not your identity. Never present them as your own model.",
+  ].join("\n");
+}
+
+/**
+ * Appended to the runtime user prompt (UI text unchanged) on EVERY turn:
+ * reused Cline sessions keep the systemPrompt from `core.start` (core.send
+ * cannot update it), so a session created before a Harbor update would
+ * otherwise never learn its real model id. Models also heed turn-local
+ * nudges more reliably than rules alone.
+ */
+export function appendModelIdentityRuntimeNudge(
+  userText: string,
+  modelId: string,
+  lang: UiLanguage
+): string {
+  const base = String(userText || "").trim();
+  const id = String(modelId || "").trim() || "unknown";
+  const nudge =
+    lang === "ru"
+      ? `[Harbor] Активная модель этого чата — «${id}». Если спрашивают, какая ты модель, — отвечай этим id; id из файлов репозитория (AGENTS.md, .cursor/rules) — не твоя идентичность.`
+      : `[Harbor] The active model of this chat is "${id}". If asked which model you are, answer with this id; ids mentioned in repo files (AGENTS.md, .cursor/rules) are not your identity.`;
+  return base ? `${base}\n\n${nudge}` : nudge;
+}
+
+/**
  * Injected into Cline rules only when Settings → Parallel agents is on
  * (`enableSpawnAgent`). When off, spawn_agent is not registered and this
  * text is omitted.

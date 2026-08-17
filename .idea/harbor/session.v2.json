@@ -2,6 +2,16 @@
   "version": 2,
   "agents": [
     {
+      "id": "agent_msww3jgh_9x0ydl",
+      "name": "New Agent",
+      "chatId": "chat_msww3jgh_kedx4c",
+      "chatIds": [
+        "chat_msww3jgh_kedx4c"
+      ],
+      "createdAt": 1786950346049,
+      "updatedAt": 1786950346049
+    },
+    {
       "id": "agent_msufhq3j_e2p84w",
       "name": "Прочитай api.md и скажи, какие опции принимает C…",
       "chatId": "chat_msufhq3j_6b1m15",
@@ -48,6 +58,18 @@
       "updatedAt": 1786812597697,
       "contextTokens": 20265,
       "selectedReasoningEffort": ""
+    },
+    "chat_msww3jgh_kedx4c": {
+      "id": "chat_msww3jgh_kedx4c",
+      "title": "New Agent",
+      "selectedModel": "DeepSeek-V4-Flash",
+      "selectedMode": "agent",
+      "history": [],
+      "uiMessages": [],
+      "createdAt": 1786950346049,
+      "updatedAt": 1786950346049,
+      "selectedReasoningEffort": "",
+      "contextTokens": 0
     }
   },
   "activeAgentId": "agent_msufhq3j_e2p84w",

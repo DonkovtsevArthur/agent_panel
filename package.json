@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.7.11",
+  "version": "2.7.19",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -792,10 +792,13 @@
           "default": "",
           "description": "%config.commitMessage.prompt.description%"
         },
-        "agentPanel.commitMessage.modelId": {
-          "type": "string",
-          "default": "",
-          "description": "%config.commitMessage.modelId.description%"
+        "agentPanel.commitMessage.modelIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.commitMessage.modelIds.description%"
         },
         "agentPanel.commitMessage.language": {
           "type": "string",

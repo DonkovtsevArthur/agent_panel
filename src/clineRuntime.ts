@@ -3,6 +3,7 @@
  * UI callbacks stay the Harbor AgentRunCallbacks contract.
  */
 import * as path from "path";
+import { createHash } from "crypto";
 import * as vscode from "vscode";
 import {
   getConfig,
@@ -18,11 +19,13 @@ import {
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
 import {
+  appendModelIdentityRuntimeNudge,
   appendSubagentsRuntimeNudge,
   appendTodoRuntimeNudge,
   appendVisionInspectRuntimeNudge,
   harborAskModeRulesForLanguage,
   harborDefaultRulesForLanguage,
+  harborModelIdentityRulesForLanguage,
   harborSubagentsRulesForLanguage,
   harborTodoRulesForLanguage,
   harborVisionInspectRulesForLanguage,
@@ -1428,6 +1431,7 @@ function clineSessionFingerprint(parts: {
   approvals: string;
   checkpoints: boolean;
   promptCache: boolean;
+  prompt: string;
 }): string {
   return [
     parts.mode,
@@ -1441,6 +1445,7 @@ function clineSessionFingerprint(parts: {
     parts.approvals,
     parts.checkpoints ? "1" : "0",
     parts.promptCache ? "1" : "0",
+    parts.prompt,
   ].join("|");
 }
 
@@ -1791,6 +1796,9 @@ export async function runClineAgentTurn(options: {
   const modePrompt = String(modeDef.prompt || "").trim();
   const harborRules = [
     customRules,
+    // Truthful self-identification: the UI-selected model id, ahead of any
+    // model names quoted by workspace AGENTS.md / rules docs.
+    harborModelIdentityRulesForLanguage(options.model, uiLang),
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
@@ -1854,6 +1862,13 @@ export async function runClineAgentTurn(options: {
       )
     : "";
   const mcpFingerprint = await harborMcpToolFingerprint(clineMode === "plan");
+  // systemPrompt is fixed at core.start and core.send cannot update it, so
+  // any prompt-affecting change (Harbor rules, custom system prompt, Cline
+  // bundle update) must recreate the session via the fingerprint.
+  const promptHash = createHash("sha1")
+    .update(baseSystemPrompt)
+    .digest("hex")
+    .slice(0, 12);
   const fingerprint = clineSessionFingerprint({
     mode: String(options.agentMode || "agent").toLowerCase(),
     model: options.model,
@@ -1866,6 +1881,7 @@ export async function runClineAgentTurn(options: {
     approvals: harborToolApprovalsFingerprint(),
     checkpoints: enableCheckpoints,
     promptCache: enablePromptCache,
+    prompt: promptHash,
   });
 
   if (persistSession && options.resetSession) {
@@ -2389,6 +2405,13 @@ export async function runClineAgentTurn(options: {
     userImages = [];
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
+  // Model identity rides on every turn: reused sessions keep the system
+  // prompt from core.start, so only a turn-local nudge reaches old chats.
+  userPrompt = appendModelIdentityRuntimeNudge(
+    userPrompt,
+    options.model,
+    uiLang
+  );
   // update_todo plan card — build it at the very start of every Agent/Plan turn.
   userPrompt = appendTodoRuntimeNudge(userPrompt, enableTodoTool, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(

@@ -650,8 +650,8 @@
     if (settingsCommitLanguageLabel) {
       settingsCommitLanguageLabel.textContent = t("commitLanguage");
     }
-    if (settingsCommitModelLabel) {
-      settingsCommitModelLabel.textContent = t("commitModel");
+    if (settingsCommitModelsLabel) {
+      settingsCommitModelsLabel.textContent = t("commitModels");
     }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");

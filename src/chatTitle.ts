@@ -1,8 +1,8 @@
 import { displayAttachmentName } from "./attachments";
 import { getConfig, getEnabledModels, resolveModelEndpoint } from "./config";
 import { resolveUiLanguage } from "./i18n";
-import { orderedUtilityModelIds } from "./modelRouting";
-import { completeWithModelFallback } from "./utilityCompletion";
+import { selectUtilityModel } from "./modelRouting";
+import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   applyAgentName,
   applyBranchTabTitle,
@@ -264,6 +264,22 @@ function buildBranchTitlePrompt(chat: ChatSession): { system: string; user: stri
   };
 }
 
+function completionText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text?: string }).text || "")
+        : ""
+    )
+    .join("");
+}
+
 async function completeUtilityTitle(
   prompts: { system: string; user: string },
   options: {
@@ -279,28 +295,34 @@ async function completeUtilityTitle(
   const fallback = String(
     options.fallbackModelId || options.chatModelId || ""
   ).trim();
-  // Лёгкая модель → модель чата → первая доступная; при недоступности
-  // кандидат проваливается в следующий (completeWithModelFallback).
-  const modelIds = orderedUtilityModelIds(enabled, {
-    fallbackModelId: fallback,
+  const modelId =
+    selectUtilityModel(enabled, { fallbackModelId: fallback })?.modelId ||
+    fallback;
+  if (!modelId) {
+    return "";
+  }
+  const endpoint = resolveModelEndpoint(modelId);
+  if (!endpoint.baseUrl || !endpoint.apiKey) {
+    return "";
+  }
+  const config = getConfig();
+  const client = getOpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
+    rejectUnauthorized: config.rejectUnauthorized,
+    caBundlePath: config.caBundlePath,
   });
-  if (!modelIds.length) {
-    return "";
-  }
-  try {
-    const { text } = await completeWithModelFallback(
-      {
-        system: prompts.system,
-        user: prompts.user,
-        maxTokens: 48,
-        temperature: 0.2,
-      },
-      { modelIds, signal: options.signal }
-    );
-    return cleanChatTitle(text);
-  } catch {
-    return "";
-  }
+  const result = await client.chatCompletions(
+    {
+      model: modelId,
+      messages: [
+        { role: "system", content: prompts.system },
+        { role: "user", content: prompts.user },
+      ],
+      temperature: 0.2,
+      max_tokens: 48,
+    },
+    options.signal
+  );
+  return cleanChatTitle(completionText(result.message.content));
 }
 
 /**

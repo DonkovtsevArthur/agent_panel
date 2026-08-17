@@ -130,7 +130,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 
 ## Model: `builtin:zai-coding-plan/GLM-5.2` operating constraints
 
-This rule applies specifically when the active model is **`builtin:zai-coding-plan/GLM-5.2`** (the current agent).
+These constraints apply **only** when the model actually serving the session is `builtin:zai-coding-plan/GLM-5.2`. Harbor injects the real selected model id into the session rules (`harborModelIdentityRulesForLanguage` in `src/i18n.ts`); model ids named in workspace docs — including this section — are repo documentation, never your identity. When asked which model you are, answer with the injected active-model id.
 
 - **Do NOT write unit tests** (`tests/*.test.js` or any other test code). Tests are written/maintained by other contributors / the user. If existing tests break as a side effect of a code change, *report* the failures (file:line + assertion) to the user — do **not** edit the test files to make them green. Do not add new test cases on your own initiative.
 - **Do NOT run the build / package step** (`npm run compile`, `npx vsce package`, VSIX install, `npm test`) unless the user **explicitly** asks for it. Finishing a task is not a trigger for build/test/package — stop after the code edits and a brief summary. When the user asks to «собери» / «build» / «run tests» / «package», do it then, not before.

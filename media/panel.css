@@ -149,13 +149,6 @@ body {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  /* Virtual-scroll-lite: не лейаутить/краситьTurnы вне вьюпорта —
-     в длинных чатах (100+ сообщений) DOM остаётся целиком, но рендер
-     за кадр стоит O(видимое окно), а не O(вся история).
-     contain-intrinsic-size с auto: до первого рендера высота — оценка,
-     после — браузер запоминает реальную. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 240px;
 }
 
 .msg {

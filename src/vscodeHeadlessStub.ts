@@ -156,6 +156,7 @@ class HeadlessConfiguration {
   private static readonly KEY_ALIASES: Record<string, string[]> = {
     "commitMessage.prompt": ["commitMessagePrompt"],
     "commitMessage.language": ["commitMessageLanguage"],
+    "commitMessage.modelIds": ["commitMessageModelIds"],
     "commitMessage.modelId": ["commitMessageModelId"],
     "commitMessage.scope": ["commitMessageScope"],
     "autoglm.enabled": ["autoglmEnabled"],

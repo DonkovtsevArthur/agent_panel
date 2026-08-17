@@ -307,7 +307,7 @@
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
   );
-  const settingsCommitModel = document.getElementById("settingsCommitModel");
+  const settingsCommitModelList = document.getElementById("settingsCommitModelList");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
   const settingsCommitPromptToggle = document.getElementById(
     "settingsCommitPromptToggle"
@@ -328,8 +328,8 @@
   const settingsCommitLanguageLabel = document.getElementById(
     "settingsCommitLanguageLabel"
   );
-  const settingsCommitModelLabel = document.getElementById(
-    "settingsCommitModelLabel"
+  const settingsCommitModelsLabel = document.getElementById(
+    "settingsCommitModelsLabel"
   );
   const settingsCommitPromptLabel = document.getElementById(
     "settingsCommitPromptLabel"

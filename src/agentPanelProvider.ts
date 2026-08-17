@@ -197,7 +197,7 @@ type SettingsPayload = {
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
-  commitMessageModelId?: string;
+  commitMessageModelIds?: string[];
   commitMessageScope?: "global" | "workspace";
   figmaEnabled?: boolean;
   autoglmEnabled?: boolean;
@@ -4602,7 +4602,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
         commitMessageLanguage: config.commitMessage.language,
-        commitMessageModelId: config.commitMessage.modelId,
+        commitMessageModelIds: config.commitMessage.modelIds,
         commitMessageScope: config.commitMessage.scope,
         workspaceName:
           vscode.workspace.workspaceFolders?.[0]?.name ||
@@ -5429,30 +5429,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : raw.commitMessageLanguage === "en"
           ? "en"
           : "auto";
-    const modelId = String(raw.commitMessageModelId || "").trim();
+    const modelIds = Array.isArray(raw.commitMessageModelIds)
+      ? raw.commitMessageModelIds
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .filter((id, i, all) => all.indexOf(id) === i)
+      : [];
 
     if (scope === "global") {
       // Сбросить workspace-override, чтобы снова действовали глобальные значения.
-      await cfg.update(
+      for (const key of [
         "commitMessage.prompt",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
-      await cfg.update(
         "commitMessage.language",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
-      await cfg.update(
+        "commitMessage.modelIds",
         "commitMessage.modelId",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
+      ]) {
+        await cfg.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+      }
     }
 
     await cfg.update("commitMessage.prompt", prompt, target);
     await cfg.update("commitMessage.language", language, target);
-    await cfg.update("commitMessage.modelId", modelId, target);
+    await cfg.update("commitMessage.modelIds", modelIds, target);
+    // Clear legacy single-model setting.
+    await cfg.update("commitMessage.modelId", undefined, target);
   }
 
   private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
@@ -5867,10 +5867,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <h4 class="settings-section-title settings-group-title" id="settingsCommitGenerationTitle">Generation</h4>
           <div class="settings-limits-row">
             <label class="settings-field">
-              <span class="settings-label" id="settingsCommitModelLabel">Model</span>
-              <select id="settingsCommitModel" class="settings-input"></select>
-            </label>
-            <label class="settings-field">
               <span class="settings-label" id="settingsCommitLanguageLabel">Language</span>
               <select id="settingsCommitLanguage" class="settings-input">
                 <option value="auto">Auto (follow UI language)</option>
@@ -5878,6 +5874,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <option value="ru">Русский</option>
               </select>
             </label>
+          </div>
+          <div class="settings-field">
+            <span class="settings-label" id="settingsCommitModelsLabel">Models</span>
+            <div id="settingsCommitModelList" class="settings-fetch-models-list"></div>
           </div>
           <div class="settings-prompt-card" id="settingsCommitPromptCard">
             <button type="button" class="settings-prompt-toggle" id="settingsCommitPromptToggle" aria-expanded="false" aria-controls="settingsCommitPromptBody">

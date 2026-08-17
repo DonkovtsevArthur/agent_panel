@@ -448,8 +448,12 @@
         ? settingsTabAutocompleteModel.value
         : ""
     );
-    fillCommitMessageModelSelect(
-      settingsCommitModel ? settingsCommitModel.value : ""
+    fillCommitMessageModelCheckboxes(
+      settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : []
     );
   }
 
@@ -499,36 +503,37 @@
     }
   }
 
-  function fillCommitMessageModelSelect(selectedId) {
-    if (!settingsCommitModel) {
+  function fillCommitMessageModelCheckboxes(selectedIds) {
+    if (!settingsCommitModelList) {
       return;
     }
-    const previous = String(
-      selectedId != null && selectedId !== ""
-        ? selectedId
-        : settingsCommitModel.value || ""
-    ).trim();
+    const selected = new Set(
+      (Array.isArray(selectedIds) ? selectedIds : [])
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    );
     const enabled = settingsModels
       .filter((m) => m && m.id && m.enabled !== false)
       .slice()
       .sort((a, b) =>
         String(a.label || a.id).localeCompare(String(b.label || b.id))
       );
-    settingsCommitModel.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = t("commitModelEmpty");
-    settingsCommitModel.appendChild(empty);
+    settingsCommitModelList.innerHTML = "";
     for (const model of enabled) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      opt.textContent = model.label || model.id;
-      settingsCommitModel.appendChild(opt);
-    }
-    if (previous && enabled.some((m) => m.id === previous)) {
-      settingsCommitModel.value = previous;
-    } else {
-      settingsCommitModel.value = "";
+      const label = document.createElement("label");
+      label.className = "settings-fetch-model-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.modelId = model.id;
+      if (selected.has(model.id)) {
+        cb.checked = true;
+      }
+      const span = document.createElement("span");
+      span.className = "settings-fetch-model-id";
+      span.textContent = model.label || model.id;
+      label.appendChild(cb);
+      label.appendChild(span);
+      settingsCommitModelList.appendChild(label);
     }
   }
 
