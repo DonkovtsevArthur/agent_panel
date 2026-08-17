@@ -592,6 +592,7 @@ export class HeadlessPanelHost {
         baseUrl: p.baseUrl,
         apiKey: p.apiKey || "",
         statusUrl: p.statusUrl || "",
+        ...(p.protocol ? { protocol: p.protocol } : {}),
         ...(typeof p.promptCache === "boolean"
           ? { promptCache: p.promptCache }
           : {}),

@@ -7,6 +7,18 @@
   const host =
     (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
     acquireVsCodeApi();
+
+  /** Crypto-random base36 token — ids must not come from Math.random (CWE-338). */
+  function cryptoToken(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(36).padStart(2, "0");
+    }
+    return out.slice(0, len);
+  }
+
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
@@ -345,6 +357,8 @@
       providerTitle: "Provider",
       promptCacheLabel: "Prompt cache",
       promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
+      protocolLabel: "Protocol",
+      protocolHint: "Wire format the endpoint speaks. Use \"Anthropic\" for proxies that accept only the Messages API.",
       providerIdRequired: "Enter a provider id.",
       providerBaseUrlRequired: "Enter a base URL.",
       noProvidersYet: "No providers yet — add at least one.",
@@ -855,6 +869,8 @@
       providerTitle: "Провайдер",
       promptCacheLabel: "Кеш промпта",
       promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
+      protocolLabel: "Протокол",
+      protocolHint: "Формат эндпоинта. Выберите «Anthropic» для прокси, работающих только через Messages API.",
       providerIdRequired: "Укажите id провайдера.",
       providerBaseUrlRequired: "Укажите base URL.",
       noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",

@@ -1189,7 +1189,7 @@
       }
       const id =
         item.id ||
-        `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        `local_${Date.now()}_${cryptoToken(7)}`;
       if (editingAttachments.some((a) => a.id === id)) {
         continue;
       }

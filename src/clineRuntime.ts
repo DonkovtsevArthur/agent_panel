@@ -3,7 +3,7 @@
  * UI callbacks stay the Harbor AgentRunCallbacks contract.
  */
 import * as path from "path";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import * as vscode from "vscode";
 import {
   getConfig,
@@ -1427,7 +1427,7 @@ function emitStep(
 }
 
 function newSessionId(): string {
-  return `harbor-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  return `harbor-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 9)}`;
 }
 
 function clineSessionFingerprint(parts: {
@@ -1678,7 +1678,7 @@ export async function disposeClineRuntime(): Promise<void> {
  */
 function buildHarborProviderConfig(
   modelInfo?: ClineKnownModelInfo,
-  options?: { promptCache?: boolean }
+  options?: { promptCache?: boolean; providerId?: string }
 ): {
   providerId: string;
   fetch: typeof fetch;
@@ -1705,7 +1705,7 @@ function buildHarborProviderConfig(
 } {
   const promptCacheEnabled = Boolean(options?.promptCache);
   return {
-    providerId: "openai-compatible",
+    providerId: options?.providerId || "openai-compatible",
     fetch: harborFetch as typeof fetch,
     ...(modelInfo
       ? {
@@ -1784,6 +1784,12 @@ export async function runClineAgentTurn(options: {
       "Нет провайдера для модели. Откройте Settings → Providers."
     );
   }
+
+  // Map Harbor provider protocol → Cline gateway providerId.
+  // "anthropic" protocol → native Anthropic provider (Messages API /v1/messages).
+  // Everything else (including unset) → "openai-compatible" (Chat Completions).
+  const clineProviderId =
+    endpoint.protocol === "anthropic" ? "anthropic" : "openai-compatible";
 
   const cwd = workspaceCwd();
   const clineMode = mapHarborModeToCline(
@@ -2564,7 +2570,7 @@ export async function runClineAgentTurn(options: {
             }),
         config: {
           sessionId,
-          providerId: "openai-compatible",
+          providerId: clineProviderId,
           modelId: options.model,
           apiKey: endpoint.apiKey || "no-key",
           baseUrl: endpoint.baseUrl,
@@ -2607,7 +2613,7 @@ export async function runClineAgentTurn(options: {
           // "Request failed with status code N" — critical for spawn_agent children.
           providerConfig: buildHarborProviderConfig(
             modelInfoData.knownModels[options.model],
-            { promptCache: enablePromptCache }
+            { promptCache: enablePromptCache, providerId: clineProviderId }
           ),
         },
       });

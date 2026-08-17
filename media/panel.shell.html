@@ -780,6 +780,14 @@
             <span class="settings-label">API Key</span>
             <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
           </label>
+          <label class="settings-field">
+            <span class="settings-label" id="providerEditProtocolLabel">Protocol</span>
+            <select id="providerEditProtocol" class="settings-input">
+              <option value="openai-compatible">OpenAI-compatible (Chat Completions)</option>
+              <option value="anthropic">Anthropic (Messages API)</option>
+            </select>
+            <span class="settings-field-hint" id="providerEditProtocolHint">Wire format the endpoint speaks. Use "Anthropic" for proxies that accept only the Messages API.</span>
+          </label>
           <label class="settings-toggle-row">
             <span class="settings-toggle-text">
               <span class="settings-toggle-title" id="providerEditPromptCacheLabel">Prompt cache</span>

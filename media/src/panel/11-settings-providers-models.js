@@ -70,6 +70,7 @@
       ...(typeof provider.promptCache === "boolean"
         ? { promptCache: provider.promptCache }
         : {}),
+      ...(provider.protocol ? { protocol: provider.protocol } : {}),
     };
   }
 
@@ -218,6 +219,9 @@
         providerEditPromptCache.checked = true;
       }
     }
+    if (providerEditProtocol) {
+      providerEditProtocol.value = provider.protocol || "openai-compatible";
+    }
     providerEditModal.hidden = false;
     (isNew ? providerEditId : providerEditName)?.focus();
   }
@@ -253,7 +257,13 @@
     const promptCache = providerEditPromptCache
       ? providerEditPromptCache.checked === true
       : false;
+    const protocol = providerEditProtocol
+      ? providerEditProtocol.value
+      : "openai-compatible";
     const next = { id, name: name || id, baseUrl, apiKey, promptCache };
+    if (protocol && protocol !== "openai-compatible") {
+      next.protocol = protocol;
+    }
     if (statusUrl && statusUrl !== baseUrl) {
       next.statusUrl = statusUrl;
     }

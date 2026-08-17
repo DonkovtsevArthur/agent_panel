@@ -72,6 +72,12 @@ export interface AgentProvider {
    * baseUrl looks like litellm / openrouter / anthropic.
    */
   promptCache?: boolean;
+  /**
+   * Wire protocol the provider speaks.
+   * - `"openai-compatible"` (default) — OpenAI Chat Completions (`/chat/completions`).
+   * - `"anthropic"` — Anthropic Messages API (`/v1/messages`).
+   */
+  protocol?: "openai-compatible" | "anthropic";
 }
 
 /**
@@ -136,6 +142,8 @@ export interface ModelEndpoint {
   providerName: string;
   /** Полный URL для GET-проверки статуса (см. resolveProviderProbeUrl). */
   statusUrl?: string;
+  /** Wire protocol: `"openai-compatible"` (default) or `"anthropic"`. */
+  protocol?: "openai-compatible" | "anthropic";
 }
 
 /** URL для проверки доступности провайдера. */
@@ -390,6 +398,7 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
       apiKey?: unknown;
       statusUrl?: unknown;
       promptCache?: unknown;
+      protocol?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     const baseUrl = normalizeBaseUrl(
@@ -414,6 +423,12 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
     }
     if (typeof row.promptCache === "boolean") {
       provider.promptCache = row.promptCache;
+    }
+    if (
+      typeof row.protocol === "string" &&
+      (row.protocol === "openai-compatible" || row.protocol === "anthropic")
+    ) {
+      provider.protocol = row.protocol;
     }
     providers.push(provider);
   }
@@ -773,7 +788,7 @@ export function getConfig(): AgentPanelConfig {
     selectionHints: {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },
-    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? false,
+    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? true,
     caBundlePath: "",
     commitMessage: (() => {
       const commitLanguage = readCommitMessageLanguage(
@@ -997,6 +1012,7 @@ export function resolveModelEndpoint(modelId: string): ModelEndpoint {
     providerId: provider.id,
     providerName: provider.name || provider.id,
     statusUrl: statusUrl && statusUrl !== baseUrl ? statusUrl : undefined,
+    protocol: provider.protocol,
   };
 }
 

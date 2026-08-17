@@ -129,6 +129,7 @@
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
   const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditProtocol = document.getElementById("providerEditProtocol");
   const providerEditPromptCache = document.getElementById("providerEditPromptCache");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");

@@ -7,6 +7,18 @@
   const host =
     (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
     acquireVsCodeApi();
+
+  /** Crypto-random base36 token — ids must not come from Math.random (CWE-338). */
+  function cryptoToken(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(36).padStart(2, "0");
+    }
+    return out.slice(0, len);
+  }
+
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
@@ -345,6 +357,8 @@
       providerTitle: "Provider",
       promptCacheLabel: "Prompt cache",
       promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
+      protocolLabel: "Protocol",
+      protocolHint: "Wire format the endpoint speaks. Use \"Anthropic\" for proxies that accept only the Messages API.",
       providerIdRequired: "Enter a provider id.",
       providerBaseUrlRequired: "Enter a base URL.",
       noProvidersYet: "No providers yet — add at least one.",
@@ -855,6 +869,8 @@
       providerTitle: "Провайдер",
       promptCacheLabel: "Кеш промпта",
       promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
+      protocolLabel: "Протокол",
+      protocolHint: "Формат эндпоинта. Выберите «Anthropic» для прокси, работающих только через Messages API.",
       providerIdRequired: "Укажите id провайдера.",
       providerBaseUrlRequired: "Укажите base URL.",
       noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",
@@ -1250,6 +1266,7 @@
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
   const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditProtocol = document.getElementById("providerEditProtocol");
   const providerEditPromptCache = document.getElementById("providerEditPromptCache");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
@@ -1927,6 +1944,18 @@
     }
     if (providerEditPromptCacheHint) {
       providerEditPromptCacheHint.textContent = t("promptCacheHint");
+    }
+    const providerEditProtocolLabel = document.getElementById(
+      "providerEditProtocolLabel"
+    );
+    const providerEditProtocolHint = document.getElementById(
+      "providerEditProtocolHint"
+    );
+    if (providerEditProtocolLabel) {
+      providerEditProtocolLabel.textContent = t("protocolLabel");
+    }
+    if (providerEditProtocolHint) {
+      providerEditProtocolHint.textContent = t("protocolHint");
     }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
@@ -2763,7 +2792,7 @@
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
       }
-      const id = item.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const id = item.id || `local_${Date.now()}_${cryptoToken(7)}`;
       if (pendingAttachments.some((a) => a.id === id)) {
         continue;
       }
@@ -2807,9 +2836,7 @@
   }
 
   function queueChipId() {
-    return `q_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `q_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function getQueueForChat(chatId) {
@@ -3056,9 +3083,7 @@
   }
 
   function selectionChipId() {
-    return `sel_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `sel_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function formatSelectionLabel(sel) {
@@ -3116,9 +3141,7 @@
   }
 
   function mentionChipId() {
-    return `mn_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `mn_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function addPendingMention(pathRaw) {
@@ -3805,7 +3828,7 @@
       demoteFieldLabel(select);
       const picker = document.createElement("div");
       picker.className = "model-picker settings-select-picker";
-      picker.dataset.selectId = select.id || `select-${Math.random().toString(36).slice(2, 9)}`;
+      picker.dataset.selectId = select.id || `select-${cryptoToken(9)}`;
 
       const trigger = document.createElement("button");
       trigger.type = "button";
@@ -5067,7 +5090,7 @@
         const mime = file.type || "application/octet-stream";
         const kind = mime.startsWith("image/") ? "image" : "file";
         resolve({
-          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          id: `local_${Date.now()}_${cryptoToken(7)}`,
           kind,
           name: file.name || (kind === "image" ? "image.png" : "file"),
           mime,
@@ -6441,7 +6464,7 @@
       }
       const id =
         item.id ||
-        `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        `local_${Date.now()}_${cryptoToken(7)}`;
       if (editingAttachments.some((a) => a.id === id)) {
         continue;
       }
@@ -9433,6 +9456,7 @@
       ...(typeof provider.promptCache === "boolean"
         ? { promptCache: provider.promptCache }
         : {}),
+      ...(provider.protocol ? { protocol: provider.protocol } : {}),
     };
   }
 
@@ -9581,6 +9605,9 @@
         providerEditPromptCache.checked = true;
       }
     }
+    if (providerEditProtocol) {
+      providerEditProtocol.value = provider.protocol || "openai-compatible";
+    }
     providerEditModal.hidden = false;
     (isNew ? providerEditId : providerEditName)?.focus();
   }
@@ -9616,7 +9643,13 @@
     const promptCache = providerEditPromptCache
       ? providerEditPromptCache.checked === true
       : false;
+    const protocol = providerEditProtocol
+      ? providerEditProtocol.value
+      : "openai-compatible";
     const next = { id, name: name || id, baseUrl, apiKey, promptCache };
+    if (protocol && protocol !== "openai-compatible") {
+      next.protocol = protocol;
+    }
     if (statusUrl && statusUrl !== baseUrl) {
       next.statusUrl = statusUrl;
     }
@@ -11817,6 +11850,7 @@
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
           promptCache: typeof p.promptCache === "boolean" ? p.promptCache : true,
+          ...(p.protocol ? { protocol: p.protocol } : {}),
         }))
       : [];
     if (
@@ -12040,6 +12074,9 @@
         }
         if (typeof p.promptCache === "boolean") {
           row.promptCache = p.promptCache;
+        }
+        if (p.protocol && p.protocol !== "openai-compatible") {
+          row.protocol = p.protocol;
         }
         return row;
       });

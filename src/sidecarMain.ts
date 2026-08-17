@@ -4,6 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import { startSidecar } from "../packages/harbor-core/src/sidecar";
 import {
   createFileSessionStore,
@@ -58,7 +59,7 @@ function rejectUnauthorizedFromSettings(settings: Record<string, unknown>): bool
       return v;
     }
   }
-  return false;
+  return true;
 }
 
 async function handleCommitMessage(
@@ -132,7 +133,7 @@ function main(): void {
     writeNotification("host.openExternal", { url });
   });
   setToolApprovalHook(async (request) => {
-    const requestId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestId = `appr-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
     writeNotification("host.requestToolApproval", {
       requestId,
       toolName: request.toolName,

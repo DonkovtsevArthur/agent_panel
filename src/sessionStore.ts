@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiClient";
 import type { ToolStepMetrics, TodoStepItem } from "./agentSteps";
@@ -246,9 +247,9 @@ export interface AgentListItem {
 }
 
 function uid(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  return `${prefix}_${Date.now().toString(36)}_${randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)}`;
 }
 
 export function chatHasMessages(uiMessages: UiMessage[] | undefined): boolean {

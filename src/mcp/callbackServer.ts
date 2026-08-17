@@ -8,6 +8,11 @@ export interface OAuthCallbackResult {
 
 /**
  * Ephemeral loopback server for OAuth redirect (MCP DCR-friendly).
+ *
+ * Plain `http://127.0.0.1` is required by RFC 8252 §7.3 (OAuth 2.0 for Native
+ * Apps): the loopback IP redirect is the standard native-app flow and HTTPS is
+ * not expected there (no trusted certificate exists for 127.0.0.1). The
+ * authorization code is bound to this redirect_uri and validated via `state`.
  */
 export async function listenForOAuthCallback(timeoutMs = 5 * 60_000): Promise<{
   redirectUrl: string;
@@ -22,6 +27,13 @@ export async function listenForOAuthCallback(timeoutMs = 5 * 60_000): Promise<{
     resolveCode = resolve;
     rejectCode = reject;
   });
+
+  const escapeHtmlText = (text: string): string =>
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
 
   const server = http.createServer((req, res) => {
     if (!req.url || req.url.startsWith("/favicon")) {
@@ -46,7 +58,7 @@ export async function listenForOAuthCallback(timeoutMs = 5 * 60_000): Promise<{
     if (error) {
       res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
       res.end(
-        `<html><body><h1>Authorization failed</h1><p>${error}</p><p>You can close this window.</p></body></html>`
+        `<html><body><h1>Authorization failed</h1><p>${escapeHtmlText(error)}</p><p>You can close this window.</p></body></html>`
       );
       if (!settled) {
         settled = true;
@@ -75,9 +87,11 @@ export async function listenForOAuthCallback(timeoutMs = 5 * 60_000): Promise<{
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    // Bind all interfaces so macOS browsers that resolve localhost → ::1 still
-    // reach the callback (redirect_uri stays on 127.0.0.1 below).
-    server.listen(0, "0.0.0.0", () => resolve());
+    // Loopback-only: the redirect_uri pins http://127.0.0.1, so binding all
+    // interfaces would only expose the OAuth callback port to the network.
+    // Remote / devcontainer scenarios are covered by VS Code auto-forwarding
+    // of localhost listeners.
+    server.listen(0, "127.0.0.1", () => resolve());
   });
 
   const address = server.address() as AddressInfo;

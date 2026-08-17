@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import { randomBytes } from "crypto";
 import {
   IncomingAttachment,
   MessageAttachment,
@@ -4712,6 +4713,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: p.baseUrl,
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          ...(p.protocol ? { protocol: p.protocol } : {}),
           ...(typeof p.promptCache === "boolean"
             ? { promptCache: p.promptCache }
             : {}),
@@ -5205,6 +5207,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           apiKey?: string;
           statusUrl?: string;
           promptCache?: boolean;
+          protocol?: "openai-compatible" | "anthropic";
         } = { id, baseUrl };
         if (name) {
           row.name = name;
@@ -5218,6 +5221,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (typeof p?.promptCache === "boolean") {
           row.promptCache = p.promptCache;
         }
+        const rawProtocol = String(
+          (p as Record<string, unknown>)?.protocol || ""
+        );
+        if (
+          rawProtocol === "openai-compatible" ||
+          rawProtocol === "anthropic"
+        ) {
+          row.protocol = rawProtocol;
+        }
         return row;
       })
       .filter(
@@ -5230,6 +5242,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           apiKey?: string;
           statusUrl?: string;
           promptCache?: boolean;
+          protocol?: "openai-compatible" | "anthropic";
         } => Boolean(p)
       );
 
@@ -6616,6 +6629,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label">API Key</span>
             <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
           </label>
+          <label class="settings-field">
+            <span class="settings-label" id="providerEditProtocolLabel">Protocol</span>
+            <select id="providerEditProtocol" class="settings-input">
+              <option value="openai-compatible">OpenAI-compatible (Chat Completions)</option>
+              <option value="anthropic">Anthropic (Messages API)</option>
+            </select>
+            <span class="settings-field-hint" id="providerEditProtocolHint">Wire format the endpoint speaks. Use "Anthropic" for proxies that accept only the Messages API.</span>
+          </label>
           <label class="settings-toggle-row">
             <span class="settings-toggle-text">
               <span class="settings-toggle-title" id="providerEditPromptCacheLabel">Prompt cache</span>
@@ -6821,11 +6842,5 @@ function parseReviewPayload(text: string): {
 }
 
 function getNonce(): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
+  return randomBytes(16).toString("hex");
 }

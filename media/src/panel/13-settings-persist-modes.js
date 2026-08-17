@@ -63,6 +63,7 @@
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
           promptCache: typeof p.promptCache === "boolean" ? p.promptCache : true,
+          ...(p.protocol ? { protocol: p.protocol } : {}),
         }))
       : [];
     if (
@@ -286,6 +287,9 @@
         }
         if (typeof p.promptCache === "boolean") {
           row.promptCache = p.promptCache;
+        }
+        if (p.protocol && p.protocol !== "openai-compatible") {
+          row.protocol = p.protocol;
         }
         return row;
       });

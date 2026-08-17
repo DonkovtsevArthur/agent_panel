@@ -216,6 +216,18 @@
     if (providerEditPromptCacheHint) {
       providerEditPromptCacheHint.textContent = t("promptCacheHint");
     }
+    const providerEditProtocolLabel = document.getElementById(
+      "providerEditProtocolLabel"
+    );
+    const providerEditProtocolHint = document.getElementById(
+      "providerEditProtocolHint"
+    );
+    if (providerEditProtocolLabel) {
+      providerEditProtocolLabel.textContent = t("protocolLabel");
+    }
+    if (providerEditProtocolHint) {
+      providerEditProtocolHint.textContent = t("protocolHint");
+    }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
     );

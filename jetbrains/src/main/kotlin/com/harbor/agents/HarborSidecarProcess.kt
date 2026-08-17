@@ -208,20 +208,21 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
   }
 
   /**
-   * Harbor default is Validate TLS = off. Only enforce certs when the user
-   * explicitly set rejectUnauthorized:true in ~/.harbor/settings.json.
+   * Harbor default is Validate TLS = on (strict cert verification). Only
+   * disabled when the user explicitly set rejectUnauthorized:false in
+   * ~/.harbor/settings.json (corporate MITM proxy without a CA bundle).
    */
   private fun readRejectUnauthorized(settingsFile: File): Boolean {
-    if (!settingsFile.isFile) return false
+    if (!settingsFile.isFile) return true
     return try {
       val root = JsonParser.parseString(settingsFile.readText()).asJsonObject
       fun flag(obj: JsonObject?, key: String): Boolean? =
         obj?.get(key)?.takeIf { it.isJsonPrimitive }?.asBoolean
       flag(root, "rejectUnauthorized")
         ?: flag(root.getAsJsonObject("agentPanel"), "rejectUnauthorized")
-        ?: false
+        ?: true
     } catch (_: Exception) {
-      false
+      true
     }
   }
 
