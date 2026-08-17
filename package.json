@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.7.19",
+  "version": "2.7.29",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -388,6 +388,11 @@
               "apiKey": {
                 "type": "string",
                 "description": "%config.providers.apiKey.description%"
+              },
+              "promptCache": {
+                "type": "boolean",
+                "default": false,
+                "description": "%config.providers.promptCache.description%"
               }
             }
           }
@@ -610,7 +615,7 @@
         },
         "agentPanel.promptCache.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "%config.promptCache.enabled.description%"
         },
         "agentPanel.tools.autoApprove": {
@@ -654,6 +659,17 @@
           "type": "boolean",
           "default": true,
           "description": "%config.focusChain.enabled.description%"
+        },
+        "agentPanel.turnContext.followUps": {
+          "type": "string",
+          "enum": ["full", "slim", "none"],
+          "default": "full",
+          "enumDescriptions": [
+            "%config.turnContext.followUps.full.description%",
+            "%config.turnContext.followUps.slim.description%",
+            "%config.turnContext.followUps.none.description%"
+          ],
+          "description": "%config.turnContext.followUps.description%"
         },
         "agentPanel.checkpoints.enabled": {
           "type": "boolean",

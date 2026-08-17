@@ -28,6 +28,28 @@
     settingsProvidersHint.classList.toggle("is-error", Boolean(isError));
   }
 
+  // Mirror of src/config.ts baseUrlSuggestsPromptCache — used to pre-check the
+  // per-provider prompt-cache checkbox for newly added providers whose baseUrl
+  // looks like an upstream that accepts Anthropic-style cache_control markers
+  // (LiteLLM / OpenRouter / Anthropic-compatible). Conservative: plain OpenAI
+  // stays off to avoid 400s.
+  function baseUrlSuggestsPromptCache(baseUrl) {
+    const url = String(baseUrl || "").toLowerCase();
+    if (!url) {
+      return false;
+    }
+    if (/api\.openai\.com/.test(url)) {
+      return false;
+    }
+    return (
+      /litellm/.test(url) ||
+      /openrouter\.ai/.test(url) ||
+      /anthropic\.com/.test(url) ||
+      /claude\.ai/.test(url) ||
+      /aihubmix|sapaicore|vertex|ai-sdk/.test(url)
+    );
+  }
+
   function providerLabel(providerId) {
     const provider = settingsProviders.find((p) => p.id === providerId);
     return provider ? provider.name || provider.id : providerId || "—";
@@ -45,6 +67,9 @@
       baseUrl: provider.baseUrl || "",
       apiKey: provider.apiKey || "",
       statusUrl: provider.statusUrl || "",
+      ...(typeof provider.promptCache === "boolean"
+        ? { promptCache: provider.promptCache }
+        : {}),
     };
   }
 
@@ -129,7 +154,13 @@
     const apiKey = modelEditNewProviderKey
       ? modelEditNewProviderKey.value
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const next = {
+      id,
+      name: name || id,
+      baseUrl,
+      apiKey,
+      promptCache: baseUrlSuggestsPromptCache(baseUrl),
+    };
     settingsProviders.push(next);
     return id;
   }
@@ -171,6 +202,22 @@
     if (providerEditApiKey) {
       providerEditApiKey.value = provider.apiKey || "";
     }
+    if (providerEditPromptCache) {
+      // Existing provider: honor its stored flag. New provider: smart default
+      // based on the baseUrl (litellm / openrouter / anthropic → on, plain
+      // OpenAI → off). User can always toggle. Re-evaluated on base URL change
+      // while the provider is still unset (isNew && no explicit prior value).
+      const stored = provider.promptCache;
+      if (typeof stored === "boolean") {
+        providerEditPromptCache.checked = stored;
+      } else if (isNew) {
+        providerEditPromptCache.checked = baseUrlSuggestsPromptCache(
+          provider.baseUrl || ""
+        );
+      } else {
+        providerEditPromptCache.checked = true;
+      }
+    }
     providerEditModal.hidden = false;
     (isNew ? providerEditId : providerEditName)?.focus();
   }
@@ -203,7 +250,10 @@
     const statusUrl = providerEditStatusUrl
       ? providerEditStatusUrl.value.trim().replace(/\/$/, "")
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const promptCache = providerEditPromptCache
+      ? providerEditPromptCache.checked === true
+      : false;
+    const next = { id, name: name || id, baseUrl, apiKey, promptCache };
     if (statusUrl && statusUrl !== baseUrl) {
       next.statusUrl = statusUrl;
     }

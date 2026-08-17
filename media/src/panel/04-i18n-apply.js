@@ -204,6 +204,18 @@
     if (providerEditStatusUrlHint) {
       providerEditStatusUrlHint.textContent = t("statusUrlHint");
     }
+    const providerEditPromptCacheLabel = document.getElementById(
+      "providerEditPromptCacheLabel"
+    );
+    const providerEditPromptCacheHint = document.getElementById(
+      "providerEditPromptCacheHint"
+    );
+    if (providerEditPromptCacheLabel) {
+      providerEditPromptCacheLabel.textContent = t("promptCacheLabel");
+    }
+    if (providerEditPromptCacheHint) {
+      providerEditPromptCacheHint.textContent = t("promptCacheHint");
+    }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
     );
@@ -273,6 +285,12 @@
     );
     if (settingsTlsValidateLabel) {
       settingsTlsValidateLabel.textContent = t("validateTls");
+    }
+    const modelEditVisionLabel = document.getElementById(
+      "modelEditVisionLabel"
+    );
+    if (modelEditVisionLabel) {
+      modelEditVisionLabel.textContent = t("supportsVision");
     }
     const settingsSystemPromptLabel = document.getElementById(
       "settingsSystemPromptLabel"
@@ -408,6 +426,34 @@
     );
     if (settingsFocusChainNote) {
       settingsFocusChainNote.textContent = t("focusChainNote");
+    }
+    const settingsTurnContextLabel = document.getElementById(
+      "settingsTurnContextLabel"
+    );
+    if (settingsTurnContextLabel) {
+      settingsTurnContextLabel.textContent = t("turnContext");
+    }
+    const settingsTurnContextNote = document.getElementById(
+      "settingsTurnContextNote"
+    );
+    if (settingsTurnContextNote) {
+      settingsTurnContextNote.textContent = t("turnContextNote");
+    }
+    const turnContextOptionLabels = {
+      full: t("turnContextFull"),
+      slim: t("turnContextSlim"),
+      none: t("turnContextNone"),
+    };
+    const settingsTurnContextSelect = document.getElementById(
+      "settingsTurnContextFollowUps"
+    );
+    if (settingsTurnContextSelect) {
+      for (const option of settingsTurnContextSelect.options || []) {
+        const optionLabel = turnContextOptionLabels[option.value];
+        if (optionLabel) {
+          option.textContent = optionLabel;
+        }
+      }
     }
     const settingsCheckpointsLabel = document.getElementById(
       "settingsCheckpointsLabel"

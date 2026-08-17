@@ -64,15 +64,22 @@ export function buildNativeGlmThinkingProviderOptionsPatch(
 	// Native Z.AI GLM endpoints expect `thinking.type`; they do not accept the
 	// routed `reasoning.enabled` / `reasoning.exclude` shape.
 	const nativeThinking = buildNativeZaiThinkingOptions(request);
-	return nativeThinking
-		? {
-				openaiCompatible: nativeThinking,
-				[request.providerId]: nativeThinking,
-				...(providerOptionsKey !== request.providerId
-					? { [providerOptionsKey]: nativeThinking }
-					: {}),
-			}
-		: undefined;
+	// `openai-compatible` is a deprecated providerOptions key (AI SDK emits a
+	// DeprecationWarning); its camelCase alias `openaiCompatible` is already
+	// emitted above, so skip the raw-id + alias buckets for that provider id.
+	if (!nativeThinking) {
+		return undefined;
+	}
+	if (request.providerId === "openai-compatible") {
+		return { openaiCompatible: nativeThinking };
+	}
+	return {
+		openaiCompatible: nativeThinking,
+		[request.providerId]: nativeThinking,
+		...(providerOptionsKey !== request.providerId
+			? { [providerOptionsKey]: nativeThinking }
+			: {}),
+	};
 }
 
 export function buildRoutedGlmReasoningProviderOptionsPatch(
@@ -92,15 +99,20 @@ export function buildRoutedGlmReasoningProviderOptionsPatch(
 		return undefined;
 	}
 
+	// `openai-compatible` is a deprecated providerOptions key (AI SDK emits a
+	// DeprecationWarning); its camelCase alias `openaiCompatible` is already
+	// emitted above, so skip the raw-id + alias buckets for that provider id.
+	if (
+		options?.includeProviderBuckets === false ||
+		request.providerId === "openai-compatible"
+	) {
+		return { openaiCompatible: routed };
+	}
 	return {
 		openaiCompatible: routed,
-		...(options?.includeProviderBuckets === false
-			? {}
-			: {
-					[request.providerId]: routed,
-					...(providerOptionsKey !== request.providerId
-						? { [providerOptionsKey]: routed }
-						: {}),
-				}),
+		[request.providerId]: routed,
+		...(providerOptionsKey !== request.providerId
+			? { [providerOptionsKey]: routed }
+			: {}),
 	};
 }

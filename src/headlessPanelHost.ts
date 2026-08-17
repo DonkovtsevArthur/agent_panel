@@ -592,6 +592,9 @@ export class HeadlessPanelHost {
         baseUrl: p.baseUrl,
         apiKey: p.apiKey || "",
         statusUrl: p.statusUrl || "",
+        ...(typeof p.promptCache === "boolean"
+          ? { promptCache: p.promptCache }
+          : {}),
       })),
       models: config.models.map((m) => ({
         id: m.id,
@@ -624,6 +627,7 @@ export class HeadlessPanelHost {
       toolsAutoApprove: config.tools.autoApprove,
       toolsApprovals: config.tools.approvals,
       focusChainEnabled: config.focusChain.enabled,
+      turnContextFollowUps: config.turnContext.followUps,
       checkpointsEnabled: config.checkpoints.enabled,
       skillsEnabled: config.skills.enabled,
       skillsWorkspaceEnabled: config.skills.workspaceEnabled,

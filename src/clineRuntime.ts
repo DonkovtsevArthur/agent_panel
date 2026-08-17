@@ -10,6 +10,7 @@ import {
   getContextWindow,
   getModeById,
   resolveModelEndpoint,
+  resolveModelPromptCache,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
   resolveModelSupportsVision,
@@ -122,6 +123,14 @@ type ClineAgentEvent = {
   outputTokens?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  /** Cached prefix tokens read this call (Anthropic cache_read / OpenAI cached_tokens). */
+  cacheReadTokens?: number;
+  /** Tokens written to the prompt cache this call (Anthropic cache_creation). */
+  cacheWriteTokens?: number;
+  /** Cumulative cache reads across iterations of this session. */
+  totalCacheReadTokens?: number;
+  /** Cumulative cache writes across iterations of this session. */
+  totalCacheWriteTokens?: number;
   recoverable?: boolean;
 };
 
@@ -324,12 +333,14 @@ function buildClineModelInfo(modelId: string): {
   // which is exactly the LiteLLM 400 path above. Passing capabilities:["tools"]
   // (no "reasoning") forces the portable OpenAI-style path instead.
   //
-  // Opt-in prompt-cache markers (agentPanel.promptCache.enabled): this
-  // capability plus the provider routing metadata (buildHarborProviderConfig)
-  // make the Cline gateway annotate the last user message with Anthropic-style
-  // cache_control. Unlike "reasoning" above, "prompt-cache" never switches the
-  // wire format, so the portable reasoning_effort path is unaffected.
-  if (config.promptCache.enabled) {
+  // Opt-in prompt-cache markers (per-provider `promptCache` flag, falling back
+  // to the global `agentPanel.promptCache.enabled`): this capability plus the
+  // provider routing metadata (buildHarborProviderConfig) make the Cline
+  // gateway annotate the last user message with Anthropic-style cache_control.
+  // Unlike "reasoning" above, "prompt-cache" never switches the wire format, so
+  // the portable reasoning_effort path is unaffected. Only safe for upstreams
+  // that accept the marker (LiteLLM / OpenRouter / Anthropic-compatible).
+  if (resolveModelPromptCache(modelId)) {
     capabilities.push("prompt-cache");
   }
   const modelEntry: ClineKnownModelInfo = {
@@ -1659,12 +1670,16 @@ export async function disposeClineRuntime(): Promise<void> {
  * as bare "Request failed with status code 400" and the real cause is invisible —
  * especially painful for spawn_agent children.
  *
- * With agentPanel.promptCache.enabled also carries gateway routing metadata so
- * the Cline gateway emits Anthropic-style cache_control markers for this model
- * (the session providerConfig.metadata is forwarded into the gateway by the
- * vendor handler-factory patch; without it the metadata is silently dropped).
+ * With per-provider prompt-cache enabled (agentPanel.providers[].promptCache,
+ * falling back to agentPanel.promptCache.enabled) also carries gateway routing
+ * metadata so the Cline gateway emits Anthropic-style cache_control markers for
+ * this model (the session providerConfig.metadata is forwarded into the gateway
+ * by the vendor handler-factory patch; without it the metadata is silently dropped).
  */
-function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
+function buildHarborProviderConfig(
+  modelInfo?: ClineKnownModelInfo,
+  options?: { promptCache?: boolean }
+): {
   providerId: string;
   fetch: typeof fetch;
   modelInfo?: ClineKnownModelInfo;
@@ -1688,7 +1703,7 @@ function buildHarborProviderConfig(modelInfo?: ClineKnownModelInfo): {
     }) => Promise<void>;
   };
 } {
-  const promptCacheEnabled = getConfig().promptCache.enabled === true;
+  const promptCacheEnabled = Boolean(options?.promptCache);
   return {
     providerId: "openai-compatible",
     fetch: harborFetch as typeof fetch,
@@ -1848,7 +1863,7 @@ export async function runClineAgentTurn(options: {
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
   const enableCheckpoints = config.checkpoints.enabled !== false;
-  const enablePromptCache = config.promptCache.enabled === true;
+  const enablePromptCache = resolveModelPromptCache(options.model);
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
@@ -2189,12 +2204,22 @@ export async function runClineAgentTurn(options: {
         // NOT for context-window fill (which is what the UI ring shows).
         // Use the latest delta to match what Cline native displays:
         // context-window occupancy of the last API call.
+        // cacheRead/cacheWrite are per-call too; the matching `total*` fields
+        // are cumulative and drive the per-chat token totals in the UI.
         usagePromptTokens = Number(event.inputTokens ?? 0);
         usageCompletionTokens = Number(event.outputTokens ?? 0);
+        const cacheRead = Number(event.cacheReadTokens ?? 0);
+        const cacheWrite = Number(event.cacheWriteTokens ?? 0);
         callbacks.onUsage?.({
           used: usagePromptTokens + usageCompletionTokens,
           promptTokens: usagePromptTokens,
           completionTokens: usageCompletionTokens,
+          cacheReadTokens: cacheRead,
+          cacheWriteTokens: cacheWrite,
+          totalInputTokens: Number(event.totalInputTokens ?? 0),
+          totalOutputTokens: Number(event.totalOutputTokens ?? 0),
+          totalCacheReadTokens: Number(event.totalCacheReadTokens ?? 0),
+          totalCacheWriteTokens: Number(event.totalCacheWriteTokens ?? 0),
         });
         break;
       }
@@ -2330,12 +2355,19 @@ export async function runClineAgentTurn(options: {
       : specialMentions;
   }
   // Do not skip IDE context just because an earlier turn had a screenshot.
+  // Follow-up turns of a live session can slim down or drop the block
+  // (agentPanel.turnContext.followUps): the heavy parts went with the
+  // session's first turn and old blocks stay in the session history anyway.
+  const followUpContextMode = reusedSession
+    ? config.turnContext.followUps
+    : "full";
   const turnContext =
-    currentHasImage
+    currentHasImage || followUpContextMode === "none"
       ? ""
       : await buildTurnContextBlock({
           skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
           lastAgentEditedPaths: options.lastAgentEditedPaths,
+          slim: followUpContextMode === "slim",
         });
   if (turnContext) {
     userPrompt = userPrompt
@@ -2574,7 +2606,8 @@ export async function runClineAgentTurn(options: {
           // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
           // "Request failed with status code N" — critical for spawn_agent children.
           providerConfig: buildHarborProviderConfig(
-            modelInfoData.knownModels[options.model]
+            modelInfoData.knownModels[options.model],
+            { promptCache: enablePromptCache }
           ),
         },
       });

@@ -1206,6 +1206,26 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--vscode-descriptionForeground, #888);
 }
 
+/* Model text merged into a tool card (was a standalone text step). */
+.agent-step-description {
+  padding-left: 22px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: calc(var(--harbor-font-size) * 0.94);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.agent-step-description p,
+.agent-step-description ul,
+.agent-step-description ol {
+  margin: 0 0 4px;
+}
+
+.agent-step-description > :last-child {
+  margin-bottom: 0;
+}
+
 .agent-step-icon {
   font-size: 15px;
   margin-top: 1px;

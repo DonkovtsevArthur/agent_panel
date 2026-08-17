@@ -82,6 +82,7 @@
       fontSizePreview: "The agent will reply at this size.",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
+      supportsVision: "Supports images (vision)",
       agentBehavior: "Agent behavior",
       browserAgent: "Browser agent",
       browserAgentTitle: "Browser agent",
@@ -241,6 +242,12 @@
       focusChain: "Focus chain",
       focusChainNote:
         "Agent keeps a task checklist; re-injected each turn.",
+      turnContext: "Turn context on follow-ups",
+      turnContextNote:
+        "IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.",
+      turnContextFull: "Full",
+      turnContextSlim: "Slim",
+      turnContextNone: "None",
       checkpoints: "Workspace checkpoints",
       checkpointsNote:
         "Git snapshot at the start of a turn. The card rolls back files.",
@@ -336,6 +343,8 @@
       addProviderFirst: "Add a provider first",
       newProvider: "New Provider",
       providerTitle: "Provider",
+      promptCacheLabel: "Prompt cache",
+      promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
       providerIdRequired: "Enter a provider id.",
       providerBaseUrlRequired: "Enter a base URL.",
       noProvidersYet: "No providers yet — add at least one.",
@@ -579,6 +588,7 @@
       fontSizePreview: "Агент будет отвечать таким размером.",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
+      supportsVision: "Поддержка изображений (vision)",
       agentBehavior: "Поведение агента",
       browserAgent: "Браузерный агент",
       browserAgentTitle: "Браузерный агент",
@@ -741,6 +751,12 @@
       focusChain: "Focus chain",
       focusChainNote:
         "Агент ведёт чеклист задач; подставляется в каждый ход.",
+      turnContext: "IDE-контекст в повторных ходах",
+      turnContextNote:
+        "Блок IDE-контекста отправляется с каждым повторным ходом. «Тощий» оставляет git + диагностику + состояние редактора.",
+      turnContextFull: "Полный",
+      turnContextSlim: "Тощий",
+      turnContextNone: "Нет",
       checkpoints: "Чекпоинты workspace",
       checkpointsNote:
         "Git-снимок в начале хода. Карточка откатывает файлы.",
@@ -837,6 +853,8 @@
       addProviderFirst: "Сначала добавьте провайдера",
       newProvider: "Новый провайдер",
       providerTitle: "Провайдер",
+      promptCacheLabel: "Кеш промпта",
+      promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
       providerIdRequired: "Укажите id провайдера.",
       providerBaseUrlRequired: "Укажите base URL.",
       noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",

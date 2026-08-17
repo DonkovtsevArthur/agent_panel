@@ -82,6 +82,7 @@
       fontSizePreview: "The agent will reply at this size.",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
+      supportsVision: "Supports images (vision)",
       agentBehavior: "Agent behavior",
       browserAgent: "Browser agent",
       browserAgentTitle: "Browser agent",
@@ -241,6 +242,12 @@
       focusChain: "Focus chain",
       focusChainNote:
         "Agent keeps a task checklist; re-injected each turn.",
+      turnContext: "Turn context on follow-ups",
+      turnContextNote:
+        "IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.",
+      turnContextFull: "Full",
+      turnContextSlim: "Slim",
+      turnContextNone: "None",
       checkpoints: "Workspace checkpoints",
       checkpointsNote:
         "Git snapshot at the start of a turn. The card rolls back files.",
@@ -336,6 +343,8 @@
       addProviderFirst: "Add a provider first",
       newProvider: "New Provider",
       providerTitle: "Provider",
+      promptCacheLabel: "Prompt cache",
+      promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
       providerIdRequired: "Enter a provider id.",
       providerBaseUrlRequired: "Enter a base URL.",
       noProvidersYet: "No providers yet — add at least one.",
@@ -579,6 +588,7 @@
       fontSizePreview: "Агент будет отвечать таким размером.",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
+      supportsVision: "Поддержка изображений (vision)",
       agentBehavior: "Поведение агента",
       browserAgent: "Браузерный агент",
       browserAgentTitle: "Браузерный агент",
@@ -741,6 +751,12 @@
       focusChain: "Focus chain",
       focusChainNote:
         "Агент ведёт чеклист задач; подставляется в каждый ход.",
+      turnContext: "IDE-контекст в повторных ходах",
+      turnContextNote:
+        "Блок IDE-контекста отправляется с каждым повторным ходом. «Тощий» оставляет git + диагностику + состояние редактора.",
+      turnContextFull: "Полный",
+      turnContextSlim: "Тощий",
+      turnContextNone: "Нет",
       checkpoints: "Чекпоинты workspace",
       checkpointsNote:
         "Git-снимок в начале хода. Карточка откатывает файлы.",
@@ -837,6 +853,8 @@
       addProviderFirst: "Сначала добавьте провайдера",
       newProvider: "Новый провайдер",
       providerTitle: "Провайдер",
+      promptCacheLabel: "Кеш промпта",
+      promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
       providerIdRequired: "Укажите id провайдера.",
       providerBaseUrlRequired: "Укажите base URL.",
       noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",
@@ -1232,6 +1250,7 @@
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
   const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditPromptCache = document.getElementById("providerEditPromptCache");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
   const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
@@ -1315,6 +1334,9 @@
   };
   const settingsFocusChainEnabled = document.getElementById(
     "settingsFocusChainEnabled"
+  );
+  const settingsTurnContextFollowUps = document.getElementById(
+    "settingsTurnContextFollowUps"
   );
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
@@ -1610,6 +1632,13 @@
   let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
+  // Cumulative billing totals for the active chat (from Cline usage events).
+  // Shown in the context ring tooltip so users can see what a chat actually
+  // consumed — including prompt-cache hits — without leaving the product.
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
   let notificationAudioContext = null;
 
   function ensureNotificationAudioContext() {
@@ -1887,6 +1916,18 @@
     if (providerEditStatusUrlHint) {
       providerEditStatusUrlHint.textContent = t("statusUrlHint");
     }
+    const providerEditPromptCacheLabel = document.getElementById(
+      "providerEditPromptCacheLabel"
+    );
+    const providerEditPromptCacheHint = document.getElementById(
+      "providerEditPromptCacheHint"
+    );
+    if (providerEditPromptCacheLabel) {
+      providerEditPromptCacheLabel.textContent = t("promptCacheLabel");
+    }
+    if (providerEditPromptCacheHint) {
+      providerEditPromptCacheHint.textContent = t("promptCacheHint");
+    }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
     );
@@ -1956,6 +1997,12 @@
     );
     if (settingsTlsValidateLabel) {
       settingsTlsValidateLabel.textContent = t("validateTls");
+    }
+    const modelEditVisionLabel = document.getElementById(
+      "modelEditVisionLabel"
+    );
+    if (modelEditVisionLabel) {
+      modelEditVisionLabel.textContent = t("supportsVision");
     }
     const settingsSystemPromptLabel = document.getElementById(
       "settingsSystemPromptLabel"
@@ -2091,6 +2138,34 @@
     );
     if (settingsFocusChainNote) {
       settingsFocusChainNote.textContent = t("focusChainNote");
+    }
+    const settingsTurnContextLabel = document.getElementById(
+      "settingsTurnContextLabel"
+    );
+    if (settingsTurnContextLabel) {
+      settingsTurnContextLabel.textContent = t("turnContext");
+    }
+    const settingsTurnContextNote = document.getElementById(
+      "settingsTurnContextNote"
+    );
+    if (settingsTurnContextNote) {
+      settingsTurnContextNote.textContent = t("turnContextNote");
+    }
+    const turnContextOptionLabels = {
+      full: t("turnContextFull"),
+      slim: t("turnContextSlim"),
+      none: t("turnContextNone"),
+    };
+    const settingsTurnContextSelect = document.getElementById(
+      "settingsTurnContextFollowUps"
+    );
+    if (settingsTurnContextSelect) {
+      for (const option of settingsTurnContextSelect.options || []) {
+        const optionLabel = turnContextOptionLabels[option.value];
+        if (optionLabel) {
+          option.textContent = optionLabel;
+        }
+      }
     }
     const settingsCheckpointsLabel = document.getElementById(
       "settingsCheckpointsLabel"
@@ -6572,12 +6647,26 @@
     return Math.min(1, u / m);
   }
 
-  function setContextUsage(used, max) {
+  function setContextUsage(used, max, totals) {
     if (!contextRingEl || !contextRingValueEl) {
       return;
     }
     contextUsed = Math.max(0, Number(used) || 0);
     contextMax = Math.max(1, Number(max) || 128000);
+    if (totals && typeof totals === "object") {
+      if (typeof totals.totalInputTokens === "number") {
+        totalInputTokens = Math.max(0, totals.totalInputTokens);
+      }
+      if (typeof totals.totalOutputTokens === "number") {
+        totalOutputTokens = Math.max(0, totals.totalOutputTokens);
+      }
+      if (typeof totals.totalCacheReadTokens === "number") {
+        totalCacheReadTokens = Math.max(0, totals.totalCacheReadTokens);
+      }
+      if (typeof totals.totalCacheWriteTokens === "number") {
+        totalCacheWriteTokens = Math.max(0, totals.totalCacheWriteTokens);
+      }
+    }
     const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
     const pctLabel = Math.round(pct * 100);
@@ -6589,7 +6678,7 @@
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
-    const tip = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
@@ -6598,6 +6687,24 @@
     if (stickToBottom) {
       scrollToBottom();
     }
+  }
+
+  function buildContextRingTip(usedLabel, maxLabel, pctLabel) {
+    const base = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const hasTotals =
+      totalInputTokens > 0 || totalOutputTokens > 0;
+    if (!hasTotals) {
+      return base;
+    }
+    const inLabel = formatTokenCount(totalInputTokens);
+    const outLabel = formatTokenCount(totalOutputTokens);
+    const parts = [`in ${inLabel}`, `out ${outLabel}`];
+    if (totalCacheReadTokens > 0 || totalCacheWriteTokens > 0) {
+      const cacheRead = formatTokenCount(totalCacheReadTokens);
+      const cacheWrite = formatTokenCount(totalCacheWriteTokens);
+      parts.push(`cache read ${cacheRead}`, `cache write ${cacheWrite}`);
+    }
+    return `${base}  ·  ${parts.join(" / ")}`;
   }
 
   /**
@@ -8260,6 +8367,34 @@
           );
         }
       }
+      // Restore description preserved across status updates (running → done).
+      const savedHtml = el.dataset.descriptionHtml;
+      if (savedHtml) {
+        let descDiv = el.querySelector(".agent-step-description");
+        if (!descDiv) {
+          descDiv = document.createElement("div");
+          descDiv.className = "agent-step-description";
+          el.appendChild(descDiv);
+        }
+        descDiv.innerHTML = savedHtml;
+      }
+      // Merge preceding text step content into this tool card so the
+      // model's explanation is shown inline rather than as a separate card.
+      const prevText = el.previousElementSibling;
+      if (prevText && prevText.dataset.stepKind === "text") {
+        const textBody = prevText.querySelector(".agent-step-text-body");
+        if (textBody && textBody.innerHTML.trim()) {
+          el.dataset.descriptionHtml = textBody.innerHTML;
+          let descDiv = el.querySelector(".agent-step-description");
+          if (!descDiv) {
+            descDiv = document.createElement("div");
+            descDiv.className = "agent-step-description";
+            el.appendChild(descDiv);
+          }
+          descDiv.innerHTML = textBody.innerHTML;
+        }
+        prevText.remove();
+      }
     } else {
       el.classList.remove("agent-step-thinking");
       const icon = agentStepStatusIcon(step.status, step.kind);
@@ -9256,6 +9391,28 @@
     settingsProvidersHint.classList.toggle("is-error", Boolean(isError));
   }
 
+  // Mirror of src/config.ts baseUrlSuggestsPromptCache — used to pre-check the
+  // per-provider prompt-cache checkbox for newly added providers whose baseUrl
+  // looks like an upstream that accepts Anthropic-style cache_control markers
+  // (LiteLLM / OpenRouter / Anthropic-compatible). Conservative: plain OpenAI
+  // stays off to avoid 400s.
+  function baseUrlSuggestsPromptCache(baseUrl) {
+    const url = String(baseUrl || "").toLowerCase();
+    if (!url) {
+      return false;
+    }
+    if (/api\.openai\.com/.test(url)) {
+      return false;
+    }
+    return (
+      /litellm/.test(url) ||
+      /openrouter\.ai/.test(url) ||
+      /anthropic\.com/.test(url) ||
+      /claude\.ai/.test(url) ||
+      /aihubmix|sapaicore|vertex|ai-sdk/.test(url)
+    );
+  }
+
   function providerLabel(providerId) {
     const provider = settingsProviders.find((p) => p.id === providerId);
     return provider ? provider.name || provider.id : providerId || "—";
@@ -9273,6 +9430,9 @@
       baseUrl: provider.baseUrl || "",
       apiKey: provider.apiKey || "",
       statusUrl: provider.statusUrl || "",
+      ...(typeof provider.promptCache === "boolean"
+        ? { promptCache: provider.promptCache }
+        : {}),
     };
   }
 
@@ -9357,7 +9517,13 @@
     const apiKey = modelEditNewProviderKey
       ? modelEditNewProviderKey.value
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const next = {
+      id,
+      name: name || id,
+      baseUrl,
+      apiKey,
+      promptCache: baseUrlSuggestsPromptCache(baseUrl),
+    };
     settingsProviders.push(next);
     return id;
   }
@@ -9399,6 +9565,22 @@
     if (providerEditApiKey) {
       providerEditApiKey.value = provider.apiKey || "";
     }
+    if (providerEditPromptCache) {
+      // Existing provider: honor its stored flag. New provider: smart default
+      // based on the baseUrl (litellm / openrouter / anthropic → on, plain
+      // OpenAI → off). User can always toggle. Re-evaluated on base URL change
+      // while the provider is still unset (isNew && no explicit prior value).
+      const stored = provider.promptCache;
+      if (typeof stored === "boolean") {
+        providerEditPromptCache.checked = stored;
+      } else if (isNew) {
+        providerEditPromptCache.checked = baseUrlSuggestsPromptCache(
+          provider.baseUrl || ""
+        );
+      } else {
+        providerEditPromptCache.checked = true;
+      }
+    }
     providerEditModal.hidden = false;
     (isNew ? providerEditId : providerEditName)?.focus();
   }
@@ -9431,7 +9613,10 @@
     const statusUrl = providerEditStatusUrl
       ? providerEditStatusUrl.value.trim().replace(/\/$/, "")
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const promptCache = providerEditPromptCache
+      ? providerEditPromptCache.checked === true
+      : false;
+    const next = { id, name: name || id, baseUrl, apiKey, promptCache };
     if (statusUrl && statusUrl !== baseUrl) {
       next.statusUrl = statusUrl;
     }
@@ -11631,6 +11816,7 @@
           baseUrl: p.baseUrl || "",
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          promptCache: typeof p.promptCache === "boolean" ? p.promptCache : true,
         }))
       : [];
     if (
@@ -11749,6 +11935,11 @@
     if (settingsFocusChainEnabled) {
       settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
     }
+    if (settingsTurnContextFollowUps) {
+      const mode = String(settings.turnContextFollowUps || "full");
+      settingsTurnContextFollowUps.value =
+        mode === "slim" || mode === "none" ? mode : "full";
+    }
     if (settingsCheckpointsEnabled) {
       settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
     }
@@ -11847,6 +12038,9 @@
         if (statusUrl && statusUrl !== row.baseUrl) {
           row.statusUrl = statusUrl;
         }
+        if (typeof p.promptCache === "boolean") {
+          row.promptCache = p.promptCache;
+        }
         return row;
       });
 
@@ -11936,6 +12130,12 @@
       focusChainEnabled: settingsFocusChainEnabled
         ? settingsFocusChainEnabled.checked
         : true,
+      turnContextFollowUps:
+        settingsTurnContextFollowUps &&
+        (settingsTurnContextFollowUps.value === "slim" ||
+          settingsTurnContextFollowUps.value === "none")
+          ? settingsTurnContextFollowUps.value
+          : "full",
       checkpointsEnabled: settingsCheckpointsEnabled
         ? settingsCheckpointsEnabled.checked
         : true,
@@ -17921,7 +18121,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         renderChatBranches(msg.branches);
         showScreen(msg.screen || "agents");
@@ -18072,7 +18277,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         showScreen("chat");
         setBusy(Boolean(msg.busy));
@@ -18131,7 +18341,12 @@
         }
         break;
       case "contextUsage":
-        setContextUsage(msg.used || 0, msg.max || contextMax);
+        setContextUsage(msg.used || 0, msg.max || contextMax, {
+          totalInputTokens: msg.totalInputTokens,
+          totalOutputTokens: msg.totalOutputTokens,
+          totalCacheReadTokens: msg.totalCacheReadTokens,
+          totalCacheWriteTokens: msg.totalCacheWriteTokens,
+        });
         break;
       case "modelsUpdated":
         fillModels(msg.models, msg.selectedModel);
@@ -18462,7 +18677,12 @@
         setComposerPlanBuild("", false);
         lastOpenedPlanKey = "";
         setAgentStatus("", true);
-        setContextUsage(0, contextMax);
+        setContextUsage(0, contextMax, {
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCacheWriteTokens: 0,
+        });
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
         break;

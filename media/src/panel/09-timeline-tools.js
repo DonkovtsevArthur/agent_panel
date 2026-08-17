@@ -1654,6 +1654,34 @@
           );
         }
       }
+      // Restore description preserved across status updates (running → done).
+      const savedHtml = el.dataset.descriptionHtml;
+      if (savedHtml) {
+        let descDiv = el.querySelector(".agent-step-description");
+        if (!descDiv) {
+          descDiv = document.createElement("div");
+          descDiv.className = "agent-step-description";
+          el.appendChild(descDiv);
+        }
+        descDiv.innerHTML = savedHtml;
+      }
+      // Merge preceding text step content into this tool card so the
+      // model's explanation is shown inline rather than as a separate card.
+      const prevText = el.previousElementSibling;
+      if (prevText && prevText.dataset.stepKind === "text") {
+        const textBody = prevText.querySelector(".agent-step-text-body");
+        if (textBody && textBody.innerHTML.trim()) {
+          el.dataset.descriptionHtml = textBody.innerHTML;
+          let descDiv = el.querySelector(".agent-step-description");
+          if (!descDiv) {
+            descDiv = document.createElement("div");
+            descDiv.className = "agent-step-description";
+            el.appendChild(descDiv);
+          }
+          descDiv.innerHTML = textBody.innerHTML;
+        }
+        prevText.remove();
+      }
     } else {
       el.classList.remove("agent-step-thinking");
       const icon = agentStepStatusIcon(step.status, step.kind);

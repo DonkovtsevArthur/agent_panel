@@ -140,6 +140,7 @@ type SettingsPayload = {
     baseUrl: string;
     apiKey?: string;
     statusUrl?: string;
+    promptCache?: boolean;
   }>;
   models: Array<{
     id: string;
@@ -174,6 +175,8 @@ type SettingsPayload = {
   /** Per-group overrides; only explicit true/false are sent. */
   toolsApprovals?: Record<string, boolean>;
   focusChainEnabled?: boolean;
+  /** Follow-up turn IDE context mode: "full" | "slim" | "none". */
+  turnContextFollowUps?: string;
   checkpointsEnabled?: boolean;
   skillsEnabled?: boolean;
   skillsWorkspaceEnabled?: boolean;
@@ -372,6 +375,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private selectedReasoningEffort: ReasoningEffortLevel | "" = "";
   private lastTurnModel = "";
   private contextTokens = 0;
+  /** Накопленный биллинг по активному чату (input, excluding cache reads). */
+  private totalInputTokens = 0;
+  /** Накопленный биллинг по активному чату (output). */
+  private totalOutputTokens = 0;
+  /** Накопленные чтения из prompt-кэша по активному чату. */
+  private totalCacheReadTokens = 0;
+  /** Накопленные записи в prompt-кэш по активному чату. */
+  private totalCacheWriteTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
   private readonly chatRunState = new Map<
@@ -838,15 +849,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private hydrateActiveChat(): void {
     const chat = getActiveChat(this.store);
     if (!chat) {
-      this.history = [];
-      this.uiMessages = [];
-      this.selectedModel = getConfig().defaultModel || "";
-      this.selectedMode = "agent";
-      this.selectedReasoningEffort = "";
-      this.lastTurnModel = "";
-      this.contextTokens = 0;
-      return;
-    }
+    this.history = [];
+    this.uiMessages = [];
+    this.selectedModel = getConfig().defaultModel || "";
+    this.selectedMode = "agent";
+    this.selectedReasoningEffort = "";
+    this.lastTurnModel = "";
+    this.contextTokens = 0;
+    this.totalInputTokens = 0;
+    this.totalOutputTokens = 0;
+    this.totalCacheReadTokens = 0;
+    this.totalCacheWriteTokens = 0;
+    return;
+  }
     this.history = copyUiAttachmentsOntoHistory(
       chat.history || [],
       chat.uiMessages || []
@@ -860,6 +875,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
         ? chat.contextTokens
+        : 0;
+    this.totalInputTokens =
+      typeof chat.totalInputTokens === "number" && chat.totalInputTokens > 0
+        ? chat.totalInputTokens
+        : 0;
+    this.totalOutputTokens =
+      typeof chat.totalOutputTokens === "number" && chat.totalOutputTokens > 0
+        ? chat.totalOutputTokens
+        : 0;
+    this.totalCacheReadTokens =
+      typeof chat.totalCacheReadTokens === "number" &&
+      chat.totalCacheReadTokens > 0
+        ? chat.totalCacheReadTokens
+        : 0;
+    this.totalCacheWriteTokens =
+      typeof chat.totalCacheWriteTokens === "number" &&
+      chat.totalCacheWriteTokens > 0
+        ? chat.totalCacheWriteTokens
         : 0;
   }
 
@@ -888,6 +921,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : { selectedReasoningEffort: undefined }),
       lastTurnModel: this.lastTurnModel,
       contextTokens: this.contextTokens,
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       ...(running
         ? {}
         : {
@@ -1119,6 +1156,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "contextUsage",
       used: this.contextTokens,
       max,
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
     });
   }
 
@@ -1217,6 +1258,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel: string;
       lastTurnModel: string;
       contextTokens: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
     }
   ): void {
     if (!this.isViewingChat(chatId)) {
@@ -1227,6 +1272,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.selectedModel = state.selectedModel;
     this.lastTurnModel = state.lastTurnModel;
     this.contextTokens = state.contextTokens;
+    if (typeof state.totalInputTokens === "number") {
+      this.totalInputTokens = state.totalInputTokens;
+    }
+    if (typeof state.totalOutputTokens === "number") {
+      this.totalOutputTokens = state.totalOutputTokens;
+    }
+    if (typeof state.totalCacheReadTokens === "number") {
+      this.totalCacheReadTokens = state.totalCacheReadTokens;
+    }
+    if (typeof state.totalCacheWriteTokens === "number") {
+      this.totalCacheWriteTokens = state.totalCacheWriteTokens;
+    }
   }
 
   private setRunStateForChat(
@@ -1438,6 +1495,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel?: string;
       lastTurnModel?: string;
       contextTokens?: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
     }
   ): void {
     if (!this.store.chats[chatId]) {
@@ -1454,6 +1515,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       ...(typeof patch.contextTokens === "number"
         ? { contextTokens: patch.contextTokens }
         : {}),
+      ...(typeof patch.totalInputTokens === "number"
+        ? { totalInputTokens: patch.totalInputTokens }
+        : {}),
+      ...(typeof patch.totalOutputTokens === "number"
+        ? { totalOutputTokens: patch.totalOutputTokens }
+        : {}),
+      ...(typeof patch.totalCacheReadTokens === "number"
+        ? { totalCacheReadTokens: patch.totalCacheReadTokens }
+        : {}),
+      ...(typeof patch.totalCacheWriteTokens === "number"
+        ? { totalCacheWriteTokens: patch.totalCacheWriteTokens }
+        : {}),
     });
     if (this.isActiveChat(chatId)) {
       this.uiMessages = nextUi;
@@ -1468,6 +1541,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
       if (typeof patch.contextTokens === "number") {
         this.contextTokens = patch.contextTokens;
+      }
+      if (typeof patch.totalInputTokens === "number") {
+        this.totalInputTokens = patch.totalInputTokens;
+      }
+      if (typeof patch.totalOutputTokens === "number") {
+        this.totalOutputTokens = patch.totalOutputTokens;
+      }
+      if (typeof patch.totalCacheReadTokens === "number") {
+        this.totalCacheReadTokens = patch.totalCacheReadTokens;
+      }
+      if (typeof patch.totalCacheWriteTokens === "number") {
+        this.totalCacheWriteTokens = patch.totalCacheWriteTokens;
       }
     }
     void this.writeStoreOnly();
@@ -1975,6 +2060,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       branches,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       scrollTop: this.store.chats[this.store.activeChatId || ""]?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus,
@@ -3104,6 +3193,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       : typeof sourceChat.contextTokens === "number" && sourceChat.contextTokens > 0
         ? sourceChat.contextTokens
         : 0;
+    // Cumulative billing for this chat (seeds from store so a mid-run chat
+    // switch does not reset the totals). Updated from Cline usage events.
+    let runTotalInputTokens = this.isActiveChat(runChatId)
+      ? this.totalInputTokens
+      : typeof sourceChat.totalInputTokens === "number" &&
+          sourceChat.totalInputTokens > 0
+        ? sourceChat.totalInputTokens
+        : 0;
+    let runTotalOutputTokens = this.isActiveChat(runChatId)
+      ? this.totalOutputTokens
+      : typeof sourceChat.totalOutputTokens === "number" &&
+          sourceChat.totalOutputTokens > 0
+        ? sourceChat.totalOutputTokens
+        : 0;
+    let runTotalCacheReadTokens = this.isActiveChat(runChatId)
+      ? this.totalCacheReadTokens
+      : typeof sourceChat.totalCacheReadTokens === "number" &&
+          sourceChat.totalCacheReadTokens > 0
+        ? sourceChat.totalCacheReadTokens
+        : 0;
+    let runTotalCacheWriteTokens = this.isActiveChat(runChatId)
+      ? this.totalCacheWriteTokens
+      : typeof sourceChat.totalCacheWriteTokens === "number" &&
+          sourceChat.totalCacheWriteTokens > 0
+        ? sourceChat.totalCacheWriteTokens
+        : 0;
 
     const requestedModel =
       (model && enabledModels.some((m) => m.id === model) ? model : "") ||
@@ -3174,6 +3289,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         history: runHistory,
         uiMessages: runUiMessages.slice(-200),
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       this.syncActiveSnapshotFromChat(runChatId, {
         history: runHistory,
@@ -3181,6 +3300,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       void this.writeStoreOnly();
     };
@@ -3554,6 +3677,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             runContextTokens = usage.used;
+            // Prefer cumulative totals from Cline (totals survive tool rounds
+            // and spawn children); fall back to summing deltas for runtimes
+            // that do not emit total* fields.
+            if (typeof usage.totalInputTokens === "number") {
+              runTotalInputTokens = usage.totalInputTokens;
+            } else {
+              runTotalInputTokens += usage.promptTokens || 0;
+            }
+            if (typeof usage.totalOutputTokens === "number") {
+              runTotalOutputTokens = usage.totalOutputTokens;
+            } else {
+              runTotalOutputTokens += usage.completionTokens || 0;
+            }
+            if (typeof usage.totalCacheReadTokens === "number") {
+              runTotalCacheReadTokens = usage.totalCacheReadTokens;
+            } else {
+              runTotalCacheReadTokens += usage.cacheReadTokens || 0;
+            }
+            if (typeof usage.totalCacheWriteTokens === "number") {
+              runTotalCacheWriteTokens = usage.totalCacheWriteTokens;
+            } else {
+              runTotalCacheWriteTokens += usage.cacheWriteTokens || 0;
+            }
             syncRunChat();
             if (this.isViewingChat(runChatId)) {
               this.postContextUsage();
@@ -3731,6 +3877,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           selectedModel: chosen,
           lastTurnModel: runLastTurnModel,
           contextTokens: runContextTokens,
+          totalInputTokens: runTotalInputTokens,
+          totalOutputTokens: runTotalOutputTokens,
+          totalCacheReadTokens: runTotalCacheReadTokens,
+          totalCacheWriteTokens: runTotalCacheWriteTokens,
         });
         this.setRunStateForChat(runChatId);
         if (this.isActiveChat(runChatId)) {
@@ -3787,6 +3937,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         selectedModel: chosen,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       this.setRunStateForChat(runChatId, "error");
       this.postRunFinished(runChatId, "error");
@@ -3981,6 +4135,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       uiMessages: nextUi.slice(-200),
       lastTurnModel: "",
       contextTokens: 0,
+      // History was truncated to the edit point — billing totals reset too.
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWriteTokens: 0,
       selectedModel: model || this.store.chats[runChatId]?.selectedModel,
     });
     if (this.isActiveChat(runChatId)) {
@@ -3988,6 +4147,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.uiMessages = nextUi;
       this.lastTurnModel = "";
       this.contextTokens = 0;
+      this.totalInputTokens = 0;
+      this.totalOutputTokens = 0;
+      this.totalCacheReadTokens = 0;
+      this.totalCacheWriteTokens = 0;
       if (model) {
         this.selectedModel = model;
       }
@@ -4549,6 +4712,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: p.baseUrl,
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          ...(typeof p.promptCache === "boolean"
+            ? { promptCache: p.promptCache }
+            : {}),
         })),
         models: config.models.map((m) => ({
           id: m.id,
@@ -4583,6 +4749,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         toolsAutoApprove: config.tools.autoApprove,
         toolsApprovals: config.tools.approvals,
         focusChainEnabled: config.focusChain.enabled,
+        turnContextFollowUps: config.turnContext.followUps,
         checkpointsEnabled: config.checkpoints.enabled,
         skillsEnabled: config.skills.enabled,
         skillsWorkspaceEnabled: config.skills.workspaceEnabled,
@@ -5037,6 +5204,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: string;
           apiKey?: string;
           statusUrl?: string;
+          promptCache?: boolean;
         } = { id, baseUrl };
         if (name) {
           row.name = name;
@@ -5046,6 +5214,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         if (statusUrl && statusUrl !== baseUrl) {
           row.statusUrl = statusUrl;
+        }
+        if (typeof p?.promptCache === "boolean") {
+          row.promptCache = p.promptCache;
         }
         return row;
       })
@@ -5058,6 +5229,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: string;
           apiKey?: string;
           statusUrl?: string;
+          promptCache?: boolean;
         } => Boolean(p)
       );
 
@@ -5258,6 +5430,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "focusChain.enabled",
       raw.focusChainEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "turnContext.followUps",
+      raw.turnContextFollowUps === "slim" || raw.turnContextFollowUps === "none"
+        ? raw.turnContextFollowUps
+        : "full",
       target
     );
     await cfg.update(
@@ -5543,6 +5722,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       chatTitle: agentName,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       chatId: this.store.activeChatId || "",
       scrollTop: getActiveChat(this.store)?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
@@ -6132,6 +6315,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 </select>
               </label>
             </div>
+            <label class="settings-toggle-row settings-approval-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTurnContextLabel">Turn context on follow-ups</span>
+                <span class="settings-toggle-hint" id="settingsTurnContextNote">IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.</span>
+              </span>
+              <select id="settingsTurnContextFollowUps" class="settings-input settings-approval-select">
+                <option value="full" id="settingsTurnContextFull"></option>
+                <option value="slim" id="settingsTurnContextSlim"></option>
+                <option value="none" id="settingsTurnContextNone"></option>
+              </select>
+            </label>
             <label class="settings-toggle-row">
               <span class="settings-toggle-text">
                 <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
@@ -6328,8 +6522,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </label>
           </div>
           <label class="settings-field settings-check">
-            <input id="modelEditVision" type="checkbox" />
-            <span class="settings-label">Supports images (vision)</span>
+            <span class="settings-label" id="modelEditVisionLabel">Supports images (vision)</span>
+            <span class="mcp-switch">
+              <input id="modelEditVision" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
@@ -6418,6 +6615,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field">
             <span class="settings-label">API Key</span>
             <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
+          </label>
+          <label class="settings-toggle-row">
+            <span class="settings-toggle-text">
+              <span class="settings-toggle-title" id="providerEditPromptCacheLabel">Prompt cache</span>
+              <span class="settings-toggle-hint" id="providerEditPromptCacheHint">Emit Anthropic-style cache_control markers. Turn on only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI will reject the marker with 400.</span>
+            </span>
+            <span class="mcp-switch">
+              <input id="providerEditPromptCache" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-foot">

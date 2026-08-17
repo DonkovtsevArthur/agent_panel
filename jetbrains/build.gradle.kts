@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.0.9"
+version = "2.0.10"
 
 repositories {
     mavenCentral()
@@ -68,6 +68,12 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>2.0.10</b>
+            <ul>
+              <li>Prompt cache — чекбокс заменён на свитч (toggle), перевод на русский</li>
+              <li>Prompt cache по умолчанию включён для всех провайдеров (включая существующие)</li>
+              <li>Исправлено сохранение prompt cache — настройка больше не теряется при перезапуске</li>
+            </ul>
             <b>2.0.6</b>
             <ul>
               <li>Провайдеры и модели хранятся глобально (<code>~/.harbor/settings.json</code>) — доступны всем проектам</li>

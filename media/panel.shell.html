@@ -224,10 +224,10 @@
           <p class="settings-section-note" id="settingsCommitNote">Generate SCM commit messages from the diff.</p>
           <h4 class="settings-section-title settings-group-title" id="settingsCommitGenerationTitle">Generation</h4>
           <div class="settings-limits-row">
-            <label class="settings-field">
-              <span class="settings-label" id="settingsCommitModelLabel">Model</span>
-              <select id="settingsCommitModel" class="settings-input"></select>
-            </label>
+            <div class="settings-field">
+              <span class="settings-label" id="settingsCommitModelsLabel">Models</span>
+              <div id="settingsCommitModelList" class="settings-fetch-models-list"></div>
+            </div>
             <label class="settings-field">
               <span class="settings-label" id="settingsCommitLanguageLabel">Language</span>
               <select id="settingsCommitLanguage" class="settings-input">
@@ -686,8 +686,11 @@
             </label>
           </div>
           <label class="settings-field settings-check">
-            <input id="modelEditVision" type="checkbox" />
-            <span class="settings-label">Supports images (vision)</span>
+            <span class="settings-label" id="modelEditVisionLabel">Supports images (vision)</span>
+            <span class="mcp-switch">
+              <input id="modelEditVision" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
@@ -776,6 +779,16 @@
           <label class="settings-field">
             <span class="settings-label">API Key</span>
             <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
+          </label>
+          <label class="settings-toggle-row">
+            <span class="settings-toggle-text">
+              <span class="settings-toggle-title" id="providerEditPromptCacheLabel">Prompt cache</span>
+              <span class="settings-toggle-hint" id="providerEditPromptCacheHint">Emit Anthropic-style cache_control markers. Turn on only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI will reject the marker with 400.</span>
+            </span>
+            <span class="mcp-switch">
+              <input id="providerEditPromptCache" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-foot">

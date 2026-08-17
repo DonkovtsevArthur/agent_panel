@@ -129,6 +129,7 @@
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
   const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditPromptCache = document.getElementById("providerEditPromptCache");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
   const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
@@ -212,6 +213,9 @@
   };
   const settingsFocusChainEnabled = document.getElementById(
     "settingsFocusChainEnabled"
+  );
+  const settingsTurnContextFollowUps = document.getElementById(
+    "settingsTurnContextFollowUps"
   );
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
@@ -507,4 +511,11 @@
   let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
+  // Cumulative billing totals for the active chat (from Cline usage events).
+  // Shown in the context ring tooltip so users can see what a chat actually
+  // consumed — including prompt-cache hits — without leaving the product.
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
   let notificationAudioContext = null;

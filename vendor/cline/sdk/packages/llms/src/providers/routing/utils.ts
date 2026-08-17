@@ -39,6 +39,15 @@ export function buildProviderAndAliasPatch(options: {
 	const providerOptionsKey = isClineProvider(options.providerId)
 		? "cline"
 		: options.providerOptionsKey;
+	// The generic openai-compatible provider's AI SDK name is `openaiCompatible`.
+	// The hyphenated raw id `openai-compatible` is a deprecated providerOptions
+	// key (AI SDK emits a DeprecationWarning for it) and the camelCase alias
+	// resolves to `openaiCompatible` — a duplicate of the bucket below. Emit only
+	// the camelCase bucket for that provider id; other providers keep the
+	// raw-id + camelCase-alias buckets as before.
+	if (providerId === "openai-compatible") {
+		return { openaiCompatible: bucketOptions };
+	}
 	const needsAlias =
 		providerOptionsKey !== providerId && providerOptionsKey !== "anthropic";
 	return {

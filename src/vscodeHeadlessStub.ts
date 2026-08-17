@@ -171,6 +171,7 @@ class HeadlessConfiguration {
     "tools.autoApprove": ["toolsAutoApprove"],
     "tools.approvals": ["toolsApprovals"],
     "focusChain.enabled": ["focusChainEnabled"],
+    "turnContext.followUps": ["turnContextFollowUps"],
     "checkpoints.enabled": ["checkpointsEnabled"],
     "skills.enabled": ["skillsEnabled"],
     "skills.workspaceEnabled": ["skillsWorkspaceEnabled"],

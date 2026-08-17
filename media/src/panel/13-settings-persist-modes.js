@@ -62,6 +62,7 @@
           baseUrl: p.baseUrl || "",
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          promptCache: typeof p.promptCache === "boolean" ? p.promptCache : true,
         }))
       : [];
     if (
@@ -180,6 +181,11 @@
     if (settingsFocusChainEnabled) {
       settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
     }
+    if (settingsTurnContextFollowUps) {
+      const mode = String(settings.turnContextFollowUps || "full");
+      settingsTurnContextFollowUps.value =
+        mode === "slim" || mode === "none" ? mode : "full";
+    }
     if (settingsCheckpointsEnabled) {
       settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
     }
@@ -278,6 +284,9 @@
         if (statusUrl && statusUrl !== row.baseUrl) {
           row.statusUrl = statusUrl;
         }
+        if (typeof p.promptCache === "boolean") {
+          row.promptCache = p.promptCache;
+        }
         return row;
       });
 
@@ -367,6 +376,12 @@
       focusChainEnabled: settingsFocusChainEnabled
         ? settingsFocusChainEnabled.checked
         : true,
+      turnContextFollowUps:
+        settingsTurnContextFollowUps &&
+        (settingsTurnContextFollowUps.value === "slim" ||
+          settingsTurnContextFollowUps.value === "none")
+          ? settingsTurnContextFollowUps.value
+          : "full",
       checkpointsEnabled: settingsCheckpointsEnabled
         ? settingsCheckpointsEnabled.checked
         : true,

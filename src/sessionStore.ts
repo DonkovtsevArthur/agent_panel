@@ -159,6 +159,18 @@ export interface ChatSession {
   archivedAt?: number;
   /** Последний известный расход контекста (токены). */
   contextTokens?: number;
+  /**
+   * Накопленный биллинг по чату: суммарные input токены всех итераций
+   * (включая повторы и спавны). Не то же, что contextTokens (занятость окна
+   * последнего вызова). Обновляется из Cline usage events с total* полями.
+   */
+  totalInputTokens?: number;
+  /** Накопленный output по чату (биллинг). */
+  totalOutputTokens?: number;
+  /** Накопленные чтения из prompt-кэша по чату (Anthropic cache_read / OpenAI cached). */
+  totalCacheReadTokens?: number;
+  /** Накопленные записи в prompt-кэш по чату (Anthropic cache_creation). */
+  totalCacheWriteTokens?: number;
   /** Чат, от которого ответвились. */
   parentChatId?: string;
   /** Индекс ui-сообщения в родителе, от которого создана ветка. */

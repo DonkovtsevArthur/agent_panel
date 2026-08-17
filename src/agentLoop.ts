@@ -32,6 +32,18 @@ export interface ContextUsageInfo {
   used: number;
   promptTokens: number;
   completionTokens: number;
+  /** Cached prefix tokens read this call (Anthropic cache_read / OpenAI cached_tokens). */
+  cacheReadTokens?: number;
+  /** Tokens written to the prompt cache this call (Anthropic cache_creation). */
+  cacheWriteTokens?: number;
+  /** Cumulative input tokens across iterations of this session (billing view). */
+  totalInputTokens?: number;
+  /** Cumulative output tokens across iterations of this session (billing view). */
+  totalOutputTokens?: number;
+  /** Cumulative cache reads across iterations of this session. */
+  totalCacheReadTokens?: number;
+  /** Cumulative cache writes across iterations of this session. */
+  totalCacheWriteTokens?: number;
 }
 
 export interface AgentRunCallbacks {

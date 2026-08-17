@@ -265,6 +265,14 @@ function openFileTargetPaths(): string[] {
 export async function buildTurnContextBlock(options: {
   skipActiveFilePrefetch?: boolean;
   lastAgentEditedPaths?: string[];
+  /**
+   * Follow-up turn of a live session: keep the cheap live-state parts
+   * (editor state, git, diagnostics, enclosing symbol, agent-edited paths)
+   * and drop the heavy ones (active-file prefetch, workspace rules,
+   * terminal snapshot, recently viewed) — they were already sent on the
+   * session's first turn and stay in its history.
+   */
+  slim?: boolean;
 }): Promise<string> {
   const parts: string[] = [];
   try {
@@ -276,7 +284,7 @@ export async function buildTurnContextBlock(options: {
     /* headless / stub */
   }
 
-  if (!options.skipActiveFilePrefetch) {
+  if (!options.slim && !options.skipActiveFilePrefetch) {
     try {
       const prefetch = buildActiveFilePrefetchMessage();
       if (prefetch.trim()) {
@@ -293,17 +301,19 @@ export async function buildTurnContextBlock(options: {
   const gitPromise = buildGitSnapshotMessage().catch(() => "");
   const symbolPromise = buildEnclosingSymbolMessage().catch(() => "");
   let rulesPromise: Promise<string | undefined> | undefined;
-  try {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (folder) {
-      rulesPromise = loadWorkspaceRules(folder.uri.fsPath, {
-        omitAgentsMd: true,
-        targetPaths: openFileTargetPaths(),
-        charCap: 6_000,
-      }).catch(() => undefined);
+  if (!options.slim) {
+    try {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (folder) {
+        rulesPromise = loadWorkspaceRules(folder.uri.fsPath, {
+          omitAgentsMd: true,
+          targetPaths: openFileTargetPaths(),
+          charCap: 6_000,
+        }).catch(() => undefined);
+      }
+    } catch {
+      /* no rules dir */
     }
-  } catch {
-    /* no rules dir */
   }
 
   const git = await gitPromise;
@@ -338,26 +348,30 @@ export async function buildTurnContextBlock(options: {
     /* headless / no LSP */
   }
 
-  try {
-    const terminal = buildTerminalSnapshotMessage(
-      extras.terminal?.output
-        ? {
-            name: String(extras.terminal.name || "Run"),
-            command: extras.terminal.command,
-            cwd: extras.terminal.cwd,
-            output: String(extras.terminal.output),
-            exitCode: extras.terminal.exitCode,
-          }
-        : undefined
-    );
-    if (terminal.trim()) {
-      parts.push(terminal.trim());
+  if (!options.slim) {
+    try {
+      const terminal = buildTerminalSnapshotMessage(
+        extras.terminal?.output
+          ? {
+              name: String(extras.terminal.name || "Run"),
+              command: extras.terminal.command,
+              cwd: extras.terminal.cwd,
+              output: String(extras.terminal.output),
+              exitCode: extras.terminal.exitCode,
+            }
+          : undefined
+      );
+      if (terminal.trim()) {
+        parts.push(terminal.trim());
+      }
+    } catch {
+      /* no terminal API */
     }
-  } catch {
-    /* no terminal API */
   }
 
-  const recentViewed = buildRecentlyViewedMessage(extras.recentFiles || []);
+  const recentViewed = options.slim
+    ? ""
+    : buildRecentlyViewedMessage(extras.recentFiles || []);
   if (recentViewed) {
     parts.push(recentViewed);
   }

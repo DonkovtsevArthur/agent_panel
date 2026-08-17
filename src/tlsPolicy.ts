@@ -200,7 +200,9 @@ function nodeHttpsFetch(
           req.end(b);
           return;
         }
-        const ab = await new Response(b).arrayBuffer();
+        // Runtime accepts ArrayBuffer/Uint8Array/Blob; the lib types narrow
+        // Uint8Array to <ArrayBufferLike> which BodyInit does not include.
+        const ab = await new Response(b as BodyInit).arrayBuffer();
         req.end(Buffer.from(ab));
       })
       .catch(reject);

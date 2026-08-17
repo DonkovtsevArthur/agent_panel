@@ -13,7 +13,11 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
-import { selectUtilityModel } from "./modelRouting";
+import {
+  looksLikeUtilityModel,
+  selectUtilityModel,
+  UTILITY_MODEL_PREFERENCE,
+} from "./modelRouting";
 import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   capWorkspaceRuleText,
@@ -229,6 +233,37 @@ function cleanCommitMessage(raw: string): string {
   return text;
 }
 
+/**
+ * Отсортировать кандидатов для commit message: сначала модели из
+ * UTILITY_MODEL_PREFERENCE (самые лёгкие/быстрые), потом остальные
+ * по looksLikeUtilityModel, потом всё остальное.
+ */
+function sortCommitModelCandidates(
+  ids: string[],
+  enabled: readonly { id: string; label?: string }[]
+): string[] {
+  const byId = new Map(enabled.map((m) => [m.id, m]));
+  return [...ids].sort((a, b) => {
+    const ra = rankCommitModel(a, byId.get(a));
+    const rb = rankCommitModel(b, byId.get(b));
+    return ra - rb;
+  });
+}
+
+function rankCommitModel(
+  id: string,
+  model: { id: string; label?: string } | undefined
+): number {
+  const prefIdx = UTILITY_MODEL_PREFERENCE.indexOf(id);
+  if (prefIdx >= 0) {
+    return prefIdx;
+  }
+  if (model && looksLikeUtilityModel(model)) {
+    return 100 + (model.label || model.id).length;
+  }
+  return 200;
+}
+
 async function findCommitRuleInCursorRules(
   root: string
 ): Promise<string | undefined> {
@@ -323,10 +358,12 @@ function buildPrompts(
       ? "Ты помогаешь писать сообщения git-коммитов. Ответь только текстом сообщения коммита: 1–2 предложения, кратко, по сути изменений. Без кавычек, без markdown, без префикса «Commit message:»."
       : "You write git commit messages. Reply with the commit message text only: 1–2 sentences, concise, focused on why. No quotes, no markdown, no 'Commit message:' prefix.";
 
+  // Если передан кастомный промпт — используем его как основной system prompt,
+  // а дефолтный добавляем только как «без markdown/кавычек»约束 в конце.
   const system = projectRule
     ? lang === "ru"
-      ? `${baseSystem}\n\nСоблюдай правило проекта для сообщений коммитов:\n${projectRule}`
-      : `${baseSystem}\n\nFollow the project commit-message rule:\n${projectRule}`
+      ? `${projectRule}\n\nОтвечай ТОЛЬКО текстом сообщения коммита — без кавычек, без markdown, без префикса «Commit message:» или «Сообщение коммита:»`
+      : `${projectRule}\n\nReply with the commit message text only — no quotes, no markdown, no 'Commit message:' prefix`
     : baseSystem;
 
   if (lang === "ru") {
@@ -399,13 +436,15 @@ export async function composeCommitMessageText(
     enabled[0]?.id ||
     "";
 
-  // Кандидаты: явный список из Settings → иначе utility-цепочка.
+  // Кандидаты: явный список из Settings (отсортированный по простоте) →
+  // иначе utility-цепочка.
   const configuredIds = config.commitMessage.modelIds.filter((id) =>
     enabled.some((m) => m.id === id)
   );
+  console.warn("[Harbor commit] modelIds:", config.commitMessage.modelIds, "configuredIds:", configuredIds, "enabled:", enabled.map(m => m.id));
   const candidates =
     configuredIds.length > 0
-      ? configuredIds
+      ? sortCommitModelCandidates(configuredIds, enabled)
       : (() => {
           const sel = selectUtilityModel(enabled, {
             fallbackModelId: mainModelId,
@@ -429,8 +468,11 @@ export async function composeCommitMessageText(
   const instruction = hasCustomPrompt
     ? storedPrompt
     : projectRule || defaultCommitMessagePromptForLanguage(lang);
+  // Если кастомный промпт на русском — force lang="ru" для user prompt.
+  const effectiveLang =
+    hasCustomPrompt && /[а-яА-ЯёЁ]/.test(storedPrompt) ? "ru" : lang;
   const prompts = buildPrompts(
-    lang,
+    effectiveLang,
     data.diff,
     data.source,
     instruction

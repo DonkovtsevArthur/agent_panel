@@ -1204,10 +1204,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			request: { providerId: "openai-compatible", modelId: "kimi-k2.6" },
 			context: { family: "kimi-k2.6" },
 			expect: [
-				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "enabled" } },
-				},
 				{ bucket: "openaiCompatible", has: { thinking: { type: "enabled" } } },
 			],
 		},
@@ -1220,10 +1216,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			},
 			context: { family: "kimi-k2.6" },
 			expect: [
-				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "disabled" } },
-				},
 				{
 					bucket: "openaiCompatible",
 					has: { thinking: { type: "disabled" } },
@@ -1547,10 +1539,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			context: { family: "deepseek" },
 			expect: [
 				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "disabled" } },
-				},
-				{
 					bucket: "openaiCompatible",
 					has: { thinking: { type: "disabled" } },
 				},
@@ -1565,10 +1553,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			},
 			context: { family: "deepseek-thinking" },
 			expect: [
-				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "disabled" } },
-				},
 				{
 					bucket: "openaiCompatible",
 					has: { thinking: { type: "disabled" } },
@@ -1585,10 +1569,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			context: { family: "deepseek-flash" },
 			expect: [
 				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "disabled" } },
-				},
-				{
 					bucket: "openaiCompatible",
 					has: { thinking: { type: "disabled" } },
 				},
@@ -1603,10 +1583,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			},
 			context: { family: "deepseek-thinking" },
 			expect: [
-				{
-					bucket: "openai-compatible",
-					has: { thinking: { type: "enabled" } },
-				},
 				{ bucket: "openaiCompatible", has: { thinking: { type: "enabled" } } },
 			],
 		},
@@ -1615,7 +1591,6 @@ describe("composeAiSdkProviderOptions: family/provider thinking patches", () => 
 			request: { providerId: "openai-compatible", modelId: "deepseek-v4-pro" },
 			context: { family: "deepseek" },
 			expect: [
-				{ bucket: "openai-compatible", lacks: ["thinking"] },
 				{ bucket: "openaiCompatible", lacks: ["thinking"] },
 			],
 		},

@@ -57,6 +57,45 @@ export interface AgentProvider {
    * Пусто или равен baseUrl → `{baseUrl}/models`.
    */
   statusUrl?: string;
+  /**
+   * Per-provider opt-in for Anthropic-style `cache_control` prompt-cache markers
+   * on OpenAI-compatible chat turns. Overrides the global
+   * `agentPanel.promptCache.enabled`:
+   * - `true`  — emit markers (only safe for upstreams that accept them:
+   *   LiteLLM / OpenRouter with Claude|Qwen upstreams, Anthropic-compatible
+   *   endpoints).
+   * - `false` — never emit, even if the global flag is on.
+   * - unset  — follow `agentPanel.promptCache.enabled` (backward compatible).
+   *
+   * Strict OpenAI (`api.openai.com`) rejects the marker with 400, so leave it
+   * off for plain OpenAI endpoints. Auto-suggested at "on" in Settings when the
+   * baseUrl looks like litellm / openrouter / anthropic.
+   */
+  promptCache?: boolean;
+}
+
+/**
+ * Heuristic for the Settings "smart default": flip the per-provider promptCache
+ * checkbox on by default when the baseUrl is one of the upstreams known to
+ * accept Anthropic-style `cache_control` on OpenAI-format bodies.
+ * Intentionally conservative — misses are fine (the user can still toggle on),
+ * false positives would 400 every request on that provider.
+ */
+export function baseUrlSuggestsPromptCache(baseUrl: string): boolean {
+  const url = String(baseUrl || "").toLowerCase();
+  if (!url) {
+    return false;
+  }
+  if (/api\.openai\.com/.test(url)) {
+    return false;
+  }
+  return (
+    /litellm/.test(url) ||
+    /openrouter\.ai/.test(url) ||
+    /anthropic\.com/.test(url) ||
+    /claude\.ai/.test(url) ||
+    /aihubmix|sapaicore|vertex|ai-sdk/.test(url)
+  );
 }
 
 export interface AgentModel {
@@ -235,6 +274,17 @@ export interface AgentPanelConfig {
     enabled: boolean;
   };
   /**
+   * `[Harbor turn context]` IDE block on follow-up turns of a live Cline
+   * session. The session's first turn always gets the full block; follow-ups
+   * re-send it and the old blocks stay in the session history, which is what
+   * inflates long chats. `full` keeps the legacy behavior, `slim` drops the
+   * heavy parts (active-file prefetch, workspace rules, terminal snapshot,
+   * recently viewed files), `none` sends no block on follow-ups.
+   */
+  turnContext: {
+    followUps: "full" | "slim" | "none";
+  };
+  /**
    * Cline git checkpoints at the start of each root-agent run (restore via UI).
    */
   checkpoints: {
@@ -339,6 +389,7 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
       baseUrl?: unknown;
       apiKey?: unknown;
       statusUrl?: unknown;
+      promptCache?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     const baseUrl = normalizeBaseUrl(
@@ -360,6 +411,9 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
     );
     if (statusUrl && statusUrl !== baseUrl) {
       provider.statusUrl = statusUrl;
+    }
+    if (typeof row.promptCache === "boolean") {
+      provider.promptCache = row.promptCache;
     }
     providers.push(provider);
   }
@@ -644,6 +698,14 @@ export function getConfig(): AgentPanelConfig {
     })(),
     focusChain: {
       enabled: cfg.get<boolean>("focusChain.enabled") !== false,
+    },
+    turnContext: {
+      followUps:
+        cfg.get("turnContext.followUps") === "none"
+          ? "none"
+          : cfg.get("turnContext.followUps") === "slim"
+            ? "slim"
+            : "full",
     },
     checkpoints: {
       enabled: cfg.get<boolean>("checkpoints.enabled") !== false,
@@ -936,4 +998,27 @@ export function resolveModelEndpoint(modelId: string): ModelEndpoint {
     providerName: provider.name || provider.id,
     statusUrl: statusUrl && statusUrl !== baseUrl ? statusUrl : undefined,
   };
+}
+
+/**
+ * Effective prompt-cache flag for a model: provider override → global setting.
+ * - `true` emits Anthropic-style `cache_control` markers on chat turns for
+ *   upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible).
+ * - `false` (default) keeps the legacy markerless behavior.
+ *
+ * Used by `clineRuntime` to set the `prompt-cache` model capability and the
+ * gateway `routing.promptCache` metadata. Part of the Cline session fingerprint
+ * so toggling restarts the session for that provider only.
+ */
+export function resolveModelPromptCache(modelId: string): boolean {
+  const config = getConfig();
+  const model = config.models.find((m) => m.id === modelId);
+  const wantedId = model?.providerId?.trim() || "";
+  const provider = wantedId
+    ? config.providers.find((p) => p.id === wantedId)
+    : primaryProvider(config.providers);
+  if (provider && typeof provider.promptCache === "boolean") {
+    return provider.promptCache;
+  }
+  return config.promptCache.enabled === true;
 }

@@ -1395,12 +1395,26 @@
     return Math.min(1, u / m);
   }
 
-  function setContextUsage(used, max) {
+  function setContextUsage(used, max, totals) {
     if (!contextRingEl || !contextRingValueEl) {
       return;
     }
     contextUsed = Math.max(0, Number(used) || 0);
     contextMax = Math.max(1, Number(max) || 128000);
+    if (totals && typeof totals === "object") {
+      if (typeof totals.totalInputTokens === "number") {
+        totalInputTokens = Math.max(0, totals.totalInputTokens);
+      }
+      if (typeof totals.totalOutputTokens === "number") {
+        totalOutputTokens = Math.max(0, totals.totalOutputTokens);
+      }
+      if (typeof totals.totalCacheReadTokens === "number") {
+        totalCacheReadTokens = Math.max(0, totals.totalCacheReadTokens);
+      }
+      if (typeof totals.totalCacheWriteTokens === "number") {
+        totalCacheWriteTokens = Math.max(0, totals.totalCacheWriteTokens);
+      }
+    }
     const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
     const pctLabel = Math.round(pct * 100);
@@ -1412,7 +1426,7 @@
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
-    const tip = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
@@ -1421,6 +1435,24 @@
     if (stickToBottom) {
       scrollToBottom();
     }
+  }
+
+  function buildContextRingTip(usedLabel, maxLabel, pctLabel) {
+    const base = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const hasTotals =
+      totalInputTokens > 0 || totalOutputTokens > 0;
+    if (!hasTotals) {
+      return base;
+    }
+    const inLabel = formatTokenCount(totalInputTokens);
+    const outLabel = formatTokenCount(totalOutputTokens);
+    const parts = [`in ${inLabel}`, `out ${outLabel}`];
+    if (totalCacheReadTokens > 0 || totalCacheWriteTokens > 0) {
+      const cacheRead = formatTokenCount(totalCacheReadTokens);
+      const cacheWrite = formatTokenCount(totalCacheWriteTokens);
+      parts.push(`cache read ${cacheRead}`, `cache write ${cacheWrite}`);
+    }
+    return `${base}  ·  ${parts.join(" / ")}`;
   }
 
   /**

@@ -43,7 +43,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         renderChatBranches(msg.branches);
         showScreen(msg.screen || "agents");
@@ -194,7 +199,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         showScreen("chat");
         setBusy(Boolean(msg.busy));
@@ -253,7 +263,12 @@
         }
         break;
       case "contextUsage":
-        setContextUsage(msg.used || 0, msg.max || contextMax);
+        setContextUsage(msg.used || 0, msg.max || contextMax, {
+          totalInputTokens: msg.totalInputTokens,
+          totalOutputTokens: msg.totalOutputTokens,
+          totalCacheReadTokens: msg.totalCacheReadTokens,
+          totalCacheWriteTokens: msg.totalCacheWriteTokens,
+        });
         break;
       case "modelsUpdated":
         fillModels(msg.models, msg.selectedModel);
@@ -584,7 +599,12 @@
         setComposerPlanBuild("", false);
         lastOpenedPlanKey = "";
         setAgentStatus("", true);
-        setContextUsage(0, contextMax);
+        setContextUsage(0, contextMax, {
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCacheWriteTokens: 0,
+        });
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
         break;
