@@ -7,6 +7,18 @@
   const host =
     (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
     acquireVsCodeApi();
+
+  /** Crypto-random base36 token — ids must not come from Math.random (CWE-338). */
+  function cryptoToken(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(36).padStart(2, "0");
+    }
+    return out.slice(0, len);
+  }
+
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",

@@ -800,7 +800,7 @@
         },
         "agentPanel.rejectUnauthorized": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "%config.rejectUnauthorized.description%"
         },
         "agentPanel.commitMessage.prompt": {

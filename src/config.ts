@@ -773,7 +773,7 @@ export function getConfig(): AgentPanelConfig {
     selectionHints: {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },
-    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? false,
+    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? true,
     caBundlePath: "",
     commitMessage: (() => {
       const commitLanguage = readCommitMessageLanguage(

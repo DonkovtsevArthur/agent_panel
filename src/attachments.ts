@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import * as vscode from "vscode";
 import type { ContentPart } from "./openaiClient";
 import { IMAGE_ONLY_ANALYSIS_PROMPT } from "./imagePromptPolicy";
@@ -102,9 +103,9 @@ export const TURN_INLINE_FILE_CHARS = 12_000;
 export const TURN_INLINE_FILES_TOTAL_CHARS = 32_000;
 
 export function newAttachmentId(): string {
-  return `att_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  return `att_${Date.now().toString(36)}_${randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)}`;
 }
 
 const UUID_RE =

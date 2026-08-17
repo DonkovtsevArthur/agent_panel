@@ -3,7 +3,7 @@
  * UI callbacks stay the Harbor AgentRunCallbacks contract.
  */
 import * as path from "path";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import * as vscode from "vscode";
 import {
   getConfig,
@@ -1427,7 +1427,7 @@ function emitStep(
 }
 
 function newSessionId(): string {
-  return `harbor-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  return `harbor-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 9)}`;
 }
 
 function clineSessionFingerprint(parts: {

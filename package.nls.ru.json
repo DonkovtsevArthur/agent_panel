@@ -98,7 +98,7 @@
   "config.tabAutocomplete.showMode.enum.inline": "Inline — ghost text сразу",
   "config.tabAutocomplete.fim.description": "Fill-in-the-middle (/completions с prompt+suffix), если провайдер умеет. При ошибке — обычный hole-fill chat. По умолчанию выкл.",
   "config.selectionHints.enabled.description": "Показывать всплывающие действия «Добавить в чат» над выделенным кодом в редакторе.",
-  "config.rejectUnauthorized.description": "Проверять TLS-сертификат. Выключено (по умолчанию) — работает без CA bundle за корпоративным прокси. Включено — строгая проверка по системному хранилищу.",
+  "config.rejectUnauthorized.description": "Проверять TLS-сертификаты. Включено (по умолчанию) — строгая проверка по системному хранилищу. Выключено — принимать самоподписанные сертификаты корпоративного прокси (небезопасно; opt-in, если нет CA bundle).",
   "config.commitMessage.prompt.description": "Своё правило/промпт для генерации сообщений коммита в SCM. Пусто = правила проекта, затем встроенный дефолт.",
   "config.commitMessage.modelIds.description": "Id моделей из agentPanel.models для генерации сообщений коммита. Первая доступная модель; если не отвечает 10 с — переход к следующей. Пусто = автоматический выбор лёгкой/utility-модели.",
   "config.commitMessage.language.description": "Язык сгенерированных сообщений коммита",

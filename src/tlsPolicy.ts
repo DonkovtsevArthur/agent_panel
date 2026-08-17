@@ -1,8 +1,11 @@
 /**
  * Harbor Advanced → "Validate TLS certificate" (`agentPanel.rejectUnauthorized`,
- * default **false**). Cline chat uses undici/`fetch`, not openaiClient's
- * https.Agent — so we apply NODE_TLS env, an insecure fetch dispatcher, and
- * patch globalThis.fetch so every Cline path honors the setting.
+ * default **true**). Cline chat uses undici/`fetch`, not openaiClient's
+ * https.Agent — so we apply an insecure fetch dispatcher and patch
+ * globalThis.fetch so every Cline path honors the setting. The process-wide
+ * `NODE_TLS_REJECT_UNAUTHORIZED` env is deliberately NOT touched: disabling
+ * cert checks must stay scoped to Harbor's own requests (SAST: insecure SSL
+ * parameters) and never weaken unrelated code in the extension host.
  */
 import * as https from "https";
 import * as http from "http";
@@ -27,20 +30,18 @@ export function applyHarborTlsPolicy(rejectUnauthorized?: boolean): void {
   }
   applied = value;
   if (value) {
-    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     insecureAgent = undefined;
     undiciDispatcher = undefined;
   } else {
-    // Corporate / self-signed MITM proxies (common on internal LiteLLM gateways).
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    // Explicit opt-in for corporate / self-signed MITM proxies (common on
+    // internal LiteLLM gateways). Scoped: only harborFetch dispatches through
+    // this agent — the process env stays untouched.
     insecureAgent = new https.Agent({ rejectUnauthorized: false });
     undiciDispatcher = undefined;
   }
   ensureGlobalFetchPatched();
   try {
-    process.stderr.write(
-      `[harbor-tls] rejectUnauthorized=${value} NODE_TLS_REJECT_UNAUTHORIZED=${process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? "(unset)"}\n`
-    );
+    process.stderr.write(`[harbor-tls] rejectUnauthorized=${value}\n`);
   } catch {
     /* ignore */
   }
@@ -77,8 +78,8 @@ function getUndiciDispatcher(): unknown {
 
 /**
  * Fetch for Cline gateway. When TLS validation is off, use undici Agent /
- * Node https with rejectUnauthorized:false (env alone is not enough on some
- * Node builds).
+ * Node https with rejectUnauthorized:false (scoped to this fetch only; the
+ * process env is never modified).
  */
 export function harborFetch(
   input: string | URL | Request,

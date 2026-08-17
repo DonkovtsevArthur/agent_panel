@@ -727,7 +727,7 @@
         const mime = file.type || "application/octet-stream";
         const kind = mime.startsWith("image/") ? "image" : "file";
         resolve({
-          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          id: `local_${Date.now()}_${cryptoToken(7)}`,
           kind,
           name: file.name || (kind === "image" ? "image.png" : "file"),
           mime,

@@ -998,6 +998,11 @@
 				return `$${Number(value || 0).toFixed(3)}`;
 			}
 
+			function escapeHtml(value) {
+				const escapes = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+				return String(value ?? "").replace(/[&<>"']/g, (ch) => escapes[ch]);
+			}
+
 			function timeAgo(timestamp) {
 				const delta = Math.max(0, Date.now() - Number(timestamp || Date.now()));
 				const seconds = Math.floor(delta / 1000);
@@ -1057,9 +1062,9 @@
 							<div class="list-row">
 								<div class="left-row">
 									<span class="dot ${dot}"></span>
-									<span class="truncate">${client.name || client.label || "Client"}</span>
+									<span class="truncate">${escapeHtml(client.name || client.label || "Client")}</span>
 								</div>
-								<span class="row-muted">${client.sessionCount || 0} ${(client.sessionCount || 0) === 1 ? "session" : "sessions"}</span>
+								<span class="row-muted">${escapeHtml(Number(client.sessionCount) || 0)} ${(client.sessionCount || 0) === 1 ? "session" : "sessions"}</span>
 								<span style="color: ${status === "Running" ? "var(--green)" : "var(--blue)"}">${status}</span>
 							</div>
 						`;
@@ -1074,9 +1079,9 @@
 						<div class="event-row">
 							<div class="left-row">
 								<span class="dot ${statusColor("", event.severity)}"></span>
-								<span class="truncate">${event.title || "Event"}</span>
+								<span class="truncate">${escapeHtml(event.title || "Event")}</span>
 							</div>
-							<span class="truncate row-muted" style="max-width: 180px">${event.body || ""}</span>
+							<span class="truncate row-muted" style="max-width: 180px">${escapeHtml(event.body || "")}</span>
 							<span class="row-muted">${timeAgo(event.timestamp)}</span>
 						</div>
 					`)
@@ -1090,15 +1095,15 @@
 				document.getElementById("overview").innerHTML = `
 					<div>
 						<div class="kv-label">Model</div>
-						<div class="kv-value">${session.model || "claude-sonnet-4.6"}</div>
+						<div class="kv-value">${escapeHtml(session.model || "claude-sonnet-4.6")}</div>
 					</div>
 					<div>
 						<div class="kv-label">Workspace</div>
-						<div class="kv-value">${session.workspaceRoot || "~/Projects/atlas"}</div>
+						<div class="kv-value">${escapeHtml(session.workspaceRoot || "~/Projects/atlas")}</div>
 					</div>
 					<div>
 						<div class="kv-label">CWD</div>
-						<div class="kv-value">${session.cwd || session.workspaceRoot || "~/Projects/atlas/server"}</div>
+						<div class="kv-value">${escapeHtml(session.cwd || session.workspaceRoot || "~/Projects/atlas/server")}</div>
 					</div>
 					<div>
 						<div class="kv-label">Tokens</div>
@@ -1137,7 +1142,7 @@
 								<div class="transcript-row">
 									<span>${time}</span>
 									<span class="role ${role}">${role[0].toUpperCase()}${role.slice(1)}</span>
-									<span>${text}</span>
+									<span>${escapeHtml(text)}</span>
 								</div>
 							`,
 						)
@@ -1162,7 +1167,7 @@
 						<div class="timeline-row ${index === items.length - 1 ? "active" : ""}">
 							<span>${item[0]}</span>
 							<span class="timeline-node"></span>
-							<span class="truncate">${item[1]}</span>
+							<span class="truncate">${escapeHtml(item[1])}</span>
 						</div>
 					`)
 					.join("");

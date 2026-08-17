@@ -7,6 +7,18 @@
   const host =
     (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
     acquireVsCodeApi();
+
+  /** Crypto-random base36 token — ids must not come from Math.random (CWE-338). */
+  function cryptoToken(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(36).padStart(2, "0");
+    }
+    return out.slice(0, len);
+  }
+
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
@@ -2763,7 +2775,7 @@
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
       }
-      const id = item.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const id = item.id || `local_${Date.now()}_${cryptoToken(7)}`;
       if (pendingAttachments.some((a) => a.id === id)) {
         continue;
       }
@@ -2807,9 +2819,7 @@
   }
 
   function queueChipId() {
-    return `q_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `q_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function getQueueForChat(chatId) {
@@ -3056,9 +3066,7 @@
   }
 
   function selectionChipId() {
-    return `sel_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `sel_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function formatSelectionLabel(sel) {
@@ -3116,9 +3124,7 @@
   }
 
   function mentionChipId() {
-    return `mn_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `mn_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function addPendingMention(pathRaw) {
@@ -3805,7 +3811,7 @@
       demoteFieldLabel(select);
       const picker = document.createElement("div");
       picker.className = "model-picker settings-select-picker";
-      picker.dataset.selectId = select.id || `select-${Math.random().toString(36).slice(2, 9)}`;
+      picker.dataset.selectId = select.id || `select-${cryptoToken(9)}`;
 
       const trigger = document.createElement("button");
       trigger.type = "button";
@@ -5067,7 +5073,7 @@
         const mime = file.type || "application/octet-stream";
         const kind = mime.startsWith("image/") ? "image" : "file";
         resolve({
-          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          id: `local_${Date.now()}_${cryptoToken(7)}`,
           kind,
           name: file.name || (kind === "image" ? "image.png" : "file"),
           mime,
@@ -6441,7 +6447,7 @@
       }
       const id =
         item.id ||
-        `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        `local_${Date.now()}_${cryptoToken(7)}`;
       if (editingAttachments.some((a) => a.id === id)) {
         continue;
       }

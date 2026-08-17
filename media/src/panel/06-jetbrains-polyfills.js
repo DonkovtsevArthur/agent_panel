@@ -426,7 +426,7 @@
       demoteFieldLabel(select);
       const picker = document.createElement("div");
       picker.className = "model-picker settings-select-picker";
-      picker.dataset.selectId = select.id || `select-${Math.random().toString(36).slice(2, 9)}`;
+      picker.dataset.selectId = select.id || `select-${cryptoToken(9)}`;
 
       const trigger = document.createElement("button");
       trigger.type = "button";
