@@ -126,10 +126,10 @@
         class="com.harbor.agents.actions.AddSelectionToNewChatAction"
         text="Add Selection to New Chat"
         description="Start a new Harbor chat with the selected code">
-        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+Shift+L -->
-        <keyboard-shortcut keymap="$default" first-keystroke="control alt shift L"/>
-        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift L" replace-all="true"/>
-        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift L" replace-all="true"/>
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+L -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control alt L"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt L" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt L" replace-all="true"/>
       </action>
       <separator/>
       <action
@@ -147,10 +147,10 @@
         class="com.harbor.agents.actions.AddFileToNewChatAction"
         text="Add File to New Chat"
         description="Start a new Harbor chat with the current file">
-        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+Shift+H -->
-        <keyboard-shortcut keymap="$default" first-keystroke="control alt shift H"/>
-        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt shift H" replace-all="true"/>
-        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt shift H" replace-all="true"/>
+        <!-- Same as VS Code Harbor: Ctrl/Cmd+Alt+H -->
+        <keyboard-shortcut keymap="$default" first-keystroke="control alt H"/>
+        <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt H" replace-all="true"/>
+        <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta alt H" replace-all="true"/>
       </action>
     </group>
 
