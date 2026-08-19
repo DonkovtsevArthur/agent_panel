@@ -352,7 +352,10 @@ export function streamLooksLikeJunk(rawSoFar: string): boolean {
     return true;
   }
   // Truncated / leaked tags without a proper completion body.
-  if (/<\/?\s*COMPLE(?!TION\b)/i.test(t)) {
+  // Tolerate a partial opening prefix that can still become <COMPLETION>:
+  // only flag when COMPLE is followed by a char that rules out TION (and is
+  // not end-of-buffer, where more tokens may still arrive).
+  if (/<\/?\s*COMPLE(?![T]|$)/i.test(t)) {
     return true;
   }
   if (/^```/m.test(t) && !/<COMPLETION>/i.test(t)) {

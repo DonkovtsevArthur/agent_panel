@@ -2,6 +2,17 @@
   "version": 2,
   "agents": [
     {
+      "id": "agent_msxeo92a_e653db89",
+      "name": "поменя версию",
+      "chatId": "chat_msxeo929_53e5cdbf",
+      "chatIds": [
+        "chat_msxeo929_53e5cdbf"
+      ],
+      "createdAt": 1786981545442,
+      "updatedAt": 1786981558652,
+      "nameSource": "first_message"
+    },
+    {
       "id": "agent_msww3jgh_9x0ydl",
       "name": "тут?",
       "chatId": "chat_msww3jgh_kedx4c",
@@ -147,9 +158,57 @@
       "updatedAt": 1786966196246,
       "selectedReasoningEffort": "",
       "contextTokens": 17197
+    },
+    "chat_msxeo929_53e5cdbf": {
+      "id": "chat_msxeo929_53e5cdbf",
+      "title": "поменя версию",
+      "selectedModel": "DeepSeek-V4-Flash",
+      "selectedMode": "agent",
+      "history": [
+        {
+          "role": "user",
+          "content": "<user_input mode=\"act\">поменя версию\n\n[Harbor turn context]\n\nEnvironment context (for this request):\n- Current date and time: Monday, August 17, 2026, 18:45:53\n- Time zone: Europe/Moscow (UTC+03:00)\n- Workspace root: /Users/ag.donkovtcev/vscode-agent-panel\n- Active file: none (no open text document)\nUse this data for the current file, time, and editor state. Do not claim that you lack access to VS Code state or system time.\n\nGit snapshot (may be stale — use run_command for exact status/diff):\n- Branch: list_agent\n- Upstream: in sync with upstream\n- HEAD: 8d3f7f1 chore: обновить .vscode/settings.json, package.json, src/commitMessage.ts\n- Dirty (1 path):\n   M .idea/harbor/session.v2.json\n\nRecently viewed / open files:\n- /Users/ag.donkovtcev/vscode-agent-panel/README.md\n- README.md\n\nMatching workspace rules for the current file(s) (glob / alwaysApply; AGENTS.md is already in session rules):\n# Workspace rule: .cursor/rules/agent-edit-policy.mdc\n\n# Политика правок агента (Harbor Agents)\n\nДокумент для моделей, работающих **в этом репозитории** и для поведения runtime панели. Подробности и карта файлов: `AGENTS.md`.\n\n## Режим из UI — закон\n\n- **Agent** → Cline `act` (правки файлов + shell).\n- **Plan / Ask** → Cline `plan` (explore без editor; пользователь сам переключает в Agent для Build).\n- **Нельзя** подменять Agent → Ask по тексту вопроса (`agentPanelProvider.ts` держит `modeForRun = selectedMode`).\n- **Нельзя** отвечать «MCP недоступен в этом режиме», если Figma/MCP подключены.\n- **Нельзя** писать «готово / исправил», если в этом ходе не было реальных правок через tools.\n\n## Tools runtime (все модели)\n\nПуть: `agentLoop.ts` → `clineRuntime.ts` → **ClineCore** local host (`@cline/sdk` / форк `vendor/cline`).\n\nЧат: builtins через `DefaultRuntimeBuilder` + Harbor MCP как `extraTools`. Harbor Settings `providers` → Cline `openai-compatible`. Один ход UI = одна Cline-сессия.\n\nНельзя утверждать «нет доступа к сайтам / Figma», если MCP/tools доступны. Если Figma MCP не подключён — направить в Settings → MCP Servers (PAT).\n\nСтарый Harbor main-like мозг (`agentLoopMainLike`, plan-quality, honestFinale, …) **удалён**.\n\n## Картинки (vision)\n\nВложения-картинки уходят в Cline как `userImages` на `start` (`clineRuntime.ts`). Harbor **не** подменяет модель на vision. Если модель без image input — Cline подставляет placeholder; иначе пиксели идут провайдеру.\n\n## Plan/Ask shell\n\nHarbor Ask/Plan → Cline `plan`. Editor выключен; `run_commands` остаётся для read-only, но **plan command-guard** из runtime-builder блокирует mutating shell (`sed`/`rm`/редиректы и т.п.). См. `docs/cline-full-runtime-migration.md`.\n\n## Git — нельзя через shell\n\n- Запрещены через tools: `git commit`, `git push` (продуктовый путь — тег панели **Commit and push**).\n- Широкий `git add .` / discard всего — только по явной просьбе «все изменения».\n\n## В этом репозитории — можно править\n\n- Код задачи в `src/`, `media/`, `tests/`\n- `vendor/cline/` при патче форка (потом пересобрать SDK / `out/clineBundle.js`)\n- `version` в `package.json` перед vsce\n- `AGENTS.md` / `.cursor/rules` при фиксации реальных правил\n- nls / UI copy без бренда Cursor\n\n## В этом репозитории — нельзя\n\n- Сравнения с Cursor в README / Marketplace / toasts / nls\n- Писать агентов в `globalState` как основное хранилище\n- Ставить VSIX через `/usr/local/bin/code` (часто Cursor)\n- Врать про сделанные правки без реальных tool-записей\n\n## Сборка после UI/логики\n\nСм. `.cursor/rules/vscode-build-and-workspace.mdc`: compile → bump version → vsce → install в бинарь VS Code → Reload Window.\n\n# Workspace rule: .cursor/rules/material-icons.mdc\n\n# Иконки: Material Symbols Outlined\n\nИсточник: [Material Symbols](https://fonts.google.com/icons?icon.set=Material+Symbols&icon.style=Outlined).\n\n## Параметры (фиксируем в проекте)\n\n- Style: **Outlined**\n- Fill: **0** (off)\n- Weight: **400**\n- Grade: **0**\n- Optical Size: **24**\n\n## Правила\n\n- Все UI-иконки панели — **Material Symbols Outlined**, не произвольный SVG и не emoji.\n- В разметке: `<span class=\"material-symbols-outlined\" aria-hidden=\"true\">icon_name</span>`.\n- Имя иконки — как в каталоге Google (`settings`, `inventory_2`, `add`, `arrow_back`, `delete`, `unarchive`, `arrow_upward`, `stop`, `expand_more`, `check`, `close`, `account_tree`).\n- Цвет через `currentColor`; размер через CSS (`.material-symbols-outlined` / `.icon-btn` / `.row-action`).\n- Шрифт локально: `media/fonts/MaterialSymbolsOutlined-24-400.ttf` (оси уже зафиксированы: opsz 24, wght 400, FILL 0, GRAD 0). Без Google CDN в webview.\n- В CSS держим `font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24` для явности.\n- Исключение: кастомная графика не из каталога (кольцо контекста / progress) — SVG допустим.\n\n## Как добавить новую иконку\n\n1. Найти имя на fonts.google.com/icons (Material Symbols → Outlined).\n2. Вставить `<span class=\"material-symbols-outlined\" …>name</span>`.\n3. Не рисовать path вручную и не тащить другой icon set.\n\n# Workspace rule: .cursor/rules/no-cursor-branding.mdc\n\n# Без бренда Cursor в описаниях\n\nHarbor Agents — расширение для **VS Code**, не для Cursor.\n\n- В README, Marketplace, UI-копирайте, nls, тостах и подсказках **не** сравнивать с Cursor и **не** писать «как в Cursor» / «like in Cursor» / Cursor-like.\n- Описывать функции сами по себе (например: «Connect в Settings, OAuth в браузере»).\n- Исключения: пути файлов вроде `.cursor/rules` в коде чтения правил проекта; CSS `cursor:`; «cursor» как позиция каретки в редакторе.\n\n# Workspace rule: .cursor/rules/vscode-build-and-workspace.mdc\n\n# Гавань агентов / Harbor Agents: сборка и хранение\n\n## Куда ставить расширение\n\nПользователь смотрит расширение в **VS Code**, не в Cursor.\n\nПосле изменений UI/логики панели:\n\n1. `npm run compile`\n2. `npx @vscode/vsce package --allow-missing-repository --skip-license`\n3. Установка **только** через бинарь VS Code:\n\n```bash\n\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" \\\n  --uninstall-extension local.vscode-agent-panel || true\nrm -rf ~/.vscode/extensions/local.vscode-agent-panel-*\n\"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\" \\\n  --install-extension ./vscode-agent-panel-<version>.vsix --force\n```\n\nНе использовать `/usr/local/bin/code` — он может указывать на Cursor.\n\nПосле установки напомнить: **Developer: Reload Window** в VS Code.\n\nПеред пакетом поднимать `version` в `package.json`.\n\n## Хранение агентов\n\nСписок агентов/чатов/архива хранится в **`workspaceState`** (`agentPanel.session.v2`) — у каждого workspace свой список.\n\n- `saveStore` пишет только в `workspaceState` (если есть открытая папка).\n- Не писать агентов в `globalState` (кроме одноразовой миграции global → текущий workspace при пустом workspace).\n- При смене `workspaceFolders` — перезагружать store и обновлять webview.\n- При загрузке/смене workspace всегда открывать **экран чата** последнего активного агента; если видимого чат\n\n[Harbor] Активная модель этого чата — «DeepSeek-V4-Flash». Если спрашивают, какая ты модель, — отвечай этим id; id из файлов репозитория (AGENTS.md, .cursor/rules) — не твоя идентичность.\n\n[Harbor] Инструмент update_todo ДОСТУПЕН — вызывай его ВСЕГДА, на каждый запрос в режимах Agent и Plan, без исключений. Сделай это САМЫМ ПЕРВЫМ инструментом: построй полный план задачи как список шагов (первый — 'in_progress', остальные 'pending'). Даже для одношаговой задачи передай один шаг. Затем обновляй статусы по мере выполнения (каждый вызов заменяет карточку целиком). В конце — финальный вызов со всеми шагами 'done'.\n\n[Harbor] Tool spawn_agent ДОСТУПЕН. При 2+ независимых частях: при необходимости быстро глянь каркас, затем spawn_agent с конкретными путями/файлами в task. Запрещено отвечать «субагенты недоступны».</user_input>"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "Пользователь просит поменять версию. Нужно посмотреть текущую версию в package.json и обсудить/узнать, на какую менять. Вероятно, поднять на следующую. Сначала прочитаю package.json.\n\nЭто Agent режим. Начну с update_todo."
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning_content": "Текущая версия 2.7.37. Подниму на 2.7.38."
+        },
+        {
+          "role": "assistant",
+          "content": "Готово. Поднял версию в `package.json` с **2.7.37** на **2.7.38**.\n\nЕсли нужно — могу собрать VSIX (`vsce package`) и установить в VS Code."
+        }
+      ],
+      "uiMessages": [
+        {
+          "role": "user",
+          "text": "поменя версию",
+          "mode": "agent"
+        },
+        {
+          "role": "assistant",
+          "text": "Готово. Поднял версию в `package.json` с **2.7.37** на **2.7.38**.\n\nЕсли нужно — могу собрать VSIX (`vsce package`) и установить в VS Code.",
+          "reasoning": "Пользователь просит поменять версию. Нужно посмотреть текущую версию в package.json и обсудить/узнать, на какую менять. Вероятно, поднять на следующую. Сначала прочитаю package.json.\n\nЭто Agent режим. Начну с update_todo.Текущая версия 2.7.37. Подниму на 2.7.38."
+        },
+        {
+          "role": "review",
+          "text": "{\"files\":[{\"path\":\"package.json\",\"created\":false,\"added\":1,\"removed\":1}],\"showScm\":true}"
+        }
+      ],
+      "createdAt": 1786981545441,
+      "updatedAt": 1786981558652,
+      "contextTokens": 17394,
+      "lastAgentEditedPaths": [
+        "/Users/ag.donkovtcev/vscode-agent-panel/package.json"
+      ]
     }
   },
-  "activeAgentId": "agent_msww3jgh_9x0ydl",
-  "activeChatId": "chat_msww3jgh_kedx4c",
+  "activeAgentId": "agent_msxeo92a_e653db89",
+  "activeChatId": "chat_msxeo929_53e5cdbf",
   "screen": "chat"
 }

@@ -8,6 +8,7 @@ import {
 import { runClineAgentTurn } from "./clineRuntime";
 import type * as vscode from "vscode";
 import type { AgentStepEvent } from "./agentSteps";
+import type { UiMessage } from "./sessionStore";
 
 export type AgentPhase =
   | "thinking"
@@ -17,7 +18,7 @@ export type AgentPhase =
   | "editing"
   | "verifying"
   | "done"
-  /** Non-lifecycle Cline notices (generic running/completed are omitted). */
+  /** Cline-уведомления вне жизненного цикла (общие running/completed опущены). */
   | "cline";
 
 export type {
@@ -32,24 +33,24 @@ export interface ContextUsageInfo {
   used: number;
   promptTokens: number;
   completionTokens: number;
-  /** Cached prefix tokens read this call (Anthropic cache_read / OpenAI cached_tokens). */
+  /** Токены кешированного префикса, прочитанные за этот вызов (Anthropic cache_read / OpenAI cached_tokens). */
   cacheReadTokens?: number;
-  /** Tokens written to the prompt cache this call (Anthropic cache_creation). */
+  /** Токены, записанные в кеш промпта за этот вызов (Anthropic cache_creation). */
   cacheWriteTokens?: number;
-  /** Cumulative input tokens across iterations of this session (billing view). */
+  /** Суммарные входные токены за все итерации сессии (для биллинга). */
   totalInputTokens?: number;
-  /** Cumulative output tokens across iterations of this session (billing view). */
+  /** Суммарные выходные токены за все итерации сессии (для биллинга). */
   totalOutputTokens?: number;
-  /** Cumulative cache reads across iterations of this session. */
+  /** Суммарные чтения кеша за все итерации сессии. */
   totalCacheReadTokens?: number;
-  /** Cumulative cache writes across iterations of this session. */
+  /** Суммарные записи кеша за все итерации сессии. */
   totalCacheWriteTokens?: number;
 }
 
 export interface AgentRunCallbacks {
   onPhase: (phase: AgentPhase, detail?: string) => void;
   onTool: (text: string) => void;
-  /** Structured turn step (thinking / text / tool lifecycle / compaction / retry). */
+  /** Структурированный шаг хода (размышление / текст / жизненный цикл инструмента / компактификация / повтор). */
   onStep?: (event: AgentStepEvent) => void;
   onFileEdit: (edit: FileEditStat) => void;
   /** Поток текста ассистента (SSE). */
@@ -65,15 +66,15 @@ export interface AgentRunCallbacks {
   /** Может быть async (SCM check) — ждём, иначе review теряется в finally. */
   onReview: (edits: FileEditStat[]) => void | Promise<void>;
   onUsage?: (usage: ContextUsageInfo) => void;
-  /** User pasted a Figma URL but MCP is not connected. */
+  /** Пользователь вставил URL Figma, но MCP не подключён. */
   onFigmaNeedsConnect?: () => void;
-  /** Active completion model changed (e.g. helper 5xx → selected). */
+  /** Активная модель дополнения изменилась (напр. helper 5xx → выбранная). */
   onActiveModel?: (modelId: string) => void;
 }
 
 /**
- * Все модели: ClineCore local session host (vendor/cline fork / @cline/sdk).
- * Harbor UI callbacks unchanged.
+ * Все модели: ClineCore локальный session host (vendor/cline форк / @cline/sdk).
+ * Harbor UI callbacks без изменений.
  */
 export async function runAgentTurn(options: {
   model: string;
@@ -85,13 +86,17 @@ export async function runAgentTurn(options: {
   agentMode?: string;
   /** @deprecated используй agentMode */
   planMode?: boolean;
-  /** Harbor UI intelligence level → Cline reasoningEffort. */
+  /** Уровень интеллекта Harbor UI → Cline reasoningEffort. */
   reasoningEffort?: string;
   callbacks: AgentRunCallbacks;
-  /** Paths from the previous agent edit turn — discard «свои». */
+  /** Пути из предыдущего хода правок агента — отбрасываем «свои». */
   lastAgentEditedPaths?: string[];
   chatId?: string;
   resetSession?: boolean;
+  /** Сохранённые UI-шаги (карточки инструментов) — используются для запуска новой Cline-сессии
+   *  с компактным дайджестом действий инструментов, когда живая сессия не может быть переиспользована
+   *  (вытеснена по простаиванию / перезагружена / изменился fingerprint). См. harborHistoryToClineMessages. */
+  priorUiMessages?: UiMessage[];
 }): Promise<ChatMessage[]> {
   return runClineAgentTurn(options);
 }

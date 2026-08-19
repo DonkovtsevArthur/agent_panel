@@ -53,6 +53,7 @@ import type {
   AgentRunCallbacks,
 } from "./agentLoop";
 import type { AgentStepEvent, ToolStepMetrics } from "./agentSteps";
+import type { UiMessage } from "./sessionStore";
 import {
   appendFigmaRuntimeNudge,
   harborMcpToolFingerprint,
@@ -997,7 +998,8 @@ async function clineImageBlocksForHarborUser(
 
 async function harborHistoryToClineMessages(
   history: ChatMessage[],
-  storageUri?: vscode.Uri
+  storageUri?: vscode.Uri,
+  priorUiMessages?: UiMessage[]
 ): Promise<ClineHistoryMessage[]> {
   // Put pixels on the original user rows in Cline's ImageContent shape.
   // A fork / model-switch starts a *new* Cline session; without this, GLM
@@ -1052,7 +1054,73 @@ async function harborHistoryToClineMessages(
       ts: Date.now() - (history.length - n) * 1000,
     });
   }
+  // Seed a fresh session with a compact digest of prior tool activity. The
+  // live Cline session is replayed only when reused; idle-eviction / reload /
+  // fingerprint change start a fresh session that would otherwise see just
+  // user+assistant text and lose "what was read/edited/ran". The digest is a
+  // single assistant message summarizing tool calls so the model does not
+  // re-read files it already inspected.
+  const digest = toolActivityDigest(priorUiMessages);
+  if (digest) {
+    n += 1;
+    out.push({
+      role: "assistant",
+      content: digest,
+      id: `harbor-tool-digest-${n}`,
+      ts: Date.now(),
+    });
+  }
   return out;
+}
+
+/**
+ * Build a compact textual digest of persisted tool / compaction / checkpoint
+ * steps for seeding a fresh Cline session. Only completed (status "done")
+ * tool steps are included — in-flight / errored rows from an aborted turn are
+ * dropped so the model does not act on half-finished work. Returns undefined
+ * when there is nothing worth replaying.
+ */
+function toolActivityDigest(
+  uiMessages: UiMessage[] | undefined
+): string | undefined {
+  if (!uiMessages || !uiMessages.length) {
+    return undefined;
+  }
+  const lines: string[] = [];
+  for (const m of uiMessages) {
+    if (m.role !== "tool" || !m.step) {
+      continue;
+    }
+    const step = m.step;
+    // Skip transient phases: keep only settled tool calls, not compaction /
+    // checkpoint / retry markers or todo progress cards (those reseed via UI).
+    if (step.kind !== "tool") {
+      continue;
+    }
+    if (step.status && step.status !== "done") {
+      continue;
+    }
+    const name = String(step.name || "tool").trim();
+    const args = String(step.argsPreview || "").trim();
+    const result = String(step.resultPreview || "").trim();
+    let line = `- ${name}`;
+    if (args) {
+      line += `(${args})`;
+    }
+    if (result) {
+      // Keep the digest compact; step result previews are already truncated.
+      line += ` → ${result}`;
+    }
+    lines.push(line);
+  }
+  if (!lines.length) {
+    return undefined;
+  }
+  return [
+    "[Ранее в этом чате уже выполнены инструменты:]",
+    ...lines,
+    "Учитывай эту проделанную работу и не повторяй уже сделанные чтения/правки.",
+  ].join("\n");
 }
 
 function mergeUserAttachmentsOntoHistory(
@@ -1772,6 +1840,9 @@ export async function runClineAgentTurn(options: {
   chatId?: string;
   /** Regenerate / edit: drop the live session and re-seed from history. */
   resetSession?: boolean;
+  /** Persisted UI steps (tool cards) — seed a fresh Cline session with a
+   *  compact tool-activity digest when the live session cannot be reused. */
+  priorUiMessages?: UiMessage[];
 }): Promise<ChatMessage[]> {
   const { callbacks } = options;
   const bundle = loadClineBundle();
@@ -2472,7 +2543,8 @@ export async function runClineAgentTurn(options: {
 
   const initialMessages = await harborHistoryToClineMessages(
     options.history,
-    options.storageUri
+    options.storageUri,
+    options.priorUiMessages
   );
 
   const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
@@ -2543,7 +2615,23 @@ export async function runClineAgentTurn(options: {
           if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
             throw error;
           }
-          liveClineByChatId.delete(chatId);
+          // Session is gone or stuck (session_not_found / session_run_in_progress).
+          // discardClineChatSession aborts the in-flight run, stops the session
+          // (shutdown awaits finalization), and drops it from the live map — no
+          // leak into the shared Cline core. Fall through to core.start below.
+          await discardClineChatSession(chatId);
+          reusedSession = false;
+          sessionId = newSessionId();
+        }
+        if (reusedSession && result === undefined) {
+          // core.send returned undefined = the session was still busy from a
+          // prior (e.g. hung) turn and the prompt was silently queued. We
+          // cannot await a queued prompt's result and retrying core.send would
+          // duplicate it, so discard this session (aborts the stuck run, drops
+          // the queued prompt) and start a fresh one from Harbor history.
+          // Without this, the turn ended with an empty finale and a follow-up
+          // "continue" saw no context of what had been done.
+          await discardClineChatSession(chatId);
           reusedSession = false;
           sessionId = newSessionId();
         }

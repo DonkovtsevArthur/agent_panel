@@ -1559,6 +1559,102 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.writeStoreOnly();
   }
 
+  /**
+   * Shared abort finalizer for a chat turn. `runClineAgentTurn` catches the
+   * AbortSignal internally and returns normally on Stop, so the provider's
+   * success path is reached with an aborted signal — `syncRunChat` gates on
+   * `isChatRunCurrent` (false after Stop) and skips the write. Without this,
+   * the aborted turn vanishes from the store on reload and a follow-up
+   * "continue" starts a fresh Cline session with no record of what was done.
+   *
+   * Mutates `uiMessages` in place: pulls out the todo plan card, splices the
+   * transient (unfinished) tool rows so reload doesn't show stuck spinners,
+   * re-appends the todo card as cancelled, persists the snapshot, and posts
+   * the stopped/idle state to the webview.
+   */
+  private finalizeAbortedTurn(
+    chatId: string,
+    runUiMessages: UiMessage[],
+    runTransientStart: number,
+    snapshot: {
+      history: ChatMessage[];
+      selectedModel: string;
+      lastTurnModel?: string;
+      contextTokens?: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
+    }
+  ): void {
+    const todoIx = runUiMessages.findIndex(
+      (m) =>
+        m.role === "tool" &&
+        m.step?.kind === "todo" &&
+        m.step.stepId === TODO_STEP_ID
+    );
+    const todoBefore =
+      todoIx >= 0 ? runUiMessages[todoIx] : undefined;
+    if (todoIx >= 0) {
+      runUiMessages.splice(todoIx, 1);
+    }
+    runUiMessages.splice(runTransientStart);
+    if (todoBefore?.step) {
+      const lang = resolveUiLanguage(getConfig().language);
+      const cancelledPreview =
+        lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
+      runUiMessages.push({
+        ...todoBefore,
+        step: {
+          ...todoBefore.step,
+          status: "error",
+          resultPreview: cancelledPreview,
+        },
+      });
+      if (this.isActiveChat(chatId)) {
+        this.view?.webview.postMessage({
+          type: "step",
+          chatId,
+          stepId: TODO_STEP_ID,
+          kind: "todo",
+          name: TODO_TOOL,
+          status: "error",
+          argsPreview: todoBefore.step.argsPreview,
+          steps: todoBefore.step.steps,
+          resultPreview: cancelledPreview,
+        });
+      }
+    }
+    this.persistRunChatSnapshot(chatId, {
+      history: snapshot.history,
+      uiMessages: runUiMessages,
+      selectedModel: snapshot.selectedModel,
+      ...(snapshot.lastTurnModel !== undefined
+        ? { lastTurnModel: snapshot.lastTurnModel }
+        : {}),
+      ...(typeof snapshot.contextTokens === "number"
+        ? { contextTokens: snapshot.contextTokens }
+        : {}),
+      ...(typeof snapshot.totalInputTokens === "number"
+        ? { totalInputTokens: snapshot.totalInputTokens }
+        : {}),
+      ...(typeof snapshot.totalOutputTokens === "number"
+        ? { totalOutputTokens: snapshot.totalOutputTokens }
+        : {}),
+      ...(typeof snapshot.totalCacheReadTokens === "number"
+        ? { totalCacheReadTokens: snapshot.totalCacheReadTokens }
+        : {}),
+      ...(typeof snapshot.totalCacheWriteTokens === "number"
+        ? { totalCacheWriteTokens: snapshot.totalCacheWriteTokens }
+        : {}),
+    });
+    this.setRunStateForChat(chatId);
+    if (this.isActiveChat(chatId)) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({ type: "stopped", chatId });
+    }
+  }
+
   private saveSession(): void {
     this.saveStore();
   }
@@ -3424,6 +3520,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               this.store.chats[runChatId]?.lastAgentEditedPaths || [],
             chatId: runChatId,
             resetSession: Boolean(options?.resetSession),
+            priorUiMessages: runUiMessages,
             callbacks: {
           onPhase: (phase, detail) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -3786,6 +3883,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         runUiMessages = collapsedUi;
       }
       syncRunChat();
+      // On Stop, runClineAgentTurn catches the abort internally and returns
+      // normally, so we reach the success path with an aborted signal.
+      // syncRunChat gates on isChatRunCurrent (false after Stop) and skips
+      // the write — finalize + persist the partial turn directly so it
+      // survives reload and a follow-up "continue" sees it in history.
+      if (currentRun.signal.aborted) {
+        // Race guard: if "продолжи" already started a newer run (chatRuns has
+        // a new controller for this chat), the old draining turn must NOT
+        // post "stopped" or splice tool rows — that would kill the new run's
+        // preloader and reset visible steps. Bail out silently instead.
+        if (
+          !this.isChatRunOwned(runChatId, runRef) &&
+          this.chatRuns.has(runChatId)
+        ) {
+          return;
+        }
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: chosen,
+            lastTurnModel: runLastTurnModel,
+            contextTokens: runContextTokens,
+            totalInputTokens: runTotalInputTokens,
+            totalOutputTokens: runTotalOutputTokens,
+            totalCacheReadTokens: runTotalCacheReadTokens,
+            totalCacheWriteTokens: runTotalCacheWriteTokens,
+          }
+        );
+        return;
+      }
       if (
         this.isChatRunCurrent(runChatId, runRef) &&
         this.isViewingChat(runChatId)
@@ -3818,79 +3948,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
 
       if (aborted) {
-        // The todo plan card is a persistent progress card, not a transient
-        // tool row — pull it out BEFORE splicing transient tool rows so it
-        // survives Stop and can be re-rendered with an "error" status.
-        const todoBeforeAbortIx = runUiMessages.findIndex(
-          (m) =>
-            m.role === "tool" &&
-            m.step?.kind === "todo" &&
-            m.step.stepId === TODO_STEP_ID
-        );
-        const todoBeforeAbort =
-          todoBeforeAbortIx >= 0 ? runUiMessages[todoBeforeAbortIx] : undefined;
-        if (todoBeforeAbortIx >= 0) {
-          runUiMessages.splice(todoBeforeAbortIx, 1);
+        // Race guard (same as success path): if a newer run already started
+        // (e.g. "продолжи" after Stop), don't post "stopped" / splice UI —
+        // the new run owns the chat now.
+        if (!owned && this.chatRuns.has(runChatId)) {
+          return;
         }
-
-        // Не оставляем в истории незавершённые tool-строки после Stop.
-        // abortChatRun already removed us from chatRuns — persist directly.
-        runUiMessages.splice(runTransientStart);
-
-        // Re-append the todo plan card as cancelled so the in_progress step
-        // spinner stops and the user sees the run was aborted.
-        if (todoBeforeAbort?.step) {
-          const todoStep = todoBeforeAbort.step;
-          const lang = resolveUiLanguage(getConfig().language);
-          const cancelledPreview =
-            lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
-          const cancelledMsg: UiMessage = {
-            ...todoBeforeAbort,
-            step: {
-              ...todoStep,
-              status: "error",
-              resultPreview: cancelledPreview,
-            },
-          };
-          runUiMessages.push(cancelledMsg);
-          // postToRunChat is gated on isChatRunCurrent, which is false after
-          // Stop (signal.aborted). The user is still viewing this chat though,
-          // so post the todo card's new "error" state directly — otherwise the
-          // in_progress step spinner keeps spinning after abort.
-          if (this.isActiveChat(runChatId)) {
-            this.view?.webview.postMessage({
-              type: "step",
-              chatId: runChatId,
-              stepId: TODO_STEP_ID,
-              kind: "todo",
-              name: TODO_TOOL,
-              status: "error",
-              argsPreview: todoStep.argsPreview,
-              steps: todoStep.steps,
-              resultPreview: cancelledPreview,
-            });
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: chosen,
+            lastTurnModel: runLastTurnModel,
+            contextTokens: runContextTokens,
+            totalInputTokens: runTotalInputTokens,
+            totalOutputTokens: runTotalOutputTokens,
+            totalCacheReadTokens: runTotalCacheReadTokens,
+            totalCacheWriteTokens: runTotalCacheWriteTokens,
           }
-        }
-
-        this.persistRunChatSnapshot(runChatId, {
-          history: runHistory,
-          uiMessages: runUiMessages,
-          selectedModel: chosen,
-          lastTurnModel: runLastTurnModel,
-          contextTokens: runContextTokens,
-          totalInputTokens: runTotalInputTokens,
-          totalOutputTokens: runTotalOutputTokens,
-          totalCacheReadTokens: runTotalCacheReadTokens,
-          totalCacheWriteTokens: runTotalCacheWriteTokens,
-        });
-        this.setRunStateForChat(runChatId);
-        if (this.isActiveChat(runChatId)) {
-          this.postRegenerateState();
-          this.view?.webview.postMessage({
-            type: "stopped",
-            chatId: runChatId,
-          });
-        }
+        );
         return;
       }
 
