@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.7.37",
+	"version": "2.7.41",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -245,8 +245,8 @@
 			},
 			{
 				"command": "agentPanel.addSelectionToNewChat",
-				"key": "ctrl+alt+shift+l",
-				"mac": "cmd+alt+shift+l",
+				"key": "ctrl+alt+l",
+				"mac": "cmd+alt+l",
 				"when": "editorTextFocus && editorHasSelection"
 			},
 			{
@@ -257,8 +257,8 @@
 			},
 			{
 				"command": "agentPanel.addFileToNewChat",
-				"key": "ctrl+alt+shift+h",
-				"mac": "cmd+alt+shift+h",
+				"key": "ctrl+alt+h",
+				"mac": "cmd+alt+h",
 				"when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
 			},
 			{
@@ -319,7 +319,7 @@
 				"command": "agentPanel.tabAutocomplete.dismissSuggestion",
 				"key": "escape",
 				"mac": "escape",
-				"when": "inlineSuggestionVisible && editorTextFocus && config.agentPanel.tabAutocomplete.enabled"
+				"when": "inlineSuggestionVisible && editorTextFocus && !suggestWidgetVisible && config.agentPanel.tabAutocomplete.enabled"
 			}
 		],
 		"configuration": {
