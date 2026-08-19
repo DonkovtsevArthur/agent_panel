@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.0.10"
+version = "2.0.16"
 
 repositories {
     mavenCentral()
@@ -18,8 +18,9 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.2.1")
         instrumentationTools()
-        // Platform ships kotlin-stdlib; don't bundle a second copy
-        bundledPlugin("com.intellij.java")
+        // PSI / codeInsight are platform APIs (com.intellij.modules.platform);
+        // no Java-specific dependency needed — keeps the plugin installable in
+        // Rider, GoLand, PyCharm, etc.
     }
 }
 

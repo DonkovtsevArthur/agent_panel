@@ -74,7 +74,7 @@ export interface AgentRunCallbacks {
 
 /**
  * Все модели: ClineCore локальный session host (vendor/cline форк / @cline/sdk).
- * Harbor UI callbacks без изменений.
+ * Колбэки Harbor UI без изменений.
  */
 export async function runAgentTurn(options: {
   model: string;

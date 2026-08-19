@@ -85,7 +85,15 @@ class HarborHostBridge(
         log.warn("Harbor sidecar→host raw $method (expected hostToWebview)")
       }
       when (method) {
-        "hostToWebview" -> postToWebview(gson.toJson(params))
+        "hostToWebview" -> {
+          postToWebview(gson.toJson(params))
+          // Force JCEF repaint after agent abort so the panel does not
+          // stay frozen in OSR mode with stale content.
+          val inner = params?.get("type")?.asString ?: ""
+          if (inner == "stopped" || inner == "idle") {
+            scheduleBrowserRepaint()
+          }
+        }
         "host.openExternal" -> {
           var url = params?.get("url")?.asString?.trim().orEmpty()
           if (url.startsWith("file://https://", ignoreCase = true) ||

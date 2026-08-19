@@ -116,7 +116,33 @@ async function handleCommitMessage(
   }
 }
 
+/**
+ * Abort-family rejections are expected cancel noise, not fatal faults
+ * (upstream Cline daemon filters the same — hub/daemon/entry.ts
+ * isAbortRejection). When a user stops a turn, in-flight provider streams
+ * reject on floating promises after the run has settled (AbortError /
+ * ABORT_ERR / AgentRuntimeAbortError). Node would kill the sidecar process,
+ * wedging the panel until an IDE restart — VS Code's extension host
+ * survives these, the bare sidecar must too.
+ */
+function installUnhandledRejectionGuard(): void {
+  process.on("unhandledRejection", (reason: unknown) => {
+    const err = reason instanceof Error ? reason : undefined;
+    const abortFamily =
+      err?.name === "AbortError" ||
+      err?.name === "AgentRuntimeAbortError" ||
+      (err as { code?: unknown } | undefined)?.code === "ABORT_ERR";
+    const label = err ? `${err.name}: ${err.message}` : String(reason);
+    process.stderr.write(
+      `[harbor-sidecar] unhandled rejection${
+        abortFamily ? " (abort noise)" : ""
+      }: ${label}\n`
+    );
+  });
+}
+
 function main(): void {
+  installUnhandledRejectionGuard();
   const workspaceRoot = process.env.HARBOR_WORKSPACE || process.cwd();
   const paths = defaultHarborPaths(workspaceRoot);
   const settingsPath =
