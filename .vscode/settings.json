@@ -1,0 +1,8 @@
+{
+    "agentPanel.commitMessage.prompt": "",
+    "agentPanel.commitMessage.language": "ru",
+    "agentPanel.commitMessage.modelIds": [
+        "mimo-v2.5",
+        "Qwen3-Coder-Next"
+    ]
+}

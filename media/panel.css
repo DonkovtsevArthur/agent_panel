@@ -1,11 +1,16 @@
 :root {
   color-scheme: light dark;
-  --radius-msg: 14px;
-  --radius-composer: 16px;
-  --radius-control: 999px;
-  /* Mode accent colors (Plan / Ask) */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+  /* Mode accent colors — mixed onto borders (user bubbles stronger, composer softer) */
   --mode-plan: #a67c00;
   --mode-ask: #2d6a4f;
+  --mode-border-user: 40%;
+  --mode-border-composer: 22%;
   /* Chat: white workspace, grey bubbles (former panel bg) */
   --harbor-chat-bg: var(--vscode-editor-background, #ffffff);
   --harbor-bubble-bg: var(--vscode-sideBar-background);
@@ -28,19 +33,20 @@
     Consolas,
     monospace
   );
+  --harbor-font-size: var(--vscode-font-size, 13px);
+  --harbor-user-tint: #8fa4b8;
+  --harbor-model-inset: 12px;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Тонкий скроллбар в цвет фона чата */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent)
-    var(--harbor-chat-bg);
-}
-
+/* Тонкий скроллбар. В Chromium (VS Code / JCEF) scrollbar-width и
+   scrollbar-color отключают ::-webkit-scrollbar — полоса сначала
+   рисуется жирной системной, потом тонкой. VS Code ещё инжектит
+   html { scrollbar-color }, из‑за этого webkit игнорируется
+   (https://github.com/microsoft/vscode/issues/213045). */
 *::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -52,7 +58,7 @@
 
 *::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--vscode-foreground) 28%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--harbor-chat-bg);
   background-clip: padding-box;
 }
@@ -88,13 +94,28 @@
   background: var(--harbor-chat-bg);
 }
 
+@supports selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-color: unset !important;
+    scrollbar-width: unset !important;
+  }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--vscode-foreground) 28%, transparent)
+      var(--harbor-chat-bg);
+  }
+}
+
 html,
 body {
   height: 100%;
   margin: 0;
   padding: 0;
   font-family: var(--harbor-font-family);
-  font-size: var(--vscode-font-size);
+  font-size: var(--harbor-font-size);
   color: var(--vscode-foreground);
   background: var(--harbor-chat-bg);
   -webkit-font-smoothing: antialiased;
@@ -110,18 +131,23 @@ body {
   flex: 1;
   overflow-y: auto;
   /* padding-top: 0 — иначе sticky user-сообщения оставляют щель и сквозь неё виден скролл */
-  padding: 0 16px 28px 12px;
+  padding: 0 16px 20px 12px;
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* safe flex-end: прижимает сообщения к низу, когда чат короткий,
+     но при переполнении откатывается к start — иначе flex-end «unsafe»
+     прячет верхние сообщения за пределами scrollable-области и скролл
+     в теле чата не дотягивается до них. */
+  justify-content: safe flex-end;
+  gap: 6px;
   min-height: 0;
 }
 
 .chat-turn {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -129,6 +155,7 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.45;
+  font-size: var(--harbor-font-size);
 }
 
 .msg-body {
@@ -148,35 +175,41 @@ body {
 .msg-wrap.msg-wrap-assistant {
   align-self: stretch;
   align-items: flex-end;
-  max-width: 100%;
-  margin-right: 0;
+  max-width: calc(100% - var(--harbor-model-inset) * 2);
+  width: auto;
+  margin-left: var(--harbor-model-inset);
+  margin-right: var(--harbor-model-inset);
+  box-sizing: border-box;
 }
 
 .msg-wrap.msg-wrap-assistant > .msg-actions {
   margin-top: 2px;
+  margin-bottom: 12px;
 }
 
 .msg-wrap.msg-wrap-user {
   align-self: stretch;
   max-width: 100%;
+  width: auto;
   margin-right: 0;
   position: sticky;
   top: 0;
   z-index: 6;
   background: var(--harbor-chat-bg);
-  padding-top: 8px;
-  padding-bottom: 4px;
+  padding-top: 4px;
+  padding-bottom: 2px;
   /* перекрывает субпиксельный просвет при sticky */
   box-shadow: 0 -2px 0 1px var(--harbor-chat-bg);
 }
 
 .chat-turn:first-child .msg-wrap.msg-wrap-user {
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .msg-wrap .msg.user {
   align-self: stretch;
   max-width: 100%;
+  width: auto;
   margin-right: 0;
 }
 
@@ -191,32 +224,46 @@ body {
 }
 
 .msg.user {
-  background: var(--harbor-bubble-bg);
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.25));
+  background: color-mix(
+    in srgb,
+    var(--harbor-user-tint) 14%,
+    var(--harbor-chat-bg)
+  );
+  border: none;
   align-self: stretch;
   max-width: 100%;
+  width: auto;
   margin-right: 0;
-  border-radius: var(--radius-msg);
-  border-bottom-right-radius: 6px;
-  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
   cursor: text;
   white-space: normal;
 }
 
 .msg.user[data-mode="plan"] {
-  border-color: var(--mode-plan);
+  background: color-mix(in srgb, var(--mode-plan) 14%, var(--harbor-chat-bg));
 }
 
 .msg.user[data-mode="ask"] {
-  border-color: var(--mode-ask);
+  background: color-mix(in srgb, var(--mode-ask) 14%, var(--harbor-chat-bg));
 }
 
 .msg.user.is-editing {
   padding: 0;
   background: transparent;
   border: none;
+  box-shadow: none;
   border-radius: 0;
   cursor: default;
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+}
+
+.msg-wrap.msg-wrap-user:has(.msg.user.is-editing) {
+  align-self: stretch;
+  max-width: 100%;
+  width: auto;
 }
 
 .msg.assistant {
@@ -242,6 +289,7 @@ body {
 }
 
 .msg-actions .icon-btn.msg-regenerate,
+.msg-actions .icon-btn.msg-copy,
 .msg-actions .icon-btn.msg-branch {
   width: 18px;
   height: 18px;
@@ -249,13 +297,15 @@ body {
   min-height: 18px;
   opacity: 0.7;
   background: transparent !important;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   color: var(--vscode-descriptionForeground, #888);
   transition: color 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
 
 .msg-actions .icon-btn.msg-regenerate:hover,
 .msg-actions .icon-btn.msg-regenerate:focus-visible,
+.msg-actions .icon-btn.msg-copy:hover,
+.msg-actions .icon-btn.msg-copy:focus-visible,
 .msg-actions .icon-btn.msg-branch:hover,
 .msg-actions .icon-btn.msg-branch:focus-visible {
   opacity: 1;
@@ -264,9 +314,11 @@ body {
 }
 
 .msg-actions .icon-btn.msg-regenerate .material-symbols-outlined,
+.msg-actions .icon-btn.msg-copy .material-symbols-outlined,
 .msg-actions .icon-btn.msg-branch .material-symbols-outlined {
   font-size: 13px;
   line-height: 1;
+  pointer-events: none;
 }
 
 .msg-edit-composer {
@@ -275,23 +327,17 @@ body {
   gap: 8px;
   width: 100%;
   padding: 12px 12px 10px;
-  border-radius: var(--radius-composer);
-  background: var(--harbor-bubble-bg);
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
-}
-
-.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="plan"]) {
-  border-color: var(--mode-plan);
-}
-
-.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="ask"]) {
-  border-color: var(--mode-ask);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background, var(--harbor-chat-bg));
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .msg-edit-input {
   width: 100%;
-  min-height: 56px;
-  max-height: 180px;
+  /* Match #prompt sizing so the edit box reads as the same composer. */
+  min-height: calc(1.45em * 3);
+  max-height: calc(1.45em * 15);
+  overflow-y: auto;
   resize: none;
   background: transparent;
   color: var(--vscode-input-foreground);
@@ -299,8 +345,13 @@ body {
   outline: none;
   padding: 0;
   font-family: inherit;
-  font-size: inherit;
+  font-size: var(--harbor-font-size);
   line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.msg-edit-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, rgba(127, 127, 127, 0.8));
 }
 
 .msg-edit-footer {
@@ -316,16 +367,70 @@ body {
   gap: 4px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
-.msg-edit-footer-left .model-picker {
-  flex: 1;
+/* Footer mirrors the main composer: left = "+" + mode, right = model +
+   intelligence + send. Same pill/round styles as .composer-footer. */
+.msg-edit-footer-left > .mode-picker {
+  flex-shrink: 0;
+}
+
+.msg-edit-footer-left > .composer-plus {
+  flex-shrink: 0;
+}
+
+.msg-edit-footer-left > .composer-plus .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.msg-edit-footer-left > .mode-picker .model-trigger,
+.msg-edit-footer-right > .msg-edit-model-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-foreground);
+}
+
+.msg-edit-footer-left > .mode-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-left > .mode-picker.is-open .model-trigger,
+.msg-edit-footer-right > .msg-edit-model-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-right > .msg-edit-model-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.msg-edit-footer-right > .msg-edit-model-picker {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
-.msg-edit-footer-left .msg-edit-mode-picker {
-  flex: 0 1 auto;
-  max-width: 42%;
+.msg-edit-footer-right > .reason-picker {
+  flex: 0 0 auto;
+  max-width: none;
+}
+
+.msg-edit-footer-right > .reason-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  color: var(--vscode-foreground);
+}
+
+.msg-edit-footer-right > .reason-picker .model-trigger:hover:not(:disabled),
+.msg-edit-footer-right > .reason-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  outline-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  color: var(--vscode-foreground);
 }
 
 .msg-edit-model-menu,
@@ -346,13 +451,15 @@ body {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .msg.assistant .md-code {
   font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-foreground);
 }
@@ -390,7 +497,7 @@ body {
 .md-pre-toggle {
   justify-content: space-between;
   padding: 5px 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -439,7 +546,7 @@ body {
 .msg.user .md-pre {
   margin: 0;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   border: 1px solid var(--vscode-editorGroup-border);
   background: var(
@@ -616,6 +723,8 @@ body.vscode-dark .md-pre .syntax-property {
 
 .msg.user .msg-body {
   white-space: normal;
+  width: auto;
+  max-width: 100%;
 }
 
 .msg.user.is-plan-implement .msg-body {
@@ -637,6 +746,13 @@ body.vscode-dark .md-pre .syntax-property {
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }
 
+.msg.user .md-p,
+.msg.user .md-pre-wrap,
+.msg.user .msg-text,
+.msg.user .msg-file-chip {
+  max-width: 100%;
+}
+
 .msg.user .md-p {
   margin: 0 0 6px;
 }
@@ -652,7 +768,7 @@ body.vscode-dark .md-pre .syntax-property {
   z-index: 1200;
   transform: translateX(-50%);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   background: var(--vscode-editorWidget-background, #252526);
   color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
@@ -746,7 +862,7 @@ body.vscode-dark .md-pre .syntax-property {
   font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-textLink-foreground, #006ab1);
   text-decoration: none;
@@ -870,35 +986,62 @@ body.vscode-dark .md-pre .syntax-property {
   align-items: center;
   gap: 4px;
   margin: 0;
-  padding: 2px 4px;
+  padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   color: var(--vscode-descriptionForeground, #888);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   cursor: pointer;
-  opacity: 0.85;
+  opacity: 0.9;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
-.tool-group-toggle:hover {
+.tool-group-toggle[hidden] {
+  display: none !important;
+}
+
+.tool-group-toggle:hover:not(:disabled) {
   opacity: 1;
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
   color: var(--vscode-foreground);
 }
 
+.tool-group-toggle:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.tool-group-toggle:focus,
+.tool-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
+  background: transparent;
+}
+
+.tool-group-summary {
+  display: inline;
+  order: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .tool-group-chevron {
+  order: 2;
   font-size: 14px;
   transition: transform 0.12s ease;
 }
 
-.tool-group:not(.is-collapsed) .tool-group-chevron {
-  transform: rotate(180deg);
+.tool-group-chevron[hidden],
+.tool-group:not(.has-steps) .tool-group-chevron {
+  display: none !important;
 }
 
-.tool-group-summary {
-  font-variant-numeric: tabular-nums;
+.tool-group:not(.is-collapsed) .tool-group-chevron {
+  transform: rotate(180deg);
 }
 
 .tool-group-body {
@@ -913,9 +1056,24 @@ body.vscode-dark .md-pre .syntax-property {
   display: none;
 }
 
+.chat-turn > .tool-group,
+.chat-turn > .reasoning-group,
+.chat-turn > .msg.assistant,
+.chat-turn > .msg.error,
+.chat-turn > .msg.system,
+.chat-turn > .agent-status {
+  margin-left: var(--harbor-model-inset);
+  margin-right: var(--harbor-model-inset);
+  max-width: calc(100% - var(--harbor-model-inset) * 2);
+  width: auto;
+  align-self: stretch;
+  box-sizing: border-box;
+}
+
 .tool-group.agent-timeline {
   gap: 0;
-  margin: 4px 0 8px;
+  margin-top: 2px;
+  margin-bottom: 4px;
   padding-left: 2px;
 }
 
@@ -932,7 +1090,7 @@ body.vscode-dark .md-pre .syntax-property {
 .agent-timeline-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
   padding: 0 0 0 10px;
 }
@@ -942,12 +1100,13 @@ body.vscode-dark .md-pre .syntax-property {
   display: none;
 }
 
-.agent-step {
+.agent-step,
+.tool-group .agent-step.msg.tool {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   opacity: 0.95;
-  font-size: 12.5px;
+  font-size: calc(var(--harbor-font-size) * 0.96);
   line-height: 1.45;
   color: var(--vscode-descriptionForeground, #888);
   padding: 0;
@@ -956,9 +1115,11 @@ body.vscode-dark .md-pre .syntax-property {
 
 .agent-step-thinking {
   flex-direction: column;
-  gap: 4px;
-  color: var(--vscode-foreground);
-  opacity: 0.88;
+  gap: 2px;
+  color: var(--vscode-descriptionForeground, #888);
+  opacity: 0.95;
+  background: transparent;
+  border: none;
 }
 
 .agent-step-head {
@@ -966,7 +1127,7 @@ body.vscode-dark .md-pre .syntax-property {
   align-items: center;
   gap: 6px;
   color: var(--vscode-descriptionForeground, #888);
-  font-size: 12px;
+  font-size: calc(var(--harbor-font-size) * 0.92);
 }
 
 .agent-step-thinking-text {
@@ -974,68 +1135,95 @@ body.vscode-dark .md-pre .syntax-property {
   overflow-wrap: anywhere;
   padding-left: 22px;
   color: var(--vscode-descriptionForeground, #aaa);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: calc(var(--harbor-font-size) * 0.92);
+  line-height: 1.45;
 }
 
 .agent-step-thinking.is-thinking-collapsed .agent-step-thinking-text {
-  max-height: 120px;
-  overflow: hidden;
-  position: relative;
-}
-
-.agent-step-thinking.is-thinking-collapsed .agent-step-thinking-text::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 22px;
-  right: 0;
-  height: 36px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    var(--harbor-chat-bg)
-  );
-  pointer-events: none;
+  display: none;
 }
 
 .agent-step-thinking-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 22px;
-  margin-top: 4px;
-  padding: 2px 6px;
+  margin: 0;
+  padding: 0;
   border: none;
   background: transparent;
+  box-shadow: none;
   color: var(--vscode-descriptionForeground, #888);
-  font-size: 11.5px;
+  font: inherit;
+  font-size: 11px;
   cursor: pointer;
-  border-radius: 4px;
+  opacity: 0.85;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .agent-step-thinking-toggle:hover {
+  opacity: 1;
   color: var(--vscode-foreground);
-  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.06));
+}
+
+.agent-step-thinking-toggle:focus,
+.agent-step-thinking-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .agent-step-thinking-toggle[hidden] {
   display: none;
 }
 
-.agent-step-thinking-chevron {
-  font-size: 15px;
-  transition: transform 0.15s ease;
+/* Intermediate assistant text block inside the collapsed tool group. */
+.agent-step-text {
+  flex-direction: column;
+  gap: 2px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  background: transparent;
 }
 
-.agent-step-thinking:not(.is-thinking-collapsed)
-  .agent-step-thinking-chevron {
-  transform: rotate(180deg);
+.agent-step-text .agent-step-text-body {
+  padding-left: 22px;
+  max-width: 100%;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: calc(var(--harbor-font-size) * 0.94);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-step-text .agent-step-text-body p,
+.agent-step-text .agent-step-text-body ul,
+.agent-step-text .agent-step-text-body ol {
+  margin: 0 0 4px;
+}
+
+.agent-step-text .agent-step-text-body > :last-child {
+  margin-bottom: 0;
 }
 
 .agent-step[data-step-kind="tool"] .agent-step-label {
-  color: var(--vscode-foreground);
-  opacity: 0.9;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+/* Model text merged into a tool card (was a standalone text step). */
+.agent-step-description {
+  padding-left: 22px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: calc(var(--harbor-font-size) * 0.94);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.agent-step-description p,
+.agent-step-description ul,
+.agent-step-description ol {
+  margin: 0 0 4px;
+}
+
+.agent-step-description > :last-child {
+  margin-bottom: 0;
 }
 
 .agent-step-icon {
@@ -1082,6 +1270,123 @@ body.vscode-dark .md-pre .syntax-property {
   }
 }
 
+/* update_todo plan card (kind "todo") */
+.tool-group .agent-step.msg.tool.agent-step-todo,
+.agent-step.agent-step-todo {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  /* Прилипает к верху при скролле. top задаётся через CSS-переменную
+     --harbor-todo-top, которая равна высоте user-пузыря (выставляется из JS
+     через ResizeObserver). Если переменной нет (нет user-сообщения) —
+     карточка прилипает к top:0. */
+  position: sticky;
+  top: var(--harbor-todo-top, 0px);
+  z-index: 5;
+}
+
+/* The plan card's header icon must NOT spin — only the in_progress step item
+   gets a spinner (todo-plan-item-icon below). Override the generic
+   agent-step[data-status="running"] rule that would otherwise spin it. */
+.agent-step.agent-step-todo .agent-step-icon {
+  animation: none;
+}
+
+.todo-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+
+.todo-plan-title {
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex-shrink: 0;
+}
+
+.todo-plan-counter {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.todo-plan-chevron {
+  font-size: 15px;
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground, #888);
+  flex-shrink: 0;
+}
+
+.todo-plan-current {
+  color: var(--vscode-descriptionForeground, #888);
+  overflow-wrap: anywhere;
+  padding-left: 21px;
+}
+
+.todo-plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.todo-plan-list[hidden] {
+  display: none;
+}
+
+.todo-plan-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.todo-plan-item-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.todo-plan-item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.todo-plan-item[data-todo-status="done"] .todo-plan-item-title {
+  color: var(--vscode-descriptionForeground, #888);
+  text-decoration: line-through;
+  text-decoration-color: var(--vscode-descriptionForeground, #888);
+}
+
+.todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-icon {
+  animation: agent-step-spin 0.9s linear infinite;
+}
+
+.agent-step-todo[data-status="error"] .todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-icon {
+  animation: none;
+}
+
+.todo-plan-item[data-todo-status="in_progress"] .todo-plan-item-title {
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.todo-plan-item[data-todo-status="pending"] {
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.todo-plan-error {
+  color: var(--vscode-errorForeground, #f44747);
+  overflow-wrap: anywhere;
+}
+
 .reasoning-group {
   display: flex;
   flex-direction: column;
@@ -1103,7 +1408,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 2px 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
   font: inherit;
@@ -1228,7 +1533,7 @@ body.vscode-dark .md-pre .syntax-property {
   line-height: 1.45;
   color: var(--vscode-descriptionForeground, #888);
   background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .msg.error .md-p,
@@ -1249,6 +1554,8 @@ body.vscode-dark .md-pre .syntax-property {
 
 .agent-status-in-messages {
   margin-top: 2px;
+  margin-left: var(--harbor-model-inset);
+  margin-right: var(--harbor-model-inset);
 }
 
 .agent-status:not([hidden]) {
@@ -1308,7 +1615,7 @@ body.vscode-dark .md-pre .syntax-property {
   align-self: stretch;
   margin-top: 4px;
   padding: 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   background: var(--harbor-bubble-bg);
 }
@@ -1334,7 +1641,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font: inherit;
@@ -1371,7 +1678,7 @@ body.vscode-dark .md-pre .syntax-property {
   align-self: stretch;
   margin-top: 8px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   background: var(--harbor-bubble-bg);
 }
@@ -1435,7 +1742,7 @@ body.vscode-dark .md-pre .syntax-property {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
   background: transparent;
   color: var(--vscode-foreground, #ccc);
@@ -1461,7 +1768,7 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 3px;
   margin-top: 2px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.28));
   background: var(--vscode-editor-background, #1e1e1e);
   font-size: 13px;
@@ -1604,7 +1911,7 @@ body.vscode-dark .md-pre .syntax-property {
   font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-textLink-foreground, #006ab1);
   text-decoration: none;
@@ -1620,7 +1927,7 @@ body.vscode-dark .md-pre .syntax-property {
   font-family: var(--harbor-font-mono);
   font-size: 0.92em;
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   color: var(--vscode-foreground);
 }
@@ -1629,7 +1936,7 @@ body.vscode-dark .md-pre .syntax-property {
 .proposed-plan-impl .md-pre {
   margin: 0;
   padding: 6px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   max-height: 280px;
   overflow-y: auto;
@@ -1773,7 +2080,7 @@ body.vscode-dark .md-pre .syntax-property {
   flex: 0 1 auto;
   padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--vscode-foreground);
   display: inline-flex;
   align-items: center;
@@ -1858,7 +2165,7 @@ body.vscode-dark .md-pre .syntax-property {
 }
 
 .composer-wrap {
-  padding: 14px 10px 10px;
+  padding: 10px 10px 10px;
   position: relative;
   z-index: 30;
   overflow: visible;
@@ -1886,7 +2193,7 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 6px;
   min-width: 0;
   padding: 4px 6px 4px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.28));
   background: color-mix(
     in srgb,
@@ -1936,7 +2243,7 @@ body.vscode-dark .md-pre .syntax-property {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -1961,19 +2268,31 @@ body.vscode-dark .md-pre .syntax-property {
   flex-direction: column;
   gap: 8px;
   padding: 12px 12px 10px;
-  border-radius: var(--radius-composer);
-  background: var(--harbor-bubble-bg);
-  border: 1px solid var(--vscode-input-border, rgba(127, 127, 127, 0.35));
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background, var(--harbor-chat-bg));
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   overflow: visible;
   position: relative;
 }
 
-.composer[data-mode="plan"] {
-  border-color: var(--mode-plan);
+.composer[data-mode="plan"],
+.msg-edit-composer[data-mode="plan"],
+.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="plan"]) {
+  border-color: color-mix(
+    in srgb,
+    var(--mode-plan) var(--mode-border-composer),
+    transparent
+  );
 }
 
-.composer[data-mode="ask"] {
-  border-color: var(--mode-ask);
+.composer[data-mode="ask"],
+.msg-edit-composer[data-mode="ask"],
+.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="ask"]) {
+  border-color: color-mix(
+    in srgb,
+    var(--mode-ask) var(--mode-border-composer),
+    transparent
+  );
 }
 
 .composer-wrap.is-drop-target .composer,
@@ -2020,7 +2339,7 @@ body.vscode-dark .md-pre .syntax-property {
   display: inline-block;
   padding: 1px 5px;
   margin: 0 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   font-family: inherit;
@@ -2056,7 +2375,7 @@ body.vscode-dark .md-pre .syntax-property {
   max-width: 100%;
   min-width: 0;
   padding: 4px 4px 4px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 35%, transparent);
   font-size: 11px;
@@ -2070,7 +2389,7 @@ body.vscode-dark .md-pre .syntax-property {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-foreground);
   font-size: 8px;
@@ -2148,7 +2467,7 @@ body.vscode-dark .md-pre .syntax-property {
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
   cursor: pointer;
@@ -2168,15 +2487,24 @@ body.vscode-dark .md-pre .syntax-property {
   line-height: 1;
 }
 
+.composer-mention-chip {
+  margin: 0;
+  cursor: pointer;
+}
+
+.composer-mention-chip .attach-chip-remove {
+  margin-left: 0;
+}
+
 .attach-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   max-width: 100%;
   min-width: 0;
-  padding: 3px 4px 3px 6px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  padding: 3px 4px 3px 4px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   font-size: 11px;
   line-height: 1.2;
@@ -2186,18 +2514,20 @@ body.vscode-dark .md-pre .syntax-property {
   position: relative;
   padding: 0;
   gap: 0;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
 .attach-thumb {
   display: block;
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 8px;
+  width: auto;
+  height: auto;
+  max-width: 132px;
+  max-height: 96px;
+  object-fit: contain;
+  border-radius: var(--radius-lg);
   flex-shrink: 0;
 }
 
@@ -2238,7 +2568,7 @@ body.vscode-dark .md-pre .syntax-property {
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -2269,13 +2599,45 @@ body.vscode-dark .md-pre .syntax-property {
   margin-bottom: 8px;
 }
 
+.msg.user.has-attach .msg-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.msg.user .msg-attachments .msg-file-chip {
+  margin: 0;
+}
+
+.msg.user.has-attach .msg-attachments {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.msg.user.has-attach .msg-text {
+  min-width: 0;
+  width: 100%;
+}
+
+.msg.user.has-attach .msg-attach-image img {
+  width: auto;
+  height: auto;
+  max-width: min(240px, 100%);
+  max-height: 160px;
+  object-fit: contain;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
 .msg-attach {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   max-width: 100%;
   padding: 4px 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   font-size: 11px;
@@ -2288,22 +2650,100 @@ body.vscode-dark .md-pre .syntax-property {
 }
 
 .msg-attach-image {
+  position: relative;
   flex-direction: column;
   align-items: flex-start;
   padding: 0;
   gap: 0;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  cursor: zoom-in;
+  font: inherit;
+  color: inherit;
+}
+
+button.msg-attach-image {
+  display: inline-flex;
 }
 
 .msg-attach-image img {
   display: block;
   max-width: min(220px, 100%);
   max-height: 160px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   object-fit: contain;
+}
+
+.msg-attach-image-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(
+    in srgb,
+    var(--vscode-editorWidget-background, #252526) 82%,
+    transparent
+  );
+  color: var(--vscode-foreground);
+  pointer-events: none;
+}
+
+.msg-attach-image-badge .material-symbols-outlined {
+  font-size: 12px;
+}
+
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 62%, transparent);
+  cursor: zoom-out;
+}
+
+.img-lightbox[hidden] {
+  display: none !important;
+}
+
+.img-lightbox-img {
+  max-width: min(920px, 100%);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.img-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #000 45%, transparent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.img-lightbox-close .material-symbols-outlined {
+  font-size: 20px;
 }
 
 .msg-attach-name {
@@ -2319,16 +2759,19 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 8px 8px 0;
 }
 
-.composer-meta {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-top: 8px;
-  padding-right: 6px;
-  min-height: 18px;
-  overflow: visible;
-  position: relative;
-  z-index: 40;
+/* Removable chips (edit mode) sit inside the composer padding, like the
+   main composer's #attachPreview. */
+.msg-edit-composer .msg-attachments.msg-edit-attach-preview {
+  margin: 0;
+}
+
+/* Context ring floats in the composer's top-right corner, above the prompt
+   textarea, so it stays clear of the footer buttons (mode/model/send). */
+.composer > .context-meter {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 41;
 }
 
 .context-meter {
@@ -2358,7 +2801,7 @@ body.vscode-dark .md-pre .syntax-property {
   bottom: calc(100% + 8px);
   z-index: 50;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--vscode-editorWidget-background, #252526);
   color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
@@ -2441,7 +2884,7 @@ body.vscode-dark .md-pre .syntax-property {
   outline: none;
   padding: 0;
   font-family: inherit;
-  font-size: inherit;
+  font-size: var(--harbor-font-size);
   line-height: 1.45;
   box-sizing: border-box;
 }
@@ -2460,29 +2903,99 @@ body.vscode-dark .md-pre .syntax-property {
 .composer-footer-left {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+}
+
+.composer-footer-left > .composer-plus .icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.composer-footer-right > #modelPicker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-foreground);
+}
+
+.composer-footer-right > #modelPicker .model-trigger:hover:not(:disabled),
+.composer-footer-right > #modelPicker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.composer-footer-left > .mode-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-foreground);
+}
+
+.composer-footer-left > .mode-picker .model-trigger:hover:not(:disabled),
+.composer-footer-left > .mode-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Composer input row holds just the textarea. Mode (Agent/Plan/Ask) lives
+   in the footer next to the + button. */
+.composer-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
 }
 
 .composer-footer-left > .mode-picker {
-  flex: 0 1 auto;
-  max-width: 38%;
+  flex-shrink: 0;
 }
 
-.composer-footer-left > .reason-picker {
+.composer-input-row > #prompt {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  /* leaves room for the context ring floating in the top-right corner */
+  padding-right: 20px;
+}
+
+.composer-footer-right > #modelPicker {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.composer-footer-right > .reason-picker {
   flex: 0 0 auto;
   max-width: none;
 }
 
-.reason-picker .model-trigger {
-  gap: 2px;
+.composer-footer-right > .reason-picker .model-trigger {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  color: var(--vscode-foreground);
 }
 
-.reason-picker .reason-icon {
-  flex-shrink: 0;
-  font-size: 16px;
-  opacity: 0.9;
+.composer-footer-right > .reason-picker .model-trigger:hover:not(:disabled),
+.composer-footer-right > .reason-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+  outline-color: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.reason-picker .model-trigger {
+  gap: 2px;
 }
 
 .reason-picker .model-menu {
@@ -2501,17 +3014,23 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--mode-ask);
 }
 
-.mode-picker .model-option[data-mode="plan"] .model-option-label {
+.mode-picker .model-option[data-mode="plan"] .model-option-label,
+#modeMenu .model-option[data-mode="plan"] .model-option-label,
+.msg-edit-mode-menu .model-option[data-mode="plan"] .model-option-label {
   color: var(--mode-plan);
   font-weight: 500;
 }
 
-.mode-picker .model-option[data-mode="ask"] .model-option-label {
+.mode-picker .model-option[data-mode="ask"] .model-option-label,
+#modeMenu .model-option[data-mode="ask"] .model-option-label,
+.msg-edit-mode-menu .model-option[data-mode="ask"] .model-option-label {
   color: var(--mode-ask);
   font-weight: 500;
 }
 
-.mode-picker .model-option {
+.mode-picker .model-option,
+#modeMenu .model-option,
+.msg-edit-mode-menu .model-option {
   align-items: flex-start;
 }
 
@@ -2523,7 +3042,9 @@ body.vscode-dark .md-pre .syntax-property {
   gap: 2px;
 }
 
-.mode-picker .model-option-label {
+.mode-picker .model-option-label,
+#modeMenu .model-option-label,
+.msg-edit-mode-menu .model-option-label {
   flex: 0 1 auto;
 }
 
@@ -2534,7 +3055,9 @@ body.vscode-dark .md-pre .syntax-property {
   white-space: normal;
 }
 
-.mode-picker .model-check {
+.mode-picker .model-check,
+#modeMenu .model-check,
+.msg-edit-mode-menu .model-check {
   margin-top: 1px;
 }
 
@@ -2542,7 +3065,8 @@ body.vscode-dark .md-pre .syntax-property {
   color: var(--vscode-textLink-foreground, #006ab1);
 }
 
-.mode-picker .model-menu {
+.mode-picker .model-menu,
+#modeMenu.model-menu {
   min-width: 240px;
 }
 
@@ -2555,7 +3079,7 @@ body.vscode-dark .md-pre .syntax-property {
   overflow-y: auto;
   margin: 0 0 6px;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background, #fff));
   border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
@@ -2580,7 +3104,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 7px 8px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font-family: inherit;
@@ -2629,7 +3153,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 0 2px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 16%, transparent);
   color: var(--vscode-textLink-foreground, #3794ff);
   font: inherit;
@@ -2638,9 +3162,47 @@ body.vscode-dark .md-pre .syntax-property {
   vertical-align: baseline;
 }
 
+.msg-file-chip,
+.msg-mention.msg-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 3px 8px 3px 4px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
+.msg.user .msg-file-chip {
+  margin: 0 0 4px;
+}
+
+.msg-file-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.msg-file-chip-line {
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
 .msg-mention:hover {
   background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 28%, transparent);
   text-decoration: underline;
+}
+
+.msg-mention.msg-file-chip:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  text-decoration: none;
 }
 
 .composer-plus {
@@ -2654,11 +3216,22 @@ body.vscode-dark .md-pre .syntax-property {
   bottom: calc(100% + 6px);
   min-width: 168px;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background, #fff));
   border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   z-index: 1000;
+}
+
+.composer-plus-menu.is-fixed {
+  position: fixed;
+  right: auto;
+  z-index: 10000;
+}
+
+.composer-plus-menu.opens-down {
+  top: calc(100% + 6px);
+  bottom: auto;
 }
 
 .composer-plus-menu[hidden] {
@@ -2673,7 +3246,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 7px 8px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font-family: inherit;
@@ -2713,6 +3286,8 @@ body.vscode-dark .md-pre .syntax-property {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .icon-btn {
@@ -2729,7 +3304,7 @@ body.vscode-dark .md-pre .syntax-property {
   );
   color: var(--vscode-foreground);
   border: none;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-pill);
   padding: 0;
   cursor: pointer;
   opacity: 0.85;
@@ -2752,6 +3327,7 @@ body.vscode-dark .md-pre .syntax-property {
 
 .icon-btn .material-symbols-outlined {
   font-size: 16px;
+  pointer-events: none;
 }
 
 .row-action .material-symbols-outlined {
@@ -2786,7 +3362,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 3px 6px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: #9a9a9a;
   font-family: var(--harbor-font-family);
@@ -2835,6 +3411,29 @@ body.vscode-dark .md-pre .syntax-property {
   transform: none;
 }
 
+/* Compact controls: on narrow panels, collapse model + intelligence chips
+   to icons so they stay visible next to the send button. Toggled by JS
+   (composer.is-compact) based on the composer's own width. */
+.model-icon-compact {
+  display: none;
+  flex-shrink: 0;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.composer.is-compact #modelPicker .model-label {
+  display: none;
+}
+
+.composer.is-compact #modelPicker .model-icon-compact {
+  display: inline-flex;
+}
+
+.composer.is-compact .composer-footer-right > #modelPicker .model-trigger,
+.composer.is-compact .composer-footer-right > .reason-picker .model-trigger {
+  padding: 4px 6px;
+}
+
 .model-menu {
   position: absolute;
   left: 0;
@@ -2845,7 +3444,7 @@ body.vscode-dark .md-pre .syntax-property {
   max-height: 240px;
   overflow-y: auto;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(--vscode-editorWidget-background, var(--vscode-input-background, #fff));
   border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.28));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
@@ -2877,7 +3476,7 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
   padding: 7px 8px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font-family: inherit;
@@ -2948,7 +3547,7 @@ button.secondary {
 button.primary {
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-pill);
   border: none;
   background: var(--vscode-foreground);
   color: var(--vscode-sideBar-background);
@@ -2966,6 +3565,7 @@ button.primary .icon-queue,
 button.primary .icon-stop {
   display: inline-block;
   font-size: 16px;
+  pointer-events: none;
 }
 
 button.primary .icon-queue,
@@ -3034,20 +3634,17 @@ button.primary:disabled {
   min-width: 0;
 }
 
-.agents-rail .agent-time {
-  display: none;
-}
-
-.agents-rail .agent-meta {
-  gap: 4px;
+.agents-rail .agent-trailing {
+  flex-basis: 4.8em;
+  min-width: 4.8em;
 }
 
 .workspace-shell.is-narrow.is-rail-open .agents-rail-backdrop {
   display: block;
   position: absolute;
   inset: 0;
-  /* Above .composer-wrap (30) / .composer-meta (40) so the rail drawer
-     covers the compose field instead of sitting under it. */
+  /* Above .composer-wrap (30) so the rail drawer covers the compose field
+     instead of sitting under it. */
   z-index: 60;
   border: none;
   padding: 0;
@@ -3144,7 +3741,7 @@ html[data-surface="settings"] .settings-layout {
   margin: 0;
   padding: 8px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font: inherit;
@@ -3233,12 +3830,24 @@ html[data-surface="settings"] .settings-layout {
   flex-shrink: 0;
 }
 
+.chat-screen:has(.chat-branches:not([hidden])) .chat-top {
+  padding-bottom: 6px;
+}
+
 .chat-branches {
+  --chat-branch-line: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 12px 14px;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 12px 0;
   flex-shrink: 0;
+  overflow-x: auto;
+  background-image: linear-gradient(
+    to top,
+    var(--chat-branch-line) 1px,
+    transparent 1px
+  );
 }
 
 .chat-branches[hidden] {
@@ -3249,48 +3858,77 @@ html[data-surface="settings"] .settings-layout {
   display: inline-flex;
   align-items: center;
   gap: 0;
-  max-width: 100%;
+  max-width: min(240px, 72%);
+  min-width: 0;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 0;
+  margin: 0;
+  padding: 0 2px 0 0;
+  border: 1px solid var(--chat-branch-line);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, var(--harbor-chat-bg));
+}
+
+.chat-branch-item:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 9%, var(--harbor-chat-bg));
 }
 
 .chat-branch-pill {
   margin: 0;
-  padding: 3px 9px;
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 999px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--radius-md) 0 0 0;
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
   font-size: 11px;
-  line-height: 1.3;
+  line-height: 1.35;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .chat-branch-item:has(.chat-branch-close) .chat-branch-pill {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  padding-right: 6px;
+  padding-right: 4px;
 }
 
 .chat-branch-pill:hover {
   color: var(--vscode-foreground);
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.chat-branch-pill:focus-visible,
+.chat-branch-close:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -2px;
+}
+
+.chat-branch-item.is-active {
+  z-index: 1;
+  background: var(--harbor-chat-bg);
+  border-color: var(--chat-branch-line);
+  border-bottom-color: var(--harbor-chat-bg);
+}
+
+.chat-branch-item.is-active:hover {
+  background: var(--harbor-chat-bg);
 }
 
 .chat-branch-pill.is-active,
 .chat-branch-item.is-active .chat-branch-pill {
   color: var(--vscode-foreground);
-  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 55%, transparent);
-  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 14%, transparent);
 }
 
 .chat-branch-close {
-  margin: 0;
-  padding: 0 8px 0 4px;
-  height: 100%;
-  min-height: 24px;
-  min-width: 28px;
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-left: none;
-  border-radius: 0 999px 999px 0;
+  margin: 0 4px 0 0;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  border: none;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
   cursor: pointer;
@@ -3301,18 +3939,16 @@ html[data-surface="settings"] .settings-layout {
 }
 
 .chat-branch-item.is-active .chat-branch-close {
-  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 55%, transparent);
-  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 14%, transparent);
   color: var(--vscode-foreground);
 }
 
 .chat-branch-close:hover {
   color: var(--vscode-foreground);
-  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
 }
 
 .chat-branch-close .material-symbols-outlined {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
 }
 
@@ -3336,7 +3972,7 @@ html[data-surface="settings"] .settings-layout {
 .agents-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 6px 12px;
+  padding: 4px 8px 12px;
   min-height: 0;
 }
 
@@ -3387,7 +4023,7 @@ html[data-surface="settings"] .settings-layout {
   margin: 0;
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
   color: var(--vscode-foreground);
   cursor: pointer;
@@ -3403,7 +4039,7 @@ html[data-surface="settings"] .settings-layout {
 .mcp-settings-entry-icon {
   width: 28px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3473,7 +4109,7 @@ html[data-surface="settings"] .settings-layout {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
 }
 
@@ -3495,7 +4131,7 @@ html[data-surface="settings"] .settings-layout {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-input-foreground, #ccc);
@@ -3587,7 +4223,7 @@ html[data-surface="settings"] .settings-layout {
   gap: 6px;
   padding: 10px;
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--vscode-editor-background, transparent);
 }
 
@@ -3597,7 +4233,7 @@ html[data-surface="settings"] .settings-layout {
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--vscode-editor-background, transparent);
   min-width: 0;
 }
@@ -3710,7 +4346,7 @@ html[data-surface="settings"] .settings-layout {
   gap: 10px;
   align-items: start;
   padding: 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 }
@@ -3718,7 +4354,7 @@ html[data-surface="settings"] .settings-layout {
 .mcp-server-icon {
   width: 32px;
   height: 32px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3741,7 +4377,7 @@ html[data-surface="settings"] .settings-layout {
 .mcp-status-dot {
   width: 8px;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--vscode-descriptionForeground, #888);
   flex-shrink: 0;
 }
@@ -3767,7 +4403,7 @@ html[data-surface="settings"] .settings-layout {
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   line-height: 1.4;
   color: var(--vscode-descriptionForeground, #888);
@@ -3812,7 +4448,7 @@ html[data-surface="settings"] .settings-layout {
 .mcp-switch-track {
   position: absolute;
   inset: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
   cursor: pointer;
   transition: background 0.12s ease;
@@ -3825,7 +4461,7 @@ html[data-surface="settings"] .settings-layout {
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: #fff;
   transition: transform 0.12s ease;
 }
@@ -3868,13 +4504,113 @@ html[data-surface="settings"] .settings-layout {
   line-height: 1.3;
 }
 
+.settings-font-size-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-range {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  margin: 2px 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--vscode-button-background, #0e639c) 0,
+    var(--vscode-button-background, #0e639c) var(--harbor-range-fill, 22%),
+    color-mix(in srgb, var(--vscode-foreground) 16%, transparent)
+      var(--harbor-range-fill, 22%),
+    color-mix(in srgb, var(--vscode-foreground) 16%, transparent) 100%
+  );
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  background-position: center;
+  border-radius: var(--radius-pill);
+}
+
+.settings-range:focus,
+.settings-range:focus-visible {
+  outline: none;
+}
+
+.settings-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.settings-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--vscode-button-background, #0e639c);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.settings-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--vscode-focusBorder, #007fd4);
+}
+
+.settings-range::-moz-range-track {
+  height: 4px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+}
+
+.settings-range::-moz-range-progress {
+  height: 4px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--vscode-button-background, #0e639c);
+}
+
+.settings-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--vscode-button-background, #0e639c);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.settings-font-size-value {
+  flex: 0 0 4.5em;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.settings-font-preview {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  font-size: var(--harbor-font-size);
+  line-height: 1.45;
+}
+
 .settings-input {
   width: 100%;
   box-sizing: border-box;
   margin: 0;
   padding: 6px 8px;
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-input-foreground, #ccc);
   font-family: var(--harbor-font-family);
@@ -3886,13 +4622,70 @@ html[data-surface="settings"] .settings-layout {
   outline-offset: -1px;
 }
 
+.settings-select-picker {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.settings-select-picker > select.settings-select-native,
+.settings-select-picker > select.settings-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-select-picker .model-trigger {
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-content: flex-start;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.settings-select-picker .model-trigger:hover:not(:disabled),
+.settings-select-picker.is-open .model-trigger {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.settings-select-picker .model-trigger:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+.settings-select-picker .model-label {
+  flex: 0 1 auto;
+  text-align: left;
+}
+
+.settings-select-menu.model-menu {
+  min-width: 240px;
+}
+
 /* JetBrains OSR: custom listbox instead of native <select> popup */
 .harbor-select-menu {
   position: fixed;
   z-index: 10050;
   overflow-y: auto;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: var(
     --vscode-editorWidget-background,
     var(--vscode-input-background, #fff)
@@ -3911,7 +4704,7 @@ html[data-surface="settings"] .settings-layout {
   font-size: 12px;
   line-height: 1.35;
   padding: 7px 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .harbor-select-option:hover {
@@ -3937,6 +4730,38 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   display: none !important;
 }
 
+.settings-tab-autocomplete-block .settings-input {
+  border: none;
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.settings-tab-autocomplete-block .settings-input:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.settings-tab-autocomplete-block .settings-prompt-body .settings-textarea {
+  min-height: 88px;
+  font-family: var(--harbor-font-mono);
+}
+
+.settings-tab-autocomplete-block .settings-prompt-body .settings-hint {
+  margin: 8px 0 0;
+}
+
+.settings-tab-autocomplete-block .settings-card,
+.settings-tab-autocomplete-block .settings-prompt-card {
+  margin-bottom: 10px;
+}
+
+.settings-tab-autocomplete-block .settings-limits-row {
+  margin-bottom: 0;
+}
+
+.settings-tab-autocomplete-block > .settings-hint {
+  margin-top: 8px;
+}
+
 .settings-textarea {
   resize: vertical;
   min-height: 96px;
@@ -3951,7 +4776,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   max-height: 220px;
   overflow: auto;
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 4px;
 }
 
@@ -3960,7 +4785,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   user-select: none;
 }
 
@@ -4010,6 +4835,171 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   color: var(--vscode-errorForeground, #f14c4c);
 }
 
+.settings-group-title {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.settings-panel .settings-group-title {
+  margin-top: 16px;
+}
+
+.settings-limits-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.settings-limits-row .settings-field {
+  margin-bottom: 0;
+}
+
+.settings-limits-row .settings-field-hint {
+  margin-top: -2px;
+}
+
+.settings-panel[data-settings-panel="commit"] > .settings-group-title:first-of-type {
+  margin-top: 12px;
+}
+
+.settings-panel[data-settings-panel="commit"] .settings-limits-row {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 520px) {
+  .settings-panel[data-settings-panel="commit"] .settings-limits-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.settings-toggle-row + .settings-toggle-row {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.settings-toggle-row:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.settings-toggle-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.settings-toggle-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.settings-prompt-card {
+  margin: 0 0 4px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-prompt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-prompt-toggle:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.settings-prompt-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+
+.settings-prompt-toggle-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-prompt-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-prompt-preview {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-prompt-card.is-open .settings-prompt-preview {
+  display: none;
+}
+
+.settings-prompt-chevron {
+  flex-shrink: 0;
+  font-size: 20px;
+  opacity: 0.55;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+
+.settings-prompt-card.is-open .settings-prompt-chevron {
+  transform: rotate(0deg);
+}
+
+.settings-prompt-body {
+  padding: 0 12px 12px;
+}
+
+.settings-prompt-body .settings-textarea {
+  min-height: 120px;
+}
+
 .mode-color-row {
   display: flex;
   flex-wrap: wrap;
@@ -4022,7 +5012,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   width: 22px;
   height: 22px;
   padding: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   background-color: transparent;
   cursor: pointer;
@@ -4078,7 +5068,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   position: relative;
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   flex-shrink: 0;
@@ -4130,7 +5120,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   font: inherit;
   font-size: 12px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -4151,7 +5141,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
   transition: border-color 0.12s ease;
 }
@@ -4168,7 +5158,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   gap: 4px;
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
@@ -4218,7 +5208,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 .settings-model-switch-ui {
   width: 34px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   transition: background 0.15s ease;
   position: relative;
@@ -4343,7 +5333,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   min-width: 200px;
   max-width: min(280px, calc(100vw - 16px));
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--vscode-editorWidget-background, #252526);
   color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
   border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
@@ -4426,7 +5416,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   width: min(100%, 400px);
   max-height: min(90vh, 640px);
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
   box-shadow: 0 12px 40px color-mix(in srgb, #000 35%, transparent);
@@ -4506,7 +5496,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   align-items: center;
   gap: 8px;
   padding: 5px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   min-width: 0;
 }
@@ -4554,7 +5544,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
 
@@ -4633,7 +5623,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   margin: 0 0 10px;
   padding: 10px;
   border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
 }
 
@@ -4649,7 +5639,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   margin: 0;
   padding: 4px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-textLink-foreground, #3794ff);
   font-family: var(--harbor-font-family);
@@ -4676,8 +5666,8 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 }
 
 .agent-block {
-  border-radius: 8px;
-  margin-bottom: 2px;
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
 }
 
 .agent-block.is-open {
@@ -4693,8 +5683,8 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 }
 
 .agent-row-wrap {
-  border-radius: 8px;
-  padding-right: 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .agent-row-wrap:hover {
@@ -4707,9 +5697,9 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   grid-template-columns: 1fr auto auto;
   gap: 8px;
   align-items: start;
-  padding: 8px;
+  padding: 9px 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--vscode-foreground);
   font: inherit;
@@ -4733,16 +5723,13 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 
 .agent-block.is-active > .agent-row-wrap,
 .agent-block.is-active > .agent-row-wrap:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
-  box-shadow: inset 2px 0 0 0 var(--vscode-focusBorder, #007fd4);
+  background: color-mix(in srgb, var(--harbor-user-tint) 18%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--harbor-user-tint) 32%, transparent);
+  outline-offset: -1px;
 }
 
 .agent-block.is-active > .agent-row-wrap > .agent-row {
   background: transparent;
-}
-
-.agent-block.is-active .agent-name {
-  font-weight: 700;
 }
 
 .agent-block.is-active:not(:hover) > .agent-row-wrap .row-action {
@@ -4776,8 +5763,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   height: 12px;
   position: absolute;
   left: 0;
-  top: 44%;
-  transform: translateY(-50%);
+  top: 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4791,12 +5777,28 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 .agent-name-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.agent-name-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.agent-trailing {
+  position: relative;
+  flex: 0 0 5.5em;
+  min-width: 5.5em;
+  height: 22px;
 }
 
 .agent-name {
   display: inline-block;
+  flex: 1;
+  min-width: 0;
   max-width: 100%;
   font-size: 13px;
   font-weight: 600;
@@ -4804,7 +5806,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: text;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   outline: none;
   line-height: 1.3;
   padding: 0;
@@ -4965,6 +5967,12 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   appearance: none;
 }
 
+.agent-name-wrap .agent-name-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .agent-name-input.is-chat {
   color: var(--vscode-foreground);
 }
@@ -4984,7 +5992,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: text;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   outline: none;
   line-height: 1.3;
   padding: 0;
@@ -5038,29 +6046,44 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 }
 
 .agent-meta {
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #888);
-  display: flex;
-  gap: 6px;
-  align-items: center;
   min-width: 0;
 }
 
 .agent-chip {
-  flex-shrink: 0;
+  display: inline-block;
+  margin-top: 4px;
+  max-width: 100%;
   padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  border: none;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
   font-size: 10px;
   color: var(--vscode-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-chip:empty {
+  display: none;
 }
 
 .agent-preview {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground, #888);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+.agent-preview:empty {
+  display: none;
 }
 
 .agent-preview .md-link,
@@ -5083,17 +6106,50 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   color: var(--vscode-descriptionForeground, #888);
   white-space: nowrap;
   flex-shrink: 0;
-  min-width: 4.5em;
+  min-width: 0;
   text-align: right;
   padding-top: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .row-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   flex-shrink: 0;
-  order: 0;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.agent-row-wrap:hover .agent-time,
+.agent-row-wrap:focus-within .agent-time,
+.agent-block.is-active > .agent-row-wrap .agent-time {
+  visibility: hidden;
+}
+
+.archive-row-wrap .agent-trailing {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.archive-row-wrap .agent-time,
+.archive-row-wrap .row-actions,
+.archive-row-wrap:hover .agent-time,
+.archive-row-wrap:focus-within .agent-time,
+.archive-block .agent-time {
+  position: static;
+  transform: none;
+  visibility: visible;
 }
 
 .row-action {
@@ -5105,7 +6161,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
   color: var(--vscode-descriptionForeground, #888);
@@ -5198,7 +6254,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   align-items: flex-start;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--vscode-foreground);
   font: inherit;
@@ -5210,7 +6266,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 }
 
 .chat-row-wrap:hover {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
 
@@ -5295,7 +6351,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   margin: 0;
   padding: 6px 8px;
   border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-input-foreground, var(--vscode-foreground));
   font: inherit;
@@ -5335,7 +6391,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
   margin: 0 0 4px;
   padding: 8px 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--vscode-foreground);
   font: inherit;
@@ -5360,7 +6416,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 .chat-search-hit-role {
   flex-shrink: 0;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
   color: var(--vscode-foreground);
   font-size: 10px;
@@ -5393,7 +6449,7 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 
 .chat-search-mark {
   padding: 0 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: #5a5a5a;
   color: #f3f3f3;
 }
@@ -5417,14 +6473,15 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 .msg.user.is-search-current,
 .msg.user.is-search-hit,
 .msg-wrap.is-search-hit > .msg.user {
-  border-color: #8a8a8a;
+  border: 1px solid #8a8a8a;
+  border-radius: var(--radius-sm);
 }
 
 .msg.assistant.is-search-current,
 .msg.assistant.is-search-hit,
 .msg-wrap.is-search-hit > .msg.assistant {
   border: 1px solid #8a8a8a;
-  border-radius: var(--radius-msg);
+  border-radius: var(--radius-xl);
   padding: 10px 12px;
 }
 
@@ -5436,4 +6493,43 @@ html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
 #chatSearchInput::selection {
   background: #5a5a5a;
   color: #f3f3f3;
+}
+
+/* Granular auto-approve groups (Settings → Agent behavior). */
+.settings-approvals-block {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.settings-approval-row .settings-approval-select {
+  width: auto;
+  min-width: 118px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* Checkpoint card: compare-with-workspace button. */
+.agent-step-checkpoint-compare {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 1px 2px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.7;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.agent-step-checkpoint-compare:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.agent-step-checkpoint-compare .material-symbols-outlined {
+  font-size: 14px;
+  line-height: 1;
 }

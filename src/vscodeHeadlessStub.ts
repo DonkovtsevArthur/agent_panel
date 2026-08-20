@@ -156,6 +156,7 @@ class HeadlessConfiguration {
   private static readonly KEY_ALIASES: Record<string, string[]> = {
     "commitMessage.prompt": ["commitMessagePrompt"],
     "commitMessage.language": ["commitMessageLanguage"],
+    "commitMessage.modelIds": ["commitMessageModelIds"],
     "commitMessage.modelId": ["commitMessageModelId"],
     "commitMessage.scope": ["commitMessageScope"],
     "autoglm.enabled": ["autoglmEnabled"],
@@ -167,6 +168,11 @@ class HeadlessConfiguration {
     "subagents.enabled": ["subagentsEnabled"],
     "parallelToolCalls.enabled": ["parallelToolCallsEnabled"],
     "autoCompact.enabled": ["autoCompactEnabled"],
+    "tools.autoApprove": ["toolsAutoApprove"],
+    "tools.approvals": ["toolsApprovals"],
+    "focusChain.enabled": ["focusChainEnabled"],
+    "turnContext.followUps": ["turnContextFollowUps"],
+    "checkpoints.enabled": ["checkpointsEnabled"],
     "skills.enabled": ["skillsEnabled"],
     "skills.workspaceEnabled": ["skillsWorkspaceEnabled"],
     "skills.globalEnabled": ["skillsGlobalEnabled"],
@@ -421,6 +427,22 @@ const state: {
   extensionContext?: HeadlessExtensionContext;
   ideEditors: StubEditor[];
   ideDiagnostics: Array<[StubUri, StubDiagnostic[]]>;
+  ideExtras: {
+    enclosingSymbol?: {
+      name?: string;
+      kind?: string;
+      line?: number;
+      detail?: string;
+    };
+    terminal?: {
+      name?: string;
+      command?: string;
+      cwd?: string;
+      output?: string;
+      exitCode?: number;
+    };
+    recentFiles?: string[];
+  };
 } = {
   workspaceRoot: process.cwd(),
   settings: {},
@@ -429,6 +451,7 @@ const state: {
   configListeners: [],
   ideEditors: [],
   ideDiagnostics: [],
+  ideExtras: {},
 };
 
 function fireConfigChange(section: string): void {
@@ -534,10 +557,17 @@ function makeStubEditor(raw: Record<string, unknown>): StubEditor | undefined {
 function applyIdeContextSnapshot(raw: unknown): void {
   state.ideEditors = [];
   state.ideDiagnostics = [];
+  state.ideExtras = {};
   if (!raw || typeof raw !== "object") {
     return;
   }
-  const rec = raw as { editors?: unknown; diagnostics?: unknown };
+  const rec = raw as {
+    editors?: unknown;
+    diagnostics?: unknown;
+    enclosingSymbol?: unknown;
+    terminal?: unknown;
+    recentFiles?: unknown;
+  };
   const editors: StubEditor[] = [];
   if (Array.isArray(rec.editors)) {
     for (const item of rec.editors) {
@@ -580,6 +610,39 @@ function applyIdeContextSnapshot(raw: unknown): void {
     }
   }
   state.ideDiagnostics = [...grouped.values()].map((b) => [b.uri, b.diags]);
+
+  if (rec.enclosingSymbol && typeof rec.enclosingSymbol === "object") {
+    const s = rec.enclosingSymbol as Record<string, unknown>;
+    const name = String(s.name || "").trim();
+    if (name) {
+      state.ideExtras.enclosingSymbol = {
+        name,
+        kind: s.kind ? String(s.kind) : undefined,
+        line: asInt(s.line),
+        detail: s.detail ? String(s.detail) : undefined,
+      };
+    }
+  }
+  if (rec.terminal && typeof rec.terminal === "object") {
+    const t = rec.terminal as Record<string, unknown>;
+    const output = String(t.output || "").trim();
+    if (output) {
+      state.ideExtras.terminal = {
+        name: String(t.name || "Run"),
+        command: t.command ? String(t.command) : undefined,
+        cwd: t.cwd ? String(t.cwd) : undefined,
+        output,
+        exitCode:
+          typeof t.exitCode === "number" ? t.exitCode : undefined,
+      };
+    }
+  }
+  if (Array.isArray(rec.recentFiles)) {
+    state.ideExtras.recentFiles = rec.recentFiles
+      .map((p) => String(p || "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  }
 }
 
 export const HarborHeadless = {
@@ -601,6 +664,9 @@ export const HarborHeadless = {
   /** JetBrains host snapshot so turnContext/editorContext see the open editor. */
   applyIdeContext(raw: unknown): void {
     applyIdeContextSnapshot(raw);
+  },
+  getIdeExtras(): typeof state.ideExtras {
+    return state.ideExtras;
   },
   getSettings(): HeadlessSettings {
     return state.settings;
@@ -773,6 +839,20 @@ export const window = {
   },
   get visibleTextEditors(): StubEditor[] {
     return state.ideEditors;
+  },
+  get tabGroups() {
+    const paths = state.ideExtras.recentFiles || [];
+    const fromEditors = state.ideEditors.map((e) => e.document.uri.fsPath);
+    const files = [...new Set([...fromEditors, ...paths])];
+    return {
+      all: [
+        {
+          tabs: files.map((fsPath) => ({
+            input: { uri: fileUri(fsPath) },
+          })),
+        },
+      ],
+    };
   },
   onDidChangeActiveTextEditor: () => ({ dispose: () => undefined }),
   onDidChangeTextEditorSelection: () => ({ dispose: () => undefined }),

@@ -68,8 +68,32 @@ class HarborHostBridge(
     }, browser.cefBrowser)
 
     removeListener = sidecar.addNotificationListener { method, params ->
+      // Diagnostic: confirm turn-lifecycle notifications reach the host.
+      // Grep the IDE log for "Harbor sidecar→host" — expect status →
+      // assistantDone → idle per turn (and agentsList with runState changes).
+      if (method == "hostToWebview" && params != null) {
+        val inner = params.get("type")?.asString ?: ""
+        if (inner == "status" || inner == "step" || inner == "assistantDone" ||
+          inner == "runFinished" || inner == "runFailed" || inner == "idle" ||
+          inner == "stopped" || inner == "agentsList"
+        ) {
+          log.info("Harbor sidecar→host hostToWebview type=$inner")
+        }
+      } else if (method.startsWith("turn.")) {
+        // Raw core events — if these appear instead of hostToWebview, the
+        // bundled sidecar is stale (emits turn.* instead of hostToWebview).
+        log.warn("Harbor sidecar→host raw $method (expected hostToWebview)")
+      }
       when (method) {
-        "hostToWebview" -> postToWebview(gson.toJson(params))
+        "hostToWebview" -> {
+          postToWebview(gson.toJson(params))
+          // Force JCEF repaint after agent abort so the panel does not
+          // stay frozen in OSR mode with stale content.
+          val inner = params?.get("type")?.asString ?: ""
+          if (inner == "stopped" || inner == "idle") {
+            scheduleBrowserRepaint()
+          }
+        }
         "host.openExternal" -> {
           var url = params?.get("url")?.asString?.trim().orEmpty()
           if (url.startsWith("file://https://", ignoreCase = true) ||
@@ -83,6 +107,32 @@ class HarborHostBridge(
             ApplicationManager.getApplication().invokeLater {
               BrowserUtil.browse(url)
             }
+          }
+        }
+        "host.requestToolApproval" -> {
+          val requestId = params?.get("requestId")?.asString.orEmpty()
+          val toolName = params?.get("toolName")?.asString ?: "tool"
+          val preview = params?.get("preview")?.asString.orEmpty()
+          ApplicationManager.getApplication().invokeLater {
+            val message = buildString {
+              append("Allow Harbor Agents to run $toolName?")
+              if (preview.isNotBlank()) {
+                append("\n\n")
+                append(preview.take(400))
+              }
+            }
+            val answer = Messages.showYesNoDialog(
+              project,
+              message,
+              "Harbor Agents",
+              Messages.getWarningIcon(),
+            )
+            val obj = JsonObject().apply {
+              addProperty("type", "toolApprovalResult")
+              addProperty("requestId", requestId)
+              addProperty("approved", answer == Messages.YES)
+            }
+            sidecar.request("webview.handle", obj) { _ -> }
           }
         }
         "vfs.refresh" -> {
@@ -390,6 +440,7 @@ class HarborHostBridge(
         ApplicationManager.getApplication().executeOnPooledThread {
           val attachments = HarborClipboard.readImageAttachments()
           if (attachments.isNotEmpty()) {
+            HarborAttachmentStore.remember(attachments)
             ApplicationManager.getApplication().invokeLater {
               postToWebview(
                 gson.toJson(
@@ -441,7 +492,7 @@ class HarborHostBridge(
         }
       }
       "pickAttachments" -> {
-        val imagesOnly = obj.get("imagesOnly")?.asBoolean != false
+        val imagesOnly = obj.get("imagesOnly")?.asBoolean == true
         ApplicationManager.getApplication().invokeLater {
           pickAttachments(imagesOnly)
         }
@@ -469,6 +520,7 @@ class HarborHostBridge(
             if (attachments.size >= 8) break
           }
           if (attachments.isEmpty()) return@executeOnPooledThread
+          HarborAttachmentStore.remember(attachments)
           ApplicationManager.getApplication().invokeLater {
             postToWebview(
               HarborFileDrop.attachmentsJson(attachments),
@@ -535,6 +587,9 @@ class HarborHostBridge(
           obj.add("ideContext", HarborIdeContext.toJson(project))
         } catch (t: Throwable) {
           log.warn("Harbor ideContext snapshot failed", t)
+        }
+        if (type == "send" || type == "editUserMessage") {
+          HarborAttachmentStore.hydrateSend(obj)
         }
         sidecar.request("webview.handle", obj) { _ -> }
       }
@@ -677,6 +732,7 @@ class HarborHostBridge(
       if (attachments.isEmpty()) {
         return@executeOnPooledThread
       }
+      HarborAttachmentStore.remember(attachments)
       ApplicationManager.getApplication().invokeLater {
         postToWebview(
           gson.toJson(
@@ -723,6 +779,7 @@ class HarborHostBridge(
   }
 
   fun postToWebview(json: String, forceRepaint: Boolean = false) {
+    HarborAttachmentStore.rememberFromHostJson(json)
     val escaped = gson.toJson(json)
     val script = """
       (function() {

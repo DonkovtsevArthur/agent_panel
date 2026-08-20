@@ -1417,6 +1417,17 @@ class SuggestionCache {
     return s.replace(/[ \t]+$/gm, "");
   }
 
+  /** Cache identity of a cursor context — shared with the lastReady guard. */
+  static keyParts(
+    prefix: string,
+    suffix: string
+  ): { prefixTail: string; suffixHead: string } {
+    return {
+      prefixTail: SuggestionCache.norm(prefix.slice(-400)),
+      suffixHead: SuggestionCache.norm(suffix.slice(0, 160)),
+    };
+  }
+
   get(
     uri: string,
     prefix: string,
@@ -1424,8 +1435,7 @@ class SuggestionCache {
     modelId: string,
     alternatives: number
   ): string[] | undefined {
-    const prefixTail = SuggestionCache.norm(prefix.slice(-400));
-    const suffixHead = SuggestionCache.norm(suffix.slice(0, 160));
+    const { prefixTail, suffixHead } = SuggestionCache.keyParts(prefix, suffix);
 
     for (const item of this.items) {
       if (item.uri !== uri || item.modelId !== modelId) {
@@ -1469,8 +1479,7 @@ class SuggestionCache {
     alternatives: number,
     texts: string[]
   ): void {
-    const prefixTail = SuggestionCache.norm(prefix.slice(-400));
-    const suffixHead = SuggestionCache.norm(suffix.slice(0, 160));
+    const { prefixTail, suffixHead } = SuggestionCache.keyParts(prefix, suffix);
     const entry: CachedSuggestion = {
       uri,
       prefixTail,
@@ -1970,13 +1979,18 @@ class HarborTabInlineCompletionProvider
   private prefetchAgain = false;
   private latestPrefetch: PrefetchJob | undefined;
   private prefetchSerial = 0;
-  /** Last texts shown as ready chip — used when Invoke cache key drifts slightly. */
+  /**
+   * Last texts shown as ready chip — reused on Invoke only when the cursor
+   * context still matches the one they were computed for (no stale fills).
+   */
   private lastReady:
     | {
         uri: string;
         line: number;
         texts: string[];
         at: number;
+        prefixTail: string;
+        suffixHead: string;
       }
     | undefined;
   /** Cross-file Next Edit target (opened on jump). */
@@ -2124,16 +2138,22 @@ class HarborTabInlineCompletionProvider
     const newPos = editor.selection.active;
     this.onCompletionAccepted(slice, position);
     this.lastShown = undefined;
-    if (remainder) {
-      this.cache.set(
-        document.uri.toString(),
-        textBeforeCursor + slice,
-        textAfterCursor,
-        modelId,
-        config.tabAutocomplete.alternatives,
-        [remainder]
-      );
-      this.rememberReady(document, newPos, [remainder]);
+      if (remainder) {
+        this.cache.set(
+          document.uri.toString(),
+          textBeforeCursor + slice,
+          textAfterCursor,
+          modelId,
+          config.tabAutocomplete.alternatives,
+          [remainder]
+        );
+        this.rememberReady(
+          document,
+          newPos,
+          [remainder],
+          textBeforeCursor + slice,
+          textAfterCursor
+        );
       log("partial accept", {
         mode,
         slice: slice.slice(0, 40).replace(/\n/g, "\\n"),
@@ -2154,13 +2174,18 @@ class HarborTabInlineCompletionProvider
   private rememberReady(
     document: vscode.TextDocument,
     position: vscode.Position,
-    texts: string[]
+    texts: string[],
+    prefix: string,
+    suffix: string
   ): void {
     this.lastReady = {
       uri: document.uri.toString(),
       line: position.line,
       texts: texts.slice(),
       at: Date.now(),
+      // Snapshot the context the texts belong to — the live document may
+      // keep changing while the provider still shows them on Invoke.
+      ...SuggestionCache.keyParts(prefix, suffix),
     };
   }
 
@@ -2179,6 +2204,22 @@ class HarborTabInlineCompletionProvider
       return undefined;
     }
     if (Date.now() - ready.at > 120_000) {
+      return undefined;
+    }
+    const lastLine = document.lineAt(document.lineCount - 1);
+    const current = SuggestionCache.keyParts(
+      document.getText(new vscode.Range(new vscode.Position(0, 0), position)),
+      document.getText(
+        new vscode.Range(
+          position,
+          new vscode.Position(document.lineCount - 1, lastLine.text.length)
+        )
+      )
+    );
+    if (
+      current.prefixTail !== ready.prefixTail ||
+      current.suffixHead !== ready.suffixHead
+    ) {
       return undefined;
     }
     return ready.texts;
@@ -2292,7 +2333,13 @@ class HarborTabInlineCompletionProvider
             alternatives: texts.length,
             preview: texts[0].slice(0, 80).replace(/\n/g, "\\n"),
           });
-          this.rememberReady(job.document, job.position, texts);
+          this.rememberReady(
+            job.document,
+            job.position,
+            texts,
+            job.textBeforeCursor,
+            job.textAfterCursor
+          );
           if (getConfig().tabAutocomplete.showMode === "inline") {
             this.setReady(false);
             void vscode.commands.executeCommand(
@@ -2356,7 +2403,13 @@ class HarborTabInlineCompletionProvider
       return;
     }
     this.setReady(true, editor.document, pos);
-    this.rememberReady(editor.document, pos, cached);
+    this.rememberReady(
+      editor.document,
+      pos,
+      cached,
+      textBeforeCursor,
+      textAfterCursor
+    );
   }
 
   onCompletionAccepted(text: string, position: vscode.Position): void {
@@ -2607,7 +2660,13 @@ class HarborTabInlineCompletionProvider
         return cached.map((text) => this.toItem(text, position));
       }
       // Prefetch path (chip mode): caret shortcut chip only (real code stays cached).
-      this.rememberReady(document, position, cached);
+      this.rememberReady(
+        document,
+        position,
+        cached,
+        textBeforeCursor,
+        textAfterCursor
+      );
       this.setReady(true, document, position);
       return [];
     }
@@ -2943,17 +3002,9 @@ class HarborTabInlineCompletionProvider
       if (earlyPublished || abortedForJunk) {
         return;
       }
-      // Prefer a closed tag; allow short single-line fills without it.
-      if (
-        !streamHasClosedCompletion(rawSoFar) &&
-        rawSoFar.length < 40 &&
-        !/\n/.test(rawSoFar)
-      ) {
-        // keep waiting for more tokens on tiny streams
-      } else if (
-        !streamHasClosedCompletion(rawSoFar) &&
-        rawSoFar.length < 24
-      ) {
+      // Publish only a finished completion: showing a partial stream makes
+      // the ghost rewrite itself while tokens keep arriving.
+      if (!streamHasClosedCompletion(rawSoFar)) {
         return;
       }
       const early = refineCompletionAlternatives(rawSoFar, params, alternatives);
@@ -2970,7 +3021,7 @@ class HarborTabInlineCompletionProvider
         alternatives,
         ranked
       );
-      this.rememberReady(document, position, ranked);
+      this.rememberReady(document, position, ranked, textBeforeCursor, textAfterCursor);
       if (config.tabAutocomplete.showMode === "inline") {
         this.markShown(document, ranked);
         void vscode.commands.executeCommand(
@@ -3331,10 +3382,14 @@ export function startTabAutocomplete(
         provider.noteUserEdit(e.document, inserted);
       }
       const ne = caretHint.getNextEdit();
-      if (ne && e.document.uri.toString() === ne.uri) {
-        if (ne.position.line >= e.document.lineCount) {
-          caretHint.clearNextEdit();
-        }
+      if (
+        ne &&
+        e.document.uri.toString() === ne.uri &&
+        e.contentChanges.length > 0
+      ) {
+        // Any edit invalidates the predicted jump target and must return Tab
+        // to its normal insert behavior.
+        caretHint.clearNextEdit();
       }
     }),
     vscode.workspace.onDidOpenTextDocument((doc) => {
@@ -3465,6 +3520,19 @@ export function startTabAutocomplete(
         const doc = editor.document;
         const last = Math.min(to, doc.lineCount - 1);
         const first = Math.max(0, Math.min(from, last));
+        // Tab/code-action must never drop code without an explicit confirm —
+        // the orphan heuristic can misfire.
+        const lineCount = last - first + 1;
+        const confirmed = await vscode.window.showWarningMessage(
+          lineCount > 1
+            ? `Harbor Tab: delete orphan block (${lineCount} lines)?`
+            : "Harbor Tab: delete orphan line?",
+          { modal: true },
+          "Delete"
+        );
+        if (confirmed !== "Delete") {
+          return;
+        }
         const deleteStart = doc.lineAt(first).range.start;
         const deleteEnd =
           last + 1 < doc.lineCount

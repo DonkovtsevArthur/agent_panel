@@ -1,5 +1,6 @@
 /**
- * Structured agent-turn steps (Zed-like sequence) and ToolResults intent hints.
+ * Структурированные шаги хода агента (последовательность в стиле Zed)
+ * и подсказки о намерении ToolResults.
  */
 
 export type AgentStepKind =
@@ -7,7 +8,9 @@ export type AgentStepKind =
   | "text"
   | "tool"
   | "compaction"
-  | "retry";
+  | "checkpoint"
+  | "retry"
+  | "todo";
 
 export type AgentToolStepStatus = "queued" | "running" | "done" | "error";
 
@@ -23,35 +26,46 @@ export interface AgentStepEvent {
   attempt?: number;
   maxAttempts?: number;
   /**
-   * Parsed per-tool metrics for richer one-line labels.
-   * Populated by the runtime from the Cline tool output on `content_end`.
+   * Разобранные метрики по каждому инструменту для более информативных
+   * однострочных подписей. Заполняются рантаймом из вывода инструмента
+   * Cline в момент события `content_end`.
    */
   metrics?: ToolStepMetrics;
+  /** Индекс запуска checkpoint Cline — используется при клике на карточку восстановления. */
+  checkpointRunCount?: number;
+  /** Пункты плана `update_todo`, отображаемые как карточка прогресса. */
+  steps?: TodoStepItem[];
+}
+
+export interface TodoStepItem {
+  title: string;
+  status: "pending" | "in_progress" | "done";
 }
 
 /**
- * Structured metrics extracted from a Cline tool result so the webview can
- * render precise one-line labels (paths, match counts, exit codes, …) without
- * re-parsing opaque `resultPreview` JSON.
+ * Структурированные метрики, извлечённые из результата инструмента Cline,
+ * чтобы webview мог выводить точные однострочные подписи (пути, число
+ * совпадений, коды выхода и т.д.) без повторного разбора «непрозрачного»
+ * JSON из `resultPreview`.
  */
 export interface ToolStepMetrics {
-  /** Resolved file paths for read_files / editor. */
+  /** Разрешённые пути файлов для read_files / editor. */
   files?: string[];
-  /** Total lines read across all files (read_files). */
+  /** Всего строк прочитано по всем файлам (read_files). */
   lines?: number;
-  /** Number of search hits (search_codebase). */
+  /** Число найденных совпадений (search_codebase). */
   matches?: number;
-  /** Process exit code (run_commands); present only when failure detected. */
+  /** Код выхода процесса (run_commands); присутствует только при обнаруженной ошибке. */
   exitCode?: number;
-  /** First lines of stderr / error tail (run_commands on failure). */
+  /** Первые строки stderr / хвост ошибки (run_commands при сбое). */
   errorOut?: string;
-  /** editor: true when a file was created rather than modified. */
+  /** editor: true, когда файл был создан, а не изменён. */
   created?: boolean;
 }
 
 export type CompletionIntent = "user_prompt" | "tool_results";
 
-/** Sticky marker so we do not stack duplicate ToolResults hints. */
+/** «Липкий» маркер, чтобы не накапливать дублирующиеся подсказки ToolResults. */
 export const TOOL_RESULTS_INTENT_MARKER = "[[harbor:tool_results_intent]]";
 
 export const TOOL_RESULTS_INTENT_HINT = `${TOOL_RESULTS_INTENT_MARKER}
@@ -59,7 +73,8 @@ Continue from the tool results above. Do not restart the task from scratch.
 Prefer the next concrete action (write_file / answer) over re-exploring files you already read.`;
 
 /**
- * Universal (not task-specific): rules/context are guidance; verify repo facts with tools.
+ * Универсальная (не привязанная к задаче): правила/контекст — это ориентир,
+ * но факты о репозитории проверяй инструментами.
  */
 export const VERIFY_REPO_FACTS_HINT = `Workspace guidance (AGENTS.md / rules / editor context) is helpful context, not a substitute for the repository.
 When the user asks for factual claims about this project that can be checked in the workspace (versions, file contents, structure, configs, scripts, dependencies), verify with list_files / read_file / search_text before answering.
@@ -67,14 +82,15 @@ Do not invent paths or versions. Prefer a short tool-verified answer over restat
 If tools are unavailable or the question is purely conceptual, answer from knowledge and say when you did not read the repo.
 When you already know several paths to inspect, call multiple read_file / list_files / search_text in the same assistant turn — they run in parallel. Do not serialize one read per round when the other paths are already clear.`;
 
-/** Short marker used in tests / docs for the parallel-reads guidance. */
+/** Короткий маркер, используемый в тестах/документации для правила параллельного чтения. */
 export const PARALLEL_READS_HINT_MARKER =
   "multiple read_file / list_files / search_text in the same assistant turn";
 
 /**
- * Zed-style focused-edit guidance: prefer search_replace (surgical patch) over
- * write_file (full rewrite) for changes to existing files — protects the rest
- * of the file (dependencies, imports, neighboring code) from being rewritten.
+ * Рекомендация по точечному редактированию в стиле Zed: для изменения
+ * существующего файла предпочитай search_replace (хирургический патч)
+ * вместо write_file (полная перезапись) — это защищает остальную часть файла
+ * (зависимости, импорты, соседний код) от перезаписи.
  */
 export const FOCUSED_EDIT_HINT = `When editing an EXISTING file, prefer search_replace (old_string → new_string) — it changes only the target fragment and leaves the rest of the file untouched (dependencies, imports, neighboring code are not rewritten or deleted). Add enough surrounding context to old_string so the match is unique. Use write_file ONLY to create a new file or to rewrite it entirely. For a version bump in package.json, call search_replace with the exact "version": "x.y.z" line.`;
 
@@ -127,8 +143,9 @@ export function hasToolResultsIntentHint(
 }
 
 /**
- * Ensures a single sticky ToolResults hint exists when continuing after tools.
- * Returns whether a hint was inserted.
+ * Гарантирует наличие единственной «липкой» подсказки ToolResults при
+ * продолжении работы после вызовов инструментов.
+ * Возвращает, была ли подсказка вставлена.
  */
 export function ensureToolResultsIntentHint(
   messages: Array<{ role: string; content?: unknown }>
@@ -159,7 +176,7 @@ export function looksLikeToolErrorResult(result: string): boolean {
       }
     }
   } catch {
-    // plain text
+    // обычный текст (не JSON)
   }
   return /^\s*error\b/i.test(trimmed);
 }

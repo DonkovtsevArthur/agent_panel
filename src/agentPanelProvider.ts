@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import { randomBytes } from "crypto";
 import {
   IncomingAttachment,
   MessageAttachment,
@@ -16,6 +17,7 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  clampUiFontSize,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
@@ -27,14 +29,27 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
+import { previewText } from "./agentSteps";
+import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
+import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
+import { resolveToolApproval } from "./toolApproval";
 import {
   discardAllClineChatSessions,
   discardClineChatSession,
   discardClineChatSessions,
   disposeClineRuntime,
+  onClineActiveChatChanged,
+  retainClineChatSession,
+  restoreClineChatCheckpoint,
+  compareClineChatCheckpoint,
 } from "./clineRuntime";
+import { reloadEditorsAfterCheckpointRestore } from "./checkpointEditors";
+import {
+  expandUserSlashCommand,
+  listHarborUserCommands,
+} from "./harborCommands";
 import {
   classifyModelFallbackError,
   modelFallbackEligibility,
@@ -65,14 +80,19 @@ import {
   workspaceHarborSkillsDir,
 } from "./harborSkills";
 import {
+  modePhaseStatusLabel,
   modeThinkingLabel,
   parseCustomModes,
   type AgentModeDef,
 } from "./modes";
-import { getOpenAICompatibleClient, type ChatMessage } from "./openaiClient";
 import {
-  ensureProposedPlanWrapper,
-  looksLikeImplementationPlan,
+  getOpenAICompatibleClient,
+  type ChatMessage,
+  type ListedProviderModel,
+} from "./openaiClient";
+import {
+  assistantFinaleDisplayText,
+  lastUiUserText,
   planMarkdownFileName,
   stripPlanImplementWrapper,
 } from "./planImplement";
@@ -89,6 +109,7 @@ import {
   chatHasMessages,
   cloneStore,
   collapseOldToolUiMessages,
+  copyUiAttachmentsOntoHistory,
   createEmptyAgent,
   deleteAgentFromStore,
   deleteAllArchivedAgentsFromStore,
@@ -98,6 +119,7 @@ import {
   getActiveChat,
   getAgentDisplayName,
   getAgentChatIds,
+  applyAgentName,
   migrateToStoreV2,
   restoreAgentInStore,
   searchChatMessages,
@@ -110,6 +132,7 @@ import {
   type ChatSearchRole,
   type ChatSearchScope,
 } from "./sessionStore";
+import { maybeGenerateChatTitle } from "./chatTitle";
 
 type SettingsPayload = {
   providers: Array<{
@@ -118,6 +141,7 @@ type SettingsPayload = {
     baseUrl: string;
     apiKey?: string;
     statusUrl?: string;
+    promptCache?: boolean;
   }>;
   models: Array<{
     id: string;
@@ -133,6 +157,7 @@ type SettingsPayload = {
     reasoningEffortDefault?: string;
   }>;
   language: string;
+  fontSize?: number;
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -147,6 +172,13 @@ type SettingsPayload = {
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
+  toolsAutoApprove?: boolean;
+  /** Per-group overrides; only explicit true/false are sent. */
+  toolsApprovals?: Record<string, boolean>;
+  focusChainEnabled?: boolean;
+  /** Follow-up turn IDE context mode: "full" | "slim" | "none". */
+  turnContextFollowUps?: string;
+  checkpointsEnabled?: boolean;
   skillsEnabled?: boolean;
   skillsWorkspaceEnabled?: boolean;
   skillsGlobalEnabled?: boolean;
@@ -169,7 +201,7 @@ type SettingsPayload = {
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
   commitMessageLanguage?: string;
-  commitMessageModelId?: string;
+  commitMessageModelIds?: string[];
   commitMessageScope?: "global" | "workspace";
   figmaEnabled?: boolean;
   autoglmEnabled?: boolean;
@@ -303,7 +335,11 @@ type WebviewToHost =
       apiKey?: string;
       rejectUnauthorized?: boolean;
       caBundlePath?: string;
-    };
+    }
+  | { type: "toolApprovalResult"; requestId: string; approved: boolean }
+  | { type: "restoreCheckpoint"; chatId?: string; checkpointRunCount?: number }
+  | { type: "compareCheckpoint"; chatId?: string; checkpointRunCount?: number }
+  | { type: "slashCommandsRefresh" };
 
 const STORAGE_KEY_V1 = "agentPanel.session.v1";
 const STORAGE_KEY_V2 = "agentPanel.session.v2";
@@ -340,6 +376,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private selectedReasoningEffort: ReasoningEffortLevel | "" = "";
   private lastTurnModel = "";
   private contextTokens = 0;
+  /** Накопленный биллинг по активному чату (input, excluding cache reads). */
+  private totalInputTokens = 0;
+  /** Накопленный биллинг по активному чату (output). */
+  private totalOutputTokens = 0;
+  /** Накопленные чтения из prompt-кэша по активному чату. */
+  private totalCacheReadTokens = 0;
+  /** Накопленные записи в prompt-кэш по активному чату. */
+  private totalCacheWriteTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
   private readonly chatRunState = new Map<
@@ -368,6 +412,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private storeRevision = 0;
   private persistedStoreRevision = 0;
   private storeWriteQueue: Promise<void> = Promise.resolve();
+  private storeWriteScheduled = false;
   private pendingComposerInsert = "";
   private pendingComposerMentions: string[] = [];
   private pendingComposerSelection:
@@ -417,6 +462,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           if (e.affectsConfiguration("agentPanel.providers")) {
             this.providerConnStatuses.clear();
             this.ensureProviderProbe(this.selectedModel, true);
+          }
+          if (e.affectsConfiguration("agentPanel.fontSize")) {
+            this.postUiFontSize();
           }
           // Не перезатираем форму настроек: webview сам автосохраняет.
         }
@@ -623,6 +671,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const created = createEmptyAgent(model);
     this.persistActiveChat();
+    this.syncClineSessionForChatSwitch(created.chat.id);
     this.store.agents.unshift(created.agent);
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
@@ -745,6 +794,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.storeRevision = 0;
     this.persistedStoreRevision = 0;
     this.storeWriteQueue = Promise.resolve();
+    this.storeWriteScheduled = false;
     this.ensureChatReady(fallbackModel);
     this.hydrateActiveChat();
 
@@ -783,6 +833,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         enabled[0]?.id ||
         "";
       const created = createEmptyAgent(model);
+      this.syncClineSessionForChatSwitch(created.chat.id);
       this.store.agents.unshift(created.agent);
       this.store.chats[created.chat.id] = created.chat;
       this.store.activeAgentId = created.agent.id;
@@ -799,16 +850,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private hydrateActiveChat(): void {
     const chat = getActiveChat(this.store);
     if (!chat) {
-      this.history = [];
-      this.uiMessages = [];
-      this.selectedModel = getConfig().defaultModel || "";
-      this.selectedMode = "agent";
-      this.selectedReasoningEffort = "";
-      this.lastTurnModel = "";
-      this.contextTokens = 0;
-      return;
-    }
-    this.history = chat.history || [];
+    this.history = [];
+    this.uiMessages = [];
+    this.selectedModel = getConfig().defaultModel || "";
+    this.selectedMode = "agent";
+    this.selectedReasoningEffort = "";
+    this.lastTurnModel = "";
+    this.contextTokens = 0;
+    this.totalInputTokens = 0;
+    this.totalOutputTokens = 0;
+    this.totalCacheReadTokens = 0;
+    this.totalCacheWriteTokens = 0;
+    return;
+  }
+    this.history = copyUiAttachmentsOntoHistory(
+      chat.history || [],
+      chat.uiMessages || []
+    );
     this.uiMessages = chat.uiMessages || [];
     this.selectedModel = chat.selectedModel || "";
     this.selectedMode = getModeById(chat.selectedMode).id;
@@ -818,6 +876,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
         ? chat.contextTokens
+        : 0;
+    this.totalInputTokens =
+      typeof chat.totalInputTokens === "number" && chat.totalInputTokens > 0
+        ? chat.totalInputTokens
+        : 0;
+    this.totalOutputTokens =
+      typeof chat.totalOutputTokens === "number" && chat.totalOutputTokens > 0
+        ? chat.totalOutputTokens
+        : 0;
+    this.totalCacheReadTokens =
+      typeof chat.totalCacheReadTokens === "number" &&
+      chat.totalCacheReadTokens > 0
+        ? chat.totalCacheReadTokens
+        : 0;
+    this.totalCacheWriteTokens =
+      typeof chat.totalCacheWriteTokens === "number" &&
+      chat.totalCacheWriteTokens > 0
+        ? chat.totalCacheWriteTokens
         : 0;
   }
 
@@ -846,12 +922,28 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : { selectedReasoningEffort: undefined }),
       lastTurnModel: this.lastTurnModel,
       contextTokens: this.contextTokens,
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       ...(running
         ? {}
         : {
             history: this.history,
             uiMessages: this.uiMessages.slice(-200),
           }),
+    });
+  }
+
+  /**
+   * Call before changing `store.activeChatId`. Idle-evicts the previous
+   * Cline session unless a turn is still running there.
+   */
+  private syncClineSessionForChatSwitch(nextChatId: string): void {
+    onClineActiveChatChanged({
+      previousChatId: this.store.activeChatId,
+      nextChatId,
+      previousStillRunning: this.isChatRunning(this.store.activeChatId),
     });
   }
 
@@ -1065,6 +1157,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       type: "contextUsage",
       used: this.contextTokens,
       max,
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
     });
   }
 
@@ -1073,20 +1169,59 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return this.writeStoreOnly();
   }
 
+  private scheduleChatTitle(chatId: string): void {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return;
+    }
+    const fallbackModelId =
+      this.store.chats[id]?.selectedModel || this.selectedModel;
+    void maybeGenerateChatTitle(this.store, id, { fallbackModelId }).then(
+      (name) => {
+        if (!name) {
+          return;
+        }
+        const agent = findAgentByChatId(this.store, id);
+        if (!agent) {
+          return;
+        }
+        void this.saveStore();
+        this.postAgentsList();
+        const renamed: Record<string, unknown> = {
+          type: "agentRenamed",
+          agentId: agent.id,
+          name: agent.name,
+        };
+        if (agent.id === this.store.activeAgentId) {
+          renamed.branches = buildBranchesList(this.store, agent.id);
+        }
+        this.view?.webview.postMessage(renamed);
+      }
+    );
+  }
+
   private writeStoreOnly(): Promise<void> {
     if (!this.hasWorkspaceFolder()) {
       return Promise.resolve();
     }
-    const revision = ++this.storeRevision;
-    const snapshot = cloneStore(this.store);
+    ++this.storeRevision;
+    // Запланированная запись клонирует стор в момент записи, а не в момент вызова,
+    // поэтому всплеск вызовов сохранения обходится одним клоном и одной записью.
+    if (this.storeWriteScheduled) {
+      return this.storeWriteQueue;
+    }
+    this.storeWriteScheduled = true;
     this.storeWriteQueue = this.storeWriteQueue
       .catch(() => undefined)
       .then(async () => {
-        if (revision < this.persistedStoreRevision) {
-          return;
+        this.storeWriteScheduled = false;
+        // Мутации могут прийти и во время await — цикл дописывает хвост.
+        while (this.persistedStoreRevision < this.storeRevision) {
+          const revision = this.storeRevision;
+          const snapshot = cloneStore(this.store);
+          await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
+          this.persistedStoreRevision = revision;
         }
-        await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
-        this.persistedStoreRevision = revision;
       });
     return this.storeWriteQueue;
   }
@@ -1124,6 +1259,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel: string;
       lastTurnModel: string;
       contextTokens: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
     }
   ): void {
     if (!this.isViewingChat(chatId)) {
@@ -1134,6 +1273,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.selectedModel = state.selectedModel;
     this.lastTurnModel = state.lastTurnModel;
     this.contextTokens = state.contextTokens;
+    if (typeof state.totalInputTokens === "number") {
+      this.totalInputTokens = state.totalInputTokens;
+    }
+    if (typeof state.totalOutputTokens === "number") {
+      this.totalOutputTokens = state.totalOutputTokens;
+    }
+    if (typeof state.totalCacheReadTokens === "number") {
+      this.totalCacheReadTokens = state.totalCacheReadTokens;
+    }
+    if (typeof state.totalCacheWriteTokens === "number") {
+      this.totalCacheWriteTokens = state.totalCacheWriteTokens;
+    }
   }
 
   private setRunStateForChat(
@@ -1269,6 +1420,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     workspaceGeneration: number;
   } {
     this.abortChatRun(chatId);
+    retainClineChatSession(chatId);
     const controller = new AbortController();
     const token = this.nextRunToken++;
     this.chatRuns.set(chatId, controller);
@@ -1329,6 +1481,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.chatRuns.delete(chatId);
     this.chatRunTokens.delete(chatId);
+    onClineActiveChatChanged({
+      previousChatId: chatId,
+      nextChatId: this.store.activeChatId,
+    });
   }
 
   /** Persist run UI/history without requiring !aborted (final error / stop). */
@@ -1340,6 +1496,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       selectedModel?: string;
       lastTurnModel?: string;
       contextTokens?: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
     }
   ): void {
     if (!this.store.chats[chatId]) {
@@ -1356,6 +1516,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       ...(typeof patch.contextTokens === "number"
         ? { contextTokens: patch.contextTokens }
         : {}),
+      ...(typeof patch.totalInputTokens === "number"
+        ? { totalInputTokens: patch.totalInputTokens }
+        : {}),
+      ...(typeof patch.totalOutputTokens === "number"
+        ? { totalOutputTokens: patch.totalOutputTokens }
+        : {}),
+      ...(typeof patch.totalCacheReadTokens === "number"
+        ? { totalCacheReadTokens: patch.totalCacheReadTokens }
+        : {}),
+      ...(typeof patch.totalCacheWriteTokens === "number"
+        ? { totalCacheWriteTokens: patch.totalCacheWriteTokens }
+        : {}),
     });
     if (this.isActiveChat(chatId)) {
       this.uiMessages = nextUi;
@@ -1371,8 +1543,116 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (typeof patch.contextTokens === "number") {
         this.contextTokens = patch.contextTokens;
       }
+      if (typeof patch.totalInputTokens === "number") {
+        this.totalInputTokens = patch.totalInputTokens;
+      }
+      if (typeof patch.totalOutputTokens === "number") {
+        this.totalOutputTokens = patch.totalOutputTokens;
+      }
+      if (typeof patch.totalCacheReadTokens === "number") {
+        this.totalCacheReadTokens = patch.totalCacheReadTokens;
+      }
+      if (typeof patch.totalCacheWriteTokens === "number") {
+        this.totalCacheWriteTokens = patch.totalCacheWriteTokens;
+      }
     }
     void this.writeStoreOnly();
+  }
+
+  /**
+   * Shared abort finalizer for a chat turn. `runClineAgentTurn` catches the
+   * AbortSignal internally and returns normally on Stop, so the provider's
+   * success path is reached with an aborted signal — `syncRunChat` gates on
+   * `isChatRunCurrent` (false after Stop) and skips the write. Without this,
+   * the aborted turn vanishes from the store on reload and a follow-up
+   * "continue" starts a fresh Cline session with no record of what was done.
+   *
+   * Mutates `uiMessages` in place: pulls out the todo plan card, splices the
+   * transient (unfinished) tool rows so reload doesn't show stuck spinners,
+   * re-appends the todo card as cancelled, persists the snapshot, and posts
+   * the stopped/idle state to the webview.
+   */
+  private finalizeAbortedTurn(
+    chatId: string,
+    runUiMessages: UiMessage[],
+    runTransientStart: number,
+    snapshot: {
+      history: ChatMessage[];
+      selectedModel: string;
+      lastTurnModel?: string;
+      contextTokens?: number;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalCacheReadTokens?: number;
+      totalCacheWriteTokens?: number;
+    }
+  ): void {
+    const todoIx = runUiMessages.findIndex(
+      (m) =>
+        m.role === "tool" &&
+        m.step?.kind === "todo" &&
+        m.step.stepId === TODO_STEP_ID
+    );
+    const todoBefore =
+      todoIx >= 0 ? runUiMessages[todoIx] : undefined;
+    if (todoIx >= 0) {
+      runUiMessages.splice(todoIx, 1);
+    }
+    runUiMessages.splice(runTransientStart);
+    if (todoBefore?.step) {
+      const lang = resolveUiLanguage(getConfig().language);
+      const cancelledPreview =
+        lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
+      runUiMessages.push({
+        ...todoBefore,
+        step: {
+          ...todoBefore.step,
+          status: "error",
+          resultPreview: cancelledPreview,
+        },
+      });
+      if (this.isActiveChat(chatId)) {
+        this.view?.webview.postMessage({
+          type: "step",
+          chatId,
+          stepId: TODO_STEP_ID,
+          kind: "todo",
+          name: TODO_TOOL,
+          status: "error",
+          argsPreview: todoBefore.step.argsPreview,
+          steps: todoBefore.step.steps,
+          resultPreview: cancelledPreview,
+        });
+      }
+    }
+    this.persistRunChatSnapshot(chatId, {
+      history: snapshot.history,
+      uiMessages: runUiMessages,
+      selectedModel: snapshot.selectedModel,
+      ...(snapshot.lastTurnModel !== undefined
+        ? { lastTurnModel: snapshot.lastTurnModel }
+        : {}),
+      ...(typeof snapshot.contextTokens === "number"
+        ? { contextTokens: snapshot.contextTokens }
+        : {}),
+      ...(typeof snapshot.totalInputTokens === "number"
+        ? { totalInputTokens: snapshot.totalInputTokens }
+        : {}),
+      ...(typeof snapshot.totalOutputTokens === "number"
+        ? { totalOutputTokens: snapshot.totalOutputTokens }
+        : {}),
+      ...(typeof snapshot.totalCacheReadTokens === "number"
+        ? { totalCacheReadTokens: snapshot.totalCacheReadTokens }
+        : {}),
+      ...(typeof snapshot.totalCacheWriteTokens === "number"
+        ? { totalCacheWriteTokens: snapshot.totalCacheWriteTokens }
+        : {}),
+    });
+    this.setRunStateForChat(chatId);
+    if (this.isActiveChat(chatId)) {
+      this.postRegenerateState();
+      this.view?.webview.postMessage({ type: "stopped", chatId });
+    }
   }
 
   private saveSession(): void {
@@ -1754,7 +2034,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : config.caBundlePath;
 
     const reply = (payload: {
-      models?: string[];
+      models?: ListedProviderModel[];
       error?: string;
     }): void => {
       this.settingsPanel?.webview.postMessage({
@@ -1786,16 +2066,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         caBundlePath,
       });
       const models = await client.listModels(controller.signal);
-      const unique = Array.from(
-        new Set(
-          models
-            .map((id) => String(id || "").trim())
-            .filter(Boolean)
-        )
-      ).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
-      );
-      reply({ models: unique });
+      reply({ models });
     } catch (error) {
       const aborted =
         controller.signal.aborted ||
@@ -1815,7 +2086,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       name: a.name,
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
-      time: formatListTime(a.updatedAt, lang),
+      time: formatListTime(a.createdAt || a.updatedAt, lang),
       active: a.active,
       empty: a.empty,
       runState: this.runStateForAgent(a.id),
@@ -1886,9 +2157,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       branches,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       scrollTop: this.store.chats[this.store.activeChatId || ""]?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus,
+      fontSize: getConfig().fontSize,
     };
     if (
       typeof highlightMessageIndex === "number" &&
@@ -1900,6 +2176,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage(payload);
     this.ensureProviderProbe(this.selectedModel);
     this.scheduleScmRefresh();
+  }
+
+  private async postSlashCommandsList(): Promise<void> {
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const commands = await listHarborUserCommands(cwd);
+    this.view?.webview.postMessage({
+      type: "slashCommandsList",
+      commands: commands.map((c) => ({
+        name: c.name,
+        description: c.description,
+        source: c.source,
+      })),
+    });
   }
 
   private async onMessage(message: WebviewToHost): Promise<void> {
@@ -1915,7 +2204,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           this.pendingSettingsOpenMcp = false;
         } else {
           void this.postInit();
+          void this.postSlashCommandsList();
         }
+        break;
+      case "slashCommandsRefresh":
+        await this.postSlashCommandsList();
         break;
       case "modelChanged": {
         // Guard against stale modelChanged arriving after a chat switch:
@@ -2094,20 +2387,28 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "renameAgent": {
         const agent = this.store.agents.find((a) => a.id === message.agentId);
         if (agent && message.name.trim()) {
-          agent.name = message.name.trim().slice(0, 80);
-          agent.updatedAt = Date.now();
+          applyAgentName(
+            this.store,
+            agent.id,
+            message.name.trim(),
+            "user"
+          );
           this.saveStore();
           this.postAgentsList();
-          this.view?.webview.postMessage({
+          const renamed: Record<string, unknown> = {
             type: "agentRenamed",
             agentId: agent.id,
             name: agent.name,
-          });
+          };
+          if (agent.id === this.store.activeAgentId) {
+            renamed.branches = buildBranchesList(this.store, agent.id);
+          }
+          this.view?.webview.postMessage(renamed);
         }
         break;
       }
       case "archiveAgent":
-        this.archiveAgent(message.agentId);
+        await this.archiveAgent(message.agentId);
         break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
@@ -2308,6 +2609,109 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           reasoningEffort: message.reasoningEffort,
         });
         break;
+      case "toolApprovalResult":
+        resolveToolApproval(
+          String(message.requestId || ""),
+          message.approved === true
+        );
+        break;
+      case "restoreCheckpoint": {
+        const chatId = String(message.chatId || this.store.activeChatId || "");
+        const runCount = Number(message.checkpointRunCount);
+        const result = await restoreClineChatCheckpoint(chatId, {
+          checkpointRunCount: Number.isFinite(runCount) && runCount > 0
+            ? runCount
+            : undefined,
+        });
+        if (result.ok) {
+          const edited =
+            this.store.chats[chatId]?.lastAgentEditedPaths || [];
+          await reloadEditorsAfterCheckpointRestore(edited);
+        }
+        this.view?.webview.postMessage({
+          type: result.ok ? "status" : "runFailed",
+          text: result.ok
+            ? "Workspace restored from checkpoint"
+            : result.error || "Checkpoint restore failed",
+          chatId,
+        });
+        break;
+      }
+      case "compareCheckpoint": {
+        const chatId = String(message.chatId || this.store.activeChatId || "");
+        const runCount = Number(message.checkpointRunCount);
+        const result = await compareClineChatCheckpoint(chatId, {
+          checkpointRunCount: Number.isFinite(runCount) && runCount > 0
+            ? runCount
+            : undefined,
+        });
+        if (!result.ok) {
+          this.view?.webview.postMessage({
+            type: "runFailed",
+            text: result.error || "Checkpoint compare failed",
+            chatId,
+          });
+          break;
+        }
+        const diffs = result.diffs || [];
+        if (!diffs.length) {
+          this.view?.webview.postMessage({
+            type: "status",
+            text: "Checkpoint matches the workspace — no changes",
+            chatId,
+          });
+          break;
+        }
+        await this.openCheckpointDiffEditors(diffs);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Open checkpoint-vs-workspace diffs: a single file opens directly,
+   * several files go through a QuickPick first.
+   */
+  private async openCheckpointDiffEditors(
+    diffs: Array<{ filePath: string; leftContent: string; rightContent: string }>
+  ): Promise<void> {
+    const openOne = async (diff: {
+      filePath: string;
+      leftContent: string;
+      rightContent: string;
+    }) => {
+      const right = vscode.Uri.file(diff.filePath);
+      const name = path.basename(diff.filePath);
+      const left = vscode.Uri.parse(`checkpoint:${name}`).with({
+        scheme: "untitled",
+        path: `/${name} (checkpoint)`,
+      });
+      const doc = await vscode.workspace.openTextDocument(left);
+      const editor = await vscode.window.showTextDocument(doc, { preview: true });
+      await editor.edit((edit) =>
+        edit.insert(new vscode.Position(0, 0), diff.leftContent)
+      );
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        left,
+        right,
+        `${name} (checkpoint ↔ workspace)`
+      );
+    };
+    if (diffs.length === 1) {
+      await openOne(diffs[0]);
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      diffs.map((d) => ({
+        label: path.basename(d.filePath),
+        description: vscode.workspace.asRelativePath(d.filePath, false),
+        diff: d,
+      })),
+      { placeHolder: "Changed files since checkpoint" }
+    );
+    if (picked) {
+      await openOne(picked.diff);
     }
   }
 
@@ -2334,6 +2738,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    this.syncClineSessionForChatSwitch(chat.id);
     agent.chatId = chat.id;
     agent.chatIds = ids;
     this.store.activeAgentId = agentId;
@@ -2376,11 +2781,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       );
       return;
     }
+    onClineActiveChatChanged({
+      previousChatId: fromChatId,
+      nextChatId: created.id,
+      previousStillRunning: this.isChatRunning(fromChatId),
+    });
 
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
     void this.postChatScreen();
+    this.scheduleChatTitle(created.id);
   }
 
   private switchBranch(chatId: string): void {
@@ -2391,9 +2802,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     this.persistActiveChat();
+    const previousChatId = this.store.activeChatId;
     if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
       return;
     }
+    onClineActiveChatChanged({
+      previousChatId,
+      nextChatId: chatId,
+      previousStillRunning: this.isChatRunning(previousChatId),
+    });
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2434,6 +2851,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!deleteAgentBranch(this.store, agent.id, chatId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2452,6 +2870,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       "";
     const created = createEmptyAgent(model);
     this.persistActiveChat();
+    this.syncClineSessionForChatSwitch(created.chat.id);
     this.store.agents.unshift(created.agent);
     this.store.chats[created.chat.id] = created.chat;
     this.store.activeAgentId = created.agent.id;
@@ -2464,19 +2883,22 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /** Archive immediately — no confirm modal (restore stays in Archive screen). */
-  private archiveAgent(agentId: string): void {
+  private async archiveAgent(agentId: string): Promise<void> {
     const agent = this.store.agents.find((a) => a.id === agentId);
     if (!agent || agent.archivedAt) {
       return;
     }
 
-    for (const chatId of getAgentChatIds(agent)) {
+    const chatIds = getAgentChatIds(agent);
+    for (const chatId of chatIds) {
       this.abortChatRun(chatId);
     }
+    await discardClineChatSessions(chatIds);
     this.persistActiveChat();
     if (!archiveAgentInStore(this.store, agentId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.setScreen("chat");
     this.hydrateActiveChat();
     this.saveStore();
@@ -2538,6 +2960,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!deleteAgentFromStore(this.store, agentId)) {
       return;
     }
+    retainClineChatSession(this.store.activeChatId);
     this.hydrateActiveChat();
     this.saveStore();
     if (this.store.screen === "archive") {
@@ -2588,6 +3011,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await discardClineChatSessions(ids);
     this.persistActiveChat();
     deleteAllArchivedAgentsFromStore(this.store);
+    retainClineChatSession(this.store.activeChatId);
     this.hydrateActiveChat();
     this.saveStore();
     this.setScreen("archive");
@@ -2866,6 +3290,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       : typeof sourceChat.contextTokens === "number" && sourceChat.contextTokens > 0
         ? sourceChat.contextTokens
         : 0;
+    // Cumulative billing for this chat (seeds from store so a mid-run chat
+    // switch does not reset the totals). Updated from Cline usage events.
+    let runTotalInputTokens = this.isActiveChat(runChatId)
+      ? this.totalInputTokens
+      : typeof sourceChat.totalInputTokens === "number" &&
+          sourceChat.totalInputTokens > 0
+        ? sourceChat.totalInputTokens
+        : 0;
+    let runTotalOutputTokens = this.isActiveChat(runChatId)
+      ? this.totalOutputTokens
+      : typeof sourceChat.totalOutputTokens === "number" &&
+          sourceChat.totalOutputTokens > 0
+        ? sourceChat.totalOutputTokens
+        : 0;
+    let runTotalCacheReadTokens = this.isActiveChat(runChatId)
+      ? this.totalCacheReadTokens
+      : typeof sourceChat.totalCacheReadTokens === "number" &&
+          sourceChat.totalCacheReadTokens > 0
+        ? sourceChat.totalCacheReadTokens
+        : 0;
+    let runTotalCacheWriteTokens = this.isActiveChat(runChatId)
+      ? this.totalCacheWriteTokens
+      : typeof sourceChat.totalCacheWriteTokens === "number" &&
+          sourceChat.totalCacheWriteTokens > 0
+        ? sourceChat.totalCacheWriteTokens
+        : 0;
 
     const requestedModel =
       (model && enabledModels.some((m) => m.id === model) ? model : "") ||
@@ -2936,6 +3386,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         history: runHistory,
         uiMessages: runUiMessages.slice(-200),
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       this.syncActiveSnapshotFromChat(runChatId, {
         history: runHistory,
@@ -2943,6 +3397,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         selectedModel: modelForChat,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       void this.writeStoreOnly();
     };
@@ -3022,6 +3480,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     // Tool-статусы этого запуска временные до успешного финала.
     runTransientStart = runUiMessages.length;
 
+    // `/name args` from .harbor/commands/*.md expands host-side; the chat
+    // keeps showing what the user typed.
+    const slashExpansion = await expandUserSlashCommand(
+      trimmed,
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    );
+    const promptText = slashExpansion?.prompt ?? trimmed;
+
     this.setRunStateForChat(runChatId, "running");
     const mode = modeForRun;
     const agentMode = mode.id;
@@ -3044,7 +3510,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           runHistory = await runAgentTurn({
             model: activeTurnModel,
             history: runHistory,
-            userText: trimmed,
+            userText: promptText,
             attachments,
             storageUri: this.storageUri(),
             signal: currentRun.signal,
@@ -3054,6 +3520,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               this.store.chats[runChatId]?.lastAgentEditedPaths || [],
             chatId: runChatId,
             resetSession: Boolean(options?.resetSession),
+            priorUiMessages: runUiMessages,
             callbacks: {
           onPhase: (phase, detail) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -3069,38 +3536,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               );
               return;
             }
-            const lang = resolveUiLanguage(getConfig().language);
-            const fallback =
-              phase === "done"
-                ? lang === "ru"
-                  ? "Готово"
-                  : "Done"
-                : phase === "editing"
-                  ? lang === "ru"
-                    ? "Редактирую..."
-                    : "Editing..."
-                  : phase === "verifying"
-                    ? lang === "ru"
-                      ? "Проверяю..."
-                      : "Verifying..."
-                  : phase === "reading"
-                    ? lang === "ru"
-                      ? "Читаю..."
-                      : "Reading..."
-                    : phase === "listing"
-                      ? lang === "ru"
-                        ? "Просматриваю..."
-                        : "Listing..."
-                      : phase === "running"
-                        ? lang === "ru"
-                          ? "Запускаю..."
-                          : "Running..."
-                        : lang === "ru"
-                          ? "Думаю..."
-                          : "Thinking...";
             this.setStatusForChat(
               runChatId,
-              detail || fallback,
+              detail || modePhaseStatusLabel(phase, mode),
               false,
               phase,
               this.modelLabel(activeTurnModel)
@@ -3127,9 +3565,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             turnHadToolSideEffects = true;
-            runUiMessages.push({ role: "tool", text: toolText });
-            syncRunChat();
-            postToRunChat({ type: "append", role: "tool", text: toolText });
+            // Each "⚙ name(args)" line is emitted right after its structured
+            // step with identical text — skip the text-only twin so it is not
+            // persisted/rendered as a duplicate card.
+            const hasStepTwin = runUiMessages.some(
+              (m) =>
+                m.role === "tool" &&
+                Boolean(m.step?.stepId) &&
+                m.text === toolText
+            );
+            if (!hasStepTwin) {
+              runUiMessages.push({ role: "tool", text: toolText });
+              syncRunChat();
+              postToRunChat({ type: "append", role: "tool", text: toolText });
+            }
           },
           onStep: (event) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -3163,7 +3612,60 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 runUiMessages.push(uiMsg);
               }
               syncRunChat();
-            } else if (event.kind === "compaction" || event.kind === "retry") {
+            } else if (event.kind === "todo") {
+              // Plan card (update_todo) — upsert by stable stepId so repeated
+              // tool calls update the single card instead of stacking clones.
+              const todoUiMsg: import("./sessionStore").UiMessage = {
+                role: "tool",
+                text: `⚙ plan ${event.argsPreview || ""}`.trim(),
+                step: {
+                  stepId: event.stepId,
+                  kind: "todo",
+                  name: event.name,
+                  status: event.status,
+                  argsPreview: event.argsPreview,
+                  steps: event.steps,
+                },
+              };
+              const todoIx = runUiMessages.findIndex(
+                (m) => m.role === "tool" && m.step?.stepId === event.stepId
+              );
+              if (todoIx >= 0) {
+                runUiMessages[todoIx] = todoUiMsg;
+              } else {
+                runUiMessages.push(todoUiMsg);
+              }
+              syncRunChat();
+            } else if (event.kind === "text") {
+              // Intermediate assistant text (an earlier model round of this
+              // turn) — persist as a card inside the collapsed tool group so
+              // the finale-only bubble does not wipe mid-turn lists/answers.
+              if (event.text) {
+                const textUiMsg: import("./sessionStore").UiMessage = {
+                  role: "tool",
+                  text: previewText(event.text, 160),
+                  step: {
+                    stepId: event.stepId,
+                    kind: "text",
+                    status: event.status,
+                    text: event.text,
+                  },
+                };
+                const textIx = runUiMessages.findIndex(
+                  (m) => m.role === "tool" && m.step?.stepId === event.stepId
+                );
+                if (textIx >= 0) {
+                  runUiMessages[textIx] = textUiMsg;
+                } else {
+                  runUiMessages.push(textUiMsg);
+                }
+                syncRunChat();
+              }
+            } else if (
+              event.kind === "compaction" ||
+              event.kind === "checkpoint" ||
+              event.kind === "retry"
+            ) {
               runUiMessages.push({
                 role: "tool",
                 text: event.text || event.kind,
@@ -3173,6 +3675,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   text: event.text,
                   attempt: event.attempt,
                   maxAttempts: event.maxAttempts,
+                  checkpointRunCount: event.checkpointRunCount,
                 },
               });
               syncRunChat();
@@ -3191,13 +3694,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             turnHadAssistantOutput = true;
             runLastTurnModel = activeTurnModel;
-            // Plan card: wrap in Plan mode, or when the finale clearly is a
-            // plan (Agent often drafts Figma/impl plans without switching mode).
-            const displayText =
-              mode.id === "plan" ||
-              looksLikeImplementationPlan(assistantText)
-                ? ensureProposedPlanWrapper(assistantText)
-                : assistantText;
+            const displayText = assistantFinaleDisplayText(assistantText, {
+              modeId: mode.id,
+              hadFileEdits: turnEdits.length > 0,
+              previousUserText: lastUiUserText(runUiMessages),
+            });
             const uiMsg: UiMessage = { role: "assistant", text: displayText };
             if (meta?.reasoning) {
               uiMsg.reasoning = meta.reasoning;
@@ -3274,6 +3775,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             runContextTokens = usage.used;
+            // Prefer cumulative totals from Cline (totals survive tool rounds
+            // and spawn children); fall back to summing deltas for runtimes
+            // that do not emit total* fields.
+            if (typeof usage.totalInputTokens === "number") {
+              runTotalInputTokens = usage.totalInputTokens;
+            } else {
+              runTotalInputTokens += usage.promptTokens || 0;
+            }
+            if (typeof usage.totalOutputTokens === "number") {
+              runTotalOutputTokens = usage.totalOutputTokens;
+            } else {
+              runTotalOutputTokens += usage.completionTokens || 0;
+            }
+            if (typeof usage.totalCacheReadTokens === "number") {
+              runTotalCacheReadTokens = usage.totalCacheReadTokens;
+            } else {
+              runTotalCacheReadTokens += usage.cacheReadTokens || 0;
+            }
+            if (typeof usage.totalCacheWriteTokens === "number") {
+              runTotalCacheWriteTokens = usage.totalCacheWriteTokens;
+            } else {
+              runTotalCacheWriteTokens += usage.cacheWriteTokens || 0;
+            }
             syncRunChat();
             if (this.isViewingChat(runChatId)) {
               this.postContextUsage();
@@ -3359,6 +3883,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         runUiMessages = collapsedUi;
       }
       syncRunChat();
+      // On Stop, runClineAgentTurn catches the abort internally and returns
+      // normally, so we reach the success path with an aborted signal.
+      // syncRunChat gates on isChatRunCurrent (false after Stop) and skips
+      // the write — finalize + persist the partial turn directly so it
+      // survives reload and a follow-up "continue" sees it in history.
+      if (currentRun.signal.aborted) {
+        // Race guard: if "продолжи" already started a newer run (chatRuns has
+        // a new controller for this chat), the old draining turn must NOT
+        // post "stopped" or splice tool rows — that would kill the new run's
+        // preloader and reset visible steps. Bail out silently instead.
+        if (
+          !this.isChatRunOwned(runChatId, runRef) &&
+          this.chatRuns.has(runChatId)
+        ) {
+          return;
+        }
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: chosen,
+            lastTurnModel: runLastTurnModel,
+            contextTokens: runContextTokens,
+            totalInputTokens: runTotalInputTokens,
+            totalOutputTokens: runTotalOutputTokens,
+            totalCacheReadTokens: runTotalCacheReadTokens,
+            totalCacheWriteTokens: runTotalCacheWriteTokens,
+          }
+        );
+        return;
+      }
       if (
         this.isChatRunCurrent(runChatId, runRef) &&
         this.isViewingChat(runChatId)
@@ -3370,6 +3927,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         !currentRun.signal.aborted
       ) {
         this.postRunFinished(runChatId, "success");
+        this.scheduleChatTitle(runChatId);
       }
     } catch (error) {
       const owned = this.isChatRunOwned(runChatId, runRef);
@@ -3390,24 +3948,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
 
       if (aborted) {
-        // Не оставляем в истории незавершённые tool-строки после Stop.
-        // abortChatRun already removed us from chatRuns — persist directly.
-        runUiMessages.splice(runTransientStart);
-        this.persistRunChatSnapshot(runChatId, {
-          history: runHistory,
-          uiMessages: runUiMessages,
-          selectedModel: chosen,
-          lastTurnModel: runLastTurnModel,
-          contextTokens: runContextTokens,
-        });
-        this.setRunStateForChat(runChatId);
-        if (this.isActiveChat(runChatId)) {
-          this.postRegenerateState();
-          this.view?.webview.postMessage({
-            type: "stopped",
-            chatId: runChatId,
-          });
+        // Race guard (same as success path): if a newer run already started
+        // (e.g. "продолжи" after Stop), don't post "stopped" / splice UI —
+        // the new run owns the chat now.
+        if (!owned && this.chatRuns.has(runChatId)) {
+          return;
         }
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: chosen,
+            lastTurnModel: runLastTurnModel,
+            contextTokens: runContextTokens,
+            totalInputTokens: runTotalInputTokens,
+            totalOutputTokens: runTotalOutputTokens,
+            totalCacheReadTokens: runTotalCacheReadTokens,
+            totalCacheWriteTokens: runTotalCacheWriteTokens,
+          }
+        );
         return;
       }
 
@@ -3455,6 +4016,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         selectedModel: chosen,
         lastTurnModel: runLastTurnModel,
         contextTokens: runContextTokens,
+        totalInputTokens: runTotalInputTokens,
+        totalOutputTokens: runTotalOutputTokens,
+        totalCacheReadTokens: runTotalCacheReadTokens,
+        totalCacheWriteTokens: runTotalCacheWriteTokens,
       });
       this.setRunStateForChat(runChatId, "error");
       this.postRunFinished(runChatId, "error");
@@ -3649,6 +4214,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       uiMessages: nextUi.slice(-200),
       lastTurnModel: "",
       contextTokens: 0,
+      // History was truncated to the edit point — billing totals reset too.
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWriteTokens: 0,
       selectedModel: model || this.store.chats[runChatId]?.selectedModel,
     });
     if (this.isActiveChat(runChatId)) {
@@ -3656,6 +4226,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.uiMessages = nextUi;
       this.lastTurnModel = "";
       this.contextTokens = 0;
+      this.totalInputTokens = 0;
+      this.totalOutputTokens = 0;
+      this.totalCacheReadTokens = 0;
+      this.totalCacheWriteTokens = 0;
       if (model) {
         this.selectedModel = model;
       }
@@ -4217,6 +4791,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: p.baseUrl,
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          ...(p.protocol ? { protocol: p.protocol } : {}),
+          ...(typeof p.promptCache === "boolean"
+            ? { promptCache: p.promptCache }
+            : {}),
         })),
         models: config.models.map((m) => ({
           id: m.id,
@@ -4233,6 +4811,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         })),
         defaultModel: config.defaultModel,
         language: config.language,
+        fontSize: config.fontSize,
         resolvedLanguage: resolveUiLanguage(config.language),
         defaultContextWindow: config.defaultContextWindow,
         baseUrl: config.baseUrl,
@@ -4247,6 +4826,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         subagentsEnabled: config.subagents.enabled,
         parallelToolCallsEnabled: config.parallelToolCalls.enabled,
         autoCompactEnabled: config.autoCompact.enabled,
+        toolsAutoApprove: config.tools.autoApprove,
+        toolsApprovals: config.tools.approvals,
+        focusChainEnabled: config.focusChain.enabled,
+        turnContextFollowUps: config.turnContext.followUps,
+        checkpointsEnabled: config.checkpoints.enabled,
         skillsEnabled: config.skills.enabled,
         skillsWorkspaceEnabled: config.skills.workspaceEnabled,
         skillsGlobalEnabled: config.skills.globalEnabled,
@@ -4265,7 +4849,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
         commitMessageLanguage: config.commitMessage.language,
-        commitMessageModelId: config.commitMessage.modelId,
+        commitMessageModelIds: config.commitMessage.modelIds,
         commitMessageScope: config.commitMessage.scope,
         workspaceName:
           vscode.workspace.workspaceFolders?.[0]?.name ||
@@ -4283,6 +4867,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.settingsPanel?.webview.postMessage(payload);
     this.ensureAllProvidersProbed();
     this.syncProviderConnPolling();
+  }
+
+  private postUiFontSize(): void {
+    const fontSize = getConfig().fontSize;
+    const payload = { type: "uiFontSize" as const, fontSize };
+    this.view?.webview.postMessage(payload);
+    this.settingsPanel?.webview.postMessage(payload);
   }
 
   private getFigmaStatusPayload(): FigmaStatusPayload {
@@ -4693,6 +5284,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: string;
           apiKey?: string;
           statusUrl?: string;
+          promptCache?: boolean;
+          protocol?: "openai-compatible" | "anthropic";
         } = { id, baseUrl };
         if (name) {
           row.name = name;
@@ -4702,6 +5295,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         if (statusUrl && statusUrl !== baseUrl) {
           row.statusUrl = statusUrl;
+        }
+        if (typeof p?.promptCache === "boolean") {
+          row.promptCache = p.promptCache;
+        }
+        const rawProtocol = String(
+          (p as Record<string, unknown>)?.protocol || ""
+        );
+        if (
+          rawProtocol === "openai-compatible" ||
+          rawProtocol === "anthropic"
+        ) {
+          row.protocol = rawProtocol;
         }
         return row;
       })
@@ -4714,6 +5319,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           baseUrl: string;
           apiKey?: string;
           statusUrl?: string;
+          promptCache?: boolean;
+          protocol?: "openai-compatible" | "anthropic";
         } => Boolean(p)
       );
 
@@ -4739,18 +5346,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (!providerId || !providerIds.has(providerId)) {
           providerId = primaryId;
         }
-        const contextWindow =
-          typeof m?.contextWindow === "number" &&
-          Number.isFinite(m.contextWindow) &&
-          m.contextWindow >= 1024
-            ? Math.floor(m.contextWindow)
-            : undefined;
-        const maxOutputTokens =
-          typeof m?.maxOutputTokens === "number" &&
-          Number.isFinite(m.maxOutputTokens) &&
-          m.maxOutputTokens > 0
-            ? Math.floor(m.maxOutputTokens)
-            : undefined;
+        const limits = readModelTokenLimits(m);
+        const contextWindow = limits.contextWindow;
+        const maxOutputTokens = limits.maxOutputTokens;
         const row: {
           id: string;
           label?: string;
@@ -4844,6 +5442,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("models", models, target);
     await cfg.update("defaultModel", resolvedDefault, target);
     await cfg.update("language", nextLanguage, target);
+    await cfg.update("fontSize", clampUiFontSize(raw.fontSize), target);
     await cfg.update(
       "defaultContextWindow",
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
@@ -4892,6 +5491,48 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "autoCompact.enabled",
       raw.autoCompactEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "tools.autoApprove",
+      raw.toolsAutoApprove !== false,
+      target
+    );
+    const approvalGroups = [
+      "reads",
+      "web",
+      "edits",
+      "commands",
+      "mcp",
+      "subagents",
+    ] as const;
+    const approvals: Record<string, boolean> = {};
+    const approvalsRaw =
+      raw.toolsApprovals && typeof raw.toolsApprovals === "object"
+        ? raw.toolsApprovals
+        : {};
+    for (const group of approvalGroups) {
+      const value = approvalsRaw[group];
+      if (typeof value === "boolean") {
+        approvals[group] = value;
+      }
+    }
+    await cfg.update("tools.approvals", approvals, target);
+    await cfg.update(
+      "focusChain.enabled",
+      raw.focusChainEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "turnContext.followUps",
+      raw.turnContextFollowUps === "slim" || raw.turnContextFollowUps === "none"
+        ? raw.turnContextFollowUps
+        : "full",
+      target
+    );
+    await cfg.update(
+      "checkpoints.enabled",
+      raw.checkpointsEnabled !== false,
       target
     );
     await cfg.update("skills.enabled", raw.skillsEnabled !== false, target);
@@ -5031,6 +5672,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.postModels();
     this.postModes();
     this.postSettings();
+    this.postUiFontSize();
     this.providerConnStatuses.clear();
     this.ensureProviderProbe(this.selectedModel, true);
 
@@ -5057,30 +5699,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : raw.commitMessageLanguage === "en"
           ? "en"
           : "auto";
-    const modelId = String(raw.commitMessageModelId || "").trim();
+    const modelIds = Array.isArray(raw.commitMessageModelIds)
+      ? raw.commitMessageModelIds
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .filter((id, i, all) => all.indexOf(id) === i)
+      : [];
 
     if (scope === "global") {
       // Сбросить workspace-override, чтобы снова действовали глобальные значения.
-      await cfg.update(
+      for (const key of [
         "commitMessage.prompt",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
-      await cfg.update(
         "commitMessage.language",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
-      await cfg.update(
+        "commitMessage.modelIds",
         "commitMessage.modelId",
-        undefined,
-        vscode.ConfigurationTarget.Workspace
-      );
+      ]) {
+        await cfg.update(key, undefined, vscode.ConfigurationTarget.Workspace);
+      }
     }
 
     await cfg.update("commitMessage.prompt", prompt, target);
     await cfg.update("commitMessage.language", language, target);
-    await cfg.update("commitMessage.modelId", modelId, target);
+    await cfg.update("commitMessage.modelIds", modelIds, target);
+    // Clear legacy single-model setting.
+    await cfg.update("commitMessage.modelId", undefined, target);
   }
 
   private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
@@ -5171,10 +5813,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       chatTitle: agentName,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
+      totalCacheReadTokens: this.totalCacheReadTokens,
+      totalCacheWriteTokens: this.totalCacheWriteTokens,
       chatId: this.store.activeChatId || "",
       scrollTop: getActiveChat(this.store)?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       modes: this.serializeModesForUi(),
+      fontSize: config.fontSize,
     });
 
     this.postAgentsList();
@@ -5199,6 +5846,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     surface: "panel" | "settings" = "panel"
   ): string {
     const lang = resolveUiLanguage(getConfig().language);
+    const fontSize = getConfig().fontSize;
     const version =
       vscode.extensions.getExtension("local.vscode-agent-panel")?.packageJSON
         ?.version ?? "0";
@@ -5237,7 +5885,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : "Harbor Agents";
 
     return `<!DOCTYPE html>
-<html lang="${lang}" data-surface="${surface}">
+<html lang="${lang}" data-surface="${surface}" style="scrollbar-color: unset; scrollbar-width: unset">
 <head>
   <meta charset="UTF-8" />
   <meta
@@ -5261,6 +5909,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       font-display: swap;
       src: url("${jetbrainsMonoUri}") format("truetype");
     }
+    :root { --harbor-font-size: ${fontSize}px; }
   </style>
   <title>${pageTitle}</title>
 </head>
@@ -5318,7 +5967,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div class="composer" id="composer" data-mode="agent">
         <div id="selectionPreview" class="selection-preview" hidden></div>
         <div id="attachPreview" class="attach-preview" hidden></div>
-        <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
+        <div class="composer-input-row">
+          <textarea id="prompt" placeholder="Task for the agent... (@ for file)" rows="3"></textarea>
+        </div>
         <div class="composer-footer">
           <div class="composer-footer-left">
             <div class="composer-plus" id="composerPlus">
@@ -5330,10 +5981,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   <span class="material-symbols-outlined" aria-hidden="true">attach_file</span>
                   <span>File</span>
                 </button>
-                <button type="button" class="composer-plus-item" data-action="image" role="menuitem">
-                  <span class="material-symbols-outlined" aria-hidden="true">image</span>
-                  <span>Image</span>
-                </button>
               </div>
             </div>
             <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
@@ -5343,8 +5990,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               </button>
               <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
             </div>
+          </div>
+          <div class="composer-footer-right">
             <div class="model-picker" id="modelPicker">
               <button type="button" class="model-trigger" id="modelTrigger" aria-haspopup="listbox" aria-expanded="false" title="Model">
+                <span class="material-symbols-outlined model-icon-compact" aria-hidden="true">smart_toy</span>
                 <span class="model-label" id="modelLabel">Model</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
@@ -5352,14 +6002,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="model-picker reason-picker" id="reasonPicker" hidden>
               <button type="button" class="model-trigger" id="reasonTrigger" aria-haspopup="listbox" aria-expanded="false" title="Intelligence">
-                <span class="material-symbols-outlined reason-icon" aria-hidden="true">psychology</span>
+                <span class="material-symbols-outlined reason-icon" aria-hidden="true">neurology</span>
                 <span class="model-label" id="reasonLabel">Medium</span>
                 <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
               </button>
               <div class="model-menu" id="reasonMenu" role="listbox" hidden></div>
             </div>
-          </div>
-          <div class="composer-footer-right">
             <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send">
               <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
               <span class="material-symbols-outlined icon-queue" aria-hidden="true">schedule</span>
@@ -5370,8 +6018,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <div id="composerDropHint" class="composer-drop-hint" hidden>
           <span class="composer-drop-hint-text">Drop file to attach</span>
         </div>
-      </div>
-      <div class="composer-meta">
         <button type="button" class="context-meter" id="contextRing" aria-label="Context usage">
           <svg class="context-ring" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
             <circle class="context-ring-track" cx="12" cy="12" r="9" fill="none" stroke="#8a8a8a" stroke-width="3.5"/>
@@ -5413,6 +6059,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         <button type="button" class="settings-nav-item" data-settings-cat="language">
           <span class="material-symbols-outlined" aria-hidden="true">language</span>
           <span class="settings-nav-label" data-i18n-nav="languageSection">Language</span>
+        </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="appearance">
+          <span class="material-symbols-outlined" aria-hidden="true">format_size</span>
+          <span class="settings-nav-label" data-i18n-nav="appearanceSection">Appearance</span>
         </button>
         <button type="button" class="settings-nav-item" data-settings-cat="commit">
           <span class="material-symbols-outlined" aria-hidden="true">commit</span>
@@ -5471,32 +6121,58 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           </label>
         </section>
 
+        <section class="settings-panel" data-settings-panel="appearance" hidden>
+          <h3 class="settings-section-title" id="settingsAppearanceTitle">Appearance</h3>
+          <p class="settings-section-note" id="settingsAppearanceNote">Chat text and composer size in the panel.</p>
+          <label class="settings-field">
+            <span class="settings-label" id="settingsFontSizeLabel">Font size</span>
+            <div class="settings-font-size-row">
+              <input id="settingsFontSize" class="settings-range" type="range" min="11" max="20" step="1" value="13" />
+              <span class="settings-font-size-value" id="settingsFontSizeValue">13 px</span>
+            </div>
+            <span class="settings-field-hint" id="settingsFontSizeHint">Applies to messages and the input field.</span>
+          </label>
+          <p class="settings-font-preview" id="settingsFontPreview">The agent will reply at this size.</p>
+        </section>
+
         <section class="settings-panel" data-settings-panel="commit" hidden>
           <h3 class="settings-section-title" id="settingsCommitTitle">Commit messages</h3>
-          <p class="settings-section-note" id="settingsCommitNote">Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.</p>
+          <p class="settings-section-note" id="settingsCommitNote">Generate SCM commit messages from the diff.</p>
+          <h4 class="settings-section-title settings-group-title" id="settingsCommitGenerationTitle">Generation</h4>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsCommitLanguageLabel">Language</span>
+              <select id="settingsCommitLanguage" class="settings-input">
+                <option value="auto">Auto (follow UI language)</option>
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-field">
+            <span class="settings-label" id="settingsCommitModelsLabel">Models</span>
+            <div id="settingsCommitModelList" class="settings-fetch-models-list"></div>
+          </div>
+          <div class="settings-prompt-card" id="settingsCommitPromptCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsCommitPromptToggle" aria-expanded="false" aria-controls="settingsCommitPromptBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsCommitPromptLabel">Prompt / rule</span>
+                <span class="settings-prompt-preview" id="settingsCommitPromptPreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsCommitPromptBody" hidden>
+              <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short English commit messages focused on why."></textarea>
+            </div>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsCommitStorageTitle">Save location</h4>
           <label class="settings-field">
             <span class="settings-label" id="settingsCommitScopeLabel">Apply to</span>
             <select id="settingsCommitScope" class="settings-input">
               <option value="global">All workspaces</option>
-              <option value="workspace">Workspace</option>
+              <option value="workspace">This workspace</option>
             </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitModelLabel">Commit model</span>
-            <select id="settingsCommitModel" class="settings-input"></select>
-          </label>
-          <p class="settings-hint" id="settingsCommitModelHint">Empty = automatic light model. Otherwise uses the selected model from your catalog.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitLanguageLabel">Commit message language</span>
-            <select id="settingsCommitLanguage" class="settings-input">
-              <option value="auto">Auto (follow UI language)</option>
-              <option value="en">English</option>
-              <option value="ru">Русский</option>
-            </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsCommitPromptLabel">Commit prompt / rule</span>
-            <textarea id="settingsCommitPrompt" class="settings-input settings-textarea" rows="5" placeholder="Optional. Example: write short Russian commit messages focused on why."></textarea>
+            <span class="settings-field-hint" id="settingsCommitScopeHint">Where these settings are saved.</span>
           </label>
         </section>
 
@@ -5553,121 +6229,321 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         </section>
 
         <section class="settings-panel" data-settings-panel="browser" hidden>
-          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent (AutoGLM)</h3>
-          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your real Chrome or Edge via AutoGLM (<code>browser_task</code>). Headless <code>browser_*</code> tools stay available for localhost checks. Requires the AutoGLM CLI and browser extension.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoglmEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsAutoglmEnabledLabel">Enable browser_task</span>
-          </label>
+          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent</h3>
+          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your Chrome or Edge.</p>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoglmEnabledLabel">Enable browser agent</span>
+                <span class="settings-toggle-hint" id="settingsAutoglmEnabledNote">The browser_task tool. Needs AutoGLM CLI and the extension.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoglmEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
+                <span class="settings-toggle-hint" id="settingsAutoglmAutoApproveNote">No prompt for sensitive steps. Login and captcha still need you.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoglmAutoApprove" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsAutoglmConnectionTitle">Connection</h4>
           <label class="settings-field">
             <span class="settings-label" id="settingsAutoglmBrowserLabel">Browser</span>
             <select id="settingsAutoglmBrowser" class="settings-input">
               <option value="chrome">Chrome</option>
               <option value="edge">Edge</option>
             </select>
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoglmAutoApprove" type="checkbox" />
-            <span class="settings-label" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
+            <span class="settings-field-hint" id="settingsAutoglmBrowserHint">Install the AutoGLM extension and enable it.</span>
           </label>
           <label class="settings-field">
-            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">Binary path (optional)</span>
+            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">CLI path</span>
             <input id="settingsAutoglmBinaryPath" class="settings-input" type="text" autocomplete="off" placeholder="autoglm on PATH, or full path" />
+            <span class="settings-field-hint" id="settingsAutoglmBinaryPathHint">Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json</span>
           </label>
-          <p class="settings-hint" id="settingsAutoglmExtensionHint">Install the AutoGLM extension for Chrome or Edge, then enable it. Saving these settings writes ~/.openclaw-autoclaw/config.json when enabled.</p>
         </section>
 
         <section class="settings-panel" data-settings-panel="agent" hidden>
           <h3 class="settings-section-title" id="settingsAgentTitle">Agent behavior</h3>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsSystemPromptLabel">System prompt</span>
-            <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsMaxTokensLabel">max_tokens</span>
-            <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsMaxResponseCharsLabel">Max response length (chars)</span>
-            <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsSoundNotificationsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSoundNotificationsLabel">Sound notifications</span>
-          </label>
-          <label class="settings-field settings-check">
-            <input id="settingsSubagentsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSubagentsLabel">Parallel agents</span>
-          </label>
-          <p class="settings-hint" id="settingsSubagentsNote">Agent, Plan, and Ask. Children follow the current mode (Plan/Ask stay read-only).</p>
-          <label class="settings-field settings-check">
-            <input id="settingsParallelToolCallsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsParallelToolCallsLabel">Parallel tool calls</span>
-          </label>
-          <p class="settings-hint" id="settingsParallelToolCallsNote">Run independent tools from one model response at the same time.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsAutoCompactEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsAutoCompactLabel">Auto compact</span>
-          </label>
-          <p class="settings-hint" id="settingsAutoCompactNote">Compress conversation context when it approaches the model input limit.</p>
+          <div class="settings-prompt-card" id="settingsSystemPromptCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsSystemPromptToggle" aria-expanded="false" aria-controls="settingsSystemPromptBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsSystemPromptLabel">System prompt</span>
+                <span class="settings-prompt-preview" id="settingsSystemPromptPreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsSystemPromptBody" hidden>
+              <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
+            </div>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsLimitsTitle">Limits</h4>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsMaxTokensLabel">Response limit</span>
+              <span class="settings-field-hint" id="settingsMaxTokensHint">tokens</span>
+              <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsMaxResponseCharsLabel">Max length</span>
+              <span class="settings-field-hint" id="settingsMaxResponseCharsHint">characters</span>
+              <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsExecutionTitle">Execution</h4>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSubagentsLabel">Parallel agents</span>
+                <span class="settings-toggle-hint" id="settingsSubagentsNote">Child agents. In Plan and Ask they only read.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSubagentsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsParallelToolCallsLabel">Parallel tool calls</span>
+                <span class="settings-toggle-hint" id="settingsParallelToolCallsNote">Independent tools from one response run together.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsParallelToolCallsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsAutoCompactLabel">Auto compact</span>
+                <span class="settings-toggle-hint" id="settingsAutoCompactNote">Compress the chat near the model window limit.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsAutoCompactEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsToolsAutoApproveLabel">Auto-approve tools</span>
+                <span class="settings-toggle-hint" id="settingsToolsAutoApproveNote">No prompt. Off — ask every time.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsToolsAutoApprove" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <div id="settingsApprovalsBlock" class="settings-approvals-block">
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalReadsLabel">Reads</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalReadsNote">read_files, search_codebase, skills</span>
+                </span>
+                <select id="settingsApprovalReads" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalReadsInherit"></option>
+                  <option value="auto" id="settingsApprovalReadsAuto"></option>
+                  <option value="ask" id="settingsApprovalReadsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalWebLabel">Web fetch</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalWebNote">fetch_web_content</span>
+                </span>
+                <select id="settingsApprovalWeb" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalWebInherit"></option>
+                  <option value="auto" id="settingsApprovalWebAuto"></option>
+                  <option value="ask" id="settingsApprovalWebAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalEditsLabel">Edits</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalEditsNote">editor, apply_patch</span>
+                </span>
+                <select id="settingsApprovalEdits" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalEditsInherit"></option>
+                  <option value="auto" id="settingsApprovalEditsAuto"></option>
+                  <option value="ask" id="settingsApprovalEditsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalCommandsLabel">Commands</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalCommandsNote">run_commands (terminal)</span>
+                </span>
+                <select id="settingsApprovalCommands" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalCommandsInherit"></option>
+                  <option value="auto" id="settingsApprovalCommandsAuto"></option>
+                  <option value="ask" id="settingsApprovalCommandsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalMcpLabel">MCP tools</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalMcpNote">Figma and custom MCP servers</span>
+                </span>
+                <select id="settingsApprovalMcp" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalMcpInherit"></option>
+                  <option value="auto" id="settingsApprovalMcpAuto"></option>
+                  <option value="ask" id="settingsApprovalMcpAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalSubagentsLabel">Subagents</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalSubagentsNote">spawn_agent</span>
+                </span>
+                <select id="settingsApprovalSubagents" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalSubagentsInherit"></option>
+                  <option value="auto" id="settingsApprovalSubagentsAuto"></option>
+                  <option value="ask" id="settingsApprovalSubagentsAsk"></option>
+                </select>
+              </label>
+            </div>
+            <label class="settings-toggle-row settings-approval-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTurnContextLabel">Turn context on follow-ups</span>
+                <span class="settings-toggle-hint" id="settingsTurnContextNote">IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.</span>
+              </span>
+              <select id="settingsTurnContextFollowUps" class="settings-input settings-approval-select">
+                <option value="full" id="settingsTurnContextFull"></option>
+                <option value="slim" id="settingsTurnContextSlim"></option>
+                <option value="none" id="settingsTurnContextNone"></option>
+              </select>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
+                <span class="settings-toggle-hint" id="settingsFocusChainNote">Agent keeps a task checklist; re-injected each turn.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsFocusChainEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsCheckpointsLabel">Workspace checkpoints</span>
+                <span class="settings-toggle-hint" id="settingsCheckpointsNote">Git snapshot at the start of a turn. The card rolls back files.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsCheckpointsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <h4 class="settings-section-title settings-group-title" id="settingsInterfaceTitle">Interface</h4>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSoundNotificationsLabel">Sound notifications</span>
+                <span class="settings-toggle-hint" id="settingsSoundNotificationsNote">Signal when the agent finishes a turn.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSoundNotificationsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsSelectionHintsLabel">Selection hints</span>
+                <span class="settings-toggle-hint" id="settingsSelectionHintsNote">Action chip over selected code.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsSelectionHintsEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
-          <h3 class="settings-section-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteNote">Prefetch while typing (ghost stays hidden). Ctrl+Enter / ⌘⏎ shows the suggestion; Tab accepts. Prefer coder models.</p>
+          <h3 class="settings-section-title settings-group-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteNote">Quiet prefetch. ⌘⏎ to show, Tab to accept.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <label class="settings-field">
             <span class="settings-label" id="settingsTabAutocompleteModelLabel">Tab model</span>
             <select id="settingsTabAutocompleteModel" class="settings-input"></select>
+            <span class="settings-field-hint" id="settingsTabAutocompleteModelHint">Coder models usually beat chat/flash for Tab.</span>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteModelHint">Coder models usually give better inline fills than chat/flash models.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
-            <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
-            <select id="settingsTabAutocompleteAlternatives" class="settings-input">
-              <option value="1">1</option>
-              <option value="2" selected>2</option>
-              <option value="3">3</option>
-            </select>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Up to N distinct ghost texts per request. Cycle Alt+[ / Alt+]; Tab accepts the current one.</p>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
-            <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches (dist, generated, …). Clear all lines to allow every path.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteNextEditHint">After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.</p>
+          <div class="settings-limits-row">
+            <label class="settings-field">
+              <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
+              <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
+              <select id="settingsTabAutocompleteAlternatives" class="settings-input">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+              </select>
+            </label>
+          </div>
+          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Distinct ghost texts in one request. Cycle Alt+[ / Alt+].</p>
+          <div class="settings-prompt-card" id="settingsTabExcludeCard">
+            <button type="button" class="settings-prompt-toggle" id="settingsTabExcludeToggle" aria-expanded="false" aria-controls="settingsTabExcludeBody">
+              <span class="settings-prompt-toggle-text">
+                <span class="settings-prompt-title" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
+                <span class="settings-prompt-preview" id="settingsTabExcludePreview"></span>
+              </span>
+              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
+            </button>
+            <div class="settings-prompt-body" id="settingsTabExcludeBody" hidden>
+              <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
+              <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches.</p>
+            </div>
+          </div>
           <label class="settings-field">
             <span class="settings-label" id="settingsTabAutocompleteShowModeLabel">Show mode</span>
             <select id="settingsTabAutocompleteShowMode" class="settings-input">
               <option value="chip" selected>Chip</option>
               <option value="inline">Inline</option>
             </select>
+            <span class="settings-field-hint" id="settingsTabAutocompleteShowModeHint">Chip = shortcut. Inline = ghost appears by itself.</span>
           </label>
-          <p class="settings-hint" id="settingsTabAutocompleteShowModeHint">Chip = silent prefetch + ⌘⏎. Inline = ghost text appears automatically.</p>
-          <label class="settings-field settings-check">
-            <input id="settingsTabAutocompleteFim" type="checkbox" />
-            <span class="settings-label" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
-          </label>
-          <p class="settings-hint" id="settingsTabAutocompleteFimHint">Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.</p>
+          <div class="settings-card">
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteNextEditHint">After Tab, a Next chip at the likely next edit.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
+                <span class="settings-toggle-hint" id="settingsTabAutocompleteFimHint">prompt+suffix if the provider supports it.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsTabAutocompleteFim" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+          </div>
           <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           </div>
-          <label class="settings-field settings-check">
-            <input id="settingsSelectionHintsEnabled" type="checkbox" />
-            <span class="settings-label" id="settingsSelectionHintsLabel">Selection hints</span>
-          </label>
         </section>
 
         <section class="settings-panel" data-settings-panel="advanced" hidden>
@@ -5737,8 +6613,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             </label>
           </div>
           <label class="settings-field settings-check">
-            <input id="modelEditVision" type="checkbox" />
-            <span class="settings-label">Supports images (vision)</span>
+            <span class="settings-label" id="modelEditVisionLabel">Supports images (vision)</span>
+            <span class="mcp-switch">
+              <input id="modelEditVision" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-body" id="modelEditJsonPane" hidden>
@@ -5827,6 +6706,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <label class="settings-field">
             <span class="settings-label">API Key</span>
             <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label" id="providerEditProtocolLabel">Protocol</span>
+            <select id="providerEditProtocol" class="settings-input">
+              <option value="openai-compatible">OpenAI-compatible (Chat Completions)</option>
+              <option value="anthropic">Anthropic (Messages API)</option>
+            </select>
+            <span class="settings-field-hint" id="providerEditProtocolHint">Wire format the endpoint speaks. Use "Anthropic" for proxies that accept only the Messages API.</span>
+          </label>
+          <label class="settings-toggle-row">
+            <span class="settings-toggle-text">
+              <span class="settings-toggle-title" id="providerEditPromptCacheLabel">Prompt cache</span>
+              <span class="settings-toggle-hint" id="providerEditPromptCacheHint">Emit Anthropic-style cache_control markers. Turn on only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI will reject the marker with 400.</span>
+            </span>
+            <span class="mcp-switch">
+              <input id="providerEditPromptCache" type="checkbox" />
+              <span class="mcp-switch-track"></span>
+            </span>
           </label>
         </div>
         <div class="settings-modal-foot">
@@ -6023,11 +6920,5 @@ function parseReviewPayload(text: string): {
 }
 
 function getNonce(): string {
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
+  return randomBytes(16).toString("hex");
 }

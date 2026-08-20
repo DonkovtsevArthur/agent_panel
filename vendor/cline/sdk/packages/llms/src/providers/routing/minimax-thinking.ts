@@ -51,6 +51,12 @@ export function buildMiniMaxThinkingProviderOptionsPatch(
 	if (!thinking) {
 		return undefined;
 	}
+	// `openai-compatible` is a deprecated providerOptions key (AI SDK emits a
+	// DeprecationWarning); its camelCase alias `openaiCompatible` is already
+	// emitted above, so skip the raw-id + alias buckets for that provider id.
+	if (request.providerId === "openai-compatible") {
+		return { openaiCompatible: thinking };
+	}
 	return {
 		openaiCompatible: thinking,
 		[request.providerId]: thinking,

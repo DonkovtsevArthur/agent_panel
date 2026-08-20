@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "1.1.96"
+version = "2.0.16"
 
 repositories {
     mavenCentral()
@@ -18,8 +18,9 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.2.1")
         instrumentationTools()
-        // Platform ships kotlin-stdlib; don't bundle a second copy
-        bundledPlugin("com.intellij.java")
+        // PSI / codeInsight are platform APIs (com.intellij.modules.platform);
+        // no Java-specific dependency needed — keeps the plugin installable in
+        // Rider, GoLand, PyCharm, etc.
     }
 }
 
@@ -68,6 +69,100 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>2.0.10</b>
+            <ul>
+              <li>Prompt cache — чекбокс заменён на свитч (toggle), перевод на русский</li>
+              <li>Prompt cache по умолчанию включён для всех провайдеров (включая существующие)</li>
+              <li>Исправлено сохранение prompt cache — настройка больше не теряется при перезапуске</li>
+            </ul>
+            <b>2.0.6</b>
+            <ul>
+              <li>Провайдеры и модели хранятся глобально (<code>~/.harbor/settings.json</code>) — доступны всем проектам</li>
+              <li>Чаты остаются per-project в <code>.idea/harbor</code></li>
+            </ul>
+            <b>1.5.145</b>
+            <ul>
+              <li>Мягкие цветные бордеры пузыря пользователя и композа по режиму; фон пузыря без изменений</li>
+            </ul>
+            <b>1.5.143</b>
+            <ul>
+              <li>Интеллект (reasoning) для Kimi и GLM-4.5+/5.x, не только Claude</li>
+            </ul>
+            <b>1.5.141</b>
+            <ul>
+              <li>Настройки: селекты как выбор режима в композе; попап не закрывается сразу</li>
+            </ul>
+            <b>1.5.138</b>
+            <ul>
+              <li>WebStorm: убран JS-скролл — снова нативное колесо JCEF, без задержки</li>
+            </ul>
+            <b>1.5.137</b>
+            <ul>
+              <li>WebStorm: скролл без замедления — полная дельта за кадр, без доезда</li>
+            </ul>
+            <b>1.5.136</b>
+            <ul>
+              <li>WebStorm: скролл мягче, но без «низкого FPS» — шаг сразу, короткий доезд</li>
+            </ul>
+            <b>1.5.135</b>
+            <ul>
+              <li>WebStorm: мягче скролл в чате, Settings и меню (JCEF OSR)</li>
+            </ul>
+            <b>1.5.134</b>
+            <ul>
+              <li>Ветки чата: вкладки как в браузере, подпись из промпта, имя форка сразу лёгкой моделью на языке из Settings</li>
+            </ul>
+            <b>1.5.115</b>
+            <ul>
+              <li>В статусе «Думаю...» короткое имя модели (GLM 5.2)</li>
+            </ul>
+            <b>1.5.114</b>
+            <ul>
+              <li>Авто-имя чата лёгкой моделью; ручное имя не перезаписывается</li>
+              <li>Превью картинок в истории; пузырь по ширине текста; шаги — чип; короткое имя модели в композере</li>
+              <li>Ветки: пилюли Main / ·2; rename агента в WebStorm больше не теряется</li>
+            </ul>
+            <b>1.5.113</b>
+            <ul>
+              <li>GLM без vision: описание картинки под капотом; повторный проход только если вопрос про скрин; inspect_images вместо spawn_agent</li>
+              <li>Простаивающие Cline-сессии выгружаются при смене чата</li>
+            </ul>
+            <b>1.4.113</b>
+            <ul>
+              <li>Settings → Поведение агента: свёрнутый промпт, лимиты в ряд, группы Выполнение / Интерфейс и switch-ряды</li>
+            </ul>
+            <b>1.3.113</b>
+            <ul>
+              <li>GLM vision: не подменять картинки Cline, только ставить их перед текстом</li>
+            </ul>
+            <b>1.2.113</b>
+            <ul>
+              <li>GLM + картинка: не клеим dump редактора, пиксели первыми в chat/completions</li>
+            </ul>
+            <b>1.1.113</b>
+            <ul>
+              <li>GLM на форке: картинки уходят в chat/completions (обход каталога Cline без images)</li>
+            </ul>
+            <b>1.1.112</b>
+            <ul>
+              <li>Форк чата: картинки доходят до модели (форма Cline ImageContent, пиксели на последнем ходе)</li>
+            </ul>
+            <b>1.1.111</b>
+            <ul>
+              <li>GLM-5.2: картинки на форке и следующем ходе (capability images)</li>
+            </ul>
+            <b>1.1.110</b>
+            <ul>
+              <li>WebStorm: снимок редактора на EDT (файл/курсор/терминал не теряются, когда фокус в чате); UI и sidecar из плагина, не из user.dir</li>
+            </ul>
+            <b>1.1.103</b>
+            <ul>
+              <li>Фикс кнопки «отправить» в композере и при редактировании сообщения (клик по иконке в webview)</li>
+            </ul>
+            <b>1.1.97</b>
+            <ul>
+              <li>Контекст хода: терминал/Run, символ у курсора, git ahead/behind, правила по файлу; картинки в истории; чекпоинты и подтверждение tools</li>
+            </ul>
             <b>1.1.96</b>
             <ul>
               <li>Контекст хода из IDE: открытый файл, курсор, выделение, диагностики; живая Cline-сессия на чат; MCP у субагентов</li>
@@ -76,18 +171,6 @@ intellijPlatform {
             <b>1.1.95</b>
             <ul>
               <li>Прикрепить файл из чата: пункт «Файл» в меню +, диалог выбора если нет открытого файла</li>
-            </ul>
-            <b>0.1.58</b>
-            <ul>
-              <li>Курсор pointer и tooltip в WebStorm (JCEF OSR): in-page tip + re-assert cursor</li>
-            </ul>
-            <b>0.1.56</b>
-            <ul>
-              <li>Кастомный цвет режима на кубике-спиннере в списке агентов</li>
-            </ul>
-            <b>0.1.55</b>
-            <ul>
-              <li>Клик по чату в списке с первого раза (JCEF OSR pointerdown + focus)</li>
             </ul>
             """.trimIndent()
         )

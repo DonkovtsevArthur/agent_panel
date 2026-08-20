@@ -15,6 +15,7 @@ node_modules/**
 media/*preview*
 media/harbor-icon*
 media/icon-marketplace.svg
+media/src/**
 *.vsix
 tests/**
 AGENTS.md

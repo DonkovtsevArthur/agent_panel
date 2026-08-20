@@ -169,6 +169,7 @@ export type HostToWebview =
   | { type: "showAgents"; [key: string]: unknown }
   | { type: "showArchive"; [key: string]: unknown }
   | { type: "showSettings"; [key: string]: unknown }
+  | { type: "uiFontSize"; fontSize: number }
   | { type: "agentsList"; [key: string]: unknown }
   | { type: "archiveList"; [key: string]: unknown }
   | { type: "append"; role: string; text: string; chatId?: string }

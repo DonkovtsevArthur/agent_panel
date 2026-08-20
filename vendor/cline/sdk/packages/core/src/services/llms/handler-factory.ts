@@ -10,6 +10,7 @@ import type {
 	AgentModel,
 	BasicLogger,
 	GatewayModelDefinition,
+	GatewayProviderMetadata,
 	ITelemetryService,
 	ModelInfo,
 } from "@cline/shared";
@@ -71,6 +72,17 @@ function buildGatewayProviderOptions(
 			projectId: config.gcp?.projectId,
 			location: gcpRegion,
 			region: gcpRegion,
+		});
+	}
+
+	if (config.providerId === "claude-code") {
+		// The Claude Code CLI executes its own tools, so its session must be
+		// anchored on the workspace. Without an explicit cwd the spawned CLI
+		// inherits the host process cwd — `/` in GUI extension hosts — and
+		// then refuses writes outside its allowed working directories.
+		const workspace = config.extensionContext?.workspace;
+		Object.assign(options, {
+			cwd: workspace?.cwd ?? workspace?.rootPath,
 		});
 	}
 
@@ -221,6 +233,17 @@ export function createAgentModelFromConfig(
 		);
 	}
 
+	// Session providerConfig may carry gateway routing metadata (e.g. a host's
+	// opt-in promptCache routes for OpenAI-compatible upstreams that accept
+	// Anthropic-style cache_control). ProviderConfig has no `metadata` field,
+	// so read it structurally and forward it — without this the gateway
+	// registry never sees per-session routing overrides.
+	const routingMetadata = (
+		normalizedProviderConfig as ProviderConfig & {
+			metadata?: GatewayProviderMetadata;
+		}
+	).metadata;
+
 	return createGateway({
 		// Forward the host-provided fetch so inference honors proxy/CA config on
 		// JetBrains and CLI, where the global fetch is not proxy-aware. Without
@@ -236,6 +259,7 @@ export function createAgentModelFromConfig(
 				timeoutMs: normalizedProviderConfig.timeoutMs,
 				fetch: normalizedProviderConfig.fetch,
 				options: buildGatewayProviderOptions(normalizedProviderConfig),
+				...(routingMetadata ? { metadata: routingMetadata } : {}),
 				models: normalizedProviderConfig.knownModels
 					? Object.entries(normalizedProviderConfig.knownModels).map(
 							([id, model]) => toGatewayConfiguredModel(id, model),

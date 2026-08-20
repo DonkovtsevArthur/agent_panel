@@ -6,7 +6,7 @@ import type {
 	TeamEvent,
 } from "@cline/core";
 import type {
-	Message,
+	MessageWithMetadata,
 	ToolApprovalRequest,
 	ToolApprovalResult,
 } from "@cline/shared";
@@ -92,7 +92,7 @@ export interface InteractiveTurnResult {
 }
 
 export interface ResumedSessionResult {
-	messages: Message[];
+	messages: MessageWithMetadata[];
 	totalCost?: number;
 	currentContextSize?: number;
 }
@@ -145,7 +145,7 @@ export interface TuiProps {
 	initialPrompt?: string;
 	initialNotice?: CliMigrationNotice;
 	onInitialNoticeShown?: (notice: CliMigrationNotice) => void | Promise<void>;
-	initialMessages?: Message[];
+	initialMessages?: MessageWithMetadata[];
 	loadDeferredInitialMessages?: () => Promise<ResumedSessionResult>;
 	initialRepoStatus?: RepoStatus;
 	workflowSlashCommands?: InteractiveSlashCommand[];
@@ -185,6 +185,11 @@ export interface TuiProps {
 	}) => Promise<PendingPromptMutationResult>;
 	onAbort: () => boolean;
 	onExit: () => void;
+	/**
+	 * Exit the TUI and run the CLI self-update afterwards. Invoked when the
+	 * user accepts the "Hub was updated by another Cline installation" dialog.
+	 */
+	onHubUpdateRestart?: () => void;
 	onRunningChange: (isRunning: boolean) => void;
 	onTurnErrorReported: (reported: boolean) => void;
 	onAutoApproveChange: (enabled: boolean) => void;
@@ -213,12 +218,18 @@ export interface TuiProps {
 		| undefined
 	>;
 	getCheckpointData: () => Promise<
-		{ messages: Message[]; checkpointHistory: CheckpointEntry[] } | undefined
+		| {
+				messages: MessageWithMetadata[];
+				checkpointHistory: CheckpointEntry[];
+		  }
+		| undefined
 	>;
 	onRestoreCheckpoint: (
 		runCount: number,
 		restoreWorkspace: boolean,
-	) => Promise<{ newSessionId: string; messages: Message[] } | undefined>;
+	) => Promise<
+		{ newSessionId: string; messages: MessageWithMetadata[] } | undefined
+	>;
 	setToolApprover: (
 		approver:
 			| ((request: ToolApprovalRequest) => Promise<ToolApprovalResult>)

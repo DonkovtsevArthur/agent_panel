@@ -11,6 +11,7 @@ import {
   resolveModelCapabilities,
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
+import { readModelTokenLimits } from "./modelTokenLimits";
 
 export { KIMI_MIN_MAX_TOKENS } from "./modelCapabilities";
 
@@ -694,6 +695,73 @@ function finalizeToolCalls(acc: Map<number, ToolCallAcc>): ToolCall[] {
     .filter((call) => Boolean(call.function.name));
 }
 
+/** Модель из GET /models провайдера (id + лимиты токенов, если API их отдал). */
+export interface ListedProviderModel {
+  id: string;
+  label?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function listedModelsArray(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  const root = asPlainRecord(payload);
+  if (!root) {
+    return [];
+  }
+  for (const key of ["data", "models", "items", "results", "list"]) {
+    const value = root[key];
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
+}
+
+/** Разбирает ответ GET /models: id + универсальные лимиты токенов. */
+export function parseListedProviderModels(
+  payload: unknown
+): ListedProviderModel[] {
+  const seen = new Set<string>();
+  const models: ListedProviderModel[] = [];
+  for (const item of listedModelsArray(payload)) {
+    const row = asPlainRecord(item);
+    if (!row) {
+      continue;
+    }
+    const id = String(row.id || "").trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const label = String(row.name || row.label || "").trim();
+    const limits = readModelTokenLimits(row);
+    const model: ListedProviderModel = { id };
+    if (label && label !== id) {
+      model.label = label;
+    }
+    if (limits.contextWindow) {
+      model.contextWindow = limits.contextWindow;
+    }
+    if (limits.maxOutputTokens) {
+      model.maxOutputTokens = limits.maxOutputTokens;
+    }
+    models.push(model);
+  }
+  models.sort((a, b) =>
+    a.id.localeCompare(b.id, undefined, { sensitivity: "base", numeric: true })
+  );
+  return models;
+}
+
 export class OpenAICompatibleClient {
   private readonly retry: Required<TransportRetryOptions>;
 
@@ -1253,7 +1321,7 @@ export class OpenAICompatibleClient {
     };
   }
 
-  async listModels(signal?: AbortSignal): Promise<string[]> {
+  async listModels(signal?: AbortSignal): Promise<ListedProviderModel[]> {
     const headers: Record<string, string> = {};
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
@@ -1275,12 +1343,7 @@ export class OpenAICompatibleClient {
       return current;
     }, signal, this.retry);
 
-    const data = JSON.parse(response.text) as {
-      data?: Array<{ id?: string }>;
-    };
-    return (data.data ?? [])
-      .map((m) => m.id)
-      .filter((id): id is string => Boolean(id));
+    return parseListedProviderModels(JSON.parse(response.text) as unknown);
   }
 
   /** GET произвольного URL (health / status). 2xx = ok. */

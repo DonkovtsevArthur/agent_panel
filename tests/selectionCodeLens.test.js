@@ -43,7 +43,7 @@ test("selection chat commands are contributed with menus and keybindings", () =>
   );
   assert.equal(
     keybindings.get("agentPanel.addSelectionToNewChat").mac,
-    "cmd+alt+shift+l"
+    "cmd+alt+l"
   );
   assert.equal(
     keybindings.get("agentPanel.addFileToChat").mac,
@@ -51,7 +51,7 @@ test("selection chat commands are contributed with menus and keybindings", () =>
   );
   assert.equal(
     keybindings.get("agentPanel.addFileToNewChat").mac,
-    "cmd+alt+shift+h"
+    "cmd+alt+h"
   );
 });
 

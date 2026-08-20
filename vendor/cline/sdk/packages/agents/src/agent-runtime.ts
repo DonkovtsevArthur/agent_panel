@@ -13,6 +13,7 @@ import type {
 	AgentModelEvent,
 	AgentModelFinishReason,
 	AgentModelRequest,
+	AgentModelToolActivity,
 	AgentRunResult,
 	AgentRuntimeEvent,
 	AgentRuntimeHooks,
@@ -326,6 +327,75 @@ function createMessage(
 
 function cloneUsage(usage: AgentUsage): AgentUsage {
 	return { ...usage };
+}
+
+/**
+ * Deterministic JSON serialization: recursively sorts object keys so two
+ * inputs with the same shape produce the same string regardless of key
+ * order. Drops `undefined` fields to match JSON.stringify semantics, keeps
+ * arrays as-is, and guards against circular references.
+ *
+ * Used to build a stable signature for duplicate tool-call detection — the
+ * same tool name + same arguments must collapse to one execution.
+ */
+function stableStringify(value: unknown): string {
+	const seen = new WeakSet<object>();
+	const recurse = (input: unknown): string => {
+		if (input === null || typeof input !== "object") {
+			return typeof input === "bigint"
+				? input.toString()
+				: JSON.stringify(input ?? null);
+		}
+		if (seen.has(input as object)) {
+			return "[Circular]";
+		}
+		seen.add(input as object);
+		if (Array.isArray(input)) {
+			return `[${input.map((item) => recurse(item)).join(",")}]`;
+		}
+		const entries = Object.entries(input as Record<string, unknown>).filter(
+			([, v]) => v !== undefined,
+		);
+		entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+		return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${recurse(v)}`).join(",")}}`;
+	};
+	return recurse(value);
+}
+
+/**
+ * Stable signature for a tool call: `toolName` + canonical serialization of
+ * `input`. Two calls with identical name and arguments produce the same
+ * signature, so duplicates can be detected within a single assistant turn.
+ */
+function toolCallSignature(toolCall: AgentToolCallPart): string {
+	return `${toolCall.toolName}\u0000${stableStringify(toolCall.input)}`;
+}
+
+/**
+ * Synthesize a non-error tool-result message for a duplicate tool call.
+ *
+ * Marked `isError:false` so the model treats the duplicate as harmless and
+ * does not retry it, with `output.deduplicated:true` as an audit trail.
+ * The message is emitted without `tool-started`/`tool-finished` events (no
+ * `executePreparedTool` call), so it stays invisible in the UI while keeping
+ * the 1:1 `tool_use`/`tool_result` pairing required by OpenAI-compatible
+ * providers.
+ */
+function synthesizeDuplicateToolResultMessage(
+	toolCall: AgentToolCallPart,
+): AgentMessage {
+	return createMessage("tool", [
+		{
+			type: "tool-result",
+			toolCallId: toolCall.toolCallId,
+			toolName: toolCall.toolName,
+			output: {
+				deduplicated: true,
+				note: "Duplicate tool call (same name and input) in this turn; skipped.",
+			},
+			isError: false,
+		},
+	]);
 }
 
 function cloneMessages(messages: readonly AgentMessage[]): AgentMessage[] {
@@ -970,6 +1040,7 @@ export class AgentRuntime {
 				description: tool.description,
 				inputSchema: tool.inputSchema,
 			})),
+			modelTools: this.config.modelTools,
 			signal: this.abortController?.signal,
 			options: mergeModelOptions(this.config.modelOptions, {
 				metadata: modelRequestMetadata,
@@ -1043,6 +1114,7 @@ export class AgentRuntime {
 
 		const content: AgentMessagePart[] = [];
 		const toolAssemblies = new Map<string, PendingToolAssembly>();
+		const modelToolActivities = new Map<string, AgentModelToolActivity>();
 		const invalidToolCalls: InvalidToolCall[] = [];
 		const sequence: Array<
 			{ type: "tool"; key: string } | { type: "part"; part: AgentMessagePart }
@@ -1105,6 +1177,29 @@ export class AgentRuntime {
 					break;
 				}
 				case "tool-call-delta": {
+					if (event.execution) {
+						const toolCall: AgentToolCallPart = {
+							type: "tool-call",
+							toolCallId: event.toolCallId ?? createUID("model_tool"),
+							toolName: event.toolName ?? "tool",
+							input: event.input,
+							metadata: event.metadata,
+							execution: event.execution,
+						};
+						modelToolActivities.set(toolCall.toolCallId, {
+							toolCallId: toolCall.toolCallId,
+							toolName: toolCall.toolName,
+							execution: event.execution,
+							input: toolCall.input,
+						});
+						await this.emit({
+							type: "tool-started",
+							snapshot: this.snapshot(),
+							iteration: this.state.iteration,
+							toolCall,
+						});
+						break;
+					}
 					const key =
 						event.toolCallId ?? `tool_${event.index ?? nextToolIndex}`;
 					if (event.index == null && event.toolCallId == null) {
@@ -1140,6 +1235,43 @@ export class AgentRuntime {
 							event.inputText,
 						);
 					}
+					break;
+				}
+				case "tool-result": {
+					const existing = modelToolActivities.get(event.toolCallId);
+					const activity = {
+						...existing,
+						toolCallId: event.toolCallId,
+						toolName: event.toolName,
+						execution: event.execution,
+						input: event.input === undefined ? existing?.input : event.input,
+						output: event.output,
+						isError: event.isError,
+					};
+					modelToolActivities.set(event.toolCallId, activity);
+					const toolCall: AgentToolCallPart = {
+						type: "tool-call",
+						toolCallId: event.toolCallId,
+						toolName: event.toolName,
+						input: activity.input,
+						execution: event.execution,
+					};
+					await this.emit({
+						type: "tool-finished",
+						snapshot: this.snapshot(),
+						iteration: this.state.iteration,
+						toolCall,
+						message: createMessage("tool", [
+							{
+								type: "tool-result",
+								toolCallId: event.toolCallId,
+								toolName: event.toolName,
+								output: event.output,
+								isError: event.isError,
+								execution: event.execution,
+							},
+						]),
+					});
 					break;
 				}
 				case "file": {
@@ -1223,10 +1355,17 @@ export class AgentRuntime {
 			});
 		}
 
+		const messageMetadata: Record<string, unknown> = {};
+		if (invalidToolCalls.length > 0) {
+			messageMetadata.invalidToolCalls = invalidToolCalls;
+		}
+		if (modelToolActivities.size > 0) {
+			messageMetadata.modelToolActivities = [...modelToolActivities.values()];
+		}
 		const message = createMessage(
 			"assistant",
 			content,
-			invalidToolCalls.length > 0 ? { invalidToolCalls } : undefined,
+			Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
 		);
 		const metrics = usageDelta(usageBeforeModel, this.state.usage);
 		if (metrics) {
@@ -1493,20 +1632,47 @@ export class AgentRuntime {
 	private async executeToolCalls(
 		toolCalls: AgentToolCallPart[],
 	): Promise<AgentMessage[]> {
-		const prepared: PreparedToolExecution[] = [];
-		for (const toolCall of toolCalls) {
-			prepared.push(await this.prepareToolExecution(toolCall));
-		}
+		// Deduplicate identical tool calls within the same assistant turn:
+		// models (notably GLM-5.2) occasionally emit two tool_use blocks with
+		// the same name + input but distinct toolCallIds. Parallel execution
+		// would run both → double work and duplicate UI cards. We keep the
+		// first occurrence and synthesize a non-error tool-result for the
+		// duplicate (no tool-started/finished events → invisible in the UI),
+		// preserving the 1:1 tool_use/tool_result pairing and array order that
+		// callers (e.g. findCompletingToolMessage) rely on.
+		const seenSignatures = new Set<string>();
+		const isDuplicate = toolCalls.map((toolCall) => {
+			const signature = toolCallSignature(toolCall);
+			if (seenSignatures.has(signature)) {
+				return true;
+			}
+			seenSignatures.add(signature);
+			return false;
+		});
 
 		if (this.config.toolExecution === "parallel") {
 			return Promise.all(
-				prepared.map((execution) => this.executePreparedTool(execution)),
+				toolCalls.map((toolCall, index) =>
+					isDuplicate[index]
+						? Promise.resolve(
+								synthesizeDuplicateToolResultMessage(toolCall),
+							)
+						: this.prepareToolExecution(toolCall).then((execution) =>
+								this.executePreparedTool(execution),
+							),
+				),
 			);
 		}
 
 		const results: AgentMessage[] = [];
-		for (const execution of prepared) {
-			results.push(await this.executePreparedTool(execution));
+		for (let index = 0; index < toolCalls.length; index += 1) {
+			const toolCall = toolCalls[index];
+			if (isDuplicate[index]) {
+				results.push(synthesizeDuplicateToolResultMessage(toolCall));
+				continue;
+			}
+			const prepared = await this.prepareToolExecution(toolCall);
+			results.push(await this.executePreparedTool(prepared));
 		}
 		return results;
 	}
@@ -1861,10 +2027,21 @@ export class AgentRuntime {
 				this.config.logger?.debug?.("Agent event", metadata);
 				break;
 		}
-		this.config.telemetry?.capture({
-			event: `agent.${event.type}`,
-			properties: metadata as TelemetryProperties,
-		});
+		switch (event.type) {
+			// Per-token/per-chunk stream events are ~97% of agent.* telemetry
+			// volume and are never queried, so they are not mirrored to
+			// telemetry. Listeners and hooks below still receive them.
+			case "assistant-text-delta":
+			case "assistant-reasoning-delta":
+			case "tool-updated":
+				break;
+			default:
+				this.config.telemetry?.capture({
+					event: `agent.${event.type}`,
+					properties: metadata as TelemetryProperties,
+				});
+				break;
+		}
 		for (const listener of this.listeners) {
 			listener(event);
 		}

@@ -7,6 +7,18 @@
   const host =
     (typeof globalThis !== "undefined" && globalThis.__harborHost) ||
     acquireVsCodeApi();
+
+  /** Crypto-random base36 token — ids must not come from Math.random (CWE-338). */
+  function cryptoToken(len) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) {
+      out += bytes[i].toString(36).padStart(2, "0");
+    }
+    return out.slice(0, len);
+  }
+
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
@@ -74,37 +86,52 @@
       languageAuto: "Auto (follow VS Code)",
       languageEn: "English",
       languageRu: "Русский",
+      appearanceSection: "Appearance",
+      appearanceNote: "Chat text and composer size in the panel.",
+      fontSize: "Font size",
+      fontSizeHint: "Applies to messages and the input field.",
+      fontSizeValue: (n) => `${n} px`,
+      fontSizePreview: "The agent will reply at this size.",
       tls: "TLS",
       validateTls: "Validate TLS certificate",
+      supportsVision: "Supports images (vision)",
       agentBehavior: "Agent behavior",
       browserAgent: "Browser agent",
-      browserAgentTitle: "Browser agent (AutoGLM)",
-      browserAgentNote:
-        "Multi-step tasks in your real Chrome or Edge via AutoGLM (browser_task). Headless browser_* tools stay available for localhost checks. Requires the AutoGLM CLI and browser extension.",
-      autoglmEnabled: "Enable browser_task",
+      browserAgentTitle: "Browser agent",
+      browserAgentNote: "Multi-step tasks in your Chrome or Edge.",
+      autoglmEnabled: "Enable browser agent",
+      autoglmEnabledNote:
+        "The browser_task tool. Needs AutoGLM CLI and the extension.",
       autoglmBrowser: "Browser",
+      autoglmBrowserHint: "Install the AutoGLM extension and enable it.",
       autoglmAutoApprove: "Auto-approve sensitive actions",
-      autoglmBinaryPath: "Binary path (optional)",
-      autoglmExtensionHint:
-        "Install the AutoGLM extension for Chrome or Edge, then enable it. Saving these settings writes ~/.openclaw-autoclaw/config.json when enabled.",
+      autoglmAutoApproveNote:
+        "No prompt for sensitive steps. Login and captcha still need you.",
+      autoglmConnection: "Connection",
+      autoglmBinaryPath: "CLI path",
+      autoglmBinaryPathPlaceholder: "autoglm on PATH, or full path",
+      autoglmBinaryPathHint:
+        "Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Advanced",
       commitMessages: "Commit messages",
-      commitMessagesNote:
-        "Prompt for SCM commit message generation. Empty uses project rules, then the built-in default.",
+      commitMessagesNote: "Generate SCM commit messages from the diff.",
+      commitGeneration: "Generation",
+      commitStorage: "Save location",
       commitScope: "Apply to",
       commitScopeGlobal: "All workspaces",
       commitScopeWorkspace: "This workspace",
-      commitScopeWorkspaceNamed: (name) => name || "This workspace",
-      commitLanguage: "Commit message language",
+      commitScopeWorkspaceNamed: (name) =>
+        name ? `This workspace (${name})` : "This workspace",
+      commitScopeHint: "Where these settings are saved.",
+      commitLanguage: "Language",
       commitLanguageAuto: "Auto (follow UI language)",
-      commitModel: "Commit model",
+      commitModel: "Model",
+      commitModels: "Models",
       commitModelEmpty: "Auto (light model)",
-      commitModelHint:
-        "Empty = automatic light model. Otherwise uses the selected model from your catalog.",
-      commitPrompt: "Commit prompt / rule",
+      commitPrompt: "Prompt / rule",
+      commitPromptEmpty: "Empty — project rules, then the built-in default.",
       commitPromptPlaceholder:
         "Optional. Example: write short English commit messages focused on why.",
-      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote: "Manage MCP connections used by Harbor Agents (Figma and more).",
@@ -189,26 +216,68 @@
       figmaOpenTokenHelp: "Open token settings",
       backToSettings: "Back to settings",
       systemPrompt: "System prompt",
+      systemPromptEmpty: "Empty",
+      agentLimits: "Limits",
+      agentExecution: "Execution",
+      agentInterface: "Interface",
       maxToolRounds: "Max tool rounds",
-      maxResponseLength: "Max response length (chars)",
+      maxTokens: "Response limit",
+      maxTokensHint: "tokens",
+      maxResponseLength: "Max length",
+      maxResponseCharsHint: "characters",
       soundNotifications: "Sound notifications",
+      soundNotificationsNote: "Signal when the agent finishes a turn.",
       parallelAgents: "Parallel agents",
-      parallelAgentsNote:
-        "On: spawn_agent + instruct to delegate. Off: no sub-agents. Plan/Ask children stay read-only.",
+      parallelAgentsNote: "Child agents. In Plan and Ask they only read.",
       parallelToolCalls: "Parallel tool calls",
       parallelToolCallsNote:
-        "Run independent tools from one model response at the same time.",
+        "Independent tools from one response run together.",
       autoCompact: "Auto compact",
-      autoCompactNote:
-        "Compress conversation context when it approaches the model input limit.",
+      autoCompactNote: "Compress the chat near the model window limit.",
+      toolsAutoApprove: "Auto-approve tools",
+      toolsAutoApproveNote: "No prompt. Off — ask every time.",
+      approvalReads: "Reads",
+      approvalReadsNote: "read_files, search_codebase, skills",
+      approvalWeb: "Web fetch",
+      approvalWebNote: "fetch_web_content",
+      approvalEdits: "Edits",
+      approvalEditsNote: "editor, apply_patch",
+      approvalCommands: "Commands",
+      approvalCommandsNote: "run_commands (terminal)",
+      approvalMcp: "MCP tools",
+      approvalMcpNote: "Figma and custom MCP servers",
+      approvalSubagents: "Subagents",
+      approvalSubagentsNote: "spawn_agent",
+      approvalInherit: "Like master",
+      approvalAuto: "Auto",
+      approvalAsk: "Ask",
+      focusChain: "Focus chain",
+      focusChainNote:
+        "Agent keeps a task checklist; re-injected each turn.",
+      turnContext: "Turn context on follow-ups",
+      turnContextNote:
+        "IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.",
+      turnContextFull: "Full",
+      turnContextSlim: "Slim",
+      turnContextNone: "None",
+      checkpoints: "Workspace checkpoints",
+      checkpointsNote:
+        "Git snapshot at the start of a turn. The card rolls back files.",
+      checkpointRestore: "Restore workspace files from this checkpoint?",
+      checkpointCompare: "Compare checkpoint with workspace",
+      todoPlanTitle: "Plan",
+      todoPlanStepDone: "done",
+      todoPlanStepInProgress: "in progress",
+      todoPlanStepPending: "pending",
+      cancelledByUser: "Cancelled by user",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Enable Tab autocomplete",
       tabAutocompleteNote:
-        "Prefetch while typing (no ghost until you ask). Ctrl+Enter / ⌘⏎ shows the suggestion; Tab accepts. Cycle Alt+[ / Alt+]. Orphan lines: Tab or Quick Fix.",
+        "Quiet prefetch. ⌘⏎ to show, Tab to accept.",
       tabAutocompleteModel: "Tab model",
       tabAutocompleteModelEmpty: "Select a model",
       tabAutocompleteModelHint:
-        "Coder models (Qwen-Coder, DeepSeek, grok-code) usually beat chat/flash for Tab.",
+        "Coder models usually beat chat/flash for Tab.",
       tabAutocompleteAgg: "Aggressiveness",
       tabAutocompleteAggLow: "Low — fewer requests",
       tabAutocompleteAggMedium: "Medium — balanced",
@@ -218,25 +287,27 @@
       tabAutocompleteAlts2: "2 — two alternatives",
       tabAutocompleteAlts3: "3 — three alternatives",
       tabAutocompleteAltsHint:
-        "Distinct ghost texts in one request. Cycle Alt+[ / Alt+]; Tab accepts the current one.",
+        "Distinct ghost texts in one request. Cycle Alt+[ / Alt+].",
       tabAutocompleteExclude: "Exclude globs",
+      tabAutocompleteExcludeEmpty: "Empty",
       tabAutocompleteExcludeHint:
-        "One glob per line. Tab stays silent on matches (dist, generated, …). Clear all lines to allow every path.",
+        "One glob per line. Tab stays silent on matches.",
       tabAutocompleteNextEdit: "Next Edit after Accept",
       tabAutocompleteNextEditHint:
-        "After Tab accept, show a Next chip at the likely following edit (store → events, event → .on). Tab jumps; Esc dismisses.",
+        "After Tab, a Next chip at the likely next edit.",
       tabAutocompleteShowMode: "Show mode",
       tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter to show",
       tabAutocompleteShowModeInline: "Inline — ghost text automatically",
       tabAutocompleteShowModeHint:
-        "Chip = silent prefetch + shortcut. Inline = ghost appears when ready.",
+        "Chip = shortcut. Inline = ghost appears by itself.",
       tabAutocompleteFim: "FIM (/completions)",
       tabAutocompleteFimHint:
-        "Use prompt+suffix fill-in-the-middle when the provider supports it. Falls back to chat hole-fill.",
+        "prompt+suffix if the provider supports it.",
       tabAutocompleteKeysHint:
         "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ / Ctrl+Shift+Enter · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
+      selectionHintsNote: "Action chip over selected code.",
       model: "Model",
       provider: "Provider",
       mode: "Mode",
@@ -254,7 +325,6 @@
       taskPlaceholder: "Task for the agent... (@ for file)",
       add: "Add",
       file: "File",
-      image: "Image",
       send: "Send",
       stop: "Stop",
       queue: "Queue",
@@ -272,6 +342,7 @@
       noFiles: "No files",
       searching: "Searching...",
       copied: "Copied",
+      copy: "Copy",
       agent: "Agent",
       plan: "Plan",
       ask: "Ask",
@@ -284,6 +355,10 @@
       addProviderFirst: "Add a provider first",
       newProvider: "New Provider",
       providerTitle: "Provider",
+      promptCacheLabel: "Prompt cache",
+      promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
+      protocolLabel: "Protocol",
+      protocolHint: "Wire format the endpoint speaks. Use \"Anthropic\" for proxies that accept only the Messages API.",
       providerIdRequired: "Enter a provider id.",
       providerBaseUrlRequired: "Enter a base URL.",
       noProvidersYet: "No providers yet — add at least one.",
@@ -374,7 +449,6 @@
       openSourceControl: "Open Source Control",
       editMessage: "Edit message",
       saveAndResend: "Save and resend",
-      attachImage: "Attach image",
       attachFile: "Attach file",
       currentModelNoImages: "Current model does not support images",
       addMode: "+ Add mode",
@@ -387,18 +461,20 @@
       stepsZero: "0 steps",
       showSteps: "Show steps",
       hideSteps: "Hide steps",
-      showThinking: "Show thinking",
-      hideThinking: "Hide thinking",
-      thinkingLabel: "Thinking",
-      thinkingWorking: "Thinking…",
+      showThinking: "Show thoughts",
+      hideThinking: "Hide thoughts",
+      thinkingLabel: "Thoughts",
+      thinkingWorking: "Thoughts…",
+      textStepLabel: "Note",
+      zoomImage: "Zoom image",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
-      toolHumanRead: (path) => (path ? `Read file ${path}` : "Read file"),
-      toolHumanWrite: (path) => (path ? `Write file ${path}` : "Write file"),
-      toolHumanReplace: (path) => (path ? `Edit file ${path}` : "Edit file"),
-      toolHumanList: (path) => (path ? `List ${path}` : "List directory"),
-      toolHumanSearch: (query) => (query ? `Search ${query}` : "Search"),
-      toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
+      toolHumanRead: (path) => (path ? `read ${path}` : "read"),
+      toolHumanWrite: (path) => (path ? `write ${path}` : "write"),
+      toolHumanReplace: (path) => (path ? `edit ${path}` : "edit"),
+      toolHumanList: (path) => (path ? `list ${path}` : "list"),
+      toolHumanSearch: (query) => (query ? `search ${query}` : "search"),
+      toolHumanRun: (cmd) => (cmd ? `run ${cmd}` : "run"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
@@ -426,6 +502,8 @@
       toolMetricLines: "lines",
       toolMetricExit: "exit",
       toolWorking: "Working…",
+      runWorking: "Running",
+      runDone: "Done",
       toolReading: "Reading…",
       toolListing: "Listing…",
       toolSearching: "Searching…",
@@ -445,10 +523,11 @@
       toolKindFetch: "fetch",
       toolKindOpen: "open",
       toolKindMcp: "mcp",
-      toolKindVision: "vision",
+      toolKindVision: "Vision",
       toolKindExplore: "explore",
       toolKindTool: "tool",
-      toolTypeCount: (kind, n) => `${kind} ×${n}`,
+      toolTypeCount: (kind, n) => (n > 1 ? `${kind} ×${n}` : kind),
+      toolFiles: (n) => (n === 1 ? "1 file" : `${n} files`),
       doneImport: (a, u, t) => `Done: +${a}, updated ${u}, total ${t}.`,
       changedFiles: (n, a, d) => `Changed files: ${n} · +${a} −${d}`,
       commitAndPush: "Commit and push",
@@ -515,37 +594,52 @@
       languageAuto: "Авто (как в VS Code)",
       languageEn: "English",
       languageRu: "Русский",
+      appearanceSection: "Внешний вид",
+      appearanceNote: "Размер текста чата и поля ввода в панели.",
+      fontSize: "Размер шрифта",
+      fontSizeHint: "Действует на сообщения и поле ввода.",
+      fontSizeValue: (n) => `${n} px`,
+      fontSizePreview: "Агент будет отвечать таким размером.",
       tls: "TLS",
       validateTls: "Проверять TLS-сертификат",
+      supportsVision: "Поддержка изображений (vision)",
       agentBehavior: "Поведение агента",
       browserAgent: "Браузерный агент",
-      browserAgentTitle: "Браузерный агент (AutoGLM)",
-      browserAgentNote:
-        "Многошаговые задачи в вашем Chrome или Edge через AutoGLM (browser_task). Headless browser_* остаются для localhost. Нужны CLI AutoGLM и расширение браузера.",
-      autoglmEnabled: "Включить browser_task",
+      browserAgentTitle: "Браузерный агент",
+      browserAgentNote: "Многошаговые задачи в вашем Chrome или Edge.",
+      autoglmEnabled: "Включить браузерный агент",
+      autoglmEnabledNote:
+        "Инструмент browser_task. Нужны CLI AutoGLM и расширение.",
       autoglmBrowser: "Браузер",
+      autoglmBrowserHint: "Установите расширение AutoGLM и включите его.",
       autoglmAutoApprove: "Автоподтверждение чувствительных действий",
-      autoglmBinaryPath: "Путь к бинарнику (опционально)",
-      autoglmExtensionHint:
-        "Установите расширение AutoGLM для Chrome или Edge и включите его. При сохранении с включённым агентом пишется ~/.openclaw-autoclaw/config.json.",
+      autoglmAutoApproveNote:
+        "Без запроса на чувствительные шаги. Логин и капча — вручную.",
+      autoglmConnection: "Подключение",
+      autoglmBinaryPath: "Путь к CLI",
+      autoglmBinaryPathPlaceholder: "autoglm в PATH или полный путь",
+      autoglmBinaryPathHint:
+        "Пусто — берётся из PATH. При сохранении пишется ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
-      commitMessagesNote:
-        "Промпт для генерации сообщений коммита в SCM. Пусто — правила проекта, затем встроенный дефолт.",
+      commitMessagesNote: "Генерация сообщений коммита в SCM по diff.",
+      commitGeneration: "Генерация",
+      commitStorage: "Область сохранения",
       commitScope: "Применить к",
-      commitScopeGlobal: "Всем workspace",
-      commitScopeWorkspace: "Текущему workspace",
-      commitScopeWorkspaceNamed: (name) => name || "Текущему workspace",
-      commitLanguage: "Язык сообщения коммита",
+      commitScopeGlobal: "Все workspace",
+      commitScopeWorkspace: "Этот workspace",
+      commitScopeWorkspaceNamed: (name) =>
+        name ? `Этот workspace (${name})` : "Этот workspace",
+      commitScopeHint: "Куда сохранить эти настройки.",
+      commitLanguage: "Язык",
       commitLanguageAuto: "Авто (как язык интерфейса)",
-      commitModel: "Модель для коммитов",
+      commitModel: "Модель",
+      commitModels: "Модели",
       commitModelEmpty: "Авто (лёгкая модель)",
-      commitModelHint:
-        "Пусто — автоматический выбор лёгкой модели. Иначе — выбранная модель из каталога.",
-      commitPrompt: "Промпт / правило коммита",
+      commitPrompt: "Промпт / правило",
+      commitPromptEmpty: "Пусто — правила проекта, затем встроенный дефолт.",
       commitPromptPlaceholder:
         "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
-      maxTokens: "max_tokens",
       figma: "Figma",
       mcpServers: "MCP Servers",
       mcpServersNote:
@@ -633,26 +727,68 @@
       figmaOpenTokenHelp: "Открыть настройки токена",
       backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
+      systemPromptEmpty: "Пусто",
+      agentLimits: "Лимиты",
+      agentExecution: "Выполнение",
+      agentInterface: "Интерфейс",
       maxToolRounds: "Макс. раундов tools",
-      maxResponseLength: "Макс. длина ответа (символы)",
+      maxTokens: "Лимит ответа",
+      maxTokensHint: "токены",
+      maxResponseLength: "Макс. длина",
+      maxResponseCharsHint: "символы",
       soundNotifications: "Звуковые уведомления",
+      soundNotificationsNote: "Сигнал, когда агент закончил ход.",
       parallelAgents: "Параллельные агенты",
-      parallelAgentsNote:
-        "Вкл: spawn_agent + правило делегировать. Выкл: без субагентов. В Plan/Ask дети только читают.",
+      parallelAgentsNote: "Дочерние агенты. В Plan и Ask — только чтение.",
       parallelToolCalls: "Параллельные tool calls",
       parallelToolCallsNote:
-        "Выполнять независимые tools из одного ответа модели одновременно.",
+        "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
-      autoCompactNote:
-        "Сжимать контекст разговора, когда он приближается к лимиту входа модели.",
+      autoCompactNote: "Сжимать диалог у лимита окна модели.",
+      toolsAutoApprove: "Автоподтверждение tools",
+      toolsAutoApproveNote: "Без запроса. Выкл. — спрашивать каждый раз.",
+      approvalReads: "Чтение",
+      approvalReadsNote: "read_files, search_codebase, skills",
+      approvalWeb: "Веб-запросы",
+      approvalWebNote: "fetch_web_content",
+      approvalEdits: "Правки",
+      approvalEditsNote: "editor, apply_patch",
+      approvalCommands: "Команды",
+      approvalCommandsNote: "run_commands (терминал)",
+      approvalMcp: "MCP-инструменты",
+      approvalMcpNote: "Figma и кастомные MCP-серверы",
+      approvalSubagents: "Субагенты",
+      approvalSubagentsNote: "spawn_agent",
+      approvalInherit: "Как общий",
+      approvalAuto: "Авто",
+      approvalAsk: "Спрашивать",
+      focusChain: "Focus chain",
+      focusChainNote:
+        "Агент ведёт чеклист задач; подставляется в каждый ход.",
+      turnContext: "IDE-контекст в повторных ходах",
+      turnContextNote:
+        "Блок IDE-контекста отправляется с каждым повторным ходом. «Тощий» оставляет git + диагностику + состояние редактора.",
+      turnContextFull: "Полный",
+      turnContextSlim: "Тощий",
+      turnContextNone: "Нет",
+      checkpoints: "Чекпоинты workspace",
+      checkpointsNote:
+        "Git-снимок в начале хода. Карточка откатывает файлы.",
+      checkpointRestore: "Восстановить файлы из этого чекпоинта?",
+      checkpointCompare: "Сравнить чекпоинт с текущими файлами",
+      todoPlanTitle: "План",
+      todoPlanStepDone: "выполнено",
+      todoPlanStepInProgress: "выполняется",
+      todoPlanStepPending: "в очереди",
+      cancelledByUser: "Отменено пользователем",
       tabAutocomplete: "Tab autocomplete",
       tabAutocompleteEnable: "Включить Tab autocomplete",
       tabAutocompleteNote:
-        "Пока печатаете — тихий prefetch (ghost не виден). Ctrl+Enter / ⌘⏎ показывает подсказку; Tab принимает. Цикл Alt+[ / Alt+]. Orphan-строки: Tab или Quick Fix.",
+        "Тихий prefetch. ⌘⏎ показать, Tab принять.",
       tabAutocompleteModel: "Модель для Tab",
       tabAutocompleteModelEmpty: "Выберите модель",
       tabAutocompleteModelHint:
-        "Coder-модели (Qwen-Coder, DeepSeek, grok-code) обычно лучше chat/flash для Tab.",
+        "Coder-модели обычно лучше chat/flash для Tab.",
       tabAutocompleteAgg: "Агрессивность",
       tabAutocompleteAggLow: "Низкая — меньше запросов",
       tabAutocompleteAggMedium: "Средняя — баланс",
@@ -662,33 +798,35 @@
       tabAutocompleteAlts2: "2 — два варианта",
       tabAutocompleteAlts3: "3 — три варианта",
       tabAutocompleteAltsHint:
-        "Разные ghost text за один запрос. Цикл Alt+[ / Alt+]; Tab принимает текущий.",
+        "Разные ghost text за один запрос. Цикл Alt+[ / Alt+].",
       tabAutocompleteExclude: "Исключить (globs)",
+      tabAutocompleteExcludeEmpty: "Пусто",
       tabAutocompleteExcludeHint:
-        "По одному glob на строку. Tab молчит на совпадениях (dist, generated, …). Пустой список — разрешить все пути.",
+        "По одному glob на строку. Tab молчит на совпадениях.",
       tabAutocompleteNextEdit: "Next Edit после Accept",
       tabAutocompleteNextEditHint:
-        "После принятия Tab — чип Next в месте следующей правки (store → events, event → .on). Tab — прыжок, Esc — скрыть.",
+        "После Tab — чип Next в следующей правке.",
       tabAutocompleteShowMode: "Режим показа",
       tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter",
       tabAutocompleteShowModeInline: "Inline — ghost сразу",
       tabAutocompleteShowModeHint:
-        "Chip = тихий prefetch + шорткат. Inline = ghost появляется сам.",
+        "Chip = шорткат. Inline = ghost появляется сам.",
       tabAutocompleteFim: "FIM (/completions)",
       tabAutocompleteFimHint:
-        "prompt+suffix fill-in-the-middle, если провайдер умеет. Иначе — hole-fill chat.",
+        "prompt+suffix, если провайдер умеет.",
       tabAutocompleteKeysHint:
         "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Стейтмент: ⌘⇧⏎ / Ctrl+Shift+Enter · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
       tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
+      selectionHintsNote: "Чип действий над выделенным кодом.",
       model: "Модель",
       provider: "Провайдер",
       mode: "Режим",
-      intelligence: "Интеллект",
-      reasonLow: "Низкий",
-      reasonMedium: "Средний",
-      reasonHigh: "Высокий",
-      reasonExtraHigh: "Очень высокий",
+      intelligence: "Intelligence",
+      reasonLow: "Low",
+      reasonMedium: "Medium",
+      reasonHigh: "High",
+      reasonExtraHigh: "Extra high",
       close: "Закрыть",
       cancel: "Отмена",
       done: "Готово",
@@ -716,6 +854,7 @@
       noFiles: "Нет файлов",
       searching: "Поиск…",
       copied: "Скопировано",
+      copy: "Копировать",
       agent: "Агент",
       plan: "План",
       ask: "Спросить",
@@ -728,6 +867,10 @@
       addProviderFirst: "Сначала добавьте провайдера",
       newProvider: "Новый провайдер",
       providerTitle: "Провайдер",
+      promptCacheLabel: "Кеш промпта",
+      promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
+      protocolLabel: "Протокол",
+      protocolHint: "Формат эндпоинта. Выберите «Anthropic» для прокси, работающих только через Messages API.",
       providerIdRequired: "Укажите id провайдера.",
       providerBaseUrlRequired: "Укажите base URL.",
       noProvidersYet: "Нет провайдеров — добавьте хотя бы один.",
@@ -818,7 +961,6 @@
       openSourceControl: "Открыть Source Control",
       editMessage: "Редактирование сообщения",
       saveAndResend: "Сохранить и переотправить",
-      attachImage: "Прикрепить изображение",
       attachFile: "Прикрепить файл",
       currentModelNoImages: "Текущая модель не поддерживает изображения",
       addMode: "+ Добавить режим",
@@ -831,18 +973,20 @@
       stepsZero: "0 шагов",
       showSteps: "Показать шаги",
       hideSteps: "Скрыть шаги",
-      showThinking: "Показать размышление",
-      hideThinking: "Скрыть размышление",
-      thinkingLabel: "Thinking",
-      thinkingWorking: "Thinking…",
+      showThinking: "Показать мысли",
+      hideThinking: "Скрыть мысли",
+      thinkingLabel: "Мысли",
+      thinkingWorking: "Мысли…",
+      textStepLabel: "Сообщение",
+      zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
       stepsMany: (n) => `${n} шагов`,
-      toolHumanRead: (path) => (path ? `Read file ${path}` : "Read file"),
-      toolHumanWrite: (path) => (path ? `Write file ${path}` : "Write file"),
-      toolHumanReplace: (path) => (path ? `Edit file ${path}` : "Edit file"),
-      toolHumanList: (path) => (path ? `List ${path}` : "List directory"),
-      toolHumanSearch: (query) => (query ? `Search ${query}` : "Search"),
-      toolHumanRun: (cmd) => (cmd ? `Run ${cmd}` : "Run command"),
+      toolHumanRead: (path) => (path ? `чтение ${path}` : "чтение"),
+      toolHumanWrite: (path) => (path ? `запись ${path}` : "запись"),
+      toolHumanReplace: (path) => (path ? `правка ${path}` : "правка"),
+      toolHumanList: (path) => (path ? `список ${path}` : "список"),
+      toolHumanSearch: (query) => (query ? `поиск ${query}` : "поиск"),
+      toolHumanRun: (cmd) => (cmd ? `команда ${cmd}` : "команда"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
@@ -870,6 +1014,8 @@
       toolMetricLines: "строк",
       toolMetricExit: "exit",
       toolWorking: "Работаю…",
+      runWorking: "выполняю",
+      runDone: "выполнено",
       toolReading: "Читаю…",
       toolListing: "Смотрю…",
       toolSearching: "Ищу…",
@@ -889,10 +1035,24 @@
       toolKindFetch: "загрузка",
       toolKindOpen: "открытие",
       toolKindMcp: "mcp",
-      toolKindVision: "vision",
+      toolKindVision: "Vision",
       toolKindExplore: "explore",
       toolKindTool: "tool",
-      toolTypeCount: (kind, n) => `${kind} ×${n}`,
+      toolTypeCount: (kind, n) => (n > 1 ? `${kind} ×${n}` : kind),
+      toolFiles: (n) => {
+        const abs = Math.abs(n) % 100;
+        const d = abs % 10;
+        if (abs > 10 && abs < 20) {
+          return `${n} файлов`;
+        }
+        if (d === 1) {
+          return `${n} файл`;
+        }
+        if (d >= 2 && d <= 4) {
+          return `${n} файла`;
+        }
+        return `${n} файлов`;
+      },
       doneImport: (a, u, t) => `Готово: +${a}, обновлено ${u}, всего ${t}.`,
       changedFiles: (n, a, d) => `Изменено файлов: ${n} · +${a} −${d}`,
       commitAndPush: "Закоммитить и запушить",
@@ -1106,6 +1266,8 @@
   const providerEditBaseUrl = document.getElementById("providerEditBaseUrl");
   const providerEditStatusUrl = document.getElementById("providerEditStatusUrl");
   const providerEditApiKey = document.getElementById("providerEditApiKey");
+  const providerEditProtocol = document.getElementById("providerEditProtocol");
+  const providerEditPromptCache = document.getElementById("providerEditPromptCache");
   const providerEditCloseBtn = document.getElementById("providerEditCloseBtn");
   const providerEditCancelBtn = document.getElementById("providerEditCancelBtn");
   const providerEditDoneBtn = document.getElementById("providerEditDoneBtn");
@@ -1130,6 +1292,37 @@
 
   const settingsDefaultModel = document.getElementById("settingsDefaultModel");
   const settingsLanguage = document.getElementById("settingsLanguage");
+  const settingsFontSize = document.getElementById("settingsFontSize");
+  const settingsFontSizeValue = document.getElementById("settingsFontSizeValue");
+  const FONT_SIZE_MIN = 11;
+  const FONT_SIZE_MAX = 20;
+  const FONT_SIZE_DEFAULT = 13;
+
+  function clampUiFontSize(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      return FONT_SIZE_DEFAULT;
+    }
+    return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(n)));
+  }
+
+  function applyUiFontSize(value) {
+    const px = clampUiFontSize(value);
+    const fill =
+      ((px - FONT_SIZE_MIN) / (FONT_SIZE_MAX - FONT_SIZE_MIN)) * 100;
+    document.documentElement.style.setProperty("--harbor-font-size", px + "px");
+    if (settingsFontSize) {
+      if (settingsFontSize.value !== String(px)) {
+        settingsFontSize.value = String(px);
+      }
+      settingsFontSize.style.setProperty("--harbor-range-fill", fill + "%");
+    }
+    if (settingsFontSizeValue) {
+      settingsFontSizeValue.textContent = t("fontSizeValue", px);
+    }
+    return px;
+  }
+
   const settingsRejectUnauthorized = document.getElementById(
     "settingsRejectUnauthorized"
   );
@@ -1144,6 +1337,26 @@
   );
   const settingsAutoCompactEnabled = document.getElementById(
     "settingsAutoCompactEnabled"
+  );
+  const settingsToolsAutoApprove = document.getElementById(
+    "settingsToolsAutoApprove"
+  );
+  const settingsApprovalSelects = {
+    reads: document.getElementById("settingsApprovalReads"),
+    web: document.getElementById("settingsApprovalWeb"),
+    edits: document.getElementById("settingsApprovalEdits"),
+    commands: document.getElementById("settingsApprovalCommands"),
+    mcp: document.getElementById("settingsApprovalMcp"),
+    subagents: document.getElementById("settingsApprovalSubagents"),
+  };
+  const settingsFocusChainEnabled = document.getElementById(
+    "settingsFocusChainEnabled"
+  );
+  const settingsTurnContextFollowUps = document.getElementById(
+    "settingsTurnContextFollowUps"
+  );
+  const settingsCheckpointsEnabled = document.getElementById(
+    "settingsCheckpointsEnabled"
   );
   const settingsTabAutocompleteEnabled = document.getElementById(
     "settingsTabAutocompleteEnabled"
@@ -1185,12 +1398,71 @@
     "settingsAutoglmBinaryPath"
   );
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
+  const settingsSystemPromptToggle = document.getElementById(
+    "settingsSystemPromptToggle"
+  );
+  const settingsSystemPromptCard = document.getElementById(
+    "settingsSystemPromptCard"
+  );
+  const settingsSystemPromptBody = document.getElementById(
+    "settingsSystemPromptBody"
+  );
+  const settingsSystemPromptPreview = document.getElementById(
+    "settingsSystemPromptPreview"
+  );
+  const settingsTabExcludeToggle = document.getElementById(
+    "settingsTabExcludeToggle"
+  );
+  const settingsTabExcludeCard = document.getElementById(
+    "settingsTabExcludeCard"
+  );
+  const settingsTabExcludeBody = document.getElementById(
+    "settingsTabExcludeBody"
+  );
+  const settingsTabExcludePreview = document.getElementById(
+    "settingsTabExcludePreview"
+  );
+
+  function updateSystemPromptPreview() {
+    if (!settingsSystemPromptPreview) {
+      return;
+    }
+    const raw = String(settingsSystemPrompt?.value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    settingsSystemPromptPreview.textContent = raw || t("systemPromptEmpty");
+  }
+
+  function updateTabExcludePreview() {
+    if (!settingsTabExcludePreview) {
+      return;
+    }
+    const lines = String(settingsTabAutocompleteExcludeGlobs?.value || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    settingsTabExcludePreview.textContent = lines.length
+      ? lines.join(", ")
+      : t("tabAutocompleteExcludeEmpty");
+  }
   const settingsCommitScope = document.getElementById("settingsCommitScope");
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
   );
-  const settingsCommitModel = document.getElementById("settingsCommitModel");
+  const settingsCommitModelList = document.getElementById("settingsCommitModelList");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
+  const settingsCommitPromptToggle = document.getElementById(
+    "settingsCommitPromptToggle"
+  );
+  const settingsCommitPromptCard = document.getElementById(
+    "settingsCommitPromptCard"
+  );
+  const settingsCommitPromptBody = document.getElementById(
+    "settingsCommitPromptBody"
+  );
+  const settingsCommitPromptPreview = document.getElementById(
+    "settingsCommitPromptPreview"
+  );
   const settingsCommitNote = document.getElementById("settingsCommitNote");
   const settingsCommitScopeLabel = document.getElementById(
     "settingsCommitScopeLabel"
@@ -1198,12 +1470,37 @@
   const settingsCommitLanguageLabel = document.getElementById(
     "settingsCommitLanguageLabel"
   );
-  const settingsCommitModelLabel = document.getElementById(
-    "settingsCommitModelLabel"
+  const settingsCommitModelsLabel = document.getElementById(
+    "settingsCommitModelsLabel"
   );
   const settingsCommitPromptLabel = document.getElementById(
     "settingsCommitPromptLabel"
   );
+
+  function updateCommitPromptPreview() {
+    if (!settingsCommitPromptPreview) {
+      return;
+    }
+    const raw = String(settingsCommitPrompt?.value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    settingsCommitPromptPreview.textContent = raw || t("commitPromptEmpty");
+  }
+
+  function updateCommitScopeWorkspaceOption() {
+    if (!settingsCommitScope) {
+      return;
+    }
+    const workspaceOpt = settingsCommitScope.querySelector(
+      'option[value="workspace"]'
+    );
+    if (workspaceOpt) {
+      workspaceOpt.textContent = t(
+        "commitScopeWorkspaceNamed",
+        settingsWorkspaceName
+      );
+    }
+  }
   const settingsFigmaTitle = null;
   const settingsMcpTitle = document.getElementById("settingsMcpTitle");
   const settingsMcpNote = document.getElementById("settingsMcpNote");
@@ -1267,6 +1564,8 @@
   const skillsRefreshBtn = document.getElementById("skillsRefreshBtn");
   const skillsFoldersList = document.getElementById("skillsFoldersList");
   let skillsCache = { enabled: true, directories: [], skills: [] };
+  /** User slash commands from .harbor/commands/*.md (host-side). */
+  let userSlashCommands = [];
   const settingsFigmaEnabled = null;
   const settingsFigmaEnabledLabel = null;
   const settingsFigmaStatus = mcpEditStatus;
@@ -1335,6 +1634,7 @@
   let fetchModelsActiveRequestId = "";
   let fetchModelsProviderId = "";
   let fetchModelsIds = [];
+  let fetchModelsById = new Map();
   let fetchModelsSelected = new Set();
   let fetchModelsExisting = new Set();
   let fetchModelsLoading = false;
@@ -1349,6 +1649,13 @@
   let settingsModelTipHideTimer = null;
   let contextUsed = 0;
   let contextMax = 128000;
+  // Cumulative billing totals for the active chat (from Cline usage events).
+  // Shown in the context ring tooltip so users can see what a chat actually
+  // consumed — including prompt-cache hits — without leaving the product.
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheWriteTokens = 0;
   let notificationAudioContext = null;
 
   function ensureNotificationAudioContext() {
@@ -1453,6 +1760,9 @@
   const BRANCH_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">fork_right</span>';
 
+  const COPY_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
+
   let chatSearchOpen = false;
   let chatSearchScope = "current";
   let chatSearchRequestId = 0;
@@ -1470,6 +1780,7 @@
   /** Follow live output only while the viewport is pinned to the bottom. */
   let stickToBottom = true;
   const NEAR_BOTTOM_PX = 80;
+  let scrollBottomRaf = 0;
 
   function localizeStaticUi() {
     document.title = "Harbor Agents";
@@ -1535,9 +1846,6 @@
       if (action === "file") {
         label.textContent = t("file");
         item.title = t("attachFile");
-      } else if (action === "image") {
-        label.textContent = t("image");
-        item.title = t("attachImage");
       }
     });
     modeTrigger.title = t("mode");
@@ -1565,11 +1873,23 @@
     setText("settingsModelsProvidersTitle", "modelsProviders");
     setText("settingsModesTitle", "modes");
     setText("settingsLanguageTitle", "languageSection");
+    setText("settingsAppearanceTitle", "appearanceSection");
+    setText("settingsAppearanceNote", "appearanceNote");
+    setText("settingsFontSizeLabel", "fontSize");
+    setText("settingsFontSizeHint", "fontSizeHint");
+    setText("settingsFontPreview", "fontSizePreview");
     setText("settingsCommitTitle", "commitMessages");
+    setText("settingsCommitGenerationTitle", "commitGeneration");
+    setText("settingsCommitStorageTitle", "commitStorage");
+    setText("settingsCommitScopeHint", "commitScopeHint");
     setText("settingsMcpTitle", "mcpServers");
     setText("settingsSkillsTitle", "skillsSection");
     setText("settingsBrowserTitle", "browserAgentTitle");
+    setText("settingsAutoglmConnectionTitle", "autoglmConnection");
     setText("settingsAgentTitle", "agentBehavior");
+    setText("settingsLimitsTitle", "agentLimits");
+    setText("settingsExecutionTitle", "agentExecution");
+    setText("settingsInterfaceTitle", "agentInterface");
     setText("settingsAdvancedTitle", "advancedSettings");
     document.querySelectorAll("[data-i18n-nav]").forEach((el) => {
       const key = el.getAttribute("data-i18n-nav");
@@ -1612,6 +1932,30 @@
     }
     if (providerEditStatusUrlHint) {
       providerEditStatusUrlHint.textContent = t("statusUrlHint");
+    }
+    const providerEditPromptCacheLabel = document.getElementById(
+      "providerEditPromptCacheLabel"
+    );
+    const providerEditPromptCacheHint = document.getElementById(
+      "providerEditPromptCacheHint"
+    );
+    if (providerEditPromptCacheLabel) {
+      providerEditPromptCacheLabel.textContent = t("promptCacheLabel");
+    }
+    if (providerEditPromptCacheHint) {
+      providerEditPromptCacheHint.textContent = t("promptCacheHint");
+    }
+    const providerEditProtocolLabel = document.getElementById(
+      "providerEditProtocolLabel"
+    );
+    const providerEditProtocolHint = document.getElementById(
+      "providerEditProtocolHint"
+    );
+    if (providerEditProtocolLabel) {
+      providerEditProtocolLabel.textContent = t("protocolLabel");
+    }
+    if (providerEditProtocolHint) {
+      providerEditProtocolHint.textContent = t("protocolHint");
     }
     const modelEditProviderLabel = document.getElementById(
       "modelEditProviderLabel"
@@ -1674,11 +2018,20 @@
       if (enOpt) enOpt.textContent = t("languageEn");
       if (ruOpt) ruOpt.textContent = t("languageRu");
     }
+    if (settingsFontSize) {
+      applyUiFontSize(settingsFontSize.value);
+    }
     const settingsTlsValidateLabel = document.getElementById(
       "settingsTlsValidateLabel"
     );
     if (settingsTlsValidateLabel) {
       settingsTlsValidateLabel.textContent = t("validateTls");
+    }
+    const modelEditVisionLabel = document.getElementById(
+      "modelEditVisionLabel"
+    );
+    if (modelEditVisionLabel) {
+      modelEditVisionLabel.textContent = t("supportsVision");
     }
     const settingsSystemPromptLabel = document.getElementById(
       "settingsSystemPromptLabel"
@@ -1698,18 +2051,21 @@
     if (settingsMaxTokensLabel) {
       settingsMaxTokensLabel.textContent = t("maxTokens");
     }
+    setText("settingsMaxTokensHint", "maxTokensHint");
     const settingsMaxResponseCharsLabel = document.getElementById(
       "settingsMaxResponseCharsLabel"
     );
     if (settingsMaxResponseCharsLabel) {
       settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
     }
+    setText("settingsMaxResponseCharsHint", "maxResponseCharsHint");
     const settingsSoundNotificationsLabel = document.getElementById(
       "settingsSoundNotificationsLabel"
     );
     if (settingsSoundNotificationsLabel) {
       settingsSoundNotificationsLabel.textContent = t("soundNotifications");
     }
+    setText("settingsSoundNotificationsNote", "soundNotificationsNote");
     const settingsSubagentsLabel = document.getElementById(
       "settingsSubagentsLabel"
     );
@@ -1745,6 +2101,112 @@
     );
     if (settingsAutoCompactNote) {
       settingsAutoCompactNote.textContent = t("autoCompactNote");
+    }
+    const settingsToolsAutoApproveLabel = document.getElementById(
+      "settingsToolsAutoApproveLabel"
+    );
+    if (settingsToolsAutoApproveLabel) {
+      settingsToolsAutoApproveLabel.textContent = t("toolsAutoApprove");
+    }
+    const settingsToolsAutoApproveNote = document.getElementById(
+      "settingsToolsAutoApproveNote"
+    );
+    if (settingsToolsAutoApproveNote) {
+      settingsToolsAutoApproveNote.textContent = t("toolsAutoApproveNote");
+    }
+    const approvalGroups = [
+      "Reads",
+      "Web",
+      "Edits",
+      "Commands",
+      "Mcp",
+      "Subagents",
+    ];
+    const approvalKeyByGroup = {
+      Reads: "approvalReads",
+      Web: "approvalWeb",
+      Edits: "approvalEdits",
+      Commands: "approvalCommands",
+      Mcp: "approvalMcp",
+      Subagents: "approvalSubagents",
+    };
+    const approvalOptionLabels = {
+      inherit: t("approvalInherit"),
+      auto: t("approvalAuto"),
+      ask: t("approvalAsk"),
+    };
+    for (const group of approvalGroups) {
+      const label = document.getElementById(`settingsApproval${group}Label`);
+      if (label) {
+        label.textContent = t(approvalKeyByGroup[group]);
+      }
+      const note = document.getElementById(`settingsApproval${group}Note`);
+      if (note) {
+        note.textContent = t(`${approvalKeyByGroup[group]}Note`);
+      }
+      const select = document.getElementById(
+        `settingsApproval${group}`
+      );
+      if (select) {
+        for (const option of select.options || []) {
+          const optionLabel = approvalOptionLabels[option.value];
+          if (optionLabel) {
+            option.textContent = optionLabel;
+          }
+        }
+      }
+    }
+    const settingsFocusChainLabel = document.getElementById(
+      "settingsFocusChainLabel"
+    );
+    if (settingsFocusChainLabel) {
+      settingsFocusChainLabel.textContent = t("focusChain");
+    }
+    const settingsFocusChainNote = document.getElementById(
+      "settingsFocusChainNote"
+    );
+    if (settingsFocusChainNote) {
+      settingsFocusChainNote.textContent = t("focusChainNote");
+    }
+    const settingsTurnContextLabel = document.getElementById(
+      "settingsTurnContextLabel"
+    );
+    if (settingsTurnContextLabel) {
+      settingsTurnContextLabel.textContent = t("turnContext");
+    }
+    const settingsTurnContextNote = document.getElementById(
+      "settingsTurnContextNote"
+    );
+    if (settingsTurnContextNote) {
+      settingsTurnContextNote.textContent = t("turnContextNote");
+    }
+    const turnContextOptionLabels = {
+      full: t("turnContextFull"),
+      slim: t("turnContextSlim"),
+      none: t("turnContextNone"),
+    };
+    const settingsTurnContextSelect = document.getElementById(
+      "settingsTurnContextFollowUps"
+    );
+    if (settingsTurnContextSelect) {
+      for (const option of settingsTurnContextSelect.options || []) {
+        const optionLabel = turnContextOptionLabels[option.value];
+        if (optionLabel) {
+          option.textContent = optionLabel;
+        }
+      }
+    }
+    const settingsCheckpointsLabel = document.getElementById(
+      "settingsCheckpointsLabel"
+    );
+    if (settingsCheckpointsLabel) {
+      settingsCheckpointsLabel.textContent = t("checkpoints");
+    }
+    const settingsCheckpointsNote = document.getElementById(
+      "settingsCheckpointsNote"
+    );
+    if (settingsCheckpointsNote) {
+      settingsCheckpointsNote.textContent = t("checkpointsNote");
     }
     const settingsTabAutocompleteTitle = document.getElementById(
       "settingsTabAutocompleteTitle"
@@ -1906,6 +2368,9 @@
     if (settingsSelectionHintsLabel) {
       settingsSelectionHintsLabel.textContent = t("selectionHints");
     }
+    setText("settingsSelectionHintsNote", "selectionHintsNote");
+    updateSystemPromptPreview();
+    updateTabExcludePreview();
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     const settingsSkillsNote = document.getElementById("settingsSkillsNote");
     if (settingsSkillsNote) settingsSkillsNote.textContent = t("skillsNote");
@@ -1916,35 +2381,16 @@
     if (settingsBrowserNote) {
       settingsBrowserNote.textContent = t("browserAgentNote");
     }
-    const settingsAutoglmEnabledLabel = document.getElementById(
-      "settingsAutoglmEnabledLabel"
-    );
-    if (settingsAutoglmEnabledLabel) {
-      settingsAutoglmEnabledLabel.textContent = t("autoglmEnabled");
-    }
-    const settingsAutoglmBrowserLabel = document.getElementById(
-      "settingsAutoglmBrowserLabel"
-    );
-    if (settingsAutoglmBrowserLabel) {
-      settingsAutoglmBrowserLabel.textContent = t("autoglmBrowser");
-    }
-    const settingsAutoglmAutoApproveLabel = document.getElementById(
-      "settingsAutoglmAutoApproveLabel"
-    );
-    if (settingsAutoglmAutoApproveLabel) {
-      settingsAutoglmAutoApproveLabel.textContent = t("autoglmAutoApprove");
-    }
-    const settingsAutoglmBinaryPathLabel = document.getElementById(
-      "settingsAutoglmBinaryPathLabel"
-    );
-    if (settingsAutoglmBinaryPathLabel) {
-      settingsAutoglmBinaryPathLabel.textContent = t("autoglmBinaryPath");
-    }
-    const settingsAutoglmExtensionHint = document.getElementById(
-      "settingsAutoglmExtensionHint"
-    );
-    if (settingsAutoglmExtensionHint) {
-      settingsAutoglmExtensionHint.textContent = t("autoglmExtensionHint");
+    setText("settingsAutoglmEnabledLabel", "autoglmEnabled");
+    setText("settingsAutoglmEnabledNote", "autoglmEnabledNote");
+    setText("settingsAutoglmAutoApproveLabel", "autoglmAutoApprove");
+    setText("settingsAutoglmAutoApproveNote", "autoglmAutoApproveNote");
+    setText("settingsAutoglmBrowserLabel", "autoglmBrowser");
+    setText("settingsAutoglmBrowserHint", "autoglmBrowserHint");
+    setText("settingsAutoglmBinaryPathLabel", "autoglmBinaryPath");
+    setText("settingsAutoglmBinaryPathHint", "autoglmBinaryPathHint");
+    if (settingsAutoglmBinaryPath) {
+      settingsAutoglmBinaryPath.placeholder = t("autoglmBinaryPathPlaceholder");
     }
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
     if (mcpSearchInput) {
@@ -1991,14 +2437,8 @@
     if (settingsCommitLanguageLabel) {
       settingsCommitLanguageLabel.textContent = t("commitLanguage");
     }
-    const settingsCommitModelHint = document.getElementById(
-      "settingsCommitModelHint"
-    );
-    if (settingsCommitModelLabel) {
-      settingsCommitModelLabel.textContent = t("commitModel");
-    }
-    if (settingsCommitModelHint) {
-      settingsCommitModelHint.textContent = t("commitModelHint");
+    if (settingsCommitModelsLabel) {
+      settingsCommitModelsLabel.textContent = t("commitModels");
     }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
@@ -2006,20 +2446,13 @@
     if (settingsCommitPrompt) {
       settingsCommitPrompt.placeholder = t("commitPromptPlaceholder");
     }
+    updateCommitPromptPreview();
     if (settingsCommitScope) {
       const globalOpt = settingsCommitScope.querySelector(
         'option[value="global"]'
       );
-      const workspaceOpt = settingsCommitScope.querySelector(
-        'option[value="workspace"]'
-      );
       if (globalOpt) globalOpt.textContent = t("commitScopeGlobal");
-      if (workspaceOpt) {
-        workspaceOpt.textContent = t(
-          "commitScopeWorkspaceNamed",
-          settingsWorkspaceName
-        );
-      }
+      updateCommitScopeWorkspaceOption();
     }
     if (settingsCommitLanguage) {
       const autoOpt = settingsCommitLanguage.querySelector(
@@ -2139,17 +2572,15 @@
     if (!model) {
       return false;
     }
-    if (typeof model === "string") {
-      const found = models.find((m) => m.id === model);
-      if (found && typeof found.supportsVision === "boolean") {
-        return found.supportsVision;
-      }
-      return guessModelSupportsVision(model);
+    const id = typeof model === "string" ? model : model.id;
+    const stored =
+      typeof model === "string"
+        ? models.find((m) => m.id === model)?.supportsVision
+        : model.supportsVision;
+    if (stored === true) {
+      return true;
     }
-    if (typeof model.supportsVision === "boolean") {
-      return model.supportsVision;
-    }
-    return guessModelSupportsVision(model.id);
+    return guessModelSupportsVision(id);
   }
 
   let busy = false;
@@ -2157,6 +2588,8 @@
   let uiMessagesCache = [];
   let pendingAttachments = [];
   let pendingSelections = [];
+  /** @type {Array<{id: string, path: string, startLine: number, endLine: number}>} */
+  let pendingMentions = [];
   /** @type {Map<string, Array<{id: string, text: string, attachments: any[], mode: string, model: string, reasoningEffort?: string}>>} */
   const messageQueues = new Map();
   const MAX_MESSAGE_QUEUE = 10;
@@ -2180,11 +2613,16 @@
   let editingUserText = "";
   let editingModelId = "";
   let editingModeId = "";
+  let editingReasoningEffort = "";
   let editingAttachments = [];
   let editModelMenuOpen = false;
   let editModeMenuOpen = false;
+  let editPlusMenuOpen = false;
+  let editReasonMenuOpen = false;
+  /** True while a host file picker was opened from the edit-composer "+" button. */
+  let pickAttachmentsForEdit = false;
   let harborEditPickerOpenedAt = 0;
-  /** Timestamp of last JetBrains pointerdown for edit-save / regenerate / branch. */
+  /** Timestamp of last edit-save / regenerate / branch pointer or submit. */
   let harborEditSaveAt = 0;
   /** Timestamp of last JetBrains pointerdown for agents-rail / branch-pill switch. */
   let harborAgentNavAt = 0;
@@ -2205,6 +2643,7 @@
 
   const MAX_PENDING_ATTACHMENTS = 8;
   const MAX_PENDING_SELECTIONS = 8;
+  const MAX_PENDING_MENTIONS = 8;
 
   function buildSlashInitPrompt(args) {
     const target = String(args || "").trim();
@@ -2247,12 +2686,20 @@
           sendText: buildSlashCompactPrompt(args),
         };
       default:
+        // User command from .harbor/commands/*.md — send as-is; the host
+        // expands the template. Keep the current mode.
+        if (
+          Array.isArray(userSlashCommands) &&
+          userSlashCommands.some((c) => c.name === name)
+        ) {
+          return { kind: "user", mode: "inherit", sendText: text };
+        }
         return null;
     }
   }
 
   function getSlashCommands() {
-    return [
+    const builtins = [
       {
         id: "agent",
         label: "/agent",
@@ -2299,10 +2746,18 @@
         kind: "prompt",
       },
     ];
+    const users = (Array.isArray(userSlashCommands) ? userSlashCommands : [])
+      .map((c) => ({
+        id: String(c.name || "").toLowerCase(),
+        label: `/${c.name}`,
+        description: String(c.description || "").slice(0, 80),
+        kind: "user",
+      }));
+    return [...builtins, ...users];
   }
 
   function attachmentPayload(att) {
-    return {
+    const row = {
       id: att.id,
       kind: att.kind,
       name: att.name,
@@ -2310,8 +2765,23 @@
       path: att.path,
       storageKey: att.storageKey,
       size: att.size,
-      dataBase64: att.dataBase64,
     };
+    // JCEF JSQuery truncates multi-MB JSON. Kotlin HarborAttachmentStore
+    // already has picker/clipboard/drop bytes — omit huge payloads.
+    // Small screenshots still fit JSQuery; include them so a cache miss
+    // (paste decoded only in the webview) does not drop the image.
+    const data = att.dataBase64;
+    const MAX_JSQUERY_BASE64 = 400000;
+    if (!harborHostAvailable()) {
+      row.dataBase64 = data;
+    } else if (
+      typeof data === "string" &&
+      data.length > 0 &&
+      data.length <= MAX_JSQUERY_BASE64
+    ) {
+      row.dataBase64 = data;
+    }
+    return row;
   }
 
   function mergePendingAttachments(list) {
@@ -2322,13 +2792,13 @@
       if (pendingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
         break;
       }
-      const id = item.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const id = item.id || `local_${Date.now()}_${cryptoToken(7)}`;
       if (pendingAttachments.some((a) => a.id === id)) {
         continue;
       }
-      const kind =
-        item.kind ||
-        (String(item.mime || "").startsWith("image/") ? "image" : "file");
+      const kind = attachmentLooksLikeImage(item)
+        ? "image"
+        : item.kind || "file";
       pendingAttachments.push({
         id,
         kind,
@@ -2360,14 +2830,13 @@
     return Boolean(
       String(promptEl.value || "").trim() ||
         pendingAttachments.length ||
-        pendingSelections.length
+        pendingSelections.length ||
+        pendingMentions.length
     );
   }
 
   function queueChipId() {
-    return `q_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `q_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function getQueueForChat(chatId) {
@@ -2493,6 +2962,8 @@
     autoResizePrompt();
     persistDraftPrompt();
     clearPendingAttachments();
+    clearPendingMentions();
+    pullMentionsFromPrompt();
     if (Array.isArray(item.attachments) && item.attachments.length) {
       mergePendingAttachments(item.attachments);
     }
@@ -2612,9 +3083,7 @@
   }
 
   function selectionChipId() {
-    return `sel_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+    return `sel_${Date.now().toString(36)}_${cryptoToken(7)}`;
   }
 
   function formatSelectionLabel(sel) {
@@ -2669,6 +3138,165 @@
     const path = sel.path || "file";
     const body = String(sel.text || "").replace(/\n$/, "");
     return `\`\`\`${start}:${end}:${path}\n${body}\n\`\`\``;
+  }
+
+  function mentionChipId() {
+    return `mn_${Date.now().toString(36)}_${cryptoToken(7)}`;
+  }
+
+  function addPendingMention(pathRaw) {
+    const parsed = parseMentionTarget(String(pathRaw || "").replace(/^@+/, ""));
+    const path = String(parsed.path || "").trim();
+    if (!path) {
+      return false;
+    }
+    const startLine = Number(parsed.startLine) || 0;
+    const endLine = Number(parsed.endLine) || startLine;
+    const dup = pendingMentions.find(
+      (m) =>
+        m.path === path && m.startLine === startLine && m.endLine === endLine
+    );
+    if (dup) {
+      return false;
+    }
+    if (pendingMentions.length >= MAX_PENDING_MENTIONS) {
+      showCopyToast(t("tooManySelections"));
+      return false;
+    }
+    pendingMentions.push({
+      id: mentionChipId(),
+      path,
+      startLine,
+      endLine,
+    });
+    renderAttachPreview();
+    updateSendButton();
+    return true;
+  }
+
+  function removePendingMention(id) {
+    pendingMentions = pendingMentions.filter((m) => m.id !== id);
+    renderAttachPreview();
+    updateSendButton();
+  }
+
+  function clearPendingMentions() {
+    pendingMentions = [];
+    renderAttachPreview();
+  }
+
+  function mentionToken(meta) {
+    const suffix =
+      meta.startLine > 0
+        ? meta.startLine === meta.endLine
+          ? `:${meta.startLine}`
+          : `:${meta.startLine}-${meta.endLine}`
+        : "";
+    return `@${meta.path}${suffix}`;
+  }
+
+  function buildMessageWithMentions(userText) {
+    const chips = pendingMentions.map(mentionToken);
+    const text = String(userText || "").trim();
+    if (!chips.length) {
+      return text;
+    }
+    if (!text) {
+      return chips.join(" ");
+    }
+    return `${chips.join(" ")} ${text}`;
+  }
+
+  function renderComposerMentionChip(meta) {
+    const path = String(meta.path || "file");
+    const fileType = selectionFileType({ path });
+    const name = pathBasename(path);
+    const line =
+      meta.startLine > 0
+        ? meta.startLine === meta.endLine
+          ? `· ${meta.startLine}`
+          : `· ${meta.startLine}–${meta.endLine}`
+        : "";
+    const remove =
+      `<button type="button" class="attach-chip-remove mention-chip-remove" data-id="${escapeHtml(
+        meta.id
+      )}" title="${t("remove")}" aria-label="${t("remove")}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+      `</button>`;
+    return (
+      `<div class="msg-file-chip composer-mention-chip" data-id="${escapeHtml(
+        meta.id
+      )}" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}">` +
+      `<span class="selection-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(
+        fileType.label
+      )}</span>` +
+      `<span class="msg-file-chip-name">${escapeHtml(name)}</span>` +
+      (line ? `<span class="msg-file-chip-line">${escapeHtml(line)}</span>` : "") +
+      remove +
+      `</div>`
+    );
+  }
+
+  function tryCommitComposerMention(textarea) {
+    if (textarea !== promptEl) {
+      return false;
+    }
+    const mention = findMentionAtCursor(textarea);
+    if (!mention || !mention.query) {
+      return false;
+    }
+    const parsed = parseMentionTarget(mention.query);
+    if (!isFilePath(parsed.path)) {
+      return false;
+    }
+    if (!addPendingMention(mention.query)) {
+      return false;
+    }
+    const value = textarea.value;
+    const next = value.slice(0, mention.start) + value.slice(mention.end);
+    textarea.value = next;
+    textarea.setSelectionRange(mention.start, mention.start);
+    autoResizePrompt();
+    persistDraftPrompt();
+    closeMentionMenu();
+    return true;
+  }
+
+  function pullMentionsFromPrompt() {
+    if (!(promptEl instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const re = /@([^\s@]+)/g;
+    let value = promptEl.value || "";
+    const hits = [];
+    let match;
+    while ((match = re.exec(value))) {
+      const path = match[1];
+      if (path.includes("://") || path.includes(":")) {
+        continue;
+      }
+      if (!isFilePath(path) && !path.includes("/")) {
+        continue;
+      }
+      hits.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        path,
+      });
+    }
+    if (!hits.length) {
+      return;
+    }
+    for (let i = hits.length - 1; i >= 0; i -= 1) {
+      const hit = hits[i];
+      if (!addPendingMention(hit.path)) {
+        continue;
+      }
+      value = `${value.slice(0, hit.start)}${value.slice(hit.end)}`;
+    }
+    promptEl.value = value.replace(/[ \t]{2,}/g, " ").replace(/^ +| +$/gm, "");
+    autoResizePrompt();
+    persistDraftPrompt();
   }
 
   function addPendingSelection(sel) {
@@ -2960,80 +3588,404 @@
   }
 
   /**
-   * OSR JCEF: native <select> gets :focus but the OS popup never appears.
-   * Replace open with an in-page listbox (JetBrains host only).
-   *
-   * Important: do not rely on `click` after `pointerdown.preventDefault` —
-   * OSR often never synthesizes click. Select on pointerdown instead.
+   * Settings <select> → composer mode-picker chrome (trigger + in-page listbox).
+   * Native select stays in the DOM (hidden) so existing value/change wiring works.
+   * JetBrains OSR: pick on pointerdown — click is often never synthesized.
    */
   function installHarborSelectPolyfill() {
-    if (!harborHostAvailable()) {
-      return;
-    }
-    let menuEl = null;
-    let activeSelect = null;
+    let activePicker = null;
+    let nativeMenuEl = null;
+    let nativeSelect = null;
     let pointerHandled = false;
+    let suppressDismiss = false;
+    const pickerMenus = new WeakMap();
 
-    function closeHarborSelectMenu() {
-      if (menuEl) {
-        menuEl.remove();
-        menuEl = null;
-      }
-      if (activeSelect) {
-        activeSelect.classList.remove("harbor-select-open");
-      }
-      activeSelect = null;
+    function armDismissGuard() {
+      suppressDismiss = true;
+      const clear = () => {
+        suppressDismiss = false;
+        document.removeEventListener("pointerup", clear, true);
+        document.removeEventListener("mouseup", clear, true);
+      };
+      document.addEventListener("pointerup", clear, true);
+      document.addEventListener("mouseup", clear, true);
+      setTimeout(clear, 400);
     }
 
-    function applyOption(select, value) {
+    function demoteFieldLabel(select) {
+      const field = select.closest("label.settings-field");
+      if (!field || field.tagName !== "LABEL") {
+        return;
+      }
+      const div = document.createElement("div");
+      div.className = field.className;
+      Array.from(field.attributes).forEach((attr) => {
+        if (attr.name === "class" || attr.name === "for") {
+          return;
+        }
+        div.setAttribute(attr.name, attr.value);
+      });
+      while (field.firstChild) {
+        div.appendChild(field.firstChild);
+      }
+      field.replaceWith(div);
+    }
+    const valueDesc = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "value"
+    );
+    const indexDesc = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      "selectedIndex"
+    );
+
+    function selectedOptionLabel(select) {
+      const opt =
+        (select && select.options && select.options[select.selectedIndex]) ||
+        null;
+      if (!opt) {
+        return "";
+      }
+      return String(opt.label || opt.textContent || opt.value || "").trim();
+    }
+
+    function syncPicker(select) {
+      const picker = select && select.closest(".settings-select-picker");
+      if (!picker) {
+        return;
+      }
+      const trigger = picker.querySelector(".model-trigger");
+      const label = picker.querySelector(".model-label");
+      if (label) {
+        label.textContent = selectedOptionLabel(select) || "\u00a0";
+      }
+      if (trigger) {
+        trigger.disabled = Boolean(select.disabled);
+        trigger.title = selectedOptionLabel(select);
+      }
+      if (select.disabled && picker.classList.contains("is-open")) {
+        closePicker(picker);
+      }
+    }
+
+    function patchSelectAccessors(select) {
+      if (!valueDesc || !valueDesc.get || !valueDesc.set) {
+        return;
+      }
+      Object.defineProperty(select, "value", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return valueDesc.get.call(this);
+        },
+        set(next) {
+          valueDesc.set.call(this, next);
+          syncPicker(this);
+        },
+      });
+      if (indexDesc && indexDesc.get && indexDesc.set) {
+        Object.defineProperty(select, "selectedIndex", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return indexDesc.get.call(this);
+          },
+          set(next) {
+            indexDesc.set.call(this, next);
+            syncPicker(this);
+          },
+        });
+      }
+    }
+
+    function applySelectValue(select, value) {
       if (!select) {
         return;
       }
       const previous = select.value;
       const wanted = value == null ? "" : String(value);
-      let matched = false;
-      for (let i = 0; i < select.options.length; i++) {
-        const opt = select.options[i];
-        const isMatch = String(opt.value) === wanted;
-        opt.selected = isMatch;
-        if (isMatch) {
-          select.selectedIndex = i;
-          matched = true;
-        }
-      }
-      if (!matched) {
-        select.value = wanted;
-      }
-      // OSR sometimes keeps stale label until a forced reflow.
-      select.blur();
-      try {
-        select.focus({ preventScroll: true });
-      } catch {
-        select.focus();
-      }
+      select.value = wanted;
       if (select.value !== previous || wanted !== previous) {
         select.dispatchEvent(new Event("input", { bubbles: true }));
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
     }
 
-    function openHarborSelectMenu(select) {
-      closeHarborSelectMenu();
+    function menuForPicker(picker) {
+      if (!picker) {
+        return null;
+      }
+      return (
+        pickerMenus.get(picker) ||
+        picker.querySelector(".settings-select-menu")
+      );
+    }
+
+    function closePicker(picker) {
+      if (!picker) {
+        return;
+      }
+      const trigger = picker.querySelector(".model-trigger");
+      const menu = menuForPicker(picker);
+      picker.classList.remove("is-open");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+      if (menu) {
+        menu.hidden = true;
+        if (typeof resetModelMenuPlacement === "function") {
+          resetModelMenuPlacement(picker, menu);
+        }
+      }
+      if (activePicker === picker) {
+        activePicker = null;
+      }
+    }
+
+    function closeActivePicker() {
+      if (activePicker) {
+        closePicker(activePicker);
+      }
+      closeNativeHarborSelectMenu();
+    }
+
+    function fillPickerMenu(select, menu) {
+      menu.innerHTML = "";
+      const options = Array.from(select.options || []);
+      for (const opt of options) {
+        if (opt.hidden || (opt.disabled && opt.hidden)) {
+          continue;
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const isActive = opt.selected || opt.value === select.value;
+        btn.className = "model-option" + (isActive ? " is-active" : "");
+        btn.setAttribute("role", "option");
+        btn.setAttribute("data-harbor-value", opt.value);
+        btn.dataset.value = opt.value;
+        if (opt.disabled) {
+          btn.disabled = true;
+        }
+        if (isActive) {
+          btn.setAttribute("aria-selected", "true");
+        }
+        const label = document.createElement("span");
+        label.className = "model-option-label";
+        label.textContent = opt.label || opt.textContent || opt.value || "";
+        btn.appendChild(label);
+        if (isActive) {
+          const check = document.createElement("span");
+          check.className = "model-check";
+          check.innerHTML = CHECK_ICON;
+          btn.appendChild(check);
+        }
+        menu.appendChild(btn);
+      }
+    }
+
+    function placeSettingsMenu(picker, menu, trigger) {
+      if (typeof placeModelMenu !== "function" || !picker || !menu || !trigger) {
+        return;
+      }
+      placeModelMenu(picker, menu, document.documentElement);
+    }
+
+    function openPicker(picker) {
+      const select = picker.querySelector("select");
+      const trigger = picker.querySelector(".model-trigger");
+      const menu = menuForPicker(picker);
+      if (!select || !trigger || !menu || select.disabled) {
+        return;
+      }
+      if (activePicker && activePicker !== picker) {
+        closePicker(activePicker);
+      }
+      fillPickerMenu(select, menu);
+      picker.classList.add("is-open");
+      trigger.setAttribute("aria-expanded", "true");
+      menu.hidden = false;
+      activePicker = picker;
+      armDismissGuard();
+      placeSettingsMenu(picker, menu, trigger);
+      forceHarborUiRepaint();
+    }
+
+    function togglePicker(picker) {
+      if (!picker) {
+        return;
+      }
+      if (picker.classList.contains("is-open")) {
+        closePicker(picker);
+      } else {
+        openPicker(picker);
+      }
+    }
+
+    function wrapSelect(select) {
+      if (!select || select.closest(".settings-select-picker")) {
+        return;
+      }
+      demoteFieldLabel(select);
+      const picker = document.createElement("div");
+      picker.className = "model-picker settings-select-picker";
+      picker.dataset.selectId = select.id || `select-${cryptoToken(9)}`;
+
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "model-trigger";
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      const field = select.closest(".settings-field");
+      const fieldLabel = field && field.querySelector(".settings-label");
+      if (fieldLabel && fieldLabel.textContent) {
+        trigger.setAttribute("aria-label", fieldLabel.textContent.trim());
+      }
+
+      const label = document.createElement("span");
+      label.className = "model-label";
+
+      const chevron = document.createElement("span");
+      chevron.className = "material-symbols-outlined model-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.textContent = "expand_more";
+
+      trigger.appendChild(label);
+      trigger.appendChild(chevron);
+
+      const menu = document.createElement("div");
+      menu.className = "model-menu settings-select-menu";
+      menu.setAttribute("role", "listbox");
+      menu.dataset.selectId = picker.dataset.selectId;
+      menu.hidden = true;
+
+      select.classList.add("settings-select-native");
+      select.setAttribute("tabindex", "-1");
+      select.setAttribute("aria-hidden", "true");
+
+      const parent = select.parentNode;
+      parent.insertBefore(picker, select);
+      picker.appendChild(trigger);
+      picker.appendChild(select);
+      picker.appendChild(menu);
+      pickerMenus.set(picker, menu);
+
+      patchSelectAccessors(select);
+      syncPicker(select);
+
+      const observer = new MutationObserver(() => {
+        syncPicker(select);
+        if (picker.classList.contains("is-open")) {
+          const liveMenu = menuForPicker(picker);
+          if (liveMenu) {
+            fillPickerMenu(select, liveMenu);
+            placeSettingsMenu(picker, liveMenu, trigger);
+          }
+        }
+      });
+      observer.observe(select, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["disabled", "hidden"],
+        characterData: true,
+      });
+      select.addEventListener("change", () => syncPicker(select));
+
+      let triggerPointerHandled = false;
+      trigger.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        triggerPointerHandled = true;
+        event.preventDefault();
+        event.stopPropagation();
+        togglePicker(picker);
+        setTimeout(() => {
+          triggerPointerHandled = false;
+        }, 0);
+      });
+      trigger.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (triggerPointerHandled || event.button !== 0) {
+          return;
+        }
+        togglePicker(picker);
+      });
+      trigger.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      trigger.addEventListener("keydown", (event) => {
+        if (
+          event.key === "Enter" ||
+          event.key === " " ||
+          event.key === "ArrowDown"
+        ) {
+          event.preventDefault();
+          openPicker(picker);
+        } else if (event.key === "Escape" && picker.classList.contains("is-open")) {
+          event.preventDefault();
+          closePicker(picker);
+        }
+      });
+
+      const onMenuOption = (event) => {
+        const option = event.target && event.target.closest
+          ? event.target.closest(".model-option")
+          : null;
+        if (!option || !menu.contains(option) || option.disabled) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const value =
+          option.getAttribute("data-harbor-value") != null
+            ? option.getAttribute("data-harbor-value")
+            : option.dataset.value !== undefined
+              ? option.dataset.value
+              : "";
+        applySelectValue(select, value);
+        closePicker(picker);
+        forceHarborUiRepaint();
+      };
+      menu.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        onMenuOption(event);
+      });
+      menu.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      menu.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
+
+    document.querySelectorAll("select.settings-input").forEach(wrapSelect);
+
+    function closeNativeHarborSelectMenu() {
+      if (nativeMenuEl) {
+        nativeMenuEl.remove();
+        nativeMenuEl = null;
+      }
+      if (nativeSelect) {
+        nativeSelect.classList.remove("harbor-select-open");
+      }
+      nativeSelect = null;
+    }
+
+    function openNativeHarborSelectMenu(select) {
+      closeNativeHarborSelectMenu();
       if (!select || select.disabled) {
         return;
       }
-      activeSelect = select;
+      nativeSelect = select;
       select.classList.add("harbor-select-open");
-      try {
-        select.focus({ preventScroll: true });
-      } catch {
-        select.focus();
-      }
-
-      menuEl = document.createElement("div");
-      menuEl.className = "harbor-select-menu";
-      menuEl.setAttribute("role", "listbox");
-
+      nativeMenuEl = document.createElement("div");
+      nativeMenuEl.className = "harbor-select-menu";
+      nativeMenuEl.setAttribute("role", "listbox");
       const options = Array.from(select.options || []);
       for (const opt of options) {
         if (opt.disabled && opt.hidden) {
@@ -3043,7 +3995,6 @@
         btn.type = "button";
         btn.className = "harbor-select-option";
         btn.setAttribute("role", "option");
-        // data-value is unreliable for "" — keep explicit attribute.
         btn.setAttribute("data-harbor-value", opt.value);
         btn.dataset.value = opt.value;
         if (opt.selected || opt.value === select.value) {
@@ -3051,35 +4002,34 @@
           btn.setAttribute("aria-selected", "true");
         }
         btn.textContent = opt.label || opt.textContent || opt.value || "";
-        menuEl.appendChild(btn);
+        nativeMenuEl.appendChild(btn);
       }
-
-      document.body.appendChild(menuEl);
+      document.body.appendChild(nativeMenuEl);
       const rect = select.getBoundingClientRect();
       const maxH = Math.min(280, Math.max(120, window.innerHeight - 24));
-      menuEl.style.maxHeight = `${maxH}px`;
+      nativeMenuEl.style.maxHeight = `${maxH}px`;
       const spaceBelow = window.innerHeight - rect.bottom - 8;
       const spaceAbove = rect.top - 8;
       const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
       const width = Math.max(rect.width, 180);
-      menuEl.style.minWidth = `${Math.min(width, window.innerWidth - 16)}px`;
-      menuEl.style.left = `${Math.max(
+      nativeMenuEl.style.minWidth = `${Math.min(width, window.innerWidth - 16)}px`;
+      nativeMenuEl.style.left = `${Math.max(
         8,
         Math.min(rect.left, window.innerWidth - width - 8)
       )}px`;
       if (openUp) {
-        menuEl.classList.add("opens-up");
-        menuEl.style.bottom = `${Math.max(
+        nativeMenuEl.classList.add("opens-up");
+        nativeMenuEl.style.bottom = `${Math.max(
           8,
           window.innerHeight - rect.top + 4
         )}px`;
-        menuEl.style.top = "auto";
+        nativeMenuEl.style.top = "auto";
       } else {
-        menuEl.style.top = `${Math.min(
+        nativeMenuEl.style.top = `${Math.min(
           rect.bottom + 4,
           window.innerHeight - 40
         )}px`;
-        menuEl.style.bottom = "auto";
+        nativeMenuEl.style.bottom = "auto";
       }
       forceHarborUiRepaint();
     }
@@ -3090,44 +4040,71 @@
         return;
       }
 
-      // Pick option first (capture phase) — don't wait for click.
-      const option = target.closest(".harbor-select-option");
-      if (option && menuEl && menuEl.contains(option)) {
+      const pickerOption = target.closest(
+        ".settings-select-menu .model-option"
+      );
+      if (pickerOption) {
+        return;
+      }
+      if (target.closest(".settings-select-menu")) {
+        event.stopPropagation();
+        return;
+      }
+      if (target.closest(".settings-select-picker .model-trigger")) {
+        return;
+      }
+      if (target.closest(".settings-field > .settings-label")) {
+        return;
+      }
+
+      const nativeOption = target.closest(".harbor-select-option");
+      if (nativeOption && nativeMenuEl && nativeMenuEl.contains(nativeOption)) {
         event.preventDefault();
         event.stopPropagation();
-        const select = activeSelect;
+        const select = nativeSelect;
         const value =
-          option.getAttribute("data-harbor-value") != null
-            ? option.getAttribute("data-harbor-value")
-            : option.dataset.value !== undefined
-              ? option.dataset.value
+          nativeOption.getAttribute("data-harbor-value") != null
+            ? nativeOption.getAttribute("data-harbor-value")
+            : nativeOption.dataset.value !== undefined
+              ? nativeOption.dataset.value
               : "";
-        applyOption(select, value);
-        closeHarborSelectMenu();
+        applySelectValue(select, value);
+        closeNativeHarborSelectMenu();
         forceHarborUiRepaint();
         return;
       }
 
-      if (menuEl && menuEl.contains(target)) {
-        // Scrollbar / padding inside menu — keep open.
+      if (nativeMenuEl && nativeMenuEl.contains(target)) {
         event.stopPropagation();
         return;
       }
 
       const pathSelect = target.closest("select");
-      if (pathSelect) {
+      if (
+        pathSelect &&
+        harborHostAvailable() &&
+        !pathSelect.closest(".settings-select-picker")
+      ) {
         event.preventDefault();
         event.stopPropagation();
-        if (activeSelect === pathSelect && menuEl) {
-          closeHarborSelectMenu();
+        if (nativeSelect === pathSelect && nativeMenuEl) {
+          closeNativeHarborSelectMenu();
         } else {
-          openHarborSelectMenu(pathSelect);
+          closeActivePicker();
+          openNativeHarborSelectMenu(pathSelect);
         }
         return;
       }
 
-      if (menuEl) {
-        closeHarborSelectMenu();
+      if (
+        !suppressDismiss &&
+        activePicker &&
+        !target.closest(".settings-select-picker")
+      ) {
+        closePicker(activePicker);
+      }
+      if (nativeMenuEl) {
+        closeNativeHarborSelectMenu();
       }
     };
 
@@ -3155,35 +4132,44 @@
     document.addEventListener(
       "keydown",
       (event) => {
-        if (event.key === "Escape" && menuEl) {
-          closeHarborSelectMenu();
+        if (event.key === "Escape") {
+          closeActivePicker();
           return;
         }
         const el = document.activeElement;
         if (
+          harborHostAvailable() &&
           el &&
           el.tagName === "SELECT" &&
+          !el.closest(".settings-select-picker") &&
           (event.key === "Enter" ||
             event.key === " " ||
             event.key === "ArrowDown")
         ) {
           event.preventDefault();
-          openHarborSelectMenu(el);
+          openNativeHarborSelectMenu(el);
         }
       },
       true
     );
-    window.addEventListener("resize", closeHarborSelectMenu);
+    window.addEventListener("resize", closeActivePicker);
     document.addEventListener(
       "scroll",
       (event) => {
-        if (!menuEl) {
+        if (suppressDismiss || (!activePicker && !nativeMenuEl)) {
           return;
         }
-        if (event.target === menuEl || menuEl.contains(event.target)) {
+        const scrolled = event.target;
+        if (nativeMenuEl && (scrolled === nativeMenuEl || nativeMenuEl.contains(scrolled))) {
           return;
         }
-        closeHarborSelectMenu();
+        if (activePicker) {
+          const menu = menuForPicker(activePicker);
+          if (menu && (scrolled === menu || menu.contains(scrolled))) {
+            return;
+          }
+        }
+        closeActivePicker();
       },
       true
     );
@@ -3202,9 +4188,9 @@
       return;
     }
     const SELECTOR =
-      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .composer-plan-build";
+      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build";
     const POINTER_ACTION_SELECTOR =
-      ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-save, .msg-regenerate, .msg-branch, .composer-plan-build, #sendBtn";
+      ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .composer-plan-build, #sendBtn";
     let downEl = null;
     let clickSeen = false;
 
@@ -3228,12 +4214,35 @@
         toggleEditModelMenu();
         return true;
       }
+      if (el.classList.contains("msg-edit-plus-btn")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditPlusMenu();
+        return true;
+      }
+      if (el.classList.contains("msg-edit-reason-trigger")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        harborEditPickerOpenedAt = Date.now();
+        toggleEditReasonMenu();
+        return true;
+      }
       if (el.classList.contains("msg-edit-save")) {
         if (!messagesEl || !messagesEl.contains(el)) {
           return false;
         }
         harborEditSaveAt = Date.now();
         submitEditedUserMessage();
+        return true;
+      }
+      if (el.classList.contains("msg-copy")) {
+        if (!messagesEl || !messagesEl.contains(el)) {
+          return false;
+        }
+        copyAssistantFromButton(el);
         return true;
       }
       if (el.classList.contains("msg-regenerate")) {
@@ -3263,7 +4272,10 @@
         return true;
       }
       if (el.classList.contains("composer-plan-build") || el.id === "sendBtn") {
-        harborEditSaveAt = Date.now();
+        // Do NOT set harborEditSaveAt here — activateSendButton() sets it
+        // internally. Setting it before el.click() causes the < 450 ms guard
+        // inside activateSendButton to bail immediately, making Send inert
+        // on JetBrains (OSR pointerdown → polyfill → el.click → guard fires).
         try {
           el.click();
         } catch {
@@ -3351,11 +4363,52 @@
 
   installHarborClickPolyfill();
 
+  function attachmentLooksLikeImage(att) {
+    const mime = String(att?.mime || "").toLowerCase();
+    if (mime.startsWith("image/") && mime !== "image/svg+xml") {
+      return true;
+    }
+    if (att?.kind === "image") {
+      return true;
+    }
+    return /\.(png|jpe?g|gif|webp|bmp)$/i.test(
+      String(att?.name || att?.path || "")
+    );
+  }
+
+  function attachmentPreviewSrc(att) {
+    if (att?.previewDataUrl) {
+      return String(att.previewDataUrl);
+    }
+    if (att?.dataBase64) {
+      return `data:${att.mime || "image/png"};base64,${att.dataBase64}`;
+    }
+    return "";
+  }
+
+  function renderFileTypeChip(att, extraClass, extraHtml) {
+    const full = String(att.path || att.name || "file");
+    const label = displayAttachmentName(att);
+    const fileType = selectionFileType({ path: full });
+    return (
+      `<div class="msg-file-chip ${extraClass || ""}" data-id="${escapeHtml(
+        att.id || ""
+      )}" title="${escapeHtml(full)}">` +
+      `<span class="selection-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(
+        fileType.label
+      )}</span>` +
+      `<span class="msg-file-chip-name">${escapeHtml(label)}</span>` +
+      (extraHtml || "") +
+      `</div>`
+    );
+  }
+
   function renderAttachPreview() {
     if (!attachPreviewEl) {
       return;
     }
-    if (!pendingAttachments.length) {
+    const mentionHtml = pendingMentions.map(renderComposerMentionChip).join("");
+    if (!pendingAttachments.length && !mentionHtml) {
       attachPreviewEl.hidden = true;
       attachPreviewEl.innerHTML = "";
       updateSendButton();
@@ -3363,35 +4416,33 @@
       return;
     }
     attachPreviewEl.hidden = false;
-    attachPreviewEl.innerHTML = pendingAttachments
-      .map((att) => {
-        const label = escapeHtml(att.path || att.name || "file");
-        if (att.kind === "image" && (att.previewDataUrl || att.dataBase64)) {
-          const src =
-            att.previewDataUrl ||
-            `data:${att.mime || "image/png"};base64,${att.dataBase64}`;
-          return (
-            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(att.id)}" title="${label}">` +
-            `<img class="attach-thumb" src="${src}" alt="" decoding="sync" />` +
-            `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
-              att.id
-            )}" title="${t("remove")}" aria-label="${t("remove")}">` +
-            `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
-            `</button></div>`
-          );
-        }
-        return (
-          `<div class="attach-chip" data-id="${escapeHtml(att.id)}">` +
-          `<span class="material-symbols-outlined attach-chip-icon" aria-hidden="true">draft</span>` +
-          `<span class="attach-chip-name" title="${label}">${label}</span>` +
+    attachPreviewEl.innerHTML =
+      mentionHtml +
+      pendingAttachments
+        .map((att) => {
+        const full = String(att.path || att.name || "file");
+        const title = escapeHtml(full);
+        const src = attachmentPreviewSrc(att);
+        const remove =
           `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
             att.id
           )}" title="${t("remove")}" aria-label="${t("remove")}">` +
           `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
-          `</button></div>`
-        );
-      })
-      .join("");
+          `</button>`;
+        if (attachmentLooksLikeImage(att) && src) {
+          return (
+            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(att.id)}" title="${title}">` +
+            `<img class="attach-thumb" src="${src}" alt="" decoding="sync" />` +
+            `<span class="msg-attach-image-badge" aria-hidden="true">` +
+            `<span class="material-symbols-outlined">image</span>` +
+            `</span>` +
+            remove +
+            `</div>`
+          );
+        }
+        return renderFileTypeChip(att, "attach-chip", remove);
+        })
+        .join("");
     attachPreviewEl.querySelectorAll("img.attach-thumb").forEach((img) => {
       if (img.complete) {
         return;
@@ -3500,6 +4551,19 @@
     mentionMenuEl.innerHTML = mentionItems
       .map((item, index) => {
         const active = index === mentionActiveIndex ? " is-active" : "";
+        if (item.special) {
+          const hint = escapeHtml(item.hint || "");
+          return (
+            `<button type="button" class="mention-option${active}" role="option" data-index="${index}" data-special="${escapeHtml(item.special)}" aria-selected="${
+              index === mentionActiveIndex ? "true" : "false"
+            }">` +
+            `<span class="material-symbols-outlined mention-option-icon" aria-hidden="true">${item.icon || "draft"}</span>` +
+            `<span class="mention-option-text">` +
+            `<span class="mention-option-name">${escapeHtml(item.name)}</span>` +
+            `<span class="mention-option-path">${hint}</span>` +
+            `</span></button>`
+          );
+        }
         const name = escapeHtml(item.name || pathBasename(item.path));
         const filePath = escapeHtml(item.path || "");
         return (
@@ -3634,6 +4698,42 @@
     });
   }
 
+  function specialMentionItems(query) {
+    const q = String(query || "").toLowerCase();
+    const specials = [
+      {
+        special: "problems",
+        name: "@problems",
+        hint: UI_LANG === "ru"
+          ? "Все ошибки и предупреждения workspace"
+          : "All workspace errors and warnings",
+        icon: "error",
+      },
+      {
+        special: "terminal",
+        name: "@terminal",
+        hint: UI_LANG === "ru"
+          ? "Последний вывод терминала / Run"
+          : "Last terminal / Run output",
+        icon: "terminal",
+      },
+      {
+        special: "url",
+        name: "@url",
+        hint: UI_LANG === "ru"
+          ? "Вставить страницу: @url https://…"
+          : "Fetch a page: @url https://…",
+        icon: "language",
+      },
+    ];
+    return specials.filter(
+      (item) =>
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.special.includes(q)
+    );
+  }
+
   function openMentionMenu(textarea, start, query) {
     mentionOpen = true;
     mentionTarget = textarea;
@@ -3648,6 +4748,11 @@
       mentionMenuEl.hidden = false;
       mentionMenuEl.innerHTML =
         `<div class="mention-empty">Searching...</div>`;
+    }
+    const specials = specialMentionItems(query);
+    if (specials.length) {
+      mentionItems = specials;
+      renderMentionMenu();
     }
     if (mentionSearchTimer) {
       clearTimeout(mentionSearchTimer);
@@ -3665,17 +4770,43 @@
       closeMentionMenu();
       return;
     }
+    if (item.special) {
+      const value = textarea.value;
+      const cursor = textarea.selectionStart;
+      const insert = item.special === "url" ? "@url " : `${item.name} `;
+      const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
+      const caret = mentionStart + insert.length;
+      textarea.value = next;
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+      if (textarea.classList.contains("msg-edit-input")) {
+        editingUserText = next;
+      }
+      autoResizePrompt();
+      persistDraftPrompt();
+      closeMentionMenu();
+      return;
+    }
     const value = textarea.value;
     const cursor = textarea.selectionStart;
+    if (textarea === promptEl) {
+      const next = value.slice(0, mentionStart) + value.slice(cursor);
+      textarea.value = next;
+      textarea.focus();
+      textarea.setSelectionRange(mentionStart, mentionStart);
+      addPendingMention(item.path);
+      autoResizePrompt();
+      persistDraftPrompt();
+      closeMentionMenu();
+      return;
+    }
     const insert = `@${item.path} `;
     const next = value.slice(0, mentionStart) + insert + value.slice(cursor);
     const caret = mentionStart + insert.length;
     textarea.value = next;
     textarea.focus();
     textarea.setSelectionRange(caret, caret);
-    if (textarea === promptEl) {
-      // keep as is
-    } else if (textarea.classList.contains("msg-edit-input")) {
+    if (textarea.classList.contains("msg-edit-input")) {
       editingUserText = next;
     }
     closeMentionMenu();
@@ -3688,7 +4819,10 @@
     if (String(msg.requestId || "") !== String(mentionRequestId)) {
       return;
     }
-    mentionItems = Array.isArray(msg.files) ? msg.files : [];
+    mentionItems = [
+      ...specialMentionItems(mentionQuery),
+      ...(Array.isArray(msg.files) ? msg.files : []),
+    ];
     mentionActiveIndex = 0;
     renderMentionMenu();
   }
@@ -3795,6 +4929,44 @@
     return false;
   }
 
+  function parseMentionTarget(raw) {
+    const s = String(raw || "").trim();
+    const m = s.match(
+      /^(.*?)(?::(\d+)(?:-(\d+))?|#L(\d+)(?:-L?(\d+))?)?$/
+    );
+    if (!m) {
+      return { path: s, startLine: 0, endLine: 0 };
+    }
+    const startLine = Number(m[2] || m[4] || 0);
+    const endLine = Number(m[3] || m[5] || startLine);
+    return { path: m[1] || s, startLine, endLine };
+  }
+
+  function renderMentionChip(pathRaw) {
+    const parsed = parseMentionTarget(pathRaw);
+    const name = pathBasename(parsed.path);
+    const fileType = selectionFileType({ path: parsed.path });
+    const line =
+      parsed.startLine > 0
+        ? parsed.startLine === parsed.endLine
+          ? `· ${parsed.startLine}`
+          : `· ${parsed.startLine}–${parsed.endLine}`
+        : "";
+    return (
+      `<button type="button" class="msg-mention msg-file-chip" data-path="${escapeHtml(
+        parsed.path
+      )}" title="${escapeHtml(parsed.path)}">` +
+      `<span class="selection-file-icon selection-file-icon-${fileType.className}" aria-hidden="true">${escapeHtml(
+        fileType.label
+      )}</span>` +
+      `<span class="msg-file-chip-name">${escapeHtml(name)}</span>` +
+      (line
+        ? `<span class="msg-file-chip-line">${escapeHtml(line)}</span>`
+        : "") +
+      `</button>`
+    );
+  }
+
   function renderUserTextWithMentions(text) {
     const raw = String(text || "");
     const re = /@([^\s@]+)/g;
@@ -3803,16 +4975,32 @@
     let match;
     while ((match = re.exec(raw))) {
       html += escapeHtml(raw.slice(last, match.index));
-      const filePath = match[1];
-      const label = pathBasename(filePath);
-      html +=
-        `<button type="button" class="msg-mention" data-path="${escapeHtml(
-          filePath
-        )}" title="${escapeHtml(filePath)}">@${escapeHtml(label)}</button>`;
+      html += renderMentionChip(match[1]);
       last = match.index + match[0].length;
     }
     html += escapeHtml(raw.slice(last));
     return html;
+  }
+
+  function displayAttachmentName(att) {
+    const kind = String(att?.kind || "");
+    const raw = String(att?.name || att?.path || "").trim();
+    const base = raw.split(/[/\\]/).pop() || raw;
+    const extMatch = base.match(/(\.[a-z0-9]{1,8})$/i);
+    const ext = extMatch ? extMatch[1] : "";
+    let stem = ext ? base.slice(0, -ext.length) : base;
+    stem = stem.replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      " "
+    );
+    stem = stem.replace(/[0-9a-f]{16,}/gi, " ");
+    stem = stem.replace(/^[_-\s]+|[_-\s]+$/g, "").replace(/[_-\s]{2,}/g, " ");
+    stem = stem.replace(/\s+/g, " ").trim();
+    if (!stem) {
+      return kind === "image" ? `image${ext || ".png"}` : ext ? `file${ext}` : "file";
+    }
+    const name = `${stem}${ext}`;
+    return name.length > 42 ? `${stem.slice(0, 28)}…${ext}` : name;
   }
 
   function renderMessageAttachments(attachments) {
@@ -3823,26 +5011,73 @@
       `<div class="msg-attachments">` +
       attachments
         .map((att) => {
-          const label = escapeHtml(att.path || att.name || "file");
-          if (att.kind === "image" && att.previewDataUrl) {
+          const full = String(att.path || att.name || "file");
+          const title = escapeHtml(full);
+          const src = attachmentPreviewSrc(att);
+          if (attachmentLooksLikeImage(att) && src) {
             return (
-              `<div class="msg-attach msg-attach-image" title="${label}">` +
-              `<img src="${att.previewDataUrl}" alt="" />` +
-              `</div>`
+              `<button type="button" class="msg-attach msg-attach-image" data-preview-src="${escapeHtml(
+                src
+              )}" title="${title}" aria-label="${t("zoomImage")}">` +
+              `<img src="${src}" alt="" />` +
+              `<span class="msg-attach-image-badge" aria-hidden="true">` +
+              `<span class="material-symbols-outlined">zoom_in</span>` +
+              `</span>` +
+              `</button>`
             );
           }
-          return (
-            `<div class="msg-attach" title="${label}">` +
-            `<span class="material-symbols-outlined" aria-hidden="true">${
-              att.kind === "image" ? "image" : "draft"
-            }</span>` +
-            `<span class="msg-attach-name">${label}</span>` +
-            `</div>`
-          );
+          return renderFileTypeChip(att, "msg-attach");
         })
         .join("") +
       `</div>`
     );
+  }
+
+  let imgLightboxEl = null;
+
+  function ensureImgLightbox() {
+    if (imgLightboxEl) {
+      return imgLightboxEl;
+    }
+    imgLightboxEl = document.createElement("div");
+    imgLightboxEl.className = "img-lightbox";
+    imgLightboxEl.hidden = true;
+    imgLightboxEl.innerHTML =
+      `<button type="button" class="img-lightbox-close" title="${t("close")}" aria-label="${t("close")}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+      `</button>` +
+      `<img class="img-lightbox-img" alt="" />`;
+    imgLightboxEl.addEventListener("click", (event) => {
+      if (event.target.closest(".img-lightbox-close") || event.target === imgLightboxEl) {
+        closeImgLightbox();
+      }
+    });
+    document.body.appendChild(imgLightboxEl);
+    return imgLightboxEl;
+  }
+
+  function openImgLightbox(src) {
+    const url = String(src || "").trim();
+    if (!url) {
+      return;
+    }
+    const box = ensureImgLightbox();
+    const img = box.querySelector(".img-lightbox-img");
+    if (img) {
+      img.src = url;
+    }
+    box.hidden = false;
+  }
+
+  function closeImgLightbox() {
+    if (!imgLightboxEl) {
+      return;
+    }
+    imgLightboxEl.hidden = true;
+    const img = imgLightboxEl.querySelector(".img-lightbox-img");
+    if (img) {
+      img.removeAttribute("src");
+    }
   }
 
   function readFileAsAttachment(file) {
@@ -3855,7 +5090,7 @@
         const mime = file.type || "application/octet-stream";
         const kind = mime.startsWith("image/") ? "image" : "file";
         resolve({
-          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          id: `local_${Date.now()}_${cryptoToken(7)}`,
           kind,
           name: file.name || (kind === "image" ? "image.png" : "file"),
           mime,
@@ -4047,14 +5282,32 @@
     return distance <= threshold;
   }
 
+  function applyScrollToBottom() {
+    if (!messagesEl) {
+      return;
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
   /** Scroll to end only if pinned (or forced — new send / full re-render). */
   function scrollToBottom(options) {
     const force = Boolean(options && options.force);
     if (!force && !stickToBottom) {
       return;
     }
-    messagesEl.scrollTop = messagesEl.scrollHeight;
     stickToBottom = true;
+    applyScrollToBottom();
+    if (scrollBottomRaf) {
+      return;
+    }
+    // Second pass after layout (user bubble, «выполняю», composer/context).
+    scrollBottomRaf = requestAnimationFrame(() => {
+      applyScrollToBottom();
+      requestAnimationFrame(() => {
+        applyScrollToBottom();
+        scrollBottomRaf = 0;
+      });
+    });
   }
 
   function pinChatToBottom() {
@@ -4186,32 +5439,31 @@
   function isAgentTimelineBusy() {
     return Boolean(
       currentChatTurnEl?.querySelector?.(
-        ".tool-group.agent-timeline:not([data-sealed]) .agent-step"
+        ".tool-group.agent-timeline:not([data-sealed])"
       )
     );
   }
 
-  /** Harbor + raw Cline lifecycle phases — timeline already shows progress. */
+  /** Old «Думаю…» line — the run group («выполняю») is the only live status. */
   function shouldSuppressStatusPhase(phase) {
     return (
+      !phase ||
       phase === "cline" ||
       phase === "reading" ||
       phase === "listing" ||
       phase === "editing" ||
       phase === "running" ||
-      phase === "thinking"
+      phase === "thinking" ||
+      phase === "verifying"
     );
   }
 
   function setAgentStatus(text, hidden, phase, modelLabel) {
-    // Tool progress lives in the timeline — don't also pulse status under it
-    // (incl. raw Cline "running (model)").
-    const timelineBusy = isAgentTimelineBusy();
+    // «выполняю» replaces the pulsing «Думаю…» line for the whole run,
+    // even before the first tool/thinking step arrives.
     const suppressPhase =
-      timelineBusy && !hidden && shouldSuppressStatusPhase(phase || "");
+      !hidden && (busy || isAgentTimelineBusy() || shouldSuppressStatusPhase(phase || ""));
     if (suppressPhase) {
-      // Keep latest status in state for restore after the timeline seals,
-      // but do not show a second busy line under «Читаю…» / tool steps.
       applyAgentStatusState(text, false, phase, modelLabel);
       if (agentStatusEl) {
         agentStatusEl.hidden = true;
@@ -4237,12 +5489,6 @@
     label.className = "agent-status-text";
     label.textContent = agentStatusState.text;
     el.appendChild(label);
-    if (agentStatusState.modelLabel) {
-      const model = document.createElement("span");
-      model.className = "agent-status-model";
-      model.textContent = `(${agentStatusState.modelLabel})`;
-      el.appendChild(model);
-    }
     if (agentStatusState.phase) {
       el.dataset.phase = agentStatusState.phase;
     } else {
@@ -4270,10 +5516,9 @@
     if (agentStatusState.hidden) {
       return;
     }
-    // A tool step may have appeared after the last status message — hide the
-    // redundant Cline/Harbor busy line under the open timeline.
     if (
-      isAgentTimelineBusy() &&
+      busy ||
+      isAgentTimelineBusy() ||
       shouldSuppressStatusPhase(agentStatusState.phase || "")
     ) {
       if (agentStatusEl) {
@@ -4317,10 +5562,17 @@
     closeMenu();
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
     editingUserIndex = index;
     editingUserText = String(item.text || "");
     editingModelId = selectedModelId || models[0]?.id || "";
     editingModeId = normalizeAgentModeUi(item.mode || agentMode || "agent");
+    editingReasoningEffort = modelSupportsReasoning(editingModelId)
+      ? normalizeReasonLevel(selectedReasoningEffort) ||
+        defaultReasonForModel(editingModelId)
+      : "";
     editingAttachments = Array.isArray(item.attachments)
       ? item.attachments.slice()
       : [];
@@ -4331,10 +5583,14 @@
     const preservedScrollTop = messagesEl.scrollTop;
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
     editingModeId = "";
+    editingReasoningEffort = "";
     editingAttachments = [];
     renderMessages(uiMessagesCache, "restore", preservedScrollTop);
   }
@@ -4376,6 +5632,10 @@
     }
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
+    pickAttachmentsForEdit = false;
+    harborEditSaveAt = Date.now();
     stickToBottom = true;
     setBusy(true);
     host.postMessage({
@@ -4384,14 +5644,49 @@
       text: nextText,
       model,
       agentMode: mode,
-      reasoningEffort: selectedReasoningEffort || undefined,
+      reasoningEffort:
+        editingReasoningEffort || selectedReasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
     });
     editingUserIndex = null;
     editingUserText = "";
     editingModelId = "";
     editingModeId = "";
+    editingReasoningEffort = "";
     editingAttachments = [];
+  }
+
+  function eventTargetElement(event) {
+    const target = event.target;
+    if (target instanceof Element) {
+      return target;
+    }
+    if (target && target.parentElement instanceof Element) {
+      return target.parentElement;
+    }
+    return null;
+  }
+
+  /** VS Code webview often drops `click` on the sticky edit-save control. */
+  function trySubmitEditedUserMessageFromPointer(event) {
+    if (event.button != null && event.button !== 0) {
+      return false;
+    }
+    const target = eventTargetElement(event);
+    if (!target || !messagesEl) {
+      return false;
+    }
+    const saveBtn = target.closest(".msg-edit-save");
+    if (!saveBtn || !messagesEl.contains(saveBtn) || saveBtn.disabled) {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - harborEditSaveAt < 450) {
+      return true;
+    }
+    submitEditedUserMessage();
+    return true;
   }
 
   function modelDisplayName(id) {
@@ -4691,13 +5986,28 @@
       return;
     }
     editingModelId = next;
+    if (modelSupportsReasoning(editingModelId)) {
+      editingReasoningEffort =
+        normalizeReasonLevel(editingReasoningEffort) ||
+        defaultReasonForModel(editingModelId);
+    } else {
+      editingReasoningEffort = "";
+    }
     const picker = getEditModelPicker();
     const label = picker
       ? picker.querySelector(".msg-edit-model-label")
       : null;
+    const trigger = picker
+      ? picker.querySelector(".msg-edit-model-trigger")
+      : null;
+    const full = modelDisplayName(editingModelId);
     if (label) {
-      label.textContent = modelDisplayName(editingModelId);
+      label.textContent = shortModelChip(full);
     }
+    if (trigger) {
+      trigger.title = full;
+    }
+    updateEditReasonPickerUI();
     closeEditModelMenu();
   }
 
@@ -4883,6 +6193,345 @@
     return true;
   }
 
+  /* --- Edit-composer "+" (attachments) picker — mirrors composerPlus. --- */
+
+  function getEditPlusPicker() {
+    return messagesEl.querySelector(".msg-edit-plus");
+  }
+
+  function findEditPlusMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-plus-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-plus-menu");
+  }
+
+  function closeEditPlusMenu() {
+    editPlusMenuOpen = false;
+    const picker = getEditPlusPicker();
+    const menu = findEditPlusMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-plus-btn");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditPlusMenu() {
+    const picker = getEditPlusPicker();
+    if (!picker) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeReasonMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
+    closeEditReasonMenu();
+    editPlusMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-plus-btn");
+    const menu = findEditPlusMenu(picker);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditPlusMenu() {
+    if (editPlusMenuOpen) {
+      closeEditPlusMenu();
+    } else {
+      openEditPlusMenu();
+    }
+  }
+
+  /* --- Edit-composer reason (Intelligence) picker — mirrors reasonPicker. --- */
+
+  function getEditReasonPicker() {
+    return messagesEl.querySelector(".msg-edit-reason-picker");
+  }
+
+  function findEditReasonMenu(picker) {
+    if (picker) {
+      const nested = picker.querySelector(".msg-edit-reason-menu");
+      if (nested) {
+        return nested;
+      }
+    }
+    return document.body.querySelector(":scope > .msg-edit-reason-menu");
+  }
+
+  function updateEditReasonPickerUI() {
+    const picker = getEditReasonPicker();
+    if (!picker) {
+      return;
+    }
+    const supported = modelSupportsReasoning(
+      editingModelId || selectedModelId
+    );
+    picker.hidden = !supported;
+    if (!supported) {
+      closeEditReasonMenu();
+      return;
+    }
+    const level =
+      normalizeReasonLevel(editingReasoningEffort) ||
+      defaultReasonForModel(editingModelId || selectedModelId);
+    const label = picker.querySelector(".msg-edit-reason-label");
+    const trigger = picker.querySelector(".msg-edit-reason-trigger");
+    if (label) {
+      label.textContent = reasonLevelLabel(level);
+    }
+    if (trigger) {
+      trigger.title = `${t("intelligence")}: ${reasonLevelLabel(level)}`;
+    }
+  }
+
+  function renderEditReasonMenu(menuEl) {
+    if (!menuEl) {
+      return;
+    }
+    menuEl.innerHTML = "";
+    const activeLevel = normalizeReasonLevel(editingReasoningEffort);
+    for (const level of REASON_LEVELS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "model-option" + (level.id === activeLevel ? " is-active" : "");
+      btn.setAttribute("role", "option");
+      btn.dataset.reason = level.id;
+      const label = document.createElement("span");
+      label.className = "model-option-label";
+      label.textContent = t(level.labelKey);
+      btn.appendChild(label);
+      if (level.id === activeLevel) {
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.innerHTML = CHECK_ICON;
+        btn.appendChild(check);
+      }
+      menuEl.appendChild(btn);
+    }
+  }
+
+  function closeEditReasonMenu() {
+    editReasonMenuOpen = false;
+    const picker = getEditReasonPicker();
+    const menu = findEditReasonMenu(picker);
+    if (picker) {
+      picker.classList.remove("is-open");
+      const trigger = picker.querySelector(".msg-edit-reason-trigger");
+      if (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+      }
+    }
+    if (menu) {
+      menu.hidden = true;
+    }
+    resetModelMenuPlacement(picker, menu);
+  }
+
+  function openEditReasonMenu() {
+    const picker = getEditReasonPicker();
+    if (!picker || picker.hidden) {
+      return;
+    }
+    closeMenu();
+    closeModeMenu();
+    closeReasonMenu();
+    closeEditModelMenu();
+    closeEditModeMenu();
+    closeEditPlusMenu();
+    editReasonMenuOpen = true;
+    const trigger = picker.querySelector(".msg-edit-reason-trigger");
+    const menu = findEditReasonMenu(picker);
+    renderEditReasonMenu(menu);
+    picker.classList.add("is-open");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "true");
+    }
+    if (menu) {
+      menu.hidden = false;
+      placeModelMenu(picker, menu, chatScreen);
+    }
+  }
+
+  function toggleEditReasonMenu() {
+    if (editReasonMenuOpen) {
+      closeEditReasonMenu();
+    } else {
+      openEditReasonMenu();
+    }
+  }
+
+  function selectEditingReasoningEffort(id) {
+    const next = normalizeReasonLevel(id);
+    if (!modelSupportsReasoning(editingModelId || selectedModelId)) {
+      editingReasoningEffort = "";
+      updateEditReasonPickerUI();
+      closeEditReasonMenu();
+      return;
+    }
+    editingReasoningEffort =
+      next || defaultReasonForModel(editingModelId || selectedModelId);
+    updateEditReasonPickerUI();
+    closeEditReasonMenu();
+  }
+
+  /* --- Edit-composer attachments — mirrors pendingAttachments flow. --- */
+
+  function refreshEditingAttachmentsPreview() {
+    const composer = messagesEl.querySelector(".msg-edit-composer");
+    if (!composer) {
+      return;
+    }
+    // Replace the read-only render (plain .msg-attachments) — edit mode
+    // shows removable chips instead.
+    composer
+      .querySelectorAll(
+        ".msg-attachments:not(.msg-edit-attach-preview)"
+      )
+      .forEach((el) => el.remove());
+    let container = composer.querySelector(
+      ".msg-attachments.msg-edit-attach-preview"
+    );
+    if (!editingAttachments.length) {
+      if (container) {
+        container.remove();
+      }
+      return;
+    }
+    if (!container) {
+      container = document.createElement("div");
+      container.className = "msg-attachments msg-edit-attach-preview";
+      const textarea = composer.querySelector(".msg-edit-input");
+      if (textarea) {
+        composer.insertBefore(container, textarea);
+      } else {
+        composer.prepend(container);
+      }
+    }
+    container.innerHTML = editingAttachments
+      .map((att) => {
+        const full = String(att.path || att.name || "file");
+        const title = escapeHtml(full);
+        const src = attachmentPreviewSrc(att);
+        const remove =
+          `<button type="button" class="attach-chip-remove" data-id="${escapeHtml(
+            att.id
+          )}" title="${t("remove")}" aria-label="${t("remove")}">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">close</span>` +
+          `</button>`;
+        if (attachmentLooksLikeImage(att) && src) {
+          return (
+            `<div class="attach-chip attach-chip-image" data-id="${escapeHtml(
+              att.id
+            )}" title="${title}">` +
+            `<img class="attach-thumb" src="${src}" alt="" decoding="sync" />` +
+            `<span class="msg-attach-image-badge" aria-hidden="true">` +
+            `<span class="material-symbols-outlined">image</span>` +
+            `</span>` +
+            remove +
+            `</div>`
+          );
+        }
+        return renderFileTypeChip(att, "attach-chip", remove);
+      })
+      .join("");
+  }
+
+  function mergeEditingAttachments(list) {
+    if (!Array.isArray(list) || !list.length) {
+      return;
+    }
+    let changed = false;
+    for (const item of list) {
+      if (editingAttachments.length >= MAX_PENDING_ATTACHMENTS) {
+        break;
+      }
+      const id =
+        item.id ||
+        `local_${Date.now()}_${cryptoToken(7)}`;
+      if (editingAttachments.some((a) => a.id === id)) {
+        continue;
+      }
+      const kind = attachmentLooksLikeImage(item)
+        ? "image"
+        : item.kind || "file";
+      editingAttachments.push({
+        id,
+        kind,
+        name: item.name || "file",
+        mime: item.mime || "application/octet-stream",
+        path: item.path,
+        storageKey: item.storageKey,
+        size: item.size,
+        dataBase64: item.dataBase64,
+        previewDataUrl: item.previewDataUrl,
+      });
+      changed = true;
+    }
+    if (changed) {
+      refreshEditingAttachmentsPreview();
+    }
+  }
+
+  function removeEditingAttachment(id) {
+    const before = editingAttachments.length;
+    editingAttachments = editingAttachments.filter((a) => a.id !== id);
+    if (editingAttachments.length !== before) {
+      refreshEditingAttachmentsPreview();
+    }
+  }
+
+  function selectEditingReasonFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const option =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-reason-menu .model-option")
+        : null;
+    if (!option) {
+      return false;
+    }
+    selectEditingReasoningEffort(String(option.dataset.reason || ""));
+    return true;
+  }
+
+  function selectEditPlusItemFromEvent(event) {
+    if (typeof event.button === "number" && event.button !== 0) {
+      return false;
+    }
+    const item =
+      event.target instanceof Element
+        ? event.target.closest(".msg-edit-plus-menu .composer-plus-item")
+        : null;
+    if (!item || item.disabled || item.classList.contains("is-disabled")) {
+      return false;
+    }
+    const action = item.getAttribute("data-action");
+    closeEditPlusMenu();
+    if (action === "file") {
+      pickAttachmentsForEdit = true;
+      host.postMessage({ type: "pickAttachments" });
+    }
+    return true;
+  }
+
   function removeRegenerateButtons() {
     const btns = messagesEl.querySelectorAll(".msg-regenerate");
     btns.forEach((b) => b.remove());
@@ -4896,14 +6545,35 @@
     );
   }
 
+  function copyAssistantFromButton(btn) {
+    const wrap = btn.closest(".msg-wrap-assistant");
+    const msg = wrap?.querySelector(".msg.assistant");
+    const raw = String(msg?.dataset.raw || msg?.querySelector(".msg-body")?.innerText || "").trim();
+    if (!raw) {
+      return;
+    }
+    const done = () => showCopyToast(t("copied"));
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(raw).then(done).catch(() => {
+        host.postMessage({ type: "copyText", text: raw });
+      });
+      return;
+    }
+    host.postMessage({ type: "copyText", text: raw });
+  }
+
   function assistantActionsHtml(index, showRegen) {
+    const copyHtml =
+      `<button type="button" class="icon-btn msg-copy" data-index="${index}" title="${t("copy")}" aria-label="${t("copy")}">` +
+      COPY_ICON +
+      `</button>`;
     const branchHtml = Number.isInteger(index) ? branchButtonHtml(index) : "";
     const regenHtml = showRegen
       ? `<button type="button" class="icon-btn msg-regenerate" title="${t("regenerateLast")}" aria-label="${t("regenerateLast")}">` +
         REGENERATE_ICON +
         `</button>`
       : "";
-    return branchHtml + regenHtml;
+    return copyHtml + branchHtml + regenHtml;
   }
 
   function ensureRegenerateButton() {
@@ -5000,12 +6670,26 @@
     return Math.min(1, u / m);
   }
 
-  function setContextUsage(used, max) {
+  function setContextUsage(used, max, totals) {
     if (!contextRingEl || !contextRingValueEl) {
       return;
     }
     contextUsed = Math.max(0, Number(used) || 0);
     contextMax = Math.max(1, Number(max) || 128000);
+    if (totals && typeof totals === "object") {
+      if (typeof totals.totalInputTokens === "number") {
+        totalInputTokens = Math.max(0, totals.totalInputTokens);
+      }
+      if (typeof totals.totalOutputTokens === "number") {
+        totalOutputTokens = Math.max(0, totals.totalOutputTokens);
+      }
+      if (typeof totals.totalCacheReadTokens === "number") {
+        totalCacheReadTokens = Math.max(0, totals.totalCacheReadTokens);
+      }
+      if (typeof totals.totalCacheWriteTokens === "number") {
+        totalCacheWriteTokens = Math.max(0, totals.totalCacheWriteTokens);
+      }
+    }
     const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
     const pctLabel = Math.round(pct * 100);
@@ -5017,12 +6701,33 @@
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
-    const tip = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
     contextRingEl.setAttribute("aria-label", `Context: ${tip}`);
     contextRingEl.hidden = false;
+    if (stickToBottom) {
+      scrollToBottom();
+    }
+  }
+
+  function buildContextRingTip(usedLabel, maxLabel, pctLabel) {
+    const base = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const hasTotals =
+      totalInputTokens > 0 || totalOutputTokens > 0;
+    if (!hasTotals) {
+      return base;
+    }
+    const inLabel = formatTokenCount(totalInputTokens);
+    const outLabel = formatTokenCount(totalOutputTokens);
+    const parts = [`in ${inLabel}`, `out ${outLabel}`];
+    if (totalCacheReadTokens > 0 || totalCacheWriteTokens > 0) {
+      const cacheRead = formatTokenCount(totalCacheReadTokens);
+      const cacheWrite = formatTokenCount(totalCacheWriteTokens);
+      parts.push(`cache read ${cacheRead}`, `cache write ${cacheWrite}`);
+    }
+    return `${base}  ·  ${parts.join(" / ")}`;
   }
 
   /**
@@ -5054,6 +6759,86 @@
     return `…/${parts.slice(-2).join("/")}`;
   }
 
+  /** Basename only — option C timeline rows. */
+  function fileBase(p) {
+    const s = String(p || "").trim().replace(/[\\/]+$/, "");
+    if (!s) {
+      return "";
+    }
+    const parts = s.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || s;
+  }
+
+  function argsPreviewFromToolText(text) {
+    const raw = String(text || "").replace(/^⚙\s*/, "").trim();
+    const match = raw.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\)$/);
+    return match ? match[1] : "";
+  }
+
+  function toolStepMatchKey(name, argsPreview, label) {
+    const tool = canonicalToolName(name || parseToolName(label) || "");
+    let path = "";
+    const rawArgs = String(argsPreview || "").trim();
+    if (rawArgs) {
+      // Scalar field: "path":"...", "command":"...", "url":"...", etc.
+      // url/task/skill/question cover fetch/open/skills/ask/spawn cards whose
+      // args carry no path — with an empty key their "⚙ name(args)" text twin
+      // renders as a duplicate card instead of merging into the step.
+      let pathMatch = rawArgs.match(
+        /"(?:relativePath|path|file_path|command|query|queries|url|task|skill|question)"\s*:\s*"((?:\\.|[^"\\])*)"/
+      );
+      // Truncated preview: opening quote present, closing quote cut off.
+      if (!pathMatch) {
+        pathMatch = rawArgs.match(
+          /"(?:relativePath|path|file_path|command|query|queries|url|task|skill|question)"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+      }
+      if (pathMatch) {
+        path = pathMatch[1].replace(/\\"/g, '"');
+      }
+      // Array field: "commands":["..."], "paths":["..."], "files":["..."], etc.
+      // Take the first element so two cards for the same tool_use collapse into
+      // one (onStep + onTool both produce the same non-empty key → merge).
+      if (!path) {
+        const arrayMatch = rawArgs.match(
+          /"(?:commands|paths|file_paths|files|queries)"\s*:\s*\["((?:\\.|[^"\\])*)"/
+        );
+        if (arrayMatch) {
+          path = arrayMatch[1].replace(/\\"/g, '"');
+        }
+      }
+      // fetch_web_content ships urls as "requests":[{"url":"..."}].
+      if (!path) {
+        const requestMatch = rawArgs.match(
+          /"requests"\s*:\s*\[\s*\{\s*"url"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+        if (requestMatch) {
+          path = requestMatch[1].replace(/\\"/g, '"');
+        }
+      }
+    }
+    if (!path && label) {
+      path = String(label)
+        .replace(/^(чтение|запись|правка|список|поиск|команда|read|write|edit|list|search|run)\s+/i, "")
+        .replace(/\s*·\s*\d+\s+\S+$/u, "")
+        .replace(/\s*\(\+\d+\)\s*$/, "")
+        .trim();
+    }
+    return `${tool}::${fileBase(path)}`;
+  }
+
+  /** Format a single command entry — string or {command, args?} object. */
+  function formatCmdEntry(entry) {
+    if (typeof entry === "string") return entry;
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      if (typeof entry.command === "string") {
+        const a = Array.isArray(entry.args) ? entry.args.map(String) : [];
+        return a.length > 0 ? `${entry.command} ${a.join(" ")}` : entry.command;
+      }
+    }
+    return String(entry);
+  }
+
   function formatToolHumanLabel(name, argsPreview, metrics, status, resultPreview) {
     const toolName = canonicalToolName(name);
     let args = {};
@@ -5063,9 +6848,14 @@
         args = JSON.parse(rawArgs);
       } catch {
         // Truncated JSON from step preview — try to pull common fields by regex.
-        const pathMatch = rawArgs.match(
+        let pathMatch = rawArgs.match(
           /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/
         );
+        if (!pathMatch) {
+          pathMatch = rawArgs.match(
+            /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)/
+          );
+        }
         if (pathMatch) {
           args.path = pathMatch[1].replace(/\\"/g, '"');
           args.relativePath = args.path;
@@ -5073,6 +6863,38 @@
         const cmdMatch = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (cmdMatch) {
           args.command = cmdMatch[1].replace(/\\"/g, '"');
+        } else {
+          // Truncated mid-string: opening quote present but closing quote cut off.
+          const cmdPartial = rawArgs.match(/"command"\s*:\s*"((?:\\.|[^"\\])*)/);
+          if (cmdPartial) {
+            args.command = cmdPartial[1].replace(/\\"/g, '"');
+          }
+        }
+        // Also try "commands" array for run_commands with truncated JSON.
+        if (!cmdMatch) {
+          const cmdsMatch = rawArgs.match(
+            /"commands"\s*:\s*\[((?:[^\]]{0,200}))/
+          );
+          if (cmdsMatch) {
+            const inner = cmdsMatch[1];
+            const items = [];
+            const re = /"((?:\\.|[^"\\])*)"/g;
+            let m;
+            while ((m = re.exec(inner)) !== null) {
+              items.push(m[1].replace(/\\"/g, '"'));
+            }
+            // If no complete quoted string matched (truncated mid-string),
+            // try to grab the first quoted prefix.
+            if (!items.length) {
+              const partial = inner.match(/"((?:\\.|[^"\\])*)/);
+              if (partial) {
+                items.push(partial[1].replace(/\\"/g, '"'));
+              }
+            }
+            if (items.length) {
+              args.commands = items;
+            }
+          }
         }
         const queryMatch = rawArgs.match(
           /"(?:query|queries)"\s*:\s*"((?:\\.|[^"\\])*)"/
@@ -5080,9 +6902,17 @@
         if (queryMatch) {
           args.query = queryMatch[1].replace(/\\"/g, '"');
         }
-        const taskMatch = rawArgs.match(/"task"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        // No trailing quote requirement: task is often truncated mid-string.
+        const taskMatch = rawArgs.match(/"task"\s*:\s*"((?:\\.|[^"\\])*)/);
         if (taskMatch) {
           args.task = taskMatch[1].replace(/\\"/g, '"');
+        }
+        // Legacy previews truncated inside systemPrompt before task appeared.
+        const systemPromptMatch = rawArgs.match(
+          /"systemPrompt"\s*:\s*"((?:\\.|[^"\\])*)/
+        );
+        if (systemPromptMatch) {
+          args.systemPrompt = systemPromptMatch[1].replace(/\\"/g, '"');
         }
         const urlMatch = rawArgs.match(/"url"\s*:\s*"((?:\\.|[^"\\])*)"/);
         if (urlMatch) {
@@ -5119,23 +6949,19 @@
       case "read_files": {
         const paths = (m.files && m.files.length ? m.files : filesFromArgs());
         const first = paths[0] || "";
-        const extra = paths.length > 1 ? ` (+${paths.length - 1})` : "";
-        const linesSuffix =
-          status === "done" && typeof m.lines === "number" && m.lines > 0
-            ? ` · ${m.lines} ${t("toolMetricLines")}`
-            : "";
-        return t("toolHumanRead", shortPath(first)) + extra + linesSuffix;
+        const extra = paths.length > 1 ? ` +${paths.length - 1}` : "";
+        return t("toolHumanRead", fileBase(first)) + extra;
       }
       case "editor": {
         const filePath =
           (m.files && m.files[0]) || args.path || args.relativePath || "";
         const isCreate = m.created === true || (!args.old_text && !args.insert_line && !!args.new_text);
         return isCreate
-          ? t("toolHumanCreate", shortPath(filePath))
-          : t("toolHumanReplace", shortPath(filePath));
+          ? t("toolHumanCreate", fileBase(filePath))
+          : t("toolHumanReplace", fileBase(filePath));
       }
       case "list_files":
-        return t("toolHumanList", shortPath(args.path || args.relativePath) || ".");
+        return t("toolHumanList", fileBase(args.path || args.relativePath) || ".");
       case "search_codebase": {
         const query = firstString(args.queries || args.query);
         const countSuffix =
@@ -5145,7 +6971,16 @@
         return t("toolHumanSearch", query) + countSuffix;
       }
       case "run_commands": {
-        const cmd = firstString(args.commands || args.command);
+        let cmd = "";
+        if (Array.isArray(args.commands) && args.commands.length) {
+          cmd = args.commands.map(formatCmdEntry).join(" && ");
+        } else if (typeof args.command === "string") {
+          cmd = args.command;
+        } else if (typeof args.cmd === "string") {
+          cmd = args.cmd;
+        } else if (typeof args === "string") {
+          cmd = args;
+        }
         const exitSuffix =
           status === "error" && typeof m.exitCode === "number"
             ? ` · ${t("toolMetricExit")} ${m.exitCode}`
@@ -5180,7 +7015,9 @@
       case "apply_patch":
         return t("toolHumanApplyPatch");
       case "spawn_agent": {
-        const task = String(args.task || args.prompt || "").trim();
+        const task = String(
+          args.task || args.prompt || args.systemPrompt || ""
+        ).trim();
         const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
         const base = t("toolHumanSpawn", short);
         if (status === "error") {
@@ -5310,6 +7147,8 @@
       return "open";
     }
     if (
+      n === "vision" ||
+      n === "inspect_images" ||
       n === "vision_attached_screenshot" ||
       n === "vision_page_url" ||
       n === "vision_figma_screenshot" ||
@@ -5389,7 +7228,7 @@
     }
   }
 
-  function toolTypesSummary(group) {
+  function toolTypeLabels(group) {
     const counts = new Map();
     for (const el of group.querySelectorAll(".msg.tool")) {
       if (el.classList.contains("agent-step")) {
@@ -5404,31 +7243,39 @@
     }
     const order = [
       "vision",
-      "explore",
       "read",
-      "list",
       "search",
+      "list",
       "write",
       "replace",
       "run",
       "fetch",
       "open",
       "mcp",
-      "tool",
+      "explore",
     ];
     const parts = [];
     for (const kind of order) {
       const n = counts.get(kind);
-      if (n) {
-        parts.push(t("toolTypeCount", toolKindLabel(kind), n));
+      if (!n) {
+        continue;
       }
+      if (kind === "read") {
+        parts.push(t("toolFiles", n));
+        continue;
+      }
+      parts.push(t("toolTypeCount", toolKindLabel(kind), n));
     }
     for (const [kind, n] of counts) {
       if (!order.includes(kind) && n) {
         parts.push(t("toolTypeCount", toolKindLabel(kind), n));
       }
     }
-    return parts.length ? parts.join(" · ") : "";
+    return parts;
+  }
+
+  function toolTypesSummary(group) {
+    return toolTypeLabels(group).join(" · ");
   }
 
   /** Count timeline steps: tools + thinking + compaction/retry (not text deltas). */
@@ -5555,6 +7402,7 @@
         continue;
       }
       group.dataset.sealed = "1";
+      dropRawToolRows(group);
       // Collapse the whole work timeline into a single header («N шагов»).
       group.classList.add("is-collapsed");
       const toggle = group.querySelector(".tool-group-toggle");
@@ -5918,7 +7766,24 @@
       !raw ||
       raw === "Thinking…" ||
       raw === "Thinking..." ||
+      raw === "Planning…" ||
+      raw === "Planning..." ||
+      raw === "Reviewing…" ||
+      raw === "Reviewing..." ||
+      raw === "Reason…" ||
+      raw === "Reason..." ||
+      raw === "Thoughts…" ||
+      raw === "Thoughts..." ||
+      raw === "Разум…" ||
+      raw === "Разум..." ||
+      raw === "Мысли…" ||
+      raw === "Мысли..." ||
       raw === "Думаю…" ||
+      raw === "Думаю..." ||
+      raw === "Планирую…" ||
+      raw === "Планирую..." ||
+      raw === "Изучаю…" ||
+      raw === "Изучаю..." ||
       raw === "Continuing…" ||
       raw === "Continuing..."
     );
@@ -5979,54 +7844,152 @@
     ) {
       uiMessagesCache.pop();
     }
+
+    // Stop button: the host may not succeed in re-posting the todo card with
+    // an "error" status (postToRunChat is gated on isChatRunCurrent, which is
+    // false after abort). As a client-side fallback, force any still-running
+    // todo plan cards into a cancelled state so the header spinner and the
+    // in_progress item spinners stop immediately.
+    cancelRunningTodoPlans();
+  }
+
+  /**
+   * Force every visible todo plan card that's still "running" into a
+   * cancelled/error state. Recovers the step list from the rendered item DOM
+   * (data attributes) so it doesn't depend on the host re-posting anything.
+   */
+  function cancelRunningTodoPlans() {
+    const cards = messagesEl.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    if (!cards.length) {
+      return;
+    }
+    const cancelledText = t("cancelledByUser") || "Cancelled by user";
+    for (const el of cards) {
+      // Rebuild steps[] from rendered item DOM: data-todo-status / title.
+      const items = el.querySelectorAll(".todo-plan-item");
+      const steps = [];
+      items.forEach((row) => {
+        const titleEl = row.querySelector(".todo-plan-item-title");
+        const rawStatus =
+          row.getAttribute("data-todo-status") || "pending";
+        const status =
+          rawStatus === "done"
+            ? "done"
+            : rawStatus === "in_progress"
+              ? "pending" // turn the in_progress one into pending on cancel
+              : "pending";
+        steps.push({
+          title: titleEl ? titleEl.textContent || "" : "",
+          status,
+        });
+      });
+      el.dataset.status = "error";
+      el.dataset.cancelled = "1";
+      renderTodoStep(el, {
+        stepId: el.getAttribute("data-step-id") || "",
+        kind: "todo",
+        name: "update_todo",
+        status: "error",
+        steps,
+        resultPreview: cancelledText,
+      });
+    }
+  }
+
+  /**
+   * When the assistant finishes successfully without a final update_todo call
+   * that marks every step "done", auto-complete any still-running todo plan
+   * cards so the user sees a finished checklist instead of a stuck spinner.
+   */
+  function completeRunningTodoPlans() {
+    const cards = messagesEl.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    if (!cards.length) {
+      return;
+    }
+    for (const el of cards) {
+      const items = el.querySelectorAll(".todo-plan-item");
+      const steps = [];
+      items.forEach((row) => {
+        const titleEl = row.querySelector(".todo-plan-item-title");
+        steps.push({
+          title: titleEl ? titleEl.textContent || "" : "",
+          status: "done",
+        });
+      });
+      el.dataset.status = "done";
+      el.dataset.todoOpen = "0";
+      renderTodoStep(el, {
+        stepId: el.getAttribute("data-step-id") || "",
+        kind: "todo",
+        name: "update_todo",
+        status: "done",
+        steps,
+      });
+    }
+  }
+
+  function toolGroupHasContent(group) {
+    const body = group?.querySelector(".tool-group-body");
+    if (!body) {
+      return false;
+    }
+    for (const el of agentStepsInBody(body)) {
+      const kind = el.dataset.stepKind || "";
+      if (kind === "text") {
+        continue;
+      }
+      if (kind === "thinking") {
+        if (!isThinkingPlaceholder(el.dataset.raw)) {
+          return true;
+        }
+        continue;
+      }
+      return true;
+    }
+    return Boolean(body.querySelector(".msg.tool:not(.agent-step)"));
   }
 
   function updateToolGroupSummary(group) {
     if (!group) {
       return;
     }
+    const hasSteps = toolGroupHasContent(group);
+    group.classList.toggle("has-steps", hasSteps);
     const toggle = group.querySelector(".tool-group-toggle");
+    const chevron = group.querySelector(".tool-group-chevron");
     if (toggle) {
       toggle.hidden = false;
+      toggle.disabled = !hasSteps;
       toggle.setAttribute(
         "aria-expanded",
-        group.classList.contains("is-collapsed") ? "false" : "true"
+        hasSteps && !group.classList.contains("is-collapsed")
+          ? "true"
+          : "false"
       );
+    }
+    if (chevron) {
+      chevron.hidden = !hasSteps;
     }
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
-      const stepCount = countAgentSteps(group);
-      if (!stepCount) {
-        summary.textContent = t("toolWorking");
-      } else if (group.dataset.sealed === "1") {
-        const types = toolTypesSummary(group);
-        summary.textContent =
-          types || stepsCountLabel(stepCount) || t("stepsZero");
-      } else {
-        const body = group.querySelector(".tool-group-body");
-        const steps = agentStepsInBody(body);
-        const last = steps[steps.length - 1];
-        const lastKind = last?.dataset?.stepKind || "";
-        if (lastKind === "thinking") {
-          summary.textContent = t("thinkingWorking");
-        } else if (lastKind === "compaction") {
-          summary.textContent = t("toolWorking");
-        } else if (lastKind === "retry") {
-          summary.textContent = t("toolWorking");
-        } else {
-          const name =
-            last?.dataset?.toolName ||
-            parseToolName(last?.dataset?.raw || "");
-          summary.textContent = name
-            ? toolWorkingLabel(toolKind(name))
-            : t("toolWorking");
-        }
-      }
+      const types = toolTypesSummary(group);
+      const base = group.dataset.failed === "1"
+        ? t("runFailedSummary")
+        : group.dataset.sealed === "1"
+          ? t("runDone")
+          : t("runWorking");
+      summary.textContent = types ? `${base} · ${types}` : base;
     }
     if (toggle) {
-      toggle.title = group.classList.contains("is-collapsed")
-        ? t("showSteps")
-        : t("hideSteps");
+      toggle.title = !hasSteps
+        ? ""
+        : group.classList.contains("is-collapsed")
+          ? t("showSteps")
+          : t("hideSteps");
     }
   }
 
@@ -6034,9 +7997,9 @@
     const group = document.createElement("div");
     group.className = "tool-group agent-timeline is-collapsed";
     group.innerHTML =
-      `<button type="button" class="tool-group-toggle" aria-expanded="false">` +
-      `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true">expand_more</span>` +
-      `<span class="tool-group-summary">${escapeHtml(t("toolWorking"))}</span>` +
+      `<button type="button" class="tool-group-toggle" aria-expanded="false" disabled>` +
+      `<span class="tool-group-summary">${escapeHtml(t("runWorking"))}</span>` +
+      `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true" hidden>expand_more</span>` +
       `</button>` +
       `<div class="tool-group-body agent-timeline-body"></div>`;
     return group;
@@ -6103,8 +8066,14 @@
     if (kind === "compaction") {
       return "compress";
     }
+    if (kind === "checkpoint") {
+      return "restore";
+    }
     if (kind === "retry") {
       return "replay";
+    }
+    if (kind === "todo") {
+      return "checklist";
     }
     if (kind === "tool" || !kind) {
       const nameHint = "";
@@ -6126,16 +8095,10 @@
   }
 
   function toolStepIcon(name, status) {
-    if (status === "done") {
-      return "check";
-    }
     if (status === "error") {
       return "error";
     }
-    if (status === "running") {
-      return "progress_activity";
-    }
-    // Canonicalize so legacy names (read_file → read_files) get the right icon too.
+    // Type icon stays after done — option C rows, not checkmarks.
     const toolName = canonicalToolName(name);
     switch (toolName) {
       case "read_files":
@@ -6181,12 +8144,94 @@
     }
   }
 
+  /**
+   * Intermediate assistant text (a completed text block from an earlier
+   * model round of this turn). Rendered as a muted markdown card INSIDE the
+   * collapsed tool group so the finale-only bubble does not wipe mid-turn
+   * lists / answers the model keeps referring to.
+   */
+  function upsertTextBlockStep(step) {
+    const raw = String(step.text || "").trim();
+    if (!raw) {
+      return null;
+    }
+    const group = ensureActiveToolGroup();
+    const body = group.querySelector(".tool-group-body");
+    if (!body) {
+      return null;
+    }
+    const stepId = String(step.stepId || "");
+    let el = body.querySelector(
+      `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+    );
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "msg tool agent-step";
+      el.dataset.stepId = stepId;
+      body.appendChild(el);
+    }
+    el.dataset.stepKind = "text";
+    el.dataset.status = "done";
+    el.classList.add("agent-step-text");
+    el.innerHTML =
+      `<div class="agent-step-head">` +
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">subject</span>` +
+      `<span class="agent-step-label">${escapeHtml(t("textStepLabel"))}</span>` +
+      `</div>` +
+      `<div class="agent-step-text-body">${renderInlineMarkdown(raw)}</div>`;
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
+  }
+
   function upsertAgentStep(step) {
     if (!step || !step.stepId) {
       return null;
     }
     if (step.kind === "text") {
-      return null;
+      return upsertTextBlockStep(step);
+    }
+
+    // Plan card (update_todo) lives OUTSIDE the collapsed tool group — it must
+    // stay visible while the steps timeline is folded. Upsert into the turn.
+    if (step.kind === "todo") {
+      const turnScope = currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+      const todoSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+      let todoEl = turnScope.querySelector(todoSel);
+      // No tasks → no plan card. Avoids an empty «План» placeholder
+      // (e.g. a failed update_todo that carried no step items).
+      const todoSteps = Array.isArray(step.steps) ? step.steps : [];
+      if (todoSteps.length === 0) {
+        if (todoEl) {
+          todoEl.remove();
+        }
+        return null;
+      }
+      if (!todoEl) {
+        todoEl = document.createElement("div");
+        todoEl.className = "msg tool agent-step";
+        todoEl.dataset.stepId = step.stepId;
+        ensureChatTurn().appendChild(todoEl);
+      }
+      // A plan card cancelled by Stop must not be revived by a late/queued
+      // "step" message still in the host pipe after the abort.
+      if (todoEl.dataset.cancelled === "1") {
+        return todoEl;
+      }
+      todoEl.dataset.stepKind = "todo";
+      if (step.status) {
+        todoEl.dataset.status = step.status;
+      }
+      todoEl.classList.add("agent-step-todo");
+      renderTodoStep(todoEl, step);
+      // Pin the plan card right under the user's prompt, above the step /
+      // thinking timeline, regardless of the order events arrive in.
+      positionTodoPlanAfterUser(turnScope, todoEl);
+      keepStatusAtEnd();
+      scrollToBottom();
+      return todoEl;
     }
 
     // Thinking: resolve target node BEFORE opening a new timeline group.
@@ -6227,6 +8272,15 @@
       `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
     );
 
+    if (!el && step.kind === "tool") {
+      const key = toolStepMatchKey(step.name, step.argsPreview, "");
+      const match = findMatchingToolStep(body, key);
+      if (match && String(match.dataset.stepId || "").startsWith("tool-text-")) {
+        el = match;
+        el.dataset.stepId = step.stepId;
+      }
+    }
+
     if (step.kind === "thinking") {
       const openThinking = findOpenThinkingStep(body);
       if (openThinking) {
@@ -6251,6 +8305,22 @@
     if (step.name) {
       el.dataset.toolName = step.name;
     }
+    if (step.kind === "tool") {
+      el.dataset.toolMatchKey = toolStepMatchKey(
+        step.name,
+        step.argsPreview,
+        // Same label the "⚙ name(args)" text line derives its key from —
+        // without it url/skill/mcp tools get an empty key and never merge
+        // with their text twin.
+        formatToolHumanLabel(
+          step.name,
+          step.argsPreview,
+          step.metrics,
+          step.status,
+          step.resultPreview || ""
+        )
+      );
+    }
 
     if (step.kind === "thinking") {
       renderThinkingStep(el, String(step.text || "").trim());
@@ -6273,13 +8343,23 @@
           let task = "";
           try {
             const args = JSON.parse(String(step.argsPreview || "{}"));
-            task = String(args.task || args.prompt || "").trim();
+            task = String(
+              args.task || args.prompt || args.systemPrompt || ""
+            ).trim();
           } catch {
             const m = String(step.argsPreview || "").match(
-              /"task"\s*:\s*"((?:\\.|[^"\\])*)"/
+              /"task"\s*:\s*"((?:\\.|[^"\\])*)/
             );
             if (m) {
               task = m[1].replace(/\\"/g, '"');
+            }
+            if (!task) {
+              const sp = String(step.argsPreview || "").match(
+                /"systemPrompt"\s*:\s*"((?:\\.|[^"\\])*)/
+              );
+              if (sp) {
+                task = sp[1].replace(/\\"/g, '"');
+              }
             }
           }
           const short = task.length > 80 ? `${task.slice(0, 77)}…` : task;
@@ -6310,13 +8390,43 @@
           );
         }
       }
+      // Restore description preserved across status updates (running → done).
+      const savedHtml = el.dataset.descriptionHtml;
+      if (savedHtml) {
+        let descDiv = el.querySelector(".agent-step-description");
+        if (!descDiv) {
+          descDiv = document.createElement("div");
+          descDiv.className = "agent-step-description";
+          el.appendChild(descDiv);
+        }
+        descDiv.innerHTML = savedHtml;
+      }
+      // Merge preceding text step content into this tool card so the
+      // model's explanation is shown inline rather than as a separate card.
+      const prevText = el.previousElementSibling;
+      if (prevText && prevText.dataset.stepKind === "text") {
+        const textBody = prevText.querySelector(".agent-step-text-body");
+        if (textBody && textBody.innerHTML.trim()) {
+          el.dataset.descriptionHtml = textBody.innerHTML;
+          let descDiv = el.querySelector(".agent-step-description");
+          if (!descDiv) {
+            descDiv = document.createElement("div");
+            descDiv.className = "agent-step-description";
+            el.appendChild(descDiv);
+          }
+          descDiv.innerHTML = textBody.innerHTML;
+        }
+        prevText.remove();
+      }
     } else {
       el.classList.remove("agent-step-thinking");
       const icon = agentStepStatusIcon(step.status, step.kind);
       const label =
         step.kind === "compaction"
           ? step.text || "Context compacted"
-          : step.kind === "retry"
+          : step.kind === "checkpoint"
+            ? step.text || "Workspace checkpoint"
+            : step.kind === "retry"
             ? step.text ||
               `Retry ${step.attempt || "?"}/${step.maxAttempts || "?"}`
             : step.text || step.kind || "";
@@ -6329,10 +8439,218 @@
       }
     }
 
+    if (step.kind === "checkpoint") {
+      el.classList.add("agent-step-checkpoint");
+      el.style.cursor = "pointer";
+      el.title = t("checkpointRestore");
+      if (!el.querySelector(".agent-step-checkpoint-compare")) {
+        const compareBtn = document.createElement("button");
+        compareBtn.type = "button";
+        compareBtn.className = "agent-step-checkpoint-compare";
+        compareBtn.title = t("checkpointCompare");
+        compareBtn.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">difference</span>';
+        compareBtn.onclick = (event) => {
+          event.stopPropagation();
+          host.postMessage({
+            type: "compareCheckpoint",
+            chatId: activeChatId || "",
+            checkpointRunCount: Number(step.checkpointRunCount) || undefined,
+          });
+        };
+        el.appendChild(compareBtn);
+      }
+      el.onclick = () => {
+        if (!window.confirm(t("checkpointRestore"))) {
+          return;
+        }
+        host.postMessage({
+          type: "restoreCheckpoint",
+          chatId: activeChatId || "",
+          checkpointRunCount: Number(step.checkpointRunCount) || undefined,
+        });
+      };
+    }
+
     updateToolGroupSummary(group);
+    dropRawToolRows(group);
     keepStatusAtEnd();
     scrollToBottom();
     return el;
+  }
+
+  /**
+   * Keep the update_todo plan card pinned as the first element of the turn's
+   * work area — directly under the user prompt and above the tool/thinking
+   * timeline. Repeated calls are safe (same-position moves are no-ops) and the
+   * card is re-pinned on every update so an assistant message or tool group
+   * appended later never pushes it down.
+   */
+  function positionTodoPlanAfterUser(turnScope, todoEl) {
+    const users = turnScope.querySelectorAll(".msg-wrap-user");
+    const user = users.length ? users[users.length - 1] : null;
+    if (user) {
+      const after = user.nextSibling;
+      if (todoEl !== after) {
+        turnScope.insertBefore(todoEl, after);
+      }
+      harborSyncTodoTop(todoEl, user);
+    } else if (turnScope.firstChild !== todoEl) {
+      turnScope.insertBefore(todoEl, turnScope.firstChild);
+      todoEl.style.removeProperty("--harbor-todo-top");
+    }
+  }
+
+  /**
+   * Set --harbor-todo-top = user bubble height so the sticky todo card pins
+   * directly below the (opaque, higher z-index) user message. A
+   * ResizeObserver keeps the variable in sync when the bubble reflows.
+   */
+  function harborSyncTodoTop(todoEl, userEl) {
+    if (!todoEl || !userEl) return;
+    const setTop = () => {
+      const h = userEl.offsetHeight || 0;
+      todoEl.style.setProperty("--harbor-todo-top", h + "px");
+    };
+    setTop();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(setTop);
+      ro.observe(userEl);
+    }
+  }
+
+  /** update_todo plan card: «План · 1/4» header + collapsible step list. */
+  function renderTodoStep(el, step) {
+    const steps = Array.isArray(step.steps) ? step.steps : [];
+    const prevOpen = el.dataset.todoOpen === "1";
+    const open = prevOpen;
+    const failed = String(step.status || "") === "error";
+
+    let doneCount = 0;
+    let currentTitle = "";
+    for (const item of steps) {
+      if (String(item.status || "") === "done") {
+        doneCount += 1;
+      } else if (!currentTitle && String(item.status || "") === "in_progress") {
+        currentTitle = String(item.title || "");
+      }
+    }
+    if (!currentTitle) {
+      const next = steps.find(
+        (item) => String(item.status || "") !== "done" && item.title
+      );
+      currentTitle = next ? String(next.title) : "";
+    }
+
+    const counter = steps.length ? `${doneCount}/${steps.length}` : "";
+    el.dataset.todoOpen = open ? "1" : "0";
+
+    // Full card collapse: when data-todo-card-collapsed="1", only a compact
+    // chip is visible — click it to restore the card.
+    const cardCollapsed = el.dataset.todoCardCollapsed === "1";
+    if (cardCollapsed) {
+      el.innerHTML = "";
+      const chip = document.createElement("div");
+      chip.className = "todo-plan-chip";
+      const chipIcon = failed
+        ? "error"
+        : steps.length && doneCount === steps.length
+          ? "check"
+          : "checklist";
+      chip.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-chip-icon" aria-hidden="true">${chipIcon}</span>` +
+        `<span class="todo-plan-chip-label">${t("todoPlanTitle")}</span>` +
+        (counter ? `<span class="todo-plan-chip-counter">${counter}</span>` : "");
+      chip.addEventListener("click", () => {
+        el.dataset.todoCardCollapsed = "0";
+        renderTodoStep(el, { steps, status: step.status });
+      });
+      el.appendChild(chip);
+      return;
+    }
+
+    const head = document.createElement("div");
+    head.className = "todo-plan-head";
+    const statusIcon = failed
+      ? "error"
+      : steps.length && doneCount === steps.length
+        ? "check"
+        : "checklist";
+    head.innerHTML =
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
+      `<span class="todo-plan-title"></span>` +
+      `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-minimize" title="Свернуть панель" aria-hidden="true">minimize</span>` +
+      `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
+    const titleEl = head.querySelector(".todo-plan-title");
+    if (titleEl) {
+      titleEl.textContent = t("todoPlanTitle");
+    }
+    const counterEl = head.querySelector(".todo-plan-counter");
+    if (counterEl) {
+      counterEl.textContent = counter;
+    }
+    head.addEventListener("click", (e) => {
+      // Minimize button: collapse entire card into compact chip.
+      if (e.target.closest(".todo-plan-minimize")) {
+        e.stopPropagation();
+        el.dataset.todoCardCollapsed = "1";
+        renderTodoStep(el, { steps, status: step.status });
+        return;
+      }
+      el.dataset.todoOpen = el.dataset.todoOpen === "1" ? "0" : "1";
+      renderTodoStep(el, { steps, status: step.status });
+    });
+
+    const list = document.createElement("div");
+    list.className = "todo-plan-list";
+    if (!open) {
+      list.setAttribute("hidden", "");
+    }
+    steps.forEach((item) => {
+      const status = failed ? "pending" : String(item.status || "pending");
+      const icon = failed
+        ? "schedule"
+        : status === "done"
+          ? "check"
+          : status === "in_progress"
+            ? "progress_activity"
+            : "schedule";
+      const row = document.createElement("div");
+      row.className = "todo-plan-item";
+      row.dataset.todoStatus = status;
+      row.title = t(
+        status === "done"
+          ? "todoPlanStepDone"
+          : status === "in_progress"
+            ? "todoPlanStepInProgress"
+            : "todoPlanStepPending"
+      );
+      row.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-item-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="todo-plan-item-title"></span>`;
+      const rowTitle = row.querySelector(".todo-plan-item-title");
+      if (rowTitle) {
+        rowTitle.textContent = String(item.title || "");
+      }
+      list.appendChild(row);
+    });
+
+    el.innerHTML = "";
+    el.appendChild(head);
+    if (!open && currentTitle) {
+      const current = document.createElement("div");
+      current.className = "todo-plan-current";
+      current.textContent = currentTitle;
+      el.appendChild(current);
+    }
+    if (failed && step.resultPreview) {
+      const err = document.createElement("div");
+      err.className = "todo-plan-error";
+      err.textContent = String(step.resultPreview);
+      el.appendChild(err);
+    }
+    el.appendChild(list);
   }
 
   function renderThinkingStep(el, incoming) {
@@ -6368,26 +8686,27 @@
     el.dataset.stepKind = "thinking";
     el.dataset.raw = full;
     el.classList.add("agent-step-thinking");
+    const userOpened = el.dataset.thinkingOpen === "1";
     el.innerHTML =
       `<div class="agent-step-head">` +
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">psychology</span>` +
       `<span class="agent-step-label">${escapeHtml(t("thinkingLabel"))}</span>` +
-      `</div>` +
-      `<div class="agent-step-thinking-text"></div>` +
-      `<button type="button" class="agent-step-thinking-toggle" aria-expanded="true" hidden>` +
+      `<button type="button" class="agent-step-thinking-toggle" hidden>` +
       `<span class="agent-step-thinking-toggle-label"></span>` +
-      `<span class="material-symbols-outlined agent-step-thinking-chevron" aria-hidden="true">expand_more</span>` +
-      `</button>`;
+      `</button>` +
+      `</div>` +
+      `<div class="agent-step-thinking-text"></div>`;
     const textEl = el.querySelector(".agent-step-thinking-text");
     if (textEl) {
-      textEl.textContent = isThinkingPlaceholder(full)
-        ? t("thinkingWorking")
-        : full;
+      textEl.textContent = isThinkingPlaceholder(full) ? "" : full;
+    }
+    if (userOpened) {
+      el.dataset.thinkingOpen = "1";
     }
     updateThinkingCollapse(el, full);
   }
 
-  /** Auto-collapse long Thinking blocks; show toggle when text exceeds preview. */
+  /** Thoughts stay a plain row; full text only after «Показать мысли». */
   function updateThinkingCollapse(el, text) {
     const toggle = el.querySelector(".agent-step-thinking-toggle");
     const toggleLabel = el.querySelector(
@@ -6398,30 +8717,56 @@
     }
     const raw = String(text || "").trim();
     const isPlaceholder = !raw || isThinkingPlaceholder(raw);
-    if (isPlaceholder || raw.length <= 240) {
-      el.classList.remove("is-thinking-collapsed");
+    if (isPlaceholder) {
+      el.classList.add("is-thinking-collapsed");
       toggle.hidden = true;
       return;
     }
+    const open = el.dataset.thinkingOpen === "1";
+    el.classList.toggle("is-thinking-collapsed", !open);
     toggle.hidden = false;
-    const collapsed = el.classList.contains("is-thinking-collapsed");
-    toggleLabel.textContent = collapsed
-      ? t("showThinking")
-      : t("hideThinking");
-    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggleLabel.textContent = open ? t("hideThinking") : t("showThinking");
+    toggle.setAttribute("aria-expanded", String(open));
   }
 
-  /** Collapse all long Thinking steps in a turn once the turn advances. */
+  /** Collapse thinking rows when the turn seals (unless the user opened one). */
   function collapseLongThinkingSteps(scope) {
     const root = scope || messagesEl;
     for (const el of root.querySelectorAll(
-      ".agent-step[data-step-kind='thinking']:not(.is-thinking-collapsed)"
+      ".agent-step[data-step-kind='thinking']"
     )) {
+      if (el.dataset.thinkingOpen === "1") {
+        continue;
+      }
       const raw = String(el.dataset.raw || "").trim();
-      if (raw && !isThinkingPlaceholder(raw) && raw.length > 240) {
+      if (raw && !isThinkingPlaceholder(raw)) {
         el.classList.add("is-thinking-collapsed");
         updateThinkingCollapse(el, raw);
       }
+    }
+  }
+
+  function findMatchingToolStep(body, key) {
+    if (!body || !key || key.endsWith("::")) {
+      return null;
+    }
+    for (const el of body.querySelectorAll(
+      ".agent-step[data-step-kind='tool']"
+    )) {
+      if (el.dataset.toolMatchKey === key) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function dropRawToolRows(group) {
+    const body = group?.querySelector(".tool-group-body");
+    if (!body) {
+      return;
+    }
+    for (const el of [...body.querySelectorAll(".msg.tool:not(.agent-step)")]) {
+      el.remove();
     }
   }
 
@@ -6431,61 +8776,33 @@
       if (el && typeof index === "number") {
         el.dataset.index = String(index);
       }
+      dropRawToolRows(el?.closest(".tool-group"));
       return el;
     }
+    const toolName = parseToolName(text);
+    const argsPreview = argsPreviewFromToolText(text);
+    const key = toolStepMatchKey(toolName, argsPreview, formatToolLine(text));
     const group = ensureActiveToolGroup();
     const body = group.querySelector(".tool-group-body");
-    const toolName = parseToolName(text);
-    const formatted = formatToolLine(text);
-    const last = body?.lastElementChild;
-    // Схлопываем подряд идущие одинаковые read_file (модель часто перечитывает зря).
-    if (
-      last &&
-      last.classList.contains("msg") &&
-      last.classList.contains("tool") &&
-      last.dataset.toolName === "read_file" &&
-      toolName === "read_file"
-    ) {
-      const lastBase = String(last.dataset.toolBaseText || "")
-        .replace(/\s*×\d+\s*$/, "")
-        .trim();
-      const nextBase = String(formatted || "")
-        .replace(/\s*×\d+\s*$/, "")
-        .trim();
-      if (lastBase && lastBase === nextBase) {
-        const count = Number(last.dataset.toolRepeatCount || 1) + 1;
-        last.dataset.toolRepeatCount = String(count);
-        last.dataset.toolBaseText = lastBase;
-        if (typeof index === "number") {
-          last.dataset.index = String(index);
-        }
-        const msgBody = last.querySelector(".msg-body");
-        if (msgBody) {
-          msgBody.textContent = `${lastBase} ×${count}`;
-        }
-        last.dataset.raw = text;
-        updateToolGroupSummary(group);
-        keepStatusAtEnd();
-        scrollToBottom();
-        return last;
+    const existing = findMatchingToolStep(body, key);
+    if (existing) {
+      if (typeof index === "number") {
+        existing.dataset.index = String(index);
       }
+      dropRawToolRows(group);
+      return existing;
     }
-    const el = document.createElement("div");
-    el.className = "msg tool";
-    if (typeof index === "number") {
+    const el = upsertAgentStep({
+      stepId: `tool-text-${index ?? Date.now()}`,
+      kind: "tool",
+      name: toolName,
+      argsPreview,
+      status: "done",
+    });
+    if (el && typeof index === "number") {
       el.dataset.index = String(index);
     }
-    el.dataset.toolName = toolName;
-    el.dataset.toolRepeatCount = "1";
-    el.dataset.toolBaseText = formatted;
-    const msgBody = document.createElement("div");
-    msgBody.className = "msg-body";
-    el.appendChild(msgBody);
-    setMessageContent(el, "tool", text);
-    body.appendChild(el);
-    updateToolGroupSummary(group);
-    keepStatusAtEnd();
-    scrollToBottom();
+    dropRawToolRows(group);
     return el;
   }
 
@@ -6494,6 +8811,7 @@
       "models",
       "modes",
       "language",
+      "appearance",
       "commit",
       "mcp",
       "skills",
@@ -6596,6 +8914,16 @@
     applyAgentsRailVisibility();
   }
 
+  /** On narrow panels, collapse model + intelligence chips to icons so they
+   *  never get clipped off the composer's right edge. */
+  function updateComposerCompact() {
+    if (!composerEl) {
+      return;
+    }
+    const w = composerEl.getBoundingClientRect().width;
+    composerEl.classList.toggle("is-compact", w > 0 && w < 360);
+  }
+
   function showScreen(name) {
     let screen =
       name === "chat" ||
@@ -6613,6 +8941,9 @@
     mcpScreenOpen = screen === "mcp";
     if (workspaceShell) {
       workspaceShell.hidden = screen !== "chat";
+    }
+    if (screen === "chat") {
+      updateComposerCompact();
     }
     if (archiveScreen) {
       archiveScreen.hidden = screen !== "archive";
@@ -7083,6 +9414,28 @@
     settingsProvidersHint.classList.toggle("is-error", Boolean(isError));
   }
 
+  // Mirror of src/config.ts baseUrlSuggestsPromptCache — used to pre-check the
+  // per-provider prompt-cache checkbox for newly added providers whose baseUrl
+  // looks like an upstream that accepts Anthropic-style cache_control markers
+  // (LiteLLM / OpenRouter / Anthropic-compatible). Conservative: plain OpenAI
+  // stays off to avoid 400s.
+  function baseUrlSuggestsPromptCache(baseUrl) {
+    const url = String(baseUrl || "").toLowerCase();
+    if (!url) {
+      return false;
+    }
+    if (/api\.openai\.com/.test(url)) {
+      return false;
+    }
+    return (
+      /litellm/.test(url) ||
+      /openrouter\.ai/.test(url) ||
+      /anthropic\.com/.test(url) ||
+      /claude\.ai/.test(url) ||
+      /aihubmix|sapaicore|vertex|ai-sdk/.test(url)
+    );
+  }
+
   function providerLabel(providerId) {
     const provider = settingsProviders.find((p) => p.id === providerId);
     return provider ? provider.name || provider.id : providerId || "—";
@@ -7100,6 +9453,10 @@
       baseUrl: provider.baseUrl || "",
       apiKey: provider.apiKey || "",
       statusUrl: provider.statusUrl || "",
+      ...(typeof provider.promptCache === "boolean"
+        ? { promptCache: provider.promptCache }
+        : {}),
+      ...(provider.protocol ? { protocol: provider.protocol } : {}),
     };
   }
 
@@ -7184,7 +9541,13 @@
     const apiKey = modelEditNewProviderKey
       ? modelEditNewProviderKey.value
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const next = {
+      id,
+      name: name || id,
+      baseUrl,
+      apiKey,
+      promptCache: baseUrlSuggestsPromptCache(baseUrl),
+    };
     settingsProviders.push(next);
     return id;
   }
@@ -7226,6 +9589,25 @@
     if (providerEditApiKey) {
       providerEditApiKey.value = provider.apiKey || "";
     }
+    if (providerEditPromptCache) {
+      // Existing provider: honor its stored flag. New provider: smart default
+      // based on the baseUrl (litellm / openrouter / anthropic → on, plain
+      // OpenAI → off). User can always toggle. Re-evaluated on base URL change
+      // while the provider is still unset (isNew && no explicit prior value).
+      const stored = provider.promptCache;
+      if (typeof stored === "boolean") {
+        providerEditPromptCache.checked = stored;
+      } else if (isNew) {
+        providerEditPromptCache.checked = baseUrlSuggestsPromptCache(
+          provider.baseUrl || ""
+        );
+      } else {
+        providerEditPromptCache.checked = true;
+      }
+    }
+    if (providerEditProtocol) {
+      providerEditProtocol.value = provider.protocol || "openai-compatible";
+    }
     providerEditModal.hidden = false;
     (isNew ? providerEditId : providerEditName)?.focus();
   }
@@ -7258,7 +9640,16 @@
     const statusUrl = providerEditStatusUrl
       ? providerEditStatusUrl.value.trim().replace(/\/$/, "")
       : "";
-    const next = { id, name: name || id, baseUrl, apiKey };
+    const promptCache = providerEditPromptCache
+      ? providerEditPromptCache.checked === true
+      : false;
+    const protocol = providerEditProtocol
+      ? providerEditProtocol.value
+      : "openai-compatible";
+    const next = { id, name: name || id, baseUrl, apiKey, promptCache };
+    if (protocol && protocol !== "openai-compatible") {
+      next.protocol = protocol;
+    }
     if (statusUrl && statusUrl !== baseUrl) {
       next.statusUrl = statusUrl;
     }
@@ -7503,8 +9894,12 @@
         ? settingsTabAutocompleteModel.value
         : ""
     );
-    fillCommitMessageModelSelect(
-      settingsCommitModel ? settingsCommitModel.value : ""
+    fillCommitMessageModelCheckboxes(
+      settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : []
     );
   }
 
@@ -7554,36 +9949,37 @@
     }
   }
 
-  function fillCommitMessageModelSelect(selectedId) {
-    if (!settingsCommitModel) {
+  function fillCommitMessageModelCheckboxes(selectedIds) {
+    if (!settingsCommitModelList) {
       return;
     }
-    const previous = String(
-      selectedId != null && selectedId !== ""
-        ? selectedId
-        : settingsCommitModel.value || ""
-    ).trim();
+    const selected = new Set(
+      (Array.isArray(selectedIds) ? selectedIds : [])
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    );
     const enabled = settingsModels
       .filter((m) => m && m.id && m.enabled !== false)
       .slice()
       .sort((a, b) =>
         String(a.label || a.id).localeCompare(String(b.label || b.id))
       );
-    settingsCommitModel.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = t("commitModelEmpty");
-    settingsCommitModel.appendChild(empty);
+    settingsCommitModelList.innerHTML = "";
     for (const model of enabled) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      opt.textContent = model.label || model.id;
-      settingsCommitModel.appendChild(opt);
-    }
-    if (previous && enabled.some((m) => m.id === previous)) {
-      settingsCommitModel.value = previous;
-    } else {
-      settingsCommitModel.value = "";
+      const label = document.createElement("label");
+      label.className = "settings-fetch-model-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.modelId = model.id;
+      if (selected.has(model.id)) {
+        cb.checked = true;
+      }
+      const span = document.createElement("span");
+      span.className = "settings-fetch-model-id";
+      span.textContent = model.label || model.id;
+      label.appendChild(cb);
+      label.appendChild(span);
+      settingsCommitModelList.appendChild(label);
     }
   }
 
@@ -7624,34 +10020,112 @@
     return undefined;
   }
 
-  function pickNestedField(raw, keys) {
-    const direct = pickField(raw, keys);
-    if (direct != null) {
-      return direct;
+  function readVisionFromArchitecture(raw) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
     }
-    const nestKeys = [
-      "model_info",
-      "modelInfo",
-      "limits",
-      "limit",
-      "metadata",
-      "meta",
-      "config",
-      "parameters",
-      "params",
-      "info",
-      "capabilities",
-    ];
-    for (const nestKey of nestKeys) {
-      const nested = pickField(raw, [nestKey]);
-      if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-        const value = pickField(nested, keys);
-        if (value != null) {
-          return value;
+    const nested = [raw.architecture, raw.model_info, raw.modelInfo, raw.info];
+    for (const src of nested) {
+      if (!src || typeof src !== "object") {
+        continue;
+      }
+      const modalities =
+        src.input_modalities || src.inputModalities || src.modality;
+      if (Array.isArray(modalities)) {
+        if (modalities.some((item) => /image/i.test(String(item)))) {
+          return true;
         }
+      } else if (typeof modalities === "string" && /image/i.test(modalities)) {
+        return true;
       }
     }
     return undefined;
+  }
+
+  function pickPositiveIntField(raw, keys) {
+    if (!raw || typeof raw !== "object") {
+      return undefined;
+    }
+    const lowerMap = new Map(
+      Object.entries(raw).map(([k, v]) => [String(k).toLowerCase(), v])
+    );
+    for (const key of keys) {
+      const value = Object.prototype.hasOwnProperty.call(raw, key)
+        ? raw[key]
+        : lowerMap.get(String(key).toLowerCase());
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) {
+        return Math.floor(n);
+      }
+    }
+    return undefined;
+  }
+
+  function collectTokenLimitSources(raw) {
+    const sources = [raw];
+    for (const value of Object.values(raw)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        sources.push(value);
+      }
+    }
+    return sources;
+  }
+
+  function pickTokenLimitFromSources(sources, keys) {
+    for (const source of sources) {
+      const value = pickPositiveIntField(source, keys);
+      if (value != null) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  function readModelTokenLimits(raw) {
+    if (!raw || typeof raw !== "object") {
+      return {};
+    }
+    const sources = collectTokenLimitSources(raw);
+    const contextWindow = pickTokenLimitFromSources(sources, [
+      "max_input_tokens",
+      "maxInputTokens",
+      "max_input",
+      "maxInput",
+      "input_tokens",
+      "inputTokens",
+      "context_window",
+      "contextWindow",
+      "context_length",
+      "contextLength",
+      "max_context_tokens",
+      "maxContextTokens",
+      "max_context",
+      "maxContext",
+      "context",
+    ]);
+    const maxOutputTokens =
+      pickTokenLimitFromSources(sources, [
+        "max_output_tokens",
+        "maxOutputTokens",
+        "max_output",
+        "maxOutput",
+        "max_completion_tokens",
+        "maxCompletionTokens",
+        "output_tokens",
+        "outputTokens",
+        "completion_tokens",
+        "completionTokens",
+        "output",
+      ]) ??
+      pickTokenLimitFromSources(sources, ["max_tokens", "maxTokens"]);
+    const limits = {};
+    if (contextWindow != null && contextWindow >= 1024) {
+      limits.contextWindow = contextWindow;
+    }
+    if (maxOutputTokens != null) {
+      limits.maxOutputTokens = maxOutputTokens;
+    }
+    return limits;
   }
 
   function normalizeModelEntry(raw) {
@@ -7692,46 +10166,14 @@
       ]) || ""
     ).trim() || id;
 
-    const contextRaw = pickNestedField(raw, [
-      "contextWindow",
-      "context_window",
-      "contextLength",
-      "context_length",
-      "maxContext",
-      "max_context",
-      "maxContextTokens",
-      "max_context_tokens",
-      "max_input_tokens",
-      "maxInputTokens",
-      "max_input",
-      "maxInput",
-      "input_tokens",
-      "inputTokens",
-      "context",
-      "tokens",
-      "max_tokens",
-      "maxTokens",
-    ]);
-    const outputRaw = pickNestedField(raw, [
-      "maxOutputTokens",
-      "max_output_tokens",
-      "max_output",
-      "maxOutput",
-      "output_tokens",
-      "outputTokens",
-      "max_completion_tokens",
-      "maxCompletionTokens",
-      "completion_tokens",
-      "completionTokens",
-    ]);
-    const contextWindow = Number(contextRaw);
-    const maxOutputTokens = Number(outputRaw);
+    const limits = readModelTokenLimits(raw);
     const visionRaw = pickField(raw, [
       "supportsVision",
       "supports_vision",
       "vision",
       "multimodal",
     ]);
+    const visionFromArchitecture = readVisionFromArchitecture(raw);
     const providerId = String(
       pickField(raw, [
         "providerId",
@@ -7744,18 +10186,24 @@
     if (providerId) {
       model.providerId = providerId;
     }
-    if (Number.isFinite(contextWindow) && contextWindow >= 1024) {
-      model.contextWindow = Math.floor(contextWindow);
+    if (limits.contextWindow) {
+      model.contextWindow = limits.contextWindow;
     }
-    if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) {
-      model.maxOutputTokens = Math.floor(maxOutputTokens);
+    if (limits.maxOutputTokens) {
+      model.maxOutputTokens = limits.maxOutputTokens;
     }
-    if (visionRaw === true || visionRaw === "true" || visionRaw === 1) {
+    if (
+      visionRaw === true ||
+      visionRaw === "true" ||
+      visionRaw === 1 ||
+      visionFromArchitecture === true
+    ) {
       model.supportsVision = true;
     } else if (
-      visionRaw === false ||
-      visionRaw === "false" ||
-      visionRaw === 0
+      (visionRaw === false ||
+        visionRaw === "false" ||
+        visionRaw === 0) &&
+      !guessModelSupportsVision(id)
     ) {
       model.supportsVision = false;
     }
@@ -7868,10 +10316,13 @@
         skipped += 1;
         continue;
       }
+      const extra = fetchModelsById.get(id) || {};
       incoming.push({
         id,
-        label: id,
+        label: extra.label || id,
         providerId: provider,
+        contextWindow: extra.contextWindow,
+        maxOutputTokens: extra.maxOutputTokens,
         enabled: true,
         supportsVision: guessModelSupportsVision(id),
       });
@@ -7882,6 +10333,38 @@
     }
     const result = upsertModels(incoming, provider);
     return { added: result.added, skipped, total: result.total };
+  }
+
+  function fillExistingModelLimitsFromFetch() {
+    const provider = String(fetchModelsProviderId || "").trim();
+    let changed = 0;
+    for (const model of settingsModels) {
+      const id = String(model.id || "").trim();
+      if (!id) {
+        continue;
+      }
+      const extra = fetchModelsById.get(id);
+      if (!extra) {
+        continue;
+      }
+      const modelProvider = String(model.providerId || "").trim();
+      if (provider && modelProvider && modelProvider !== provider) {
+        continue;
+      }
+      if (!model.contextWindow && extra.contextWindow) {
+        model.contextWindow = extra.contextWindow;
+        changed += 1;
+      }
+      if (!model.maxOutputTokens && extra.maxOutputTokens) {
+        model.maxOutputTokens = extra.maxOutputTokens;
+        changed += 1;
+      }
+    }
+    if (changed) {
+      renderSettingsModels();
+      schedulePersistSettings(0);
+    }
+    return changed;
   }
 
   function providerById(providerId) {
@@ -7909,6 +10392,7 @@
 
   function resetFetchModelsState() {
     fetchModelsIds = [];
+    fetchModelsById = new Map();
     fetchModelsSelected = new Set();
     fetchModelsExisting = new Set();
     fetchModelsLoading = false;
@@ -8158,6 +10642,33 @@
     return true;
   }
 
+  function normalizeListedProviderModel(item) {
+    if (typeof item === "string") {
+      const id = item.trim();
+      return id ? { id } : null;
+    }
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+    const id = String(item.id || "").trim();
+    if (!id) {
+      return null;
+    }
+    const model = { id };
+    const label = String(item.label || "").trim();
+    if (label && label !== id) {
+      model.label = label;
+    }
+    const limits = readModelTokenLimits(item);
+    if (limits.contextWindow) {
+      model.contextWindow = limits.contextWindow;
+    }
+    if (limits.maxOutputTokens) {
+      model.maxOutputTokens = limits.maxOutputTokens;
+    }
+    return model;
+  }
+
   function onProviderModelsListed(msg) {
     const requestId = String(msg?.requestId || "");
     if (!requestId || requestId !== fetchModelsActiveRequestId) {
@@ -8170,15 +10681,19 @@
     if (msg.error) {
       fetchModelsError = String(msg.error);
       fetchModelsIds = [];
+      fetchModelsById = new Map();
       fetchModelsSelected = new Set();
     } else {
       fetchModelsError = "";
-      fetchModelsIds = Array.isArray(msg.models)
-        ? msg.models.map((id) => String(id || "").trim()).filter(Boolean)
+      const listed = Array.isArray(msg.models)
+        ? msg.models.map(normalizeListedProviderModel).filter(Boolean)
         : [];
+      fetchModelsById = new Map(listed.map((model) => [model.id, model]));
+      fetchModelsIds = listed.map((model) => model.id);
       fetchModelsSelected = new Set(
         fetchModelsIds.filter((id) => !fetchModelsExisting.has(id))
       );
+      fillExistingModelLimitsFromFetch();
     }
     renderFetchModelsPicker();
   }
@@ -9326,6 +11841,7 @@
     if (settingsLanguage) {
       settingsLanguage.value = settingsLanguageValue;
     }
+    applyUiFontSize(settings.fontSize);
     settingsProviders = Array.isArray(settings.providers)
       ? settings.providers.map((p) => ({
           id: p.id || "",
@@ -9333,6 +11849,8 @@
           baseUrl: p.baseUrl || "",
           apiKey: p.apiKey || "",
           statusUrl: p.statusUrl || "",
+          promptCache: typeof p.promptCache === "boolean" ? p.promptCache : true,
+          ...(p.protocol ? { protocol: p.protocol } : {}),
         }))
       : [];
     if (
@@ -9368,15 +11886,7 @@
     if (settingsCommitScope) {
       settingsCommitScope.value =
         settings.commitMessageScope === "workspace" ? "workspace" : "global";
-      const workspaceOpt = settingsCommitScope.querySelector(
-        'option[value="workspace"]'
-      );
-      if (workspaceOpt) {
-        workspaceOpt.textContent = t(
-          "commitScopeWorkspaceNamed",
-          settingsWorkspaceName
-        );
-      }
+      updateCommitScopeWorkspaceOption();
     }
     settingsDefaultContextWindow =
       Number(settings.defaultContextWindow) > 0
@@ -9387,6 +11897,7 @@
     }
     if (settingsSystemPrompt) {
       settingsSystemPrompt.value = settings.systemPrompt || "";
+      updateSystemPromptPreview();
     }
     if (settingsCommitLanguage) {
       settingsCommitLanguage.value =
@@ -9398,8 +11909,9 @@
     }
     if (settingsCommitPrompt) {
       settingsCommitPrompt.value = settings.commitMessagePrompt || "";
+      updateCommitPromptPreview();
     }
-    fillCommitMessageModelSelect(settings.commitMessageModelId || "");
+    fillCommitMessageModelCheckboxes(settings.commitMessageModelIds || []);
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -9438,6 +11950,33 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    if (settingsToolsAutoApprove) {
+      settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
+    }
+    const approvalOverrides =
+      settings.toolsApprovals &&
+      typeof settings.toolsApprovals === "object"
+        ? settings.toolsApprovals
+        : {};
+    for (const [group, select] of Object.entries(settingsApprovalSelects)) {
+      if (!select) {
+        continue;
+      }
+      const value = approvalOverrides[group];
+      select.value =
+        value === true ? "auto" : value === false ? "ask" : "inherit";
+    }
+    if (settingsFocusChainEnabled) {
+      settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
+    }
+    if (settingsTurnContextFollowUps) {
+      const mode = String(settings.turnContextFollowUps || "full");
+      settingsTurnContextFollowUps.value =
+        mode === "slim" || mode === "none" ? mode : "full";
+    }
+    if (settingsCheckpointsEnabled) {
+      settingsCheckpointsEnabled.checked = settings.checkpointsEnabled !== false;
+    }
     if (
       Array.isArray(settings.skillsExtraDirectories) ||
       Array.isArray(settings.skillsDisabled)
@@ -9471,6 +12010,7 @@
         ? settings.tabAutocompleteExcludeGlobs
         : [];
       settingsTabAutocompleteExcludeGlobs.value = globs.join("\n");
+      updateTabExcludePreview();
     }
     if (settingsTabAutocompleteNextEdit) {
       settingsTabAutocompleteNextEdit.checked =
@@ -9532,6 +12072,12 @@
         if (statusUrl && statusUrl !== row.baseUrl) {
           row.statusUrl = statusUrl;
         }
+        if (typeof p.promptCache === "boolean") {
+          row.promptCache = p.promptCache;
+        }
+        if (p.protocol && p.protocol !== "openai-compatible") {
+          row.protocol = p.protocol;
+        }
         return row;
       });
 
@@ -9569,6 +12115,7 @@
       providers,
       models,
       language: settingsLanguage ? settingsLanguage.value : settingsLanguageValue,
+      fontSize: clampUiFontSize(settingsFontSize ? settingsFontSize.value : FONT_SIZE_DEFAULT),
       defaultModel: firstEnabledSettingsModelId() || settingsDefaultModelId,
       defaultContextWindow: settingsDefaultContextWindow,
       baseUrl: primary ? String(primary.baseUrl || "").replace(/\/$/, "") : "",
@@ -9583,9 +12130,11 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
-      commitMessageModelId: settingsCommitModel
-        ? settingsCommitModel.value.trim()
-        : "",
+      commitMessageModelIds: settingsCommitModelList
+        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
+            (el) => el.dataset.modelId
+          )
+        : [],
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
@@ -9606,6 +12155,26 @@
         : true,
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
+        : true,
+      toolsAutoApprove: settingsToolsAutoApprove
+        ? settingsToolsAutoApprove.checked
+        : true,
+      toolsApprovals: Object.fromEntries(
+        Object.entries(settingsApprovalSelects)
+          .filter(([, select]) => select && select.value !== "inherit")
+          .map(([group, select]) => [group, select.value === "auto"])
+      ),
+      focusChainEnabled: settingsFocusChainEnabled
+        ? settingsFocusChainEnabled.checked
+        : true,
+      turnContextFollowUps:
+        settingsTurnContextFollowUps &&
+        (settingsTurnContextFollowUps.value === "slim" ||
+          settingsTurnContextFollowUps.value === "none")
+          ? settingsTurnContextFollowUps.value
+          : "full",
+      checkpointsEnabled: settingsCheckpointsEnabled
+        ? settingsCheckpointsEnabled.checked
         : true,
       skillsEnabled: skillsCache.enabled !== false,
       skillsExtraDirectories: Array.isArray(skillsCache.directories)
@@ -9988,14 +12557,16 @@
         chunks.push(`:root{--mode-ask:${accent};}`);
       }
       chunks.push(
-        `.composer[data-mode="${attr}"],` +
-          `.msg.user[data-mode="${attr}"],` +
-          `.msg-edit-composer[data-mode="${attr}"]{border-color:${accent};}` +
+        `.msg.user[data-mode="${attr}"]{background:color-mix(in srgb,${accent} 14%,var(--harbor-chat-bg));}` +
+          `.composer[data-mode="${attr}"],` +
+          `.msg-edit-composer[data-mode="${attr}"]{border-color:color-mix(in srgb,${accent} var(--mode-border-composer),transparent);}` +
           `.mode-picker[data-mode="${attr}"] .model-trigger,` +
           `.mode-picker[data-mode="${attr}"] .model-trigger:hover:not(:disabled),` +
           `.mode-picker[data-mode="${attr}"].is-open .model-trigger,` +
           `.msg-edit-mode-picker[data-mode="${attr}"] .model-trigger{color:${accent};}` +
-          `.mode-picker .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
+          `.mode-picker .model-option[data-mode="${attr}"] .model-option-label,` +
+          `#modeMenu .model-option[data-mode="${attr}"] .model-option-label,` +
+          `.msg-edit-mode-menu .model-option[data-mode="${attr}"] .model-option-label{color:${accent};}` +
           `.agents-list .agent-run-status-running[data-mode="${attr}"]{--cube-accent:${accent};}`
       );
     }
@@ -10230,11 +12801,10 @@
           `<div class="agent-block archive-block" data-agent="${a.id}">` +
           `<div class="agent-row-wrap archive-row-wrap">` +
           `<div class="agent-row flat">` +
-          `<span class="agent-main">` +
-          `<div class="agent-name"></div>` +
-          `<div class="agent-meta"><span class="agent-preview"></span></div>` +
-          `</span>` +
-          `</div>` +
+          `<div class="agent-main">` +
+          `<div class="agent-name-row">` +
+          `<div class="agent-name-wrap"><div class="agent-name"></div></div>` +
+          `<div class="agent-trailing">` +
           `<span class="agent-time"></span>` +
           `<div class="row-actions">` +
           `<button type="button" class="row-action row-restore" data-restore-agent="${a.id}" title="${t("restore")}" aria-label="${t("restore")}">` +
@@ -10243,6 +12813,11 @@
           `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="${t("delete")}" aria-label="${t("delete")}">` +
           DELETE_ICON +
           `</button>` +
+          `</div>` +
+          `</div>` +
+          `</div>` +
+          `<div class="agent-preview"></div>` +
+          `</div>` +
           `</div>` +
           `</div>` +
           `</div>`
@@ -10260,6 +12835,30 @@
       );
       block.querySelector(".agent-time").textContent = a.time || "";
     });
+  }
+
+  function shortModelChip(raw) {
+    const s = String(raw || "").trim();
+    if (!s || s === "—") {
+      return "—";
+    }
+    const last = s.includes("/") ? s.slice(s.lastIndexOf("/") + 1) : s;
+    if (/^claude-sonnet-/i.test(last)) {
+      return last.replace(/^claude-sonnet-/i, "Sonnet ");
+    }
+    if (/^claude-opus-/i.test(last)) {
+      return last.replace(/^claude-opus-/i, "Opus ");
+    }
+    if (/^claude-haiku-/i.test(last)) {
+      return last.replace(/^claude-haiku-/i, "Haiku ");
+    }
+    if (/^glm-/i.test(last)) {
+      return last.replace(/^glm-/i, "GLM ");
+    }
+    if (/^gpt-/i.test(last)) {
+      return last.replace(/^gpt-/i, "GPT-");
+    }
+    return last;
   }
 
   function renderAgentsList() {
@@ -10303,16 +12902,21 @@
           `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
           `<div class="agent-row-wrap">` +
           `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
-          `<span class="agent-main">` +
+          `<div class="agent-main">` +
           statusHtml +
-          `<div class="agent-name-row"><div class="agent-name"></div></div>` +
-          `<div class="agent-meta"><span class="agent-chip"></span><span class="agent-preview"></span></div>` +
-          `</span>` +
-          `</div>` +
+          `<div class="agent-name-row">` +
+          `<div class="agent-name-wrap"><div class="agent-name"></div></div>` +
+          `<div class="agent-trailing">` +
+          `<span class="agent-time"></span>` +
           `<div class="row-actions">` +
           action +
           `</div>` +
-          `<span class="agent-time"></span>` +
+          `</div>` +
+          `</div>` +
+          `<div class="agent-preview"></div>` +
+          `<span class="agent-chip"></span>` +
+          `</div>` +
+          `</div>` +
           `</div>` +
           `</div>`
         );
@@ -10325,7 +12929,14 @@
         return;
       }
       block.querySelector(".agent-name").textContent = a.name || t("agent");
-      block.querySelector(".agent-chip").textContent = a.model || "—";
+      const chip = block.querySelector(".agent-chip");
+      const chipText = shortModelChip(a.model);
+      chip.textContent = chipText === "—" ? "" : chipText;
+      if (chip.textContent && a.model) {
+        chip.title = String(a.model);
+      } else {
+        chip.removeAttribute("title");
+      }
       block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
         a.preview
       );
@@ -10492,11 +13103,8 @@
     promptEl.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  /** Вставить @path упоминания в composer (как из @-меню). */
+  /** Вставить @path упоминания в composer чипами (как в пузыре пользователя). */
   function insertComposerMentions(paths) {
-    if (!promptEl) {
-      return;
-    }
     const list = (Array.isArray(paths) ? paths : [])
       .map((p) => String(p || "").trim().replace(/^@+/, ""))
       .filter(Boolean);
@@ -10504,26 +13112,13 @@
       return;
     }
     showScreen("chat");
-    const snippet = list.map((p) => `@${p}`).join(" ") + " ";
-    const cur = promptEl.value || "";
-    const start =
-      typeof promptEl.selectionStart === "number"
-        ? promptEl.selectionStart
-        : cur.length;
-    const end =
-      typeof promptEl.selectionEnd === "number"
-        ? promptEl.selectionEnd
-        : start;
-    const before = cur.slice(0, start);
-    const after = cur.slice(end);
-    const padBefore = before.length && !/\s$/.test(before) ? " " : "";
-    const next = before + padBefore + snippet + after;
-    const caret = (before + padBefore + snippet).length;
-    promptEl.value = next;
-    promptEl.disabled = false;
-    promptEl.focus();
-    promptEl.setSelectionRange(caret, caret);
-    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+    for (const path of list) {
+      addPendingMention(path);
+    }
+    if (promptEl) {
+      promptEl.disabled = false;
+      promptEl.focus();
+    }
   }
 
   function parseReviewData(raw) {
@@ -10596,6 +13191,7 @@
     const mount = ensureChatTurn();
     mount.appendChild(card);
     setComposerScmActions(list, Boolean(parsed.showScm));
+    syncComposerPlanFromCache({ openEditor: false });
     keepStatusAtEnd();
     scrollToBottom();
   }
@@ -10728,21 +13324,60 @@
     composerPlanActionsEl.appendChild(btn);
   }
 
-  /** True when a user message after the plan already started Build. */
-  function planAlreadyImplementedAfter(list, planIndex) {
-    for (let j = planIndex + 1; j < list.length; j++) {
-      const item = list[j];
-      if (item?.role === "user" && looksLikePlanImplementDisplay(item.text)) {
+  function precedingUserIndex(list, index) {
+    for (let j = index - 1; j >= 0; j--) {
+      if (list[j]?.role === "user") {
+        return j;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * True when this assistant "plan" is the recap of an already-executed plan
+   * (Build handoff, or a review/file-edit turn before the finale).
+   */
+  function assistantPlanIsExecutedRecap(list, planIndex) {
+    const userIndex = precedingUserIndex(list, planIndex);
+    if (userIndex < 0) {
+      return false;
+    }
+    if (looksLikePlanImplementDisplay(list[userIndex].text)) {
+      return true;
+    }
+    for (let j = userIndex + 1; j < planIndex; j++) {
+      if (list[j]?.role === "review") {
         return true;
       }
     }
     return false;
   }
 
+  /** True when Build already ran, or files were edited, after this plan. */
+  function planAlreadyImplementedAfter(list, planIndex) {
+    for (let j = planIndex + 1; j < list.length; j++) {
+      const item = list[j];
+      if (item?.role === "user" && looksLikePlanImplementDisplay(item.text)) {
+        return true;
+      }
+      if (item?.role === "review") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function planIsAlreadyExecuted(list, planIndex) {
+    return (
+      assistantPlanIsExecutedRecap(list, planIndex) ||
+      planAlreadyImplementedAfter(list, planIndex)
+    );
+  }
+
   /**
    * When a complete proposed_plan is available: show composer Build tag and
    * sync the live editable Plan.md tab (reveal "editor"). Card «Open in tab»
-   * can still open markdown preview. Skip if Build already ran for this plan.
+   * can still open markdown preview. Skip if this plan is already executed.
    */
   function presentProposedPlan(
     raw,
@@ -10758,7 +13393,7 @@
         list[i]?.role === "assistant" &&
         extractLatestProposedPlan(list[i].text) === plan
       ) {
-        if (planAlreadyImplementedAfter(list, i)) {
+        if (planIsAlreadyExecuted(list, i)) {
           setComposerPlanBuild("", false);
           return false;
         }
@@ -10791,9 +13426,8 @@
       if (!plan) {
         continue;
       }
-      if (planAlreadyImplementedAfter(list, i)) {
-        setComposerPlanBuild("", false);
-        return;
+      if (planIsAlreadyExecuted(list, i)) {
+        continue;
       }
       presentProposedPlan(item.text, { openEditor });
       return;
@@ -11081,12 +13715,7 @@
 
     text = text.replace(/@([^\s@]+)/g, (full, path) => {
       const id = tokens.length;
-      const label = pathBasename(path);
-      tokens.push(
-        `<button type="button" class="msg-mention" data-path="${escapeHtml(
-          path
-        )}" title="${escapeHtml(path)}">@${escapeHtml(label)}</button>`
-      );
+      tokens.push(renderMentionChip(path));
       return `\u0001T${id}\u0001`;
     });
 
@@ -11184,7 +13813,44 @@
    * Citation-fence ```start:end:path ... ``` — вытаскиваем до marked,
    * чтобы пути вроде foo.module.css и CSS с ~= не ломали разбор.
    */
-  function replaceCitationFences(raw) {
+  function renderUserFileChip(meta) {
+    const path = meta.path || "file";
+    const suffix =
+      meta.startLine > 0
+        ? meta.startLine === meta.endLine
+          ? `:${meta.startLine}`
+          : `:${meta.startLine}-${meta.endLine}`
+        : "";
+    return renderMentionChip(`${path}${suffix}`);
+  }
+
+  /** File chips (@path / citation fences) go above the user text, not inline. */
+  function extractUserFileChips(raw) {
+    const chips = [];
+    const cited = replaceCitationFences(String(raw || ""), true);
+    for (const html of cited.blocks) {
+      if (html) {
+        chips.push(html);
+      }
+    }
+    let text = cited.text.replace(/\u0002CITE\d+\u0002/g, "");
+    text = text.replace(/@([^\s@]+)/g, (full, path) => {
+      if (String(path).includes("://")) {
+        return full;
+      }
+      chips.push(renderMentionChip(path));
+      return "";
+    });
+    text = text
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return { chips, text };
+  }
+
+  function replaceCitationFences(raw, compact) {
     const blocks = [];
     // ```27:29:path/to/file.module.css ... ```
     const re =
@@ -11193,7 +13859,11 @@
       re,
       (full, lead, _fence, meta, body) => {
         const id = blocks.length;
-        blocks.push(renderCodeBlockHtml(body.replace(/\r/g, ""), meta.trim()));
+        blocks.push(
+          compact
+            ? renderUserFileChip(parseCodeFenceMeta(meta.trim()))
+            : renderCodeBlockHtml(body.replace(/\r/g, ""), meta.trim())
+        );
         return `${lead}\n\n\u0002CITE${id}\u0002\n\n`;
       }
     );
@@ -11877,12 +14547,12 @@
   }
 
   /** Markdown (GFM): таблицы, списки, заголовки, код, ссылки, жирный/курсив и т.д. */
-  function renderInlineMarkdown(text) {
+  function renderInlineMarkdown(text, opts) {
     const raw = String(text || "");
     if (!raw) {
       return "";
     }
-    const extracted = replaceCitationFences(raw);
+    const extracted = replaceCitationFences(raw, Boolean(opts && opts.userChrome));
     const plans = replaceProposedPlanBlocks(extracted.text);
     const api = getMarkedApi();
     if (ensureMarkdownRenderer() && api) {
@@ -11979,7 +14649,22 @@
         `</span>`;
       return;
     }
-    if (role === "assistant" || role === "error" || role === "user") {
+    if (role === "user") {
+      const extracted = extractUserFileChips(raw);
+      const md = extracted.text
+        ? renderInlineMarkdown(extracted.text, { userChrome: true })
+        : "";
+      const chipsHtml = extracted.chips.length
+        ? `<div class="msg-attachments">${extracted.chips.join("")}</div>`
+        : "";
+      if (extracted.chips.length) {
+        el.classList.add("has-attach");
+      }
+      body.innerHTML =
+        chipsHtml + (md ? `<div class="msg-text">${md}</div>` : "");
+      return;
+    }
+    if (role === "assistant" || role === "error") {
       body.innerHTML = renderInlineMarkdown(raw);
       return;
     }
@@ -12071,9 +14756,19 @@
         el.classList.add("is-editing");
         const editModeId = normalizeAgentModeUi(editingModeId || agentMode);
         const editModeLabel = modeDisplayName(editModeId);
-        const editModelLabel = modelDisplayName(
+        const editModelFull = modelDisplayName(
           editingModelId || selectedModelId
         );
+        const editModelLabel = shortModelChip(editModelFull);
+        const editReasonSupported = modelSupportsReasoning(
+          editingModelId || selectedModelId
+        );
+        const editReasonLabel = editReasonSupported
+          ? reasonLevelLabel(
+              normalizeReasonLevel(editingReasoningEffort) ||
+                defaultReasonForModel(editingModelId || selectedModelId)
+            )
+          : "";
         body.innerHTML =
           `<div class="msg-edit-composer">` +
           (msgAttachments.length
@@ -12082,6 +14777,17 @@
           `<textarea class="msg-edit-input" data-index="${index}" rows="3" aria-label="${t("editMessage")}"></textarea>` +
           `<div class="msg-edit-footer">` +
           `<div class="msg-edit-footer-left">` +
+          `<div class="composer-plus msg-edit-plus">` +
+          `<button type="button" class="icon-btn msg-edit-plus-btn" aria-haspopup="menu" aria-expanded="false" title="${t("add")}" aria-label="${t("add")}">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">add</span>` +
+          `</button>` +
+          `<div class="composer-plus-menu msg-edit-plus-menu" role="menu" hidden>` +
+          `<button type="button" class="composer-plus-item" data-action="file" role="menuitem">` +
+          `<span class="material-symbols-outlined" aria-hidden="true">attach_file</span>` +
+          `<span>${escapeHtml(t("file"))}</span>` +
+          `</button>` +
+          `</div>` +
+          `</div>` +
           `<div class="model-picker mode-picker msg-edit-mode-picker" data-mode="${escapeHtml(
             editModeId
           )}">` +
@@ -12093,8 +14799,12 @@
           `</button>` +
           `<div class="model-menu msg-edit-mode-menu" role="listbox" hidden></div>` +
           `</div>` +
+          `</div>` +
+          `<div class="msg-edit-footer-right">` +
           `<div class="model-picker msg-edit-model-picker" id="msgEditModelPicker">` +
-          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${t("model")}">` +
+          `<button type="button" class="model-trigger msg-edit-model-trigger" aria-haspopup="listbox" aria-expanded="false" title="${escapeHtml(
+            editModelFull
+          )}">` +
           `<span class="model-label msg-edit-model-label">${escapeHtml(
             editModelLabel
           )}</span>` +
@@ -12102,8 +14812,20 @@
           `</button>` +
           `<div class="model-menu msg-edit-model-menu" role="listbox" hidden></div>` +
           `</div>` +
-          `</div>` +
-          `<div class="msg-edit-footer-right">` +
+          (editReasonSupported
+            ? `<div class="model-picker reason-picker msg-edit-reason-picker">` +
+              `<button type="button" class="model-trigger msg-edit-reason-trigger" aria-haspopup="listbox" aria-expanded="false" title="${escapeHtml(
+                t("intelligence")
+              )}">` +
+              `<span class="material-symbols-outlined reason-icon" aria-hidden="true">neurology</span>` +
+              `<span class="model-label msg-edit-reason-label">${escapeHtml(
+                editReasonLabel
+              )}</span>` +
+              `<span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>` +
+              `</button>` +
+              `<div class="model-menu msg-edit-reason-menu" role="listbox" hidden></div>` +
+              `</div>`
+            : "") +
           `<button type="button" class="primary msg-edit-save" data-index="${index}" title="${t("saveAndResend")}" aria-label="${t("saveAndResend")}">` +
           `<span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>` +
           `</button>` +
@@ -12122,10 +14844,36 @@
         if (input) {
           input.value = editingUserText;
         }
+        // Removable attachment chips replace the read-only preview in edit mode.
+        if (msgAttachments.length) {
+          refreshEditingAttachmentsPreview();
+        }
+        const saveBtn = body.querySelector(".msg-edit-save");
+        if (saveBtn) {
+          saveBtn.addEventListener("pointerdown", (event) => {
+            trySubmitEditedUserMessageFromPointer(event);
+          });
+        }
       } else if (msgAttachments.length) {
         const attachHtml = renderMessageAttachments(msgAttachments);
         if (attachHtml) {
-          body.insertAdjacentHTML("afterbegin", attachHtml);
+          el.classList.add("has-attach");
+          const existing = body.querySelector(".msg-attachments");
+          if (existing) {
+            const tmp = document.createElement("div");
+            tmp.innerHTML = attachHtml;
+            const incoming = tmp.querySelector(".msg-attachments");
+            if (incoming) {
+              existing.insertAdjacentHTML("afterbegin", incoming.innerHTML);
+            }
+          } else {
+            const textHtml = body.innerHTML;
+            body.innerHTML =
+              attachHtml +
+              (String(text || "").trim()
+                ? `<div class="msg-text">${textHtml}</div>`
+                : "");
+          }
         }
       }
       const wrap = document.createElement("div");
@@ -12236,9 +14984,13 @@
       return;
     }
     const model = models.find((m) => m.id === selectedModelId);
-    modelLabel.textContent = model
+    const full = model
       ? model.label || model.id
       : selectedModelId || t("noModels");
+    modelLabel.textContent = shortModelChip(full);
+    if (modelTrigger) {
+      modelTrigger.title = full;
+    }
   }
 
   function updateVisionUi() {
@@ -12251,16 +15003,6 @@
     if (fileItem) {
       fileItem.title = t("attachFile");
     }
-    const imageItem = composerPlusMenu.querySelector(
-      '.composer-plus-item[data-action="image"]'
-    );
-    if (!imageItem) {
-      return;
-    }
-    imageItem.disabled = false;
-    imageItem.classList.remove("is-disabled");
-    imageItem.setAttribute("aria-disabled", "false");
-    imageItem.title = t("attachImage");
   }
 
   /** Ignore briefly-stale host selectedModel after a local picker change. */
@@ -12420,6 +15162,7 @@
     if (composerPlusMenu) {
       composerPlusMenu.hidden = true;
     }
+    resetModelMenuPlacement(composerPlusEl, composerPlusMenu);
   }
 
   function openPlusMenu() {
@@ -12428,6 +15171,8 @@
     closeReasonMenu();
     closeEditModelMenu();
     closeEditModeMenu();
+    closeEditPlusMenu();
+    closeEditReasonMenu();
     plusMenuOpen = true;
     if (composerPlusEl) {
       composerPlusEl.classList.add("is-open");
@@ -12437,6 +15182,7 @@
     }
     if (composerPlusMenu) {
       composerPlusMenu.hidden = false;
+      placeModelMenu(composerPlusEl, composerPlusMenu, chatScreen);
     }
   }
 
@@ -12525,6 +15271,7 @@
     if (modeMenu) {
       modeMenu.hidden = true;
     }
+    resetModelMenuPlacement(modePicker, modeMenu);
   }
 
   function openModeMenu() {
@@ -12543,6 +15290,7 @@
     }
     if (modeMenu) {
       modeMenu.hidden = false;
+      placeModelMenu(modePicker, modeMenu, chatScreen);
     }
   }
 
@@ -12584,6 +15332,7 @@
     }
     if (modeMenu && !modeMenu.hidden) {
       renderModeMenu();
+      placeModelMenu(modePicker, modeMenu, chatScreen);
     }
     if (promptEl) {
       promptEl.placeholder =
@@ -12852,6 +15601,9 @@
       closeModeMenu();
       closeSlashMenu();
       closeMentionMenu();
+      if (currentChatTurnEl && messagesEl.contains(currentChatTurnEl)) {
+        ensureActiveToolGroup();
+      }
     }
     updateSendButton();
     if (!busy) {
@@ -12953,6 +15705,16 @@
       event.stopPropagation();
       return;
     }
+    if (editReasonMenuOpen && selectEditingReasonFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (editPlusMenuOpen && selectEditPlusItemFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (!editModelMenuOpen) {
       return;
     }
@@ -12973,6 +15735,24 @@
         selectEditingMode(String(editModeOption.dataset.mode || "").trim());
         return;
       }
+    }
+    if (editReasonMenuOpen) {
+      const editReasonOption = event.target.closest(
+        ".msg-edit-reason-menu .model-option"
+      );
+      if (editReasonOption) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectEditingReasoningEffort(
+          String(editReasonOption.dataset.reason || "")
+        );
+        return;
+      }
+    }
+    if (editPlusMenuOpen && selectEditPlusItemFromEvent(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
     }
     if (!editModelMenuOpen) {
       return;
@@ -13007,24 +15787,34 @@
     ) {
       closeMenu();
     }
-    if (
-      plusMenuOpen &&
-      composerPlusEl &&
-      !composerPlusEl.contains(event.target)
-    ) {
+    const inPlusMenu =
+      Boolean(
+        composerPlusEl &&
+          targetNode &&
+          composerPlusEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element &&
+          target.closest("#composerPlusMenu, .composer-plus-menu.is-fixed")
+      );
+    if (plusMenuOpen && !inPlusMenu) {
       closePlusMenu();
     }
     if (
       modeMenuOpen &&
-      modePicker &&
-      !modePicker.contains(event.target)
+      !(
+        (modePicker && targetNode && modePicker.contains(targetNode)) ||
+        (target instanceof Element && target.closest("#modeMenu"))
+      )
     ) {
       closeModeMenu();
     }
     if (
       reasonMenuOpen &&
-      reasonPicker &&
-      !reasonPicker.contains(event.target)
+      !(
+        (reasonPicker && targetNode && reasonPicker.contains(targetNode)) ||
+        (target instanceof Element && target.closest("#reasonMenu"))
+      )
     ) {
       closeReasonMenu();
     }
@@ -13040,6 +15830,10 @@
     const editModelMenuEl = findEditModelMenu(editModelPickerEl);
     const editModePickerEl = getEditModePicker();
     const editModeMenuEl = findEditModeMenu(editModePickerEl);
+    const editPlusPickerEl = getEditPlusPicker();
+    const editPlusMenuEl = findEditPlusMenu(editPlusPickerEl);
+    const editReasonPickerEl = getEditReasonPicker();
+    const editReasonMenuEl = findEditReasonMenu(editReasonPickerEl);
     const inEditModelMenu =
       Boolean(
         editModelMenuEl && targetNode && editModelMenuEl.contains(targetNode)
@@ -13053,6 +15847,20 @@
       ) ||
       Boolean(
         target instanceof Element && target.closest(".msg-edit-mode-menu")
+      );
+    const inEditPlusMenu =
+      Boolean(
+        editPlusMenuEl && targetNode && editPlusMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-plus-menu")
+      );
+    const inEditReasonMenu =
+      Boolean(
+        editReasonMenuEl && targetNode && editReasonMenuEl.contains(targetNode)
+      ) ||
+      Boolean(
+        target instanceof Element && target.closest(".msg-edit-reason-menu")
       );
     if (editModelMenuOpen) {
       const inPicker =
@@ -13072,7 +15880,30 @@
         closeEditModeMenu();
       }
     }
+    if (editPlusMenuOpen) {
+      const inPicker =
+        editPlusPickerEl &&
+        targetNode &&
+        editPlusPickerEl.contains(targetNode);
+      if (!inPicker && !inEditPlusMenu) {
+        closeEditPlusMenu();
+      }
+    }
+    if (editReasonMenuOpen) {
+      const inPicker =
+        editReasonPickerEl &&
+        targetNode &&
+        editReasonPickerEl.contains(targetNode);
+      if (!inPicker && !inEditReasonMenu) {
+        closeEditReasonMenu();
+      }
+    }
     // Floated edit menus live on document.body — must not cancel the edit.
+    // Save/resend is inside the composer; still exclude it explicitly so a
+    // VS Code webview retarget (sticky user bubble) cannot abort the click.
+    const inEditSave =
+      target instanceof Element &&
+      Boolean(target.closest(".msg-edit-save, .msg-edit-footer-right"));
     if (Number.isInteger(editingUserIndex) && !busy) {
       const composer = messagesEl.querySelector(".msg-edit-composer");
       if (
@@ -13080,7 +15911,10 @@
         targetNode &&
         !composer.contains(targetNode) &&
         !inEditModelMenu &&
-        !inEditModeMenu
+        !inEditModeMenu &&
+        !inEditPlusMenu &&
+        !inEditReasonMenu &&
+        !inEditSave
       ) {
         cancelEditingUserMessage();
       }
@@ -13088,6 +15922,10 @@
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && imgLightboxEl && !imgLightboxEl.hidden) {
+      closeImgLightbox();
+      return;
+    }
     if (event.key === "Escape" && mentionOpen) {
       closeMentionMenu();
     }
@@ -13109,6 +15947,12 @@
     if (event.key === "Escape" && editModeMenuOpen) {
       closeEditModeMenu();
     }
+    if (event.key === "Escape" && editPlusMenuOpen) {
+      closeEditPlusMenu();
+    }
+    if (event.key === "Escape" && editReasonMenuOpen) {
+      closeEditReasonMenu();
+    }
   });
 
 
@@ -13118,8 +15962,10 @@
     let typed = rawInput.trim();
     let modeForSend = agentMode;
     if (command) {
-      setAgentMode(command.mode, { close: true });
-      modeForSend = normalizeAgentModeUi(command.mode);
+      if (command.mode !== "inherit") {
+        setAgentMode(command.mode, { close: true });
+        modeForSend = normalizeAgentModeUi(command.mode);
+      }
       if (command.kind === "mode" && !command.sendText) {
         promptEl.value = "";
         autoResizePrompt();
@@ -13132,7 +15978,7 @@
       }
       typed = command.sendText;
     }
-    const text = buildMessageWithSelections(typed);
+    const text = buildMessageWithSelections(buildMessageWithMentions(typed));
     const attachments = pendingAttachments.slice();
     if (!text && !attachments.length) {
       return;
@@ -13153,6 +15999,7 @@
       clearDraftPrompt();
       clearPendingAttachments();
       clearPendingSelections();
+      clearPendingMentions();
       closeSlashMenu();
       closeMentionMenu();
       updateSendButton();
@@ -13177,9 +16024,11 @@
     clearDraftPrompt();
     clearPendingAttachments();
     clearPendingSelections();
+    clearPendingMentions();
     closeSlashMenu();
     closeMentionMenu();
     setBusy(true);
+    pinChatToBottom();
     host.postMessage({
       type: "send",
       text,
@@ -13190,7 +16039,14 @@
     });
   }
 
-  sendBtn.addEventListener("click", () => {
+  function activateSendButton(event) {
+    if (event && typeof event.button === "number" && event.button !== 0) {
+      return;
+    }
+    if (Date.now() - harborEditSaveAt < 450) {
+      return;
+    }
+    harborEditSaveAt = Date.now();
     if (busy) {
       if (composerHasContent()) {
         sendPrompt();
@@ -13200,6 +16056,20 @@
       return;
     }
     sendPrompt();
+  }
+
+  sendBtn.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    activateSendButton(event);
+  });
+  sendBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activateSendButton(event);
   });
 
   if (messageQueueEl) {
@@ -13241,28 +16111,68 @@
   }
 
   if (composerPlusBtn) {
-    composerPlusBtn.addEventListener("click", (event) => {
+    let plusPointerHandled = false;
+    // JCEF OSR often skips `click` after pointerdown; open on pointerdown.
+    composerPlusBtn.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      plusPointerHandled = true;
       event.preventDefault();
       event.stopPropagation();
       togglePlusMenu();
+      setTimeout(() => {
+        plusPointerHandled = false;
+      }, 0);
+    });
+    composerPlusBtn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (plusPointerHandled || event.button !== 0) {
+        return;
+      }
+      togglePlusMenu();
+    });
+    composerPlusBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
     });
   }
 
   if (modeTrigger) {
+    let modePointerHandled = false;
+    modeTrigger.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      modePointerHandled = true;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleModeMenu();
+      setTimeout(() => {
+        modePointerHandled = false;
+      }, 0);
+    });
     modeTrigger.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (modePointerHandled || event.button !== 0) {
+        return;
+      }
+      toggleModeMenu();
     });
     modeTrigger.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      toggleModeMenu();
     });
   }
 
   if (modeMenu) {
     modeMenu.addEventListener("mousedown", (event) => {
       event.preventDefault();
+      event.stopPropagation();
+    });
+    modeMenu.addEventListener("pointerdown", (event) => {
       event.stopPropagation();
     });
     modeMenu.addEventListener("click", (event) => {
@@ -13321,6 +16231,13 @@
   applySelectedReasoningEffort(selectedReasoningEffort, { notify: false });
 
   if (composerPlusMenu) {
+    composerPlusMenu.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    composerPlusMenu.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
     composerPlusMenu.addEventListener("click", (event) => {
       const item = event.target.closest(".composer-plus-item");
       if (!item || item.disabled || item.classList.contains("is-disabled")) {
@@ -13331,15 +16248,30 @@
       const action = item.getAttribute("data-action");
       closePlusMenu();
       if (action === "file") {
+        pickAttachmentsForEdit = false;
         host.postMessage({ type: "pickAttachments" });
-      } else if (action === "image") {
-        host.postMessage({ type: "pickAttachments", imagesOnly: true });
       }
     });
   }
 
   if (attachPreviewEl) {
     attachPreviewEl.addEventListener("click", (event) => {
+      const mentionRemove = event.target.closest(".mention-chip-remove");
+      if (mentionRemove) {
+        event.preventDefault();
+        event.stopPropagation();
+        removePendingMention(mentionRemove.getAttribute("data-id"));
+        return;
+      }
+      const mentionChip = event.target.closest(".composer-mention-chip");
+      if (mentionChip) {
+        event.preventDefault();
+        const path = mentionChip.getAttribute("data-path");
+        if (path) {
+          host.postMessage({ type: "openFile", path });
+        }
+        return;
+      }
       const btn = event.target.closest(".attach-chip-remove");
       if (!btn) {
         return;
@@ -13606,6 +16538,54 @@
   }
 
   const settingsBody = document.getElementById("settingsBody");
+  if (settingsSystemPromptToggle && settingsSystemPromptCard) {
+    settingsSystemPromptToggle.addEventListener("click", () => {
+      const open = !settingsSystemPromptCard.classList.contains("is-open");
+      settingsSystemPromptCard.classList.toggle("is-open", open);
+      settingsSystemPromptToggle.setAttribute(
+        "aria-expanded",
+        open ? "true" : "false"
+      );
+      if (settingsSystemPromptBody) {
+        settingsSystemPromptBody.hidden = !open;
+      }
+      if (open && settingsSystemPrompt) {
+        settingsSystemPrompt.focus();
+      }
+    });
+  }
+  if (settingsTabExcludeToggle && settingsTabExcludeCard) {
+    settingsTabExcludeToggle.addEventListener("click", () => {
+      const open = !settingsTabExcludeCard.classList.contains("is-open");
+      settingsTabExcludeCard.classList.toggle("is-open", open);
+      settingsTabExcludeToggle.setAttribute(
+        "aria-expanded",
+        open ? "true" : "false"
+      );
+      if (settingsTabExcludeBody) {
+        settingsTabExcludeBody.hidden = !open;
+      }
+      if (open && settingsTabAutocompleteExcludeGlobs) {
+        settingsTabAutocompleteExcludeGlobs.focus();
+      }
+    });
+  }
+  if (settingsCommitPromptToggle && settingsCommitPromptCard) {
+    settingsCommitPromptToggle.addEventListener("click", () => {
+      const open = !settingsCommitPromptCard.classList.contains("is-open");
+      settingsCommitPromptCard.classList.toggle("is-open", open);
+      settingsCommitPromptToggle.setAttribute(
+        "aria-expanded",
+        open ? "true" : "false"
+      );
+      if (settingsCommitPromptBody) {
+        settingsCommitPromptBody.hidden = !open;
+      }
+      if (open && settingsCommitPrompt) {
+        settingsCommitPrompt.focus();
+      }
+    });
+  }
   if (settingsBody) {
     settingsBody.addEventListener("scroll", hideSettingsModelTip, { passive: true });
     settingsBody.addEventListener("input", (event) => {
@@ -13615,9 +16595,21 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsAutoglmBinaryPath"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath, #settingsTabAutocompleteExcludeGlobs"
         )
       ) {
+        if (target.closest("#settingsSystemPrompt")) {
+          updateSystemPromptPreview();
+        }
+        if (target.closest("#settingsCommitPrompt")) {
+          updateCommitPromptPreview();
+        }
+        if (target.closest("#settingsTabAutocompleteExcludeGlobs")) {
+          updateTabExcludePreview();
+        }
+        if (target.closest("#settingsFontSize")) {
+          applyUiFontSize(settingsFontSize.value);
+        }
         schedulePersistSettings();
       }
     });
@@ -13628,7 +16620,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModel, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsTabAutocompleteNextEdit, #settingsTabAutocompleteShowMode, #settingsTabAutocompleteFim, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
@@ -14298,10 +17290,12 @@
   if (workspaceShell && typeof ResizeObserver === "function") {
     const shellRo = new ResizeObserver(() => {
       updateWorkspaceNarrow();
+      updateComposerCompact();
     });
     shellRo.observe(workspaceShell);
   }
   updateWorkspaceNarrow();
+  updateComposerCompact();
   applyAgentsRailVisibility();
 
   if (chatBranchesEl) {
@@ -14726,7 +17720,22 @@
     });
   }
 
+  messagesEl.addEventListener(
+    "pointerdown",
+    (event) => {
+      trySubmitEditedUserMessageFromPointer(event);
+    },
+    true
+  );
+
   messagesEl.addEventListener("click", (event) => {
+    const previewBtn = event.target.closest(".msg-attach-image[data-preview-src]");
+    if (previewBtn && messagesEl.contains(previewBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      openImgLightbox(previewBtn.getAttribute("data-preview-src") || "");
+      return;
+    }
     const codeToggle = event.target.closest(".md-pre-toggle");
     if (
       codeToggle &&
@@ -14743,7 +17752,7 @@
       event.preventDefault();
       event.stopPropagation();
       const group = toolToggle.closest(".tool-group");
-      if (!group) {
+      if (!group || !toolGroupHasContent(group)) {
         return;
       }
       const collapsed = group.classList.toggle("is-collapsed");
@@ -14778,6 +17787,7 @@
         return;
       }
       const collapsed = step.classList.toggle("is-thinking-collapsed");
+      step.dataset.thinkingOpen = collapsed ? "0" : "1";
       thinkingToggle.setAttribute(
         "aria-expanded",
         collapsed ? "false" : "true"
@@ -14836,7 +17846,39 @@
       toggleEditModelMenu();
       return;
     }
-    const saveEditBtn = event.target.closest(".msg-edit-save");
+    const editPlusTrigger = event.target.closest(".msg-edit-plus-btn");
+    if (editPlusTrigger && messagesEl.contains(editPlusTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
+      toggleEditPlusMenu();
+      return;
+    }
+    const editReasonTrigger = event.target.closest(".msg-edit-reason-trigger");
+    if (editReasonTrigger && messagesEl.contains(editReasonTrigger)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (Date.now() - harborEditPickerOpenedAt < 450) {
+        return;
+      }
+      toggleEditReasonMenu();
+      return;
+    }
+    const editAttachRemove = event.target.closest(
+      ".msg-edit-attach-preview .attach-chip-remove"
+    );
+    if (editAttachRemove && messagesEl.contains(editAttachRemove)) {
+      event.preventDefault();
+      event.stopPropagation();
+      removeEditingAttachment(editAttachRemove.getAttribute("data-id"));
+      return;
+    }
+    const saveEditTarget = eventTargetElement(event);
+    const saveEditBtn = saveEditTarget
+      ? saveEditTarget.closest(".msg-edit-save")
+      : null;
     if (saveEditBtn && messagesEl.contains(saveEditBtn)) {
       event.preventDefault();
       event.stopPropagation();
@@ -14844,6 +17886,13 @@
         return;
       }
       submitEditedUserMessage();
+      return;
+    }
+    const copyBtn = event.target.closest(".msg-copy");
+    if (copyBtn && messagesEl.contains(copyBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      copyAssistantFromButton(copyBtn);
       return;
     }
     const regenBtn = event.target.closest(".msg-regenerate");
@@ -14992,6 +18041,10 @@
     if (onMentionKeydown(event, promptEl)) {
       return;
     }
+    if (event.key === " " && tryCommitComposerMention(promptEl)) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendPrompt();
@@ -15013,6 +18066,30 @@
     },
     { passive: true }
   );
+
+  if (typeof ResizeObserver !== "undefined") {
+    const keepPinnedOnResize = () => {
+      if (stickToBottom && !restoringChatScroll) {
+        scrollToBottom();
+      }
+      // user-пузырь мог поменять высоту при reflow — переприбить план-карточку.
+      try {
+        relpinAllTodoTops();
+      } catch (_) {}
+    };
+    const resizePin = new ResizeObserver(keepPinnedOnResize);
+    resizePin.observe(messagesEl);
+    if (composerWrapEl) {
+      resizePin.observe(composerWrapEl);
+    }
+  }
+  if (typeof MutationObserver !== "undefined") {
+    new MutationObserver(() => {
+      if (stickToBottom && !restoringChatScroll) {
+        scrollToBottom();
+      }
+    }).observe(messagesEl, { childList: true, subtree: true });
+  }
 
   if (mentionMenuEl) {
     mentionMenuEl.addEventListener("mousedown", (event) => {
@@ -15044,6 +18121,9 @@
           activeChatId = msg.chatId;
         }
         fillModels(msg.models, msg.selectedModel, true);
+        if (msg.fontSize != null) {
+          applyUiFontSize(msg.fontSize);
+        }
         if (msg.modes) {
           applyModes(msg.modes);
         }
@@ -15055,8 +18135,11 @@
         editingUserText = "";
         editingModelId = "";
         editingModeId = "";
+        editingReasoningEffort = "";
         editingAttachments = [];
+        pickAttachmentsForEdit = false;
         clearPendingAttachments();
+        clearPendingMentions();
         setCanRegenerate(msg.canRegenerate);
         applyAgentStatusState(
           msg.status?.text || "",
@@ -15075,7 +18158,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         renderChatBranches(msg.branches);
         showScreen(msg.screen || "agents");
@@ -15083,7 +18171,14 @@
         renderMessageQueue();
         break;
       case "attachmentsAdded":
-        mergePendingAttachments(msg.attachments || []);
+        if (pickAttachmentsForEdit) {
+          // Picker was opened from the edit-composer "+" — attachments go to
+          // the message being edited, not the main composer draft.
+          pickAttachmentsForEdit = false;
+          mergeEditingAttachments(msg.attachments || []);
+        } else {
+          mergePendingAttachments(msg.attachments || []);
+        }
         break;
       case "fileSearchResults":
         handleMentionResults(msg);
@@ -15142,6 +18237,9 @@
           showScreen("settings");
         }
         break;
+      case "uiFontSize":
+        applyUiFontSize(msg.fontSize);
+        break;
       case "providerModelsListed":
         onProviderModelsListed(msg);
         break;
@@ -15163,6 +18261,9 @@
         };
         renderSkillsSettings();
         break;
+      case "slashCommandsList":
+        userSlashCommands = Array.isArray(msg.commands) ? msg.commands : [];
+        break;
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
@@ -15172,6 +18273,9 @@
         }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel, true);
+        }
+        if (msg.fontSize != null) {
+          applyUiFontSize(msg.fontSize);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
         applySelectedReasoningEffort(msg.selectedReasoningEffort, {
@@ -15210,7 +18314,12 @@
           chatTitleEl.textContent = msg.chatTitle;
         }
         if (msg.contextMax !== undefined || msg.contextUsed !== undefined) {
-          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax);
+          setContextUsage(msg.contextUsed || 0, msg.contextMax || contextMax, {
+            totalInputTokens: msg.totalInputTokens,
+            totalOutputTokens: msg.totalOutputTokens,
+            totalCacheReadTokens: msg.totalCacheReadTokens,
+            totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          });
         }
         showScreen("chat");
         setBusy(Boolean(msg.busy));
@@ -15257,13 +18366,24 @@
               chatAgentNameEl.textContent = msg.name;
             }
           }
+          if (msg.agentId === activeAgentId && chatTitleEl && msg.name) {
+            chatTitleEl.textContent = msg.name;
+          }
+          if (msg.agentId === activeAgentId && Array.isArray(msg.branches)) {
+            renderChatBranches(msg.branches);
+          }
           if (renamingAgentId !== msg.agentId) {
             renderAgentsList();
           }
         }
         break;
       case "contextUsage":
-        setContextUsage(msg.used || 0, msg.max || contextMax);
+        setContextUsage(msg.used || 0, msg.max || contextMax, {
+          totalInputTokens: msg.totalInputTokens,
+          totalOutputTokens: msg.totalOutputTokens,
+          totalCacheReadTokens: msg.totalCacheReadTokens,
+          totalCacheWriteTokens: msg.totalCacheWriteTokens,
+        });
         break;
       case "modelsUpdated":
         fillModels(msg.models, msg.selectedModel);
@@ -15293,7 +18413,9 @@
         editingUserText = "";
         editingModelId = "";
         editingModeId = "";
+        editingReasoningEffort = "";
         editingAttachments = [];
+        pickAttachmentsForEdit = false;
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
         break;
@@ -15491,6 +18613,7 @@
         }
         streamingEl = null;
         streamingRenderScheduled = false;
+        completeRunningTodoPlans();
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -15564,6 +18687,7 @@
             break;
           }
         }
+        completeRunningTodoPlans();
         setAgentStatus("", true);
         setIdleAndDrain();
         break;
@@ -15590,7 +18714,12 @@
         setComposerPlanBuild("", false);
         lastOpenedPlanKey = "";
         setAgentStatus("", true);
-        setContextUsage(0, contextMax);
+        setContextUsage(0, contextMax, {
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCacheReadTokens: 0,
+          totalCacheWriteTokens: 0,
+        });
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
         break;

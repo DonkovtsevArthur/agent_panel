@@ -51,9 +51,9 @@ Cline владеет: что можно в Ask/Plan/Agent и как исполн
 
 ### Phase 3 — выровнять входы
 
-1. History restore с image parts (не только текст).
+1. History restore с image parts (сделано: вложения-картинки с user-ходов Harbor → Cline `initialMessages` при новом `start`).
 2. MCP: либо оставить Harbor bridge как host-provided tools, либо их MCP loader + наши credentials.
-3. Rules: Harbor `AGENTS.md` / `.cursor/rules` → через Cline user-instructions extension или наш prepareTurn.
+3. Rules: Harbor `AGENTS.md` уже через Cline user-instructions; glob/`alwaysApply` `.cursor/rules` для активного файла — в turn context (`omitAgentsMd`).
 3b. **Skills (сделано):** Harbor-only dirs (`.harbor/skills`, `~/.harbor/skills` + Settings extra) → Cline `createUserInstructionConfigService` / `skills` tool; Settings → Skills UI. Без автоскана `.agents`/`.cline`/`.cursor`.
 4. **Долгоживущая Cline-сессия (сделано):** `interactive: true` + `chatId` → `core.send` на следующих ходах; regenerate/edit/смена mode·model·MCP — `stop` и новый `start` с Harbor history. Без `chatId` — one-shot как раньше.
 
@@ -62,7 +62,7 @@ Cline владеет: что можно в Ask/Plan/Agent и как исполн
 - **Spawn / parallel agents (сделано):** `enableSpawnAgent` при `agentPanel.subagents.enabled` (default on) во всех режимах + Harbor rules nudge делегировать через `spawn_agent` (выкл → нет tool и нет rules). Children наследуют mode-preset родителя (Plan/Ask = read-focused + command-guard; Agent = act) и parent `extraTools` (Harbor MCP). UI: Settings toggle + карточка `spawn_agent`. Teams (`enableAgentTeams`) — нет.
 - **Parallel tool calls (сделано):** `agentPanel.parallelToolCalls.enabled` (default on) → `maxParallelToolCalls: 8`; off → `1` (sequential).
 - **Auto compact (сделано):** `agentPanel.autoCompact.enabled` (default on) → `compaction: { enabled: true, strategy: "agentic" }`; notice → UI step `compaction`.
-- Checkpoints, approvals UI (или оставить yolo) — ещё открыто.
+- Checkpoints, approvals UI (сделано): `checkpoint.enabled` + карточка Restore; Settings auto-approve tools (default on, yolo) / off → confirm.
 - Teams / task board — позже (нужна долгоживущая Cline-сессия из Phase 3).
 
 ## Не делать

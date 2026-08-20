@@ -2,6 +2,7 @@ import {
 	CLINE_DEFAULT_MODEL_ID,
 	type GatewayModelCapability,
 	type GatewayModelDefinition,
+	type GatewayModelToolCapability,
 	type GatewayProviderManifest,
 	type GatewayProviderMetadata,
 	type GatewayProviderSettings,
@@ -23,7 +24,11 @@ import type {
 	ProviderClient,
 	ProviderProtocol,
 } from "../catalog/types";
-import type { BuiltinSpec, ProviderApiLine } from "./builtin-types";
+import type {
+	BuiltinSpec,
+	ProviderApiLine,
+	ProviderFamily,
+} from "./builtin-types";
 import {
 	ClineFreeModelLimitError,
 	ClineNotSubscribedError,
@@ -52,6 +57,16 @@ export const DEFAULT_EXTERNAL_OCA_BASE_URL =
 	"https://code.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm";
 const CLINE_PASS_PROVIDER_ID = "cline-pass";
 const OPENAI_CODEX_DEFAULT_MODEL_ID = "gpt-5.4";
+const NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES: readonly GatewayModelToolCapability[] =
+	[{ name: "web_search" }];
+const VERTEX_MODEL_TOOL_CAPABILITIES: readonly GatewayModelToolCapability[] = [
+	{
+		name: "web_search",
+		// Vertex Claude is created through the Anthropic adapter, which does not
+		// expose Google Search. Exclusions also cover unregistered Claude model ids.
+		excludeRoutes: [{ matcher: "anthropic-compatible" }],
+	},
+];
 const OPENROUTER_STICKY_SESSION_METADATA: GatewayProviderMetadata = {
 	stickySession: {
 		transport: "json-body",
@@ -428,6 +443,30 @@ function buildClineModels(): Record<string, ModelInfo> {
 	);
 }
 
+function buildVertexModels(): Record<string, ModelInfo> {
+	const vertexModels = generatedModels("vertex");
+
+	// models.dev does not carry Fable 5 under google-vertex, so overlay the
+	// record here until it does. Pricing is deliberately dropped: Vertex
+	// bills region-dependently (its US/EU multi-region rates exceed
+	// Anthropic's list price), and a copied universal price would understate
+	// the displayed and recorded cost. Omitting it degrades cost display to
+	// "unknown" instead of wrong.
+	if (vertexModels["claude-fable-5"]) {
+		// Upstream now carries the model — its record wins.
+		return vertexModels;
+	}
+	const anthropicFable = generatedModels("anthropic")["claude-fable-5"];
+	if (!anthropicFable) {
+		return vertexModels;
+	}
+	const { pricing: _droppedAnthropicPricing, ...vertexFable } = anthropicFable;
+	return {
+		...vertexModels,
+		"claude-fable-5": vertexFable,
+	};
+}
+
 function fallbackModelInfo(id: string, spec?: BuiltinSpec): ModelInfo {
 	const info: ModelInfo = {
 		id,
@@ -546,8 +585,9 @@ function inferClient(spec: BuiltinSpec): ProviderClient {
 }
 
 function createClineLikeSpec(
-	input: Pick<BuiltinSpec, "id" | "name" | "defaultModelId"> &
-		Partial<
+	input: Pick<BuiltinSpec, "id" | "name" | "defaultModelId"> & {
+		family?: ProviderFamily;
+	} & Partial<
 			Pick<
 				BuiltinSpec,
 				| "description"
@@ -563,8 +603,9 @@ function createClineLikeSpec(
 		id: input.id,
 		name: input.name,
 		description: input.description ?? "Cline API endpoint",
-		family: "openai-compatible",
+		family: input.family ?? "openai-compatible",
 		popular: input.popular,
+		modelToolCapabilities: NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES,
 		capabilities: ["reasoning", "prompt-cache", "tools", "oauth"],
 		modelsProviderId: input.modelsProviderId,
 		modelsFactory: input.modelsFactory,
@@ -616,6 +657,7 @@ async function handleClineResponseError(
 
 const cline = createClineLikeSpec({
 	id: "cline",
+	family: "cline",
 	name: "Cline Usage-Billing",
 	popular: 1,
 	modelsFactory: buildClineModels,
@@ -631,6 +673,7 @@ const cline = createClineLikeSpec({
 
 const clinePass = createClineLikeSpec({
 	id: CLINE_PASS_PROVIDER_ID,
+	family: "cline",
 	name: "ClinePass",
 	popular: 2,
 	description: "Cline API endpoint with ClinePass models",
@@ -727,8 +770,11 @@ const OPENAI_COMPATIBLE_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		id: "litellm",
 		name: "LiteLLM",
 		description: "Self-hosted LLM proxy",
+		// No `protocol` override: LiteLLM's OpenAI-compatible surface is Chat
+		// Completions (`/chat/completions`), and self-hosted proxies commonly
+		// do not expose `/responses`. Inherit the family default (openai-chat)
+		// like every other openai-compatible built-in. See #10781 / #13003.
 		family: "openai-compatible",
-		protocol: "openai-responses",
 		popular: 40,
 		capabilities: ["prompt-cache"],
 		defaultModelId: "gpt-5.4",
@@ -974,6 +1020,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		name: "OpenAI",
 		description: "Creator of GPT and ChatGPT",
 		family: "openai",
+		modelToolCapabilities: NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES,
 		capabilities: ["reasoning"],
 		modelsProviderId: "openai-native",
 		defaultModelId: "gpt-5.4",
@@ -986,6 +1033,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		description:
 			"OpenAI ChatGPT subscription access uses an OAuth device code flow.",
 		family: "openai",
+		modelToolCapabilities: NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES,
 		popular: 5,
 		capabilities: ["reasoning", "oauth"],
 		defaultModelId: OPENAI_CODEX_DEFAULT_MODEL_ID,
@@ -1011,6 +1059,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		name: "Anthropic",
 		description: "Creator of Claude, the AI assistant",
 		family: "anthropic",
+		modelToolCapabilities: NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES,
 		popular: 15,
 		capabilities: ["reasoning", "prompt-cache"],
 		defaultModelId: "claude-sonnet-5",
@@ -1024,7 +1073,13 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		name: "Claude Code",
 		description: "Use Claude Code SDK with Claude Pro/Max subscription",
 		family: "claude-code",
-		capabilities: ["reasoning"],
+		// provider-tools: the Claude Code CLI executes its own native tools
+		// (Read/Write/Bash/...) inside the spawned agent session and cannot
+		// bridge externally-executed AI SDK tools. Without this capability the
+		// gateway sends Cline's tool definitions (which the provider drops)
+		// while the CLI's own tools stay enabled with no approval plumbing —
+		// every write is refused and no prompt can appear (#13146).
+		capabilities: ["reasoning", "provider-tools"],
 		defaultModelId: "sonnet",
 		modelsFactory: buildClaudeCodeModels,
 		defaults: { baseUrl: "" },
@@ -1035,6 +1090,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		name: "Google Gemini",
 		description: "Google Gemini API",
 		family: "google",
+		modelToolCapabilities: NATIVE_WEB_SEARCH_MODEL_TOOL_CAPABILITIES,
 		popular: 45,
 		capabilities: ["reasoning", "prompt-cache"],
 		apiKeyEnv: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
@@ -1046,6 +1102,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 		name: "Google Vertex AI",
 		description: "Google Cloud Vertex AI",
 		family: "vertex",
+		modelToolCapabilities: VERTEX_MODEL_TOOL_CAPABILITIES,
 		capabilities: ["reasoning", "prompt-cache"],
 		apiKeyEnv: [
 			"GCP_PROJECT_ID",
@@ -1056,7 +1113,7 @@ const BUILTIN_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
 			"GOOGLE_VERTEX_PROJECT",
 			"GOOGLE_VERTEX_LOCATION",
 		],
-		modelsProviderId: "vertex",
+		modelsFactory: buildVertexModels,
 		configFields: VERTEX_CONFIG_FIELDS,
 		metadata: ANTHROPIC_ROUTING_METADATA,
 	},
@@ -1159,8 +1216,9 @@ export function resolveProviderApiLineBaseUrl(
 	if (!isProviderApiLine(apiLine)) {
 		return undefined;
 	}
-	return API_LINE_BASE_URLS_BY_PROVIDER_ID.get(normalizeProviderId(providerId))
-		?.[apiLine];
+	return API_LINE_BASE_URLS_BY_PROVIDER_ID.get(
+		normalizeProviderId(providerId),
+	)?.[apiLine];
 }
 
 function getModels(spec: BuiltinSpec): Record<string, ModelInfo> {
@@ -1236,6 +1294,11 @@ export function toManifest(spec: BuiltinSpec): GatewayProviderManifest {
 		defaultModelId:
 			collection.provider.defaultModelId || resolvedModels[0]?.id || "default",
 		models: resolvedModels,
+		modelToolCapabilities: spec.modelToolCapabilities?.map((capability) => ({
+			...capability,
+			routes: capability.routes?.map((route) => ({ ...route })),
+			excludeRoutes: capability.excludeRoutes?.map((route) => ({ ...route })),
+		})),
 		capabilities,
 		env: spec.env ?? ["browser", "node"],
 		api: spec.defaults?.baseUrl,
@@ -1244,6 +1307,13 @@ export function toManifest(spec: BuiltinSpec): GatewayProviderManifest {
 		metadata,
 	};
 }
+
+/** Static manifests used for synchronous capability checks before providers load. */
+export const BUILTIN_PROVIDER_MANIFESTS_BY_ID: Readonly<
+	Record<string, GatewayProviderManifest>
+> = Object.fromEntries(
+	BUILTIN_SPECS.map((spec) => [spec.id, toManifest(spec)] as const),
+);
 
 export const BUILTIN_PROVIDER_COLLECTION_LIST: ModelCollection[] =
 	BUILTIN_SPECS.map(toModelCollection);

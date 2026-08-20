@@ -53,11 +53,14 @@ object HarborClipboard {
 
   fun encodeFile(file: File): Map<String, Any>? {
     return try {
+      val ext = file.extension.lowercase()
+      if (ext !in imageExt) {
+        return null
+      }
       val bytes = file.readBytes()
       if (bytes.isEmpty() || bytes.size > 12 * 1024 * 1024) {
         return null
       }
-      val ext = file.extension.lowercase().ifBlank { "png" }
       val mime =
         when (ext) {
           "jpg", "jpeg" -> "image/jpeg"

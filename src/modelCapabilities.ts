@@ -7,8 +7,8 @@ export interface ModelCapabilities {
   minimumOutputTokens?: number;
   /**
    * Модель принимает OpenAI-style `reasoning_effort` на chat/completions
-   * (Claude 3.5+/4 через корпоративный гейтвей). Гейтвей включает extended
-   * thinking и стримит `reasoning_content` в дельтах.
+   * (Claude 3.5+/4, Kimi, GLM-4.5+ через корпоративный гейтвей). Гейтвей
+   * включает thinking и стримит `reasoning_content` в дельтах.
    */
   supportsReasoningEffort: boolean;
   /** Значение reasoning_effort по умолчанию, если не задано в конфиге. */
@@ -91,6 +91,9 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
       requiresReasoningContentForToolCalls: true,
       minimumOutputTokens: KIMI_MIN_MAX_TOKENS,
       omitContentForToolCalls: true,
+      // K2.5 / K3 thinking: same OpenAI-style reasoning_effort as Claude.
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: "high",
     },
   },
   {
@@ -112,8 +115,28 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     },
   },
   {
+    // GLM-4.5+ / GLM-5.x thinking (Z.AI, LiteLLM). Classic GLM-4 / 4-flash
+    // do not take reasoning_effort — keep them on the vision-false catch-all.
+    pattern: /glm[-_.]?(?:4\.?[5-9]|[5-9])/i,
+    capabilities: {
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: "high",
+      omitTemperature: true,
+      minimumOutputTokens: 16_000,
+    },
+  },
+  {
     pattern:
       /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/i,
+    capabilities: { supportsVision: false },
+  },
+  {
+    // GLM vision variants only (4V / 4.5V / 4.6V / 5V / OCR). GLM-5.2 is text.
+    pattern: /glm[-_.]?(?:4v|4\.?[5-9]v|[5-9]v)|glm-ocr|glm-5v/i,
+    capabilities: { supportsVision: true },
+  },
+  {
+    pattern: /(?:^|[\/._-])glm[-_.]?[4-9]|z-ai\/glm|zai\/glm|zai-org\/glm/i,
     capabilities: { supportsVision: false },
   },
   {

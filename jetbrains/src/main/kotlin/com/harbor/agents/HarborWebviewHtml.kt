@@ -1,8 +1,6 @@
 package com.harbor.agents
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.io.FileUtil
 import java.io.File
@@ -40,15 +38,16 @@ object HarborWebviewHtml {
     val surfaceAttr = if (surface == "settings") "settings" else "panel"
     val pageTitle = if (surfaceAttr == "settings") "Settings — Harbor Agents" else "Harbor Agents"
     val theme = HarborThemeCss.rootVariables()
+    val assetVer = HarborPluginInfo.version()
 
     val html = """
 <!DOCTYPE html>
-<html lang="$lang" data-surface="$surfaceAttr" data-harbor-host="jetbrains">
+<html lang="$lang" data-surface="$surfaceAttr" data-harbor-host="jetbrains" style="scrollbar-color: unset; scrollbar-width: unset">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>$pageTitle</title>
-  <link rel="stylesheet" href="/panel.css" />
+  <link rel="stylesheet" href="/panel.css?v=$assetVer" />
   <style id="harbor-jb-theme">
 $theme
   </style>
@@ -157,8 +156,8 @@ $shell
       };
     })();
   </script>
-  <script src="/marked.js"></script>
-  <script src="/panel.js"></script>
+  <script src="/marked.js?v=$assetVer"></script>
+  <script src="/panel.js?v=$assetVer"></script>
 </body>
 </html>
     """.trimIndent()
@@ -166,8 +165,9 @@ $shell
     File(outDir, "index.html").writeText(html, StandardCharsets.UTF_8)
     log.info(
       "Harbor UI materialized at ${outDir.absolutePath}/index.html " +
-        "(project=${project.name} css=${File(outDir, "panel.css").length()} " +
-        "js=${File(outDir, "panel.js").length()})"
+        "(plugin=${HarborPluginInfo.version()} project=${project.name} " +
+        "css=${File(outDir, "panel.css").length()} js=${File(outDir, "panel.js").length()} " +
+        "mediaRoot=${mediaRoot?.absolutePath ?: "classpath"})"
     )
     return outDir
   }
@@ -182,12 +182,23 @@ $shell
   fun build(project: Project, surface: String = "panel"): String = buildInline(project, surface)
 
   private fun resolveMediaRoot(): File? {
+    val fromEnv = System.getenv("HARBOR_MEDIA")
+    if (!fromEnv.isNullOrBlank()) {
+      val f = File(fromEnv)
+      if (File(f, "panel.js").exists()) return f.canonicalFile
+    }
+    // Packaged plugin: always prefer jar classpath (copyAsset fallback).
+    // Dev overlay only when HARBOR_DEV=1 — otherwise user.dir can steal
+    // an unrelated checkout's media/ and the installed zip never applies.
+    if (!HarborPluginInfo.devOverlay()) {
+      return null
+    }
     val candidates = listOf(
       File(System.getProperty("user.dir"), "../media"),
       File(System.getProperty("user.dir"), "media"),
       File(System.getProperty("user.dir"), "../../media"),
-      pluginPath()?.resolve("harbor/media")?.toFile(),
-      pluginPath()?.resolve("media")?.toFile(),
+      HarborPluginInfo.pluginPath()?.resolve("harbor/media")?.toFile(),
+      HarborPluginInfo.pluginPath()?.resolve("media")?.toFile(),
     )
     for (c in candidates) {
       if (c != null && File(c, "panel.js").exists()) {
@@ -195,16 +206,6 @@ $shell
       }
     }
     return null
-  }
-
-  private fun pluginPath(): java.nio.file.Path? {
-    return try {
-      val id = PluginId.getId("com.harbor.agents")
-      val plugin = PluginManagerCore.getPlugin(id) ?: return null
-      plugin.pluginPath
-    } catch (_: Throwable) {
-      null
-    }
   }
 
   private fun copyAsset(mediaRoot: File?, name: String, dest: File) {

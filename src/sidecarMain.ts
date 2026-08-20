@@ -4,6 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import { startSidecar } from "../packages/harbor-core/src/sidecar";
 import {
   createFileSessionStore,
@@ -23,6 +24,10 @@ import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { initMcpManager } from "./mcpBundle";
 import { composeCommitMessageText } from "./commitMessage";
 import type * as vscode from "vscode";
+import {
+  setToolApprovalHook,
+  waitForToolApprovalResult,
+} from "./toolApproval";
 
 function writeNotification(method: string, params: unknown): void {
   process.stdout.write(
@@ -54,7 +59,7 @@ function rejectUnauthorizedFromSettings(settings: Record<string, unknown>): bool
       return v;
     }
   }
-  return false;
+  return true;
 }
 
 async function handleCommitMessage(
@@ -111,7 +116,33 @@ async function handleCommitMessage(
   }
 }
 
+/**
+ * Abort-family rejections are expected cancel noise, not fatal faults
+ * (upstream Cline daemon filters the same — hub/daemon/entry.ts
+ * isAbortRejection). When a user stops a turn, in-flight provider streams
+ * reject on floating promises after the run has settled (AbortError /
+ * ABORT_ERR / AgentRuntimeAbortError). Node would kill the sidecar process,
+ * wedging the panel until an IDE restart — VS Code's extension host
+ * survives these, the bare sidecar must too.
+ */
+function installUnhandledRejectionGuard(): void {
+  process.on("unhandledRejection", (reason: unknown) => {
+    const err = reason instanceof Error ? reason : undefined;
+    const abortFamily =
+      err?.name === "AbortError" ||
+      err?.name === "AgentRuntimeAbortError" ||
+      (err as { code?: unknown } | undefined)?.code === "ABORT_ERR";
+    const label = err ? `${err.name}: ${err.message}` : String(reason);
+    process.stderr.write(
+      `[harbor-sidecar] unhandled rejection${
+        abortFamily ? " (abort noise)" : ""
+      }: ${label}\n`
+    );
+  });
+}
+
 function main(): void {
+  installUnhandledRejectionGuard();
   const workspaceRoot = process.env.HARBOR_WORKSPACE || process.cwd();
   const paths = defaultHarborPaths(workspaceRoot);
   const settingsPath =
@@ -126,6 +157,15 @@ function main(): void {
   });
   HarborHeadless.setOpenExternalHook(async (url) => {
     writeNotification("host.openExternal", { url });
+  });
+  setToolApprovalHook(async (request) => {
+    const requestId = `appr-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+    writeNotification("host.requestToolApproval", {
+      requestId,
+      toolName: request.toolName,
+      preview: request.preview || "",
+    });
+    return waitForToolApprovalResult(requestId);
   });
   // Before Cline/undici touch the network — honor Advanced → Validate TLS.
   applyHarborTlsPolicy(rejectUnauthorizedFromSettings(settings));

@@ -22,6 +22,52 @@ export const MAX_DESCRIPTION_CHARS = 8_000;
 /** Marker in tool-result text — context budget must not compact these payloads. */
 export const HARBOR_VISION_HELPER_MARKER = "[Harbor vision helper";
 
+const CHAT_VISION_DESCRIBE_SYSTEM = `You describe screenshots for a coding assistant that cannot view images.
+Give a complete visual inventory: what it is, layout, notable colors, and all readable text (titles, buttons, labels, tables, errors).
+Quote visible strings exactly. Do not invent labels. No plan, no code.
+If the user asked a specific question, answer that after the inventory.
+Match the language of the user's question.`;
+
+export function buildChatVisionDescribeMessages(
+  imageDataUrls: string[],
+  userQuestion?: string
+): ChatMessage[] {
+  const images = imageDataUrls
+    .map((url) => String(url || "").trim())
+    .filter(Boolean)
+    .slice(0, MAX_VISION_IMAGES);
+  const question = String(userQuestion || "").trim().slice(0, MAX_ACCOMPANYING_CHARS);
+  const parts: ContentPart[] = [
+    {
+      type: "text",
+      text: question
+        ? `The user asked:\n${question}\n\nFirst give a complete inventory of the image(s). Then answer that question from what you see.`
+        : "Give a complete inventory of the attached image(s) so another model can answer later questions about them.",
+    },
+  ];
+  for (const url of images) {
+    parts.push({ type: "image_url", image_url: { url } });
+  }
+  return [
+    { role: "system", content: CHAT_VISION_DESCRIBE_SYSTEM },
+    { role: "user", content: parts },
+  ];
+}
+
+export function formatChatVisionHelperPrompt(options: {
+  visionModelId: string;
+  description: string;
+}): string {
+  const description = String(options.description || "").trim();
+  return [
+    `${HARBOR_VISION_HELPER_MARKER} · ${options.visionModelId}]`,
+    "The selected chat model cannot view images. Treat the description below as what you would see on the screenshot. Answer the user from it; do not say you cannot see the picture. If this inventory is not enough, call inspect_images with a specific question — do not spawn_agent for vision.",
+    "",
+    "## What is in the image",
+    description || "(Vision helper returned an empty description.)",
+  ].join("\n");
+}
+
 export function buildVisionDescribeMessages(
   imageDataUrls: string[],
   accompanyingText?: string

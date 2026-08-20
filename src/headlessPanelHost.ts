@@ -4,10 +4,13 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { runAgentTurn } from "./agentLoop";
+import { runAgentTurn, type AgentPhase } from "./agentLoop";
 import {
   discardClineChatSession,
   discardClineChatSessions,
+  onClineActiveChatChanged,
+  retainClineChatSession,
+  restoreClineChatCheckpoint,
 } from "./clineRuntime";
 import {
   getConfig,
@@ -33,6 +36,7 @@ import {
   buildArchiveList,
   buildBranchesList,
   createDefaultStore,
+  copyUiAttachmentsOntoHistory,
   createEmptyAgent,
   deleteAgentBranch,
   deleteAgentFromStore,
@@ -43,18 +47,29 @@ import {
   getActiveChat,
   getAgentChatIds,
   getAgentDisplayName,
+  applyAgentName,
   restoreAgentInStore,
   switchAgentBranch,
   touchChat,
 } from "./sessionStore";
+import { maybeGenerateChatTitle } from "./chatTitle";
 import {
   getOpenAICompatibleClient,
   type ChatMessage,
+  type ListedProviderModel,
 } from "./openaiClient";
 import type { ChatSession } from "./sessionStore";
 import { HarborHeadless } from "./vscodeHeadlessStub";
-import type { MessageAttachment } from "./attachments";
+import {
+  enrichAttachmentsForUi,
+  persistIncomingAttachments,
+  stripAttachmentPayload,
+  type IncomingAttachment,
+  type MessageAttachment,
+} from "./attachments";
+import { resolveToolApproval } from "./toolApproval";
 import { resolveUiLanguage } from "./i18n";
+import { modePhaseStatusLabel, modeThinkingLabel } from "./modes";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import type { FileEditStat } from "./diffStats";
 import { hasUncommittedChanges } from "./gitStatus";
@@ -62,13 +77,14 @@ import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import { discardPaths } from "./discardPaths";
 import {
-  ensureProposedPlanWrapper,
-  looksLikeImplementationPlan,
+  assistantFinaleDisplayText,
+  lastUiUserText,
 } from "./planImplement";
 import { getMcpManager } from "./mcpBundle";
 import { parseArgsInput, parseEnvLines } from "./mcpBundle";
 import type { FigmaStatusPayload } from "./mcpBundle";
 import type { McpServerRuntimeStatus } from "./mcpBundle";
+import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 
 type ProviderConnState = "unknown" | "connecting" | "connected" | "error";
 type ChatRunState = "running" | "success" | "error";
@@ -138,6 +154,11 @@ export class HeadlessPanelHost {
   >();
   /** Per-chat run indicator for the agents rail loader (cube). */
   private readonly chatRunState = new Map<string, ChatRunState>();
+  /** Busy-line under the transcript («Думаю…» / tool phases) — same as VS Code. */
+  private readonly chatStatusState = new Map<
+    string,
+    { text: string; hidden: boolean; phase?: AgentPhase; modelLabel?: string }
+  >();
 
   constructor(opts: HeadlessPanelOptions) {
     this.opts = opts;
@@ -178,9 +199,10 @@ export class HeadlessPanelHost {
     this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
     // Copy arrays — sharing store refs lets later mutations (or a concurrent
     // turn) silently rewrite another chat's transcript on disk.
-    this.history = Array.isArray(chat?.history)
-      ? (chat!.history as ChatMessage[]).slice()
-      : [];
+    this.history = copyUiAttachmentsOntoHistory(
+      Array.isArray(chat?.history) ? (chat!.history as ChatMessage[]).slice() : [],
+      Array.isArray(chat?.uiMessages) ? chat!.uiMessages.slice() : []
+    );
     this.uiMessages = Array.isArray(chat?.uiMessages)
       ? chat!.uiMessages.slice()
       : [];
@@ -192,6 +214,57 @@ export class HeadlessPanelHost {
 
   private persist(): void {
     writeJsonFile(this.opts.sessionPath, this.store);
+  }
+
+  private storageUri() {
+    return HarborHeadless.getExtensionContext().storageUri as never;
+  }
+
+  private async enrichUiMessages(list: UiMessage[]): Promise<UiMessage[]> {
+    const storage = this.storageUri();
+    const out: UiMessage[] = [];
+    for (const msg of list) {
+      if (!msg.attachments?.length) {
+        out.push(msg);
+        continue;
+      }
+      out.push({
+        ...msg,
+        attachments: await enrichAttachmentsForUi(msg.attachments, storage),
+      });
+    }
+    return out;
+  }
+
+  private scheduleChatTitle(chatId: string): void {
+    const id = String(chatId || "").trim();
+    if (!id) {
+      return;
+    }
+    const fallbackModelId =
+      this.store.chats[id]?.selectedModel || this.selectedModel;
+    void maybeGenerateChatTitle(this.store, id, { fallbackModelId }).then(
+      (name) => {
+        if (!name) {
+          return;
+        }
+        const agent = findAgentByChatId(this.store, id);
+        if (!agent) {
+          return;
+        }
+        this.persist();
+        this.postAgentsList();
+        const renamed: Record<string, unknown> = {
+          type: "agentRenamed",
+          agentId: agent.id,
+          name: agent.name,
+        };
+        if (agent.id === this.store.activeAgentId) {
+          renamed.branches = buildBranchesList(this.store, agent.id);
+        }
+        this.post(renamed);
+      }
+    );
   }
 
   private post(message: Record<string, unknown>): void {
@@ -300,15 +373,47 @@ export class HeadlessPanelHost {
         this.abort = undefined;
         if (this.store.activeChatId) {
           this.setRunStateForChat(this.store.activeChatId);
+          this.setStatusForChat(this.store.activeChatId, "", true);
         }
         this.post({ type: "stopped" });
         this.post({ type: "idle", chatId: this.store.activeChatId });
         return { ok: true };
+      case "toolApprovalResult":
+        resolveToolApproval(
+          String(msg.requestId || ""),
+          msg.approved === true
+        );
+        return { ok: true };
+      case "restoreCheckpoint": {
+        const chatId = String(msg.chatId || this.store.activeChatId || "");
+        const runCount = Number(msg.checkpointRunCount);
+        const result = await restoreClineChatCheckpoint(chatId, {
+          checkpointRunCount:
+            Number.isFinite(runCount) && runCount > 0 ? runCount : undefined,
+        });
+        if (result.ok) {
+          const edited = this.store.chats[chatId]?.lastAgentEditedPaths || [];
+          this.opts.onVfsRefresh?.(edited);
+        }
+        this.post({
+          type: result.ok ? "status" : "runFailed",
+          text: result.ok
+            ? "Workspace restored from checkpoint"
+            : result.error || "Checkpoint restore failed",
+          chatId,
+        });
+        return result;
+      }
       case "newChat":
       case "newAgent":
         return this.onNewAgent();
       case "openAgent":
         return this.onOpenAgent(String(msg.agentId || ""));
+      case "renameAgent":
+        return this.onRenameAgent(
+          String(msg.agentId || ""),
+          String(msg.name || "")
+        );
       case "showAgents":
         this.postAgentsList();
         this.post({ type: "showAgents" });
@@ -374,6 +479,7 @@ export class HeadlessPanelHost {
         }
         this.providerConnStatuses.clear();
         this.postSettingsPayload();
+        this.postUiFontSize();
         this.postFigmaStatus();
         this.postMcpServersList();
         this.post({
@@ -461,7 +567,7 @@ export class HeadlessPanelHost {
     }
   }
 
-  /** Map VS Code settings UI payload → `.idea/harbor/settings.json`. */
+  /** Map VS Code settings UI payload → global settings file. */
   private persistUiSettings(settings: Record<string, unknown>): void {
     const existing =
       (readJsonFile(this.opts.settingsPath) as Record<string, unknown>) || {};
@@ -487,6 +593,10 @@ export class HeadlessPanelHost {
         baseUrl: p.baseUrl,
         apiKey: p.apiKey || "",
         statusUrl: p.statusUrl || "",
+        ...(p.protocol ? { protocol: p.protocol } : {}),
+        ...(typeof p.promptCache === "boolean"
+          ? { promptCache: p.promptCache }
+          : {}),
       })),
       models: config.models.map((m) => ({
         id: m.id,
@@ -501,6 +611,7 @@ export class HeadlessPanelHost {
       })),
       defaultModel: config.defaultModel,
       language: config.language,
+      fontSize: config.fontSize,
       resolvedLanguage: resolveUiLanguage(config.language),
       defaultContextWindow: config.defaultContextWindow,
       baseUrl: config.baseUrl,
@@ -515,6 +626,11 @@ export class HeadlessPanelHost {
       subagentsEnabled: config.subagents.enabled,
       parallelToolCallsEnabled: config.parallelToolCalls.enabled,
       autoCompactEnabled: config.autoCompact.enabled,
+      toolsAutoApprove: config.tools.autoApprove,
+      toolsApprovals: config.tools.approvals,
+      focusChainEnabled: config.focusChain.enabled,
+      turnContextFollowUps: config.turnContext.followUps,
+      checkpointsEnabled: config.checkpoints.enabled,
       skillsEnabled: config.skills.enabled,
       skillsWorkspaceEnabled: config.skills.workspaceEnabled,
       skillsGlobalEnabled: config.skills.globalEnabled,
@@ -533,7 +649,7 @@ export class HeadlessPanelHost {
       modes: this.serializeModes(),
       commitMessagePrompt: config.commitMessage.prompt,
       commitMessageLanguage: config.commitMessage.language,
-      commitMessageModelId: config.commitMessage.modelId,
+      commitMessageModelIds: config.commitMessage.modelIds,
       commitMessageScope: config.commitMessage.scope,
       workspaceName: path.basename(this.opts.workspaceRoot),
       figmaEnabled: config.figma.enabled,
@@ -785,7 +901,10 @@ export class HeadlessPanelHost {
         ? msg.rejectUnauthorized
         : config.rejectUnauthorized;
 
-    const reply = (payload: { models?: string[]; error?: string }) => {
+    const reply = (payload: {
+      models?: ListedProviderModel[];
+      error?: string;
+    }) => {
       this.post({
         type: "providerModelsListed",
         requestId,
@@ -815,12 +934,7 @@ export class HeadlessPanelHost {
         caBundlePath: config.caBundlePath,
       });
       const models = await client.listModels(controller.signal);
-      const unique = Array.from(
-        new Set(models.map((id) => String(id || "").trim()).filter(Boolean))
-      ).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
-      );
-      reply({ models: unique });
+      reply({ models });
       return { ok: true };
     } catch (error) {
       const aborted =
@@ -839,6 +953,13 @@ export class HeadlessPanelHost {
     this.post({
       type: "settings",
       settings: this.buildSettingsPayload(),
+    });
+  }
+
+  private postUiFontSize(): void {
+    this.post({
+      type: "uiFontSize",
+      fontSize: getConfig().fontSize,
     });
   }
 
@@ -887,9 +1008,11 @@ export class HeadlessPanelHost {
       this.chatRunState.get(this.store.activeChatId || "") === "running";
     // Prefer store transcript for paint — live this.uiMessages can lag after a
     // rapid agent switch if hydrate and a background sync raced.
-    const paintUi = (
-      getActiveChat(this.store)?.uiMessages || this.uiMessages || []
-    ).slice();
+    const paintUi = await this.enrichUiMessages(
+      (
+        getActiveChat(this.store)?.uiMessages || this.uiMessages || []
+      ).slice()
+    );
     this.post({
       type: "init",
       models,
@@ -905,7 +1028,9 @@ export class HeadlessPanelHost {
       contextMax: getContextWindow(this.selectedModel),
       modes: this.serializeModes(),
       harborHost: "jetbrains",
+      fontSize: getConfig().fontSize,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
     });
     this.postAgentsList();
     this.postSettingsPayload();
@@ -923,8 +1048,9 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
-      status: null,
+      status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
+      fontSize: getConfig().fontSize,
     });
     this.ensureAllProvidersProbed();
     this.scheduleScmRefresh([200, 800]);
@@ -938,6 +1064,45 @@ export class HeadlessPanelHost {
     }
     const row = getConfig().models.find((m) => m.id === id);
     return String(row?.label || id).trim() || id;
+  }
+
+  /** Label for the chat busy-line; empty so the webview omits `(—)`. */
+  private statusModelLabel(modelId: string): string {
+    const label = this.modelLabel(modelId);
+    return !label || label === "—" ? "" : label;
+  }
+
+  private setStatusForChat(
+    chatId: string | undefined,
+    text: string,
+    hidden = false,
+    phase?: AgentPhase,
+    modelLabel?: string
+  ): void {
+    if (!chatId) {
+      return;
+    }
+    const nextHidden = Boolean(hidden || !text);
+    if (nextHidden) {
+      this.chatStatusState.delete(chatId);
+    } else {
+      this.chatStatusState.set(chatId, {
+        text,
+        hidden: false,
+        phase,
+        modelLabel: modelLabel || undefined,
+      });
+    }
+    if (this.isViewingChat(chatId)) {
+      this.post({
+        type: "status",
+        chatId,
+        text,
+        hidden: nextHidden,
+        phase,
+        modelLabel: nextHidden ? undefined : modelLabel || undefined,
+      });
+    }
   }
 
   private isViewingChat(chatId: string | undefined): boolean {
@@ -1004,7 +1169,7 @@ export class HeadlessPanelHost {
       name: a.name,
       model: this.modelLabel(a.model) || a.model || "—",
       preview: a.preview,
-      time: formatListTime(a.updatedAt, lang),
+      time: formatListTime(a.createdAt || a.updatedAt, lang),
       active: a.active,
       empty: a.empty,
       runState: this.runStateForAgent(a.id),
@@ -1057,9 +1222,20 @@ export class HeadlessPanelHost {
   }
 
   private async onArchiveAgent(agentId: string): Promise<unknown> {
-    if (!agentId || !archiveAgentInStore(this.store, agentId)) {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    if (!agent || agent.archivedAt) {
       return { ok: false };
     }
+    const chatIds = getAgentChatIds(agent);
+    if (chatIds.some((id) => this.chatRunState.get(id) === "running")) {
+      this.abort?.abort();
+      this.abort = undefined;
+    }
+    await discardClineChatSessions(chatIds);
+    if (!archiveAgentInStore(this.store, agentId)) {
+      return { ok: false };
+    }
+    retainClineChatSession(this.store.activeChatId);
     await this.afterStoreMutation({ showAgentsRail: true });
     return { ok: true };
   }
@@ -1088,6 +1264,7 @@ export class HeadlessPanelHost {
     if (!deleteAgentFromStore(this.store, agentId)) {
       return { ok: false };
     }
+    retainClineChatSession(this.store.activeChatId);
     await this.afterStoreMutation({
       preferArchive,
       showAgentsRail: !preferArchive,
@@ -1096,10 +1273,21 @@ export class HeadlessPanelHost {
   }
 
   private async onDeleteAllArchived(): Promise<unknown> {
+    const archived = buildArchiveList(this.store);
+    const ids: string[] = [];
+    for (const item of archived) {
+      const agent = this.store.agents.find((a) => a.id === item.id);
+      if (!agent) {
+        continue;
+      }
+      ids.push(...getAgentChatIds(agent));
+    }
+    await discardClineChatSessions(ids);
     const n = deleteAllArchivedAgentsFromStore(this.store);
     if (!n) {
       return { ok: true, deleted: 0 };
     }
+    retainClineChatSession(this.store.activeChatId);
     this.store.screen = "archive";
     ensureActiveVisible(this.store);
     this.hydrateFromActiveChat();
@@ -1128,6 +1316,7 @@ export class HeadlessPanelHost {
     if (!deleteAgentBranch(this.store, agentId, chatId)) {
       return { ok: false };
     }
+    retainClineChatSession(this.store.activeChatId);
     this.chatRunState.delete(chatId);
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
@@ -1167,12 +1356,18 @@ export class HeadlessPanelHost {
     if (!created) {
       return { ok: false, error: "cannot branch" };
     }
+    onClineActiveChatChanged({
+      previousChatId: fromChatId,
+      nextChatId: created.id,
+      previousStillRunning: this.isChatRunning(fromChatId),
+    });
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
     this.persist();
     this.postAgentsList();
     this.lastReadyAt = 0;
     await this.onReady("panel");
+    this.scheduleChatTitle(created.id);
     return { ok: true, chatId: created.id };
   }
 
@@ -1184,9 +1379,15 @@ export class HeadlessPanelHost {
       return { ok: true };
     }
     this.flushActiveChatToStore();
+    const previousChatId = this.store.activeChatId;
     if (!switchAgentBranch(this.store, this.store.activeAgentId, chatId)) {
       return { ok: false };
     }
+    onClineActiveChatChanged({
+      previousChatId,
+      nextChatId: chatId,
+      previousStillRunning: this.isChatRunning(previousChatId),
+    });
     this.store.screen = "chat";
     this.hydrateFromActiveChat();
     this.persist();
@@ -1471,9 +1672,26 @@ export class HeadlessPanelHost {
     this.persist();
   }
 
+  private isChatRunning(chatId: string | undefined): boolean {
+    return Boolean(chatId) && this.chatRunState.get(chatId || "") === "running";
+  }
+
+  /**
+   * Call before changing `store.activeChatId`. Idle-evicts the previous
+   * Cline session unless a turn is still running there.
+   */
+  private syncClineSessionForChatSwitch(nextChatId: string): void {
+    onClineActiveChatChanged({
+      previousChatId: this.store.activeChatId,
+      nextChatId,
+      previousStillRunning: this.isChatRunning(this.store.activeChatId),
+    });
+  }
+
   private async onNewAgent(): Promise<unknown> {
     this.flushActiveChatToStore();
     const { agent, chat } = createEmptyAgent(this.selectedModel);
+    this.syncClineSessionForChatSwitch(chat.id);
     this.store.agents.unshift(agent);
     this.store.chats[chat.id] = chat;
     this.store.activeAgentId = agent.id;
@@ -1488,12 +1706,34 @@ export class HeadlessPanelHost {
     return { ok: true };
   }
 
+  private async onRenameAgent(agentId: string, name: string): Promise<unknown> {
+    const agent = this.store.agents.find((a) => a.id === agentId);
+    const next = String(name || "").trim();
+    if (!agent || !next) {
+      return { ok: false };
+    }
+    applyAgentName(this.store, agent.id, next, "user");
+    this.persist();
+    this.postAgentsList();
+    const renamed: Record<string, unknown> = {
+      type: "agentRenamed",
+      agentId: agent.id,
+      name: agent.name,
+    };
+    if (agent.id === this.store.activeAgentId) {
+      renamed.branches = buildBranchesList(this.store, agent.id);
+    }
+    this.post(renamed);
+    return { ok: true };
+  }
+
   private async onOpenAgent(agentId: string): Promise<unknown> {
     const agent = this.store.agents.find((a) => a.id === agentId);
     if (!agent) {
       return { ok: false, error: "agent not found" };
     }
     this.flushActiveChatToStore();
+    this.syncClineSessionForChatSwitch(agent.chatId);
     this.store.activeAgentId = agent.id;
     this.store.activeChatId = agent.chatId;
     this.store.screen = "chat";
@@ -1613,6 +1853,93 @@ export class HeadlessPanelHost {
     });
   }
 
+  /**
+   * Shared abort finalizer for a chat turn. Cleans up transient (in-progress)
+   * tool rows so reload does not show stuck spinners, marks the todo plan card
+   * as cancelled, persists the snapshot, and posts stopped/idle to the webview.
+   */
+  private finalizeAbortedTurn(
+    chatId: string,
+    uiMessages: UiMessage[],
+    transientStart: number,
+    snapshot: {
+      history: ChatMessage[];
+      selectedModel: string;
+      selectedMode: string;
+      contextTokens: number;
+      lastAgentEditedPaths?: string[];
+    }
+  ): void {
+    // Find and remove the todo plan card (may be anywhere in the array).
+    const todoIx = uiMessages.findIndex(
+      (m) =>
+        m.role === "tool" &&
+        m.step?.kind === "todo" &&
+        m.step.stepId === TODO_STEP_ID
+    );
+    const todoBefore = todoIx >= 0 ? uiMessages[todoIx] : undefined;
+    if (todoIx >= 0) {
+      uiMessages.splice(todoIx, 1);
+    }
+
+    // Drop all transient (in-progress) tool rows produced by this turn.
+    uiMessages.splice(transientStart);
+
+    // Re-append the todo card with cancelled status.
+    if (todoBefore?.step) {
+      const lang = resolveUiLanguage(getConfig().language);
+      const cancelledPreview =
+        lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
+      uiMessages.push({
+        ...todoBefore,
+        step: {
+          ...todoBefore.step,
+          status: "error",
+          resultPreview: cancelledPreview,
+        },
+      });
+
+      // Post the cancelled card to the live webview.
+      if (this.store.activeChatId === chatId) {
+        this.post({
+          type: "step",
+          chatId,
+          stepId: TODO_STEP_ID,
+          kind: "todo",
+          name: TODO_TOOL,
+          status: "error",
+          argsPreview: todoBefore.step.argsPreview,
+          steps: todoBefore.step.steps,
+          resultPreview: cancelledPreview,
+        });
+      }
+    }
+
+    // Persist the cleaned snapshot.
+    touchChat(this.store, chatId, {
+      history: snapshot.history,
+      uiMessages,
+      selectedModel: snapshot.selectedModel,
+      selectedMode: snapshot.selectedMode,
+      lastAgentEditedPaths: snapshot.lastAgentEditedPaths,
+      contextTokens: snapshot.contextTokens,
+    });
+    this.persist();
+    if (this.store.activeChatId === chatId) {
+      this.history = snapshot.history;
+      this.uiMessages = uiMessages;
+      this.contextTokens = snapshot.contextTokens;
+    }
+
+    // Clear run-state and notify the webview.
+    this.setRunStateForChat(chatId);
+    if (this.store.activeChatId === chatId) {
+      this.postRegenerateState();
+      this.post({ type: "stopped", chatId });
+      this.post({ type: "idle", chatId });
+    }
+  }
+
   private async onEditUserMessage(msg: {
     index?: unknown;
     text?: unknown;
@@ -1635,9 +1962,22 @@ export class HeadlessPanelHost {
       return { ok: false, error: "bad index" };
     }
 
-    const attachments = Array.isArray(msg.attachments)
-      ? (msg.attachments as MessageAttachment[])
-      : target.attachments || [];
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await this.persistTurnAttachments(
+        Array.isArray(msg.attachments) ? msg.attachments : target.attachments
+      );
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.post({
+        type: "runFailed",
+        text: messageText,
+        chatId: this.store.activeChatId,
+      });
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: messageText };
+    }
     if (!nextText && !attachments.length) {
       this.postRegenerateState();
       this.post({ type: "idle", chatId: this.store.activeChatId });
@@ -1669,7 +2009,7 @@ export class HeadlessPanelHost {
       mode: agentMode,
     };
     if (attachments.length) {
-      uiMsg.attachments = attachments;
+      uiMsg.attachments = attachments.map(stripAttachmentPayload);
     }
     this.uiMessages.push(uiMsg);
     this.lastTurnModel = "";
@@ -1746,6 +2086,18 @@ export class HeadlessPanelHost {
     });
   }
 
+  private async persistTurnAttachments(
+    incoming: unknown
+  ): Promise<MessageAttachment[]> {
+    if (!Array.isArray(incoming) || !incoming.length) {
+      return [];
+    }
+    return persistIncomingAttachments(
+      incoming as IncomingAttachment[],
+      HarborHeadless.getExtensionContext().storageUri as never
+    );
+  }
+
   private async onSend(msg: {
     text?: unknown;
     model?: unknown;
@@ -1756,11 +2108,37 @@ export class HeadlessPanelHost {
     resetSession?: unknown;
   }): Promise<unknown> {
     const text = String(msg.text || "").trim();
-    if (!text) {
-      return { ok: false, error: "empty" };
-    }
     if (this.abort) {
+      // The webview renders the user bubble optimistically before this RPC
+      // returns; a silent rejection ghosts the message with no feedback.
+      const lang = resolveUiLanguage(getConfig().language);
+      this.post({
+        type: "runFailed",
+        text:
+          lang === "ru"
+            ? "Предыдущий ход ещё выполняется — сначала остановите его"
+            : "Previous turn is still running — stop it first",
+        chatId: this.store.activeChatId,
+      });
       return { ok: false, error: "busy" };
+    }
+
+    let attachments: MessageAttachment[] = [];
+    try {
+      attachments = await this.persistTurnAttachments(msg.attachments);
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : String(error);
+      this.post({
+        type: "runFailed",
+        text: messageText,
+        chatId: this.store.activeChatId,
+      });
+      this.post({ type: "idle", chatId: this.store.activeChatId });
+      return { ok: false, error: messageText };
+    }
+    if (!text && !attachments.length) {
+      return { ok: false, error: "empty" };
     }
 
     const runChatId = this.store.activeChatId;
@@ -1807,6 +2185,7 @@ export class HeadlessPanelHost {
           : 0;
 
     const syncRunChat = (): void => {
+      if (!runActive()) return;
       const chat = this.store.chats[runChatId];
       if (!chat) {
         return;
@@ -1831,17 +2210,25 @@ export class HeadlessPanelHost {
       this.post({ ...message, chatId: runChatId });
     };
 
+    // Own the run before the first syncRunChat call — syncRunChat checks
+    // runActive(), and runActive must already be initialized there (TDZ).
+    const ac = new AbortController();
+    const savedAc = ac;
+    /** False after Stop (signal.aborted) or after a newer run replaced us. */
+    const runActive = (): boolean =>
+      !ac.signal.aborted && this.abort === savedAc;
+    this.abort = ac;
+    retainClineChatSession(runChatId);
+
     if (!msg.hideUser) {
       const userUi: UiMessage = {
         role: "user",
         text,
         mode: agentMode,
       };
-      const attachments = Array.isArray(msg.attachments)
-        ? (msg.attachments as MessageAttachment[])
-        : [];
-      if (attachments.length) {
-        userUi.attachments = attachments;
+      const attachmentsForUi = attachments.map(stripAttachmentPayload);
+      if (attachmentsForUi.length) {
+        userUi.attachments = attachmentsForUi;
       }
       // Persist immediately (webview already showed the bubble). Otherwise
       // switching chats before the turn finishes drops the user message.
@@ -1849,20 +2236,29 @@ export class HeadlessPanelHost {
       syncRunChat();
     }
 
-    const ac = new AbortController();
-    this.abort = ac;
+    // Index after which all UI messages are transient (produced by the
+    // current turn). Used by finalizeAbortedTurn to splice them out on Stop.
+    const runTransientStart = runUiMessages.length;
+
     const editedPaths: string[] = [];
     let assistantText = "";
     this.setRunStateForChat(runChatId, "running");
+    const mode = getModeById(agentMode);
+    let activeTurnModel = model;
+    this.setStatusForChat(
+      runChatId,
+      modeThinkingLabel(mode),
+      false,
+      "thinking",
+      this.statusModelLabel(activeTurnModel)
+    );
 
     try {
       runHistory = await runAgentTurn({
         model,
         history: runHistory,
         userText: text,
-        attachments: Array.isArray(msg.attachments)
-          ? (msg.attachments as MessageAttachment[])
-          : undefined,
+        attachments: attachments.length ? attachments : undefined,
         signal: ac.signal,
         agentMode,
         reasoningEffort: reasoningEffort || undefined,
@@ -1870,15 +2266,45 @@ export class HeadlessPanelHost {
           this.store.chats[runChatId]?.lastAgentEditedPaths || [],
         chatId: runChatId,
         resetSession: Boolean(msg.resetSession),
+        priorUiMessages: runUiMessages,
+        storageUri: HarborHeadless.getExtensionContext().storageUri as never,
         callbacks: {
           onPhase: (phase, detail) => {
-            postToRun({
-              type: "status",
+            if (!runActive()) return;
+            if (phase === "cline") {
+              this.setStatusForChat(
+                runChatId,
+                detail || "cline",
+                false,
+                "cline",
+                this.statusModelLabel(activeTurnModel)
+              );
+              return;
+            }
+            this.setStatusForChat(
+              runChatId,
+              detail || modePhaseStatusLabel(phase, mode),
+              false,
               phase,
-              text: detail || phase,
-            });
+              this.statusModelLabel(activeTurnModel)
+            );
+          },
+          onActiveModel: (modelId) => {
+            if (!runActive()) return;
+            activeTurnModel = modelId;
+            const current = this.chatStatusState.get(runChatId);
+            if (current && !current.hidden && current.text) {
+              this.setStatusForChat(
+                runChatId,
+                current.text,
+                false,
+                current.phase,
+                this.statusModelLabel(activeTurnModel)
+              );
+            }
           },
           onTool: (t) => {
+            if (!runActive()) return;
             postToRun({
               type: "append",
               role: "tool",
@@ -1886,6 +2312,7 @@ export class HeadlessPanelHost {
             });
           },
           onStep: (event) => {
+            if (!runActive()) return;
             postToRun({
               type: "step",
               ...event,
@@ -1897,6 +2324,7 @@ export class HeadlessPanelHost {
             }
           },
           onAssistantDelta: (delta) => {
+            if (!runActive()) return;
             assistantText += delta;
             postToRun({
               type: "assistantDelta",
@@ -1904,16 +2332,18 @@ export class HeadlessPanelHost {
             });
           },
           onAssistantStreamClear: () => {
+            if (!runActive()) return;
             assistantText = "";
             postToRun({ type: "assistantStreamClear" });
           },
           onAssistant: (full, meta) => {
+            if (!runActive()) return;
             const raw = full || assistantText;
-            // Plan card / Build chip: same wrap as VS Code agentPanelProvider.
-            const displayText =
-              agentMode === "plan" || looksLikeImplementationPlan(raw)
-                ? ensureProposedPlanWrapper(raw)
-                : raw;
+            const displayText = assistantFinaleDisplayText(raw, {
+              modeId: agentMode,
+              hadFileEdits: editedPaths.length > 0,
+              previousUserText: lastUiUserText(runUiMessages),
+            });
             assistantText = displayText;
             this.lastTurnModel = model;
             runUiMessages = [
@@ -1933,12 +2363,14 @@ export class HeadlessPanelHost {
             this.postRegenerateState();
           },
           onReasoning: (r) => {
+            if (!runActive()) return;
             postToRun({
               type: "reasoning",
               text: r,
             });
           },
           onReview: async (edits) => {
+            if (!runActive()) return;
             const reviewEdits =
               edits && edits.length
                 ? edits
@@ -1965,6 +2397,7 @@ export class HeadlessPanelHost {
             );
           },
           onUsage: (usage) => {
+            if (!runActive()) return;
             runContextTokens = usage.used;
             postToRun({
               type: "contextUsage",
@@ -1972,11 +2405,28 @@ export class HeadlessPanelHost {
             });
           },
           onFigmaNeedsConnect: () => {
+            if (!runActive()) return;
             this.post({ type: "figmaNeedsConnect" });
           },
         },
       });
 
+      // Race guard: if Stop+continue already started a newer run, the old
+      // draining turn must not post assistantDone / runFinished / idle —
+      // that would kill the new run's preloader and reset visible steps.
+      // Clean up transient rows and persist so the aborted turn survives reload.
+      if (!runActive()) {
+        this.finalizeAbortedTurn(runChatId, runUiMessages, runTransientStart, {
+          history: runHistory,
+          selectedModel: model,
+          selectedMode: agentMode,
+          lastAgentEditedPaths: editedPaths.length
+            ? [...new Set(editedPaths)]
+            : this.store.chats[runChatId]?.lastAgentEditedPaths,
+          contextTokens: runContextTokens,
+        });
+        return { ok: true };
+      }
       touchChat(this.store, runChatId, {
         history: runHistory,
         uiMessages: runUiMessages,
@@ -1995,6 +2445,7 @@ export class HeadlessPanelHost {
       }
       this.setRunStateForChat(runChatId, "success");
       postToRun({ type: "runFinished", outcome: "success" });
+      this.scheduleChatTitle(runChatId);
       this.scheduleScmRefresh([500, 1500]);
       return { ok: true };
     } catch (err) {
@@ -2003,6 +2454,18 @@ export class HeadlessPanelHost {
         ac.signal.aborted ||
         /abort/i.test(message) ||
         message === "aborted";
+      // Race guard: if a newer run started (Stop+continue), do not post
+      // runFailed / set error state — the new run owns the chat now.
+      // Clean up transient rows and persist so the aborted turn survives reload.
+      if (aborted && !runActive()) {
+        this.finalizeAbortedTurn(runChatId, runUiMessages, runTransientStart, {
+          history: runHistory,
+          selectedModel: model,
+          selectedMode: agentMode,
+          contextTokens: runContextTokens,
+        });
+        return { ok: true };
+      }
       runUiMessages = [...runUiMessages, { role: "error", text: message }];
       postToRun({
         type: "runFailed",
@@ -2027,8 +2490,18 @@ export class HeadlessPanelHost {
       this.scheduleScmRefresh(500);
       return { ok: false, error: message };
     } finally {
-      this.abort = undefined;
-      postToRun({ type: "idle" });
+      // Race guard: if a newer run is active or we were stopped, do not
+      // clear its abort controller and do not post idle — that would
+      // kill the new run's preloader and reset visible steps.
+      if (runActive()) {
+        this.abort = undefined;
+        this.setStatusForChat(runChatId, "", true);
+        postToRun({ type: "idle" });
+      }
+      onClineActiveChatChanged({
+        previousChatId: runChatId,
+        nextChatId: this.store.activeChatId,
+      });
     }
   }
 

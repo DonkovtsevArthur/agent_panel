@@ -13,7 +13,11 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
-import { selectUtilityModel } from "./modelRouting";
+import {
+  looksLikeUtilityModel,
+  selectUtilityModel,
+  UTILITY_MODEL_PREFERENCE,
+} from "./modelRouting";
 import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   capWorkspaceRuleText,
@@ -226,7 +230,40 @@ function cleanCommitMessage(raw: string): string {
   }
   // Иногда модели добавляют заголовок
   text = text.replace(/^(commit message|сообщение коммита)\s*:\s*/i, "").trim();
-  return text;
+  // Conventional commit — одна строка; берём первую непустую
+  const firstLine = text.split("\n").find((l) => l.trim().length > 0);
+  return (firstLine || text).trim();
+}
+
+/**
+ * Отсортировать кандидатов для commit message: сначала модели из
+ * UTILITY_MODEL_PREFERENCE (самые лёгкие/быстрые), потом остальные
+ * по looksLikeUtilityModel, потом всё остальное.
+ */
+function sortCommitModelCandidates(
+  ids: string[],
+  enabled: readonly { id: string; label?: string }[]
+): string[] {
+  const byId = new Map(enabled.map((m) => [m.id, m]));
+  return [...ids].sort((a, b) => {
+    const ra = rankCommitModel(a, byId.get(a));
+    const rb = rankCommitModel(b, byId.get(b));
+    return ra - rb;
+  });
+}
+
+function rankCommitModel(
+  id: string,
+  model: { id: string; label?: string } | undefined
+): number {
+  const prefIdx = UTILITY_MODEL_PREFERENCE.indexOf(id);
+  if (prefIdx >= 0) {
+    return prefIdx;
+  }
+  if (model && looksLikeUtilityModel(model)) {
+    return 100 + (model.label || model.id).length;
+  }
+  return 200;
 }
 
 async function findCommitRuleInCursorRules(
@@ -320,13 +357,15 @@ function buildPrompts(
 ): { system: string; user: string } {
   const baseSystem =
     lang === "ru"
-      ? "Ты помогаешь писать сообщения git-коммитов. Ответь только текстом сообщения коммита: 1–2 предложения, кратко, по сути изменений. Без кавычек, без markdown, без префикса «Commit message:»."
-      : "You write git commit messages. Reply with the commit message text only: 1–2 sentences, concise, focused on why. No quotes, no markdown, no 'Commit message:' prefix.";
+      ? "Ты помогаешь писать сообщения git-коммитов. Используй формат: <тип>(<область>): <описание> — одно краткое предложение на русском. Типы: feat/fix/docs/style/refactor/test/chore/perf. Ответь ТОЛЬКО текстом сообщения — без кавычек, без markdown, без префикса."
+      : "You write git commit messages. Use the format: <type>(<scope>): <description> — one concise sentence. Types: feat/fix/docs/style/refactor/test/chore/perf. Reply with the commit message text only — no quotes, no markdown, no prefix.";
 
+  // Если передан кастомный промпт — используем его как основной system prompt,
+  // а дефолтный добавляем только как «без markdown/кавычек»约束 в конце.
   const system = projectRule
     ? lang === "ru"
-      ? `${baseSystem}\n\nСоблюдай правило проекта для сообщений коммитов:\n${projectRule}`
-      : `${baseSystem}\n\nFollow the project commit-message rule:\n${projectRule}`
+      ? `${projectRule}\n\nОтвечай ТОЛЬКО текстом сообщения коммита — без кавычек, без markdown, без префикса «Commit message:» или «Сообщение коммита:»`
+      : `${projectRule}\n\nReply with the commit message text only — no quotes, no markdown, no 'Commit message:' prefix`
     : baseSystem;
 
   if (lang === "ru") {
@@ -354,14 +393,22 @@ export function fallbackCommitMessage(
 ): string {
   const list = normalizeRelPaths(paths);
   if (!list.length) {
-    return lang === "ru" ? "Обновить изменения" : "Update changes";
+    return lang === "ru" ? "chore: обновить изменения" : "chore: update changes";
   }
   if (list.length === 1) {
-    return lang === "ru" ? `Обновить ${list[0]}` : `Update ${list[0]}`;
+    return lang === "ru"
+      ? `chore: обновить ${list[0]}`
+      : `chore: update ${list[0]}`;
+  }
+  if (list.length <= 3) {
+    const names = list.map((p) => path.basename(p)).join(", ");
+    return lang === "ru"
+      ? `chore: обновить ${names}`
+      : `chore: update ${names}`;
   }
   return lang === "ru"
-    ? `Обновить ${list.length} файлов`
-    : `Update ${list.length} files`;
+    ? `chore: обновить ${list.length} файлов`
+    : `chore: update ${list.length} files`;
 }
 
 /**
@@ -398,20 +445,22 @@ export async function composeCommitMessageText(
       : "") ||
     enabled[0]?.id ||
     "";
-  const preferredModelId = String(config.commitMessage.modelId || "").trim();
-  // Явный выбор в Settings → иначе лёгкая/utility-модель, иначе основная.
-  const modelId =
-    (preferredModelId && enabled.some((m) => m.id === preferredModelId)
-      ? preferredModelId
-      : "") ||
-    selectUtilityModel(enabled, { fallbackModelId: mainModelId })?.modelId ||
-    mainModelId;
-  if (!modelId) {
-    return fallbackCommitMessage(paths, lang);
-  }
 
-  const endpoint = resolveModelEndpoint(modelId);
-  if (!endpoint.baseUrl || !endpoint.apiKey) {
+  // Кандидаты: явный список из Settings (отсортированный по простоте) →
+  // иначе utility-цепочка.
+  const configuredIds = config.commitMessage.modelIds.filter((id) =>
+    enabled.some((m) => m.id === id)
+  );
+  const candidates =
+    configuredIds.length > 0
+      ? sortCommitModelCandidates(configuredIds, enabled)
+      : (() => {
+          const sel = selectUtilityModel(enabled, {
+            fallbackModelId: mainModelId,
+          });
+          return sel ? [sel.modelId] : mainModelId ? [mainModelId] : [];
+        })();
+  if (!candidates.length) {
     return fallbackCommitMessage(paths, lang);
   }
 
@@ -428,43 +477,83 @@ export async function composeCommitMessageText(
   const instruction = hasCustomPrompt
     ? storedPrompt
     : projectRule || defaultCommitMessagePromptForLanguage(lang);
+  // Если кастомный промпт на русском — force lang="ru" для user prompt.
+  const effectiveLang =
+    hasCustomPrompt && /[а-яА-ЯёЁ]/.test(storedPrompt) ? "ru" : lang;
   const prompts = buildPrompts(
-    lang,
+    effectiveLang,
     data.diff,
     data.source,
     instruction
   );
-  const client = getOpenAICompatibleClient(endpoint.baseUrl, endpoint.apiKey, {
+
+  const COMMIT_MODEL_TIMEOUT_MS = 10_000;
+  const tlsOptions = {
     rejectUnauthorized: config.rejectUnauthorized,
     caBundlePath: config.caBundlePath,
-  });
+  };
 
-  const result = await client.chatCompletions(
-    {
-      model: modelId,
-      messages: [
-        { role: "system", content: prompts.system },
-        { role: "user", content: prompts.user },
-      ],
-      temperature: 0.2,
-      max_tokens: 256,
-    },
-    signal
-  );
-  const content = result.message.content;
-  const raw =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .map((part) =>
-              part && typeof part === "object" && "text" in part
-                ? String(part.text || "")
-                : ""
-            )
-            .join("")
-        : "";
-  return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+  let lastError: unknown;
+  for (const modelId of candidates) {
+    if (signal?.aborted) {
+      throw new Error("aborted");
+    }
+    const endpoint = resolveModelEndpoint(modelId);
+    if (!endpoint.baseUrl || !endpoint.apiKey) {
+      continue;
+    }
+    const client = getOpenAICompatibleClient(
+      endpoint.baseUrl,
+      endpoint.apiKey,
+      tlsOptions
+    );
+
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), COMMIT_MODEL_TIMEOUT_MS);
+    const signals: AbortSignal[] = [deadline.signal];
+    if (signal) {
+      signals.push(signal);
+    }
+    const combined = AbortSignal.any(signals);
+
+    try {
+      const result = await client.chatCompletions(
+        {
+          model: modelId,
+          messages: [
+            { role: "system", content: prompts.system },
+            { role: "user", content: prompts.user },
+          ],
+          temperature: 0.2,
+          max_tokens: 256,
+        },
+        combined
+      );
+      const content = result.message.content;
+      const raw =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content
+                .map((part) =>
+                  part && typeof part === "object" && "text" in part
+                    ? String(part.text || "")
+                    : ""
+                )
+                .join("")
+            : "";
+      return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new Error("aborted");
+      }
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return fallbackCommitMessage(paths, lang);
 }
 
 export async function generateCommitMessage(

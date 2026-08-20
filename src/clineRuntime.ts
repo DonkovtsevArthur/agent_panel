@@ -3,12 +3,14 @@
  * UI callbacks stay the Harbor AgentRunCallbacks contract.
  */
 import * as path from "path";
+import { createHash, randomUUID } from "crypto";
 import * as vscode from "vscode";
 import {
   getConfig,
   getContextWindow,
   getModeById,
   resolveModelEndpoint,
+  resolveModelPromptCache,
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
   resolveModelSupportsVision,
@@ -18,9 +20,17 @@ import {
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
 import {
+  appendModelIdentityRuntimeNudge,
   appendSubagentsRuntimeNudge,
+  appendTodoRuntimeNudge,
+  appendVisionInspectRuntimeNudge,
+  harborAskModeRulesForLanguage,
   harborDefaultRulesForLanguage,
+  harborModelIdentityRulesForLanguage,
   harborSubagentsRulesForLanguage,
+  harborTodoRulesForLanguage,
+  harborVisionInspectRulesForLanguage,
+  harborFocusChainRulesForLanguage,
   isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
@@ -31,6 +41,9 @@ import type { MessageAttachment } from "./attachments";
 import {
   attachmentPreviewDataUrl,
   buildInlinedAttachmentsPrompt,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  stripAttachmentPayload,
 } from "./attachments";
 import {
   enabledSkillNames,
@@ -40,6 +53,7 @@ import type {
   AgentRunCallbacks,
 } from "./agentLoop";
 import type { AgentStepEvent, ToolStepMetrics } from "./agentSteps";
+import type { UiMessage } from "./sessionStore";
 import {
   appendFigmaRuntimeNudge,
   harborMcpToolFingerprint,
@@ -59,6 +73,19 @@ import {
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
+import { withTurnImages } from "./turnImageInject";
+import { buildSpecialMentionsPrompt } from "./mentions";
+import { buildFocusChainBlock } from "./focusChain";
+import { describeChatImagesForMainModel } from "./figmaVisionHelper";
+import { withInspectableImages } from "./inspectImagesContext";
+import { createInspectImagesTool } from "./inspectImagesTool";
+import { withTodoStepEmitter } from "./todoStepContext";
+import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
+import {
+  harborClineToolPolicies,
+  harborToolApprovalsFingerprint,
+  requestHarborToolApproval,
+} from "./toolApproval";
 
 type ClineMode = "act" | "plan";
 
@@ -97,6 +124,14 @@ type ClineAgentEvent = {
   outputTokens?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+  /** Cached prefix tokens read this call (Anthropic cache_read / OpenAI cached_tokens). */
+  cacheReadTokens?: number;
+  /** Tokens written to the prompt cache this call (Anthropic cache_creation). */
+  cacheWriteTokens?: number;
+  /** Cumulative cache reads across iterations of this session. */
+  totalCacheReadTokens?: number;
+  /** Cumulative cache writes across iterations of this session. */
+  totalCacheWriteTokens?: number;
   recoverable?: boolean;
 };
 
@@ -135,6 +170,19 @@ type ClineCoreInstance = {
   }) => Promise<ClineStartResult["result"] | undefined>;
   abort: (sessionId: string, reason?: unknown) => Promise<void>;
   stop: (sessionId: string) => Promise<void>;
+  restore?: (input: {
+    sessionId: string;
+    checkpointRunCount: number;
+    cwd?: string;
+    restore?: { messages?: boolean; workspace?: boolean };
+  }) => Promise<unknown>;
+  compareCheckpoint?: (input: {
+    sessionId: string;
+    checkpointRunCount: number;
+    cwd?: string;
+  }) => Promise<{
+    diffs: Array<{ filePath: string; leftContent: string; rightContent: string }>;
+  }>;
   dispose?: () => Promise<void>;
   subscribe: (listener: (event: CoreSessionEvent) => void) => () => void;
 };
@@ -142,10 +190,81 @@ type ClineCoreInstance = {
 type LiveClineChat = {
   sessionId: string;
   fingerprint: string;
+  lastCheckpointRunCount?: number;
 };
 
 /** Harbor chatId → live interactive Cline session (in-memory; lost on reload). */
 const liveClineByChatId = new Map<string, LiveClineChat>();
+
+/**
+ * Unused interactive sessions are stopped after this idle so RSS can drop.
+ * Follow-up in that chat starts a new Cline session from Harbor history.
+ * Checkpoint restore needs a live session — it fails until the next turn.
+ */
+export const CLINE_SESSION_IDLE_EVICT_MS = 10 * 60 * 1000;
+
+/**
+ * Hard cap on simultaneously live chat sessions (LRU). Idle evict only runs
+ * after the user switches away from a chat, so rapid switching or many
+ * parallel turns could otherwise keep an unbounded number of Cline sessions
+ * inside the shared core. Over cap: stop the least-recently-used idle session
+ * via the same discard path as idle evict. Running turns and the active chat
+ * are never evicted — while only those remain, the cap is soft.
+ */
+export const CLINE_MAX_LIVE_SESSIONS = 12;
+
+const idleEvictTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearIdleEvictTimer(chatId: string): void {
+  const timer = idleEvictTimers.get(chatId);
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  idleEvictTimers.delete(chatId);
+}
+
+function clearAllIdleEvictTimers(): void {
+  for (const timer of idleEvictTimers.values()) {
+    clearTimeout(timer);
+  }
+  idleEvictTimers.clear();
+}
+
+/** Chats with a turn in flight — cap eviction must never stop these. */
+const liveClineBusyChatIds = new Set<string>();
+
+/** Last chat retained by the host — proxy for the chat the user is viewing. */
+let lastRetainedChatId: string | undefined;
+
+/** Map preserves insertion order: delete+set moves the chat to the MRU end. */
+function touchLiveClineChat(chatId: string): void {
+  const entry = liveClineByChatId.get(chatId);
+  if (entry) {
+    liveClineByChatId.delete(chatId);
+    liveClineByChatId.set(chatId, entry);
+  }
+}
+
+/**
+ * Stop least-recently-used idle sessions while above the cap. Fire-and-forget:
+ * discardClineChatSession removes the map entry synchronously, the actual
+ * core.stop continues in the background (same as idle evict).
+ */
+function enforceLiveClineSessionCap(protectedChatId: string): void {
+  while (liveClineByChatId.size > CLINE_MAX_LIVE_SESSIONS) {
+    const victim = [...liveClineByChatId.keys()].find(
+      (id) =>
+        id !== protectedChatId &&
+        id !== lastRetainedChatId &&
+        !liveClineBusyChatIds.has(id)
+    );
+    if (!victim) {
+      break;
+    }
+    void discardClineChatSession(victim);
+  }
+}
 
 /**
  * Subset of Cline's ModelInfo (vendor/.../shared/src/llms/model-info.ts) that
@@ -159,6 +278,7 @@ const liveClineByChatId = new Map<string, LiveClineChat>();
  */
 type ClineKnownModelInfo = {
   id: string;
+  name?: string;
   maxTokens?: number;
   contextWindow?: number;
   maxInputTokens?: number;
@@ -189,7 +309,11 @@ function buildClineModelInfo(modelId: string): {
     supportsVision: stored?.supportsVision,
   });
   const capabilities: string[] = ["tools"];
-  if (resolveModelSupportsVision(modelId) || caps.supportsVision) {
+  if (
+    resolveModelSupportsVision(modelId) ||
+    caps.supportsVision ||
+    resolveModelCapabilities(modelId).supportsVision
+  ) {
     capabilities.push("images");
   }
   // NOTE: не объявляем capability "reasoning"/"reasoning-effort" в catalog.
@@ -209,8 +333,20 @@ function buildClineModelInfo(modelId: string): {
   // shouldEmitAnthropicReasoning treats that as "emit Anthropic thinking" —
   // which is exactly the LiteLLM 400 path above. Passing capabilities:["tools"]
   // (no "reasoning") forces the portable OpenAI-style path instead.
+  //
+  // Opt-in prompt-cache markers (per-provider `promptCache` flag, falling back
+  // to the global `agentPanel.promptCache.enabled`): this capability plus the
+  // provider routing metadata (buildHarborProviderConfig) make the Cline
+  // gateway annotate the last user message with Anthropic-style cache_control.
+  // Unlike "reasoning" above, "prompt-cache" never switches the wire format, so
+  // the portable reasoning_effort path is unaffected. Only safe for upstreams
+  // that accept the marker (LiteLLM / OpenRouter / Anthropic-compatible).
+  if (resolveModelPromptCache(modelId)) {
+    capabilities.push("prompt-cache");
+  }
   const modelEntry: ClineKnownModelInfo = {
     id: modelId,
+    name: stored?.label || modelId,
     ...(Number.isFinite(contextWindow) && contextWindow > 0
       ? {
           contextWindow,
@@ -281,15 +417,21 @@ function loadClineBundle(): ClineBundle {
 
 function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
   if (!corePromise) {
-    corePromise = bundle.ClineCore.create({
+    const created = bundle.ClineCore.create({
       clientName: "harbor-agents",
       backendMode: "local",
       // Never wire PostHog / OTEL / live sinks; keep vendor telemetry trees intact for re-forks.
       telemetry: createHarborNoopTelemetry(),
       distinctId: HARBOR_CLINE_DISTINCT_ID,
-      toolPolicies: bundle.createToolPoliciesWithPreset("yolo"),
+      // Cline's "default" preset is `{}` and treats missing autoApprove as
+      // allow. Harbor always emits explicit policies so requestToolApproval
+      // runs for groups the user wants to confirm.
+      toolPolicies: harborClineToolPolicies(),
       capabilities: {
-        requestToolApproval: async () => ({ approved: true }),
+        requestToolApproval: async (request: {
+          toolName?: string;
+          input?: unknown;
+        }) => requestHarborToolApproval(request),
       },
       prepare: async () => ({
         applyToStartSessionInput: async (input: {
@@ -315,17 +457,35 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
           const priorExtra = Array.isArray(input.config.extraTools)
             ? (input.config.extraTools as unknown[])
             : [];
+          const inspectImages = createInspectImagesTool(
+            bundle.createTool,
+            plannerModelId
+          );
           return {
             ...input,
             config: {
               ...input.config,
               systemPrompt,
               disableMcpSettingsTools: true,
-              extraTools: [...priorExtra, ...mcp.tools],
+              extraTools: [
+                ...priorExtra,
+                ...(inspectImages ? [inspectImages] : []),
+                ...mcp.tools,
+              ],
             },
           };
         },
       }),
+    });
+    corePromise = created;
+    // A rejected creation must not poison the memo: without this, every later
+    // call replays the same rejected promise until the extension host restarts.
+    // Identity check so a concurrently recreated promise (dispose + new call)
+    // is never wiped by a stale rejection.
+    void created.catch(() => {
+      if (corePromise === created) {
+        corePromise = undefined;
+      }
     });
   }
   return corePromise;
@@ -555,6 +715,9 @@ function submitSummaryFromToolCalls(toolCalls: unknown): string {
  * payload). Keep streamed/result text only when it already has a longer
  * tagged plan.
  */
+/** `<proposed_plan>` marker (raw or entity-escaped) — Plan-card finale tag. */
+const PROPOSED_PLAN_TAGS_RE = /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i;
+
 function pickFinalAssistantText(options: {
   resultText: string;
   streamedText: string;
@@ -568,10 +731,8 @@ function pickFinalAssistantText(options: {
     options.messagesText.trim();
   const submit = options.submitSummary.trim();
   if (submit) {
-    const streamHasTags =
-      /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(stream);
-    const submitHasTags =
-      /(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(submit);
+    const streamHasTags = PROPOSED_PLAN_TAGS_RE.test(stream);
+    const submitHasTags = PROPOSED_PLAN_TAGS_RE.test(submit);
     if (streamHasTags && !submitHasTags && stream.length > submit.length) {
       return stream;
     }
@@ -595,9 +756,254 @@ function reasoningFromMessageContent(
     .join("");
 }
 
-function harborHistoryToClineMessages(
+const MAX_HISTORY_IMAGES = MAX_ATTACHMENTS;
+/** data: URL length for a MAX_IMAGE_BYTES payload (base64 + header). */
+const MAX_HISTORY_IMAGE_CHARS = Math.ceil(MAX_IMAGE_BYTES * (4 / 3)) + 128;
+
+function isUsableImageDataUrl(url: string | undefined): url is string {
+  return Boolean(
+    url &&
+      url.startsWith("data:image/") &&
+      url.length <= MAX_HISTORY_IMAGE_CHARS
+  );
+}
+
+function imageDedupKey(att: MessageAttachment | undefined, url: string): string {
+  return att?.storageKey || att?.id || url.slice(-96);
+}
+
+function isImageAttachmentLike(
+  att: { kind?: string; mime?: string } | undefined
+): boolean {
+  if (!att) {
+    return false;
+  }
+  if (att.kind === "image") {
+    return true;
+  }
+  return String(att.mime || "")
+    .toLowerCase()
+    .startsWith("image/");
+}
+
+function harborTurnHasImages(
+  history: ChatMessage[],
+  current?: MessageAttachment[]
+): boolean {
+  if ((current || []).some((att) => isImageAttachmentLike(att))) {
+    return true;
+  }
+  for (const msg of history) {
+    if (msg.role !== "user") {
+      continue;
+    }
+    if ((msg.attachments || []).some((att) => isImageAttachmentLike(att))) {
+      return true;
+    }
+    if (!Array.isArray(msg.content)) {
+      continue;
+    }
+    if (
+      msg.content.some(
+        (part) => part && typeof part === "object" && part.type === "image_url"
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function pushImageDataUrl(
+  att: MessageAttachment | undefined,
+  url: string | undefined,
+  out: string[],
+  seen: Set<string>
+): Promise<void> {
+  if (!isUsableImageDataUrl(url) || out.length >= MAX_HISTORY_IMAGES) {
+    return;
+  }
+  const key = imageDedupKey(att, url);
+  if (seen.has(key) || seen.has(url.slice(-96))) {
+    return;
+  }
+  seen.add(key);
+  seen.add(url.slice(-96));
+  out.push(url);
+}
+
+/**
+ * Current-turn images first, then earlier chat attachments.
+ * OpenAI-compatible gateways (and Cline compact) often keep pixels only on
+ * the latest user message — follow-ups like «что на картинке?» otherwise
+ * get no image and the model invents a scene.
+ */
+async function collectTurnImageDataUrls(
+  current: MessageAttachment[] | undefined,
+  history: ChatMessage[],
+  storageUri: vscode.Uri | undefined
+): Promise<{ urls: string[]; fromCurrent: number; fromHistory: number }> {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const att of current || []) {
+    if (!isImageAttachmentLike(att)) {
+      continue;
+    }
+    await pushImageDataUrl(
+      att,
+      await attachmentPreviewDataUrl(att, storageUri),
+      urls,
+      seen
+    );
+  }
+  const fromCurrent = urls.length;
+  for (const msg of history) {
+    if (msg.role !== "user") {
+      continue;
+    }
+    for (const att of msg.attachments || []) {
+      if (!isImageAttachmentLike(att)) {
+        continue;
+      }
+      await pushImageDataUrl(
+        att,
+        await attachmentPreviewDataUrl(att, storageUri),
+        urls,
+        seen
+      );
+    }
+    if (!Array.isArray(msg.content)) {
+      continue;
+    }
+    for (const part of msg.content) {
+      if (!part || typeof part !== "object" || part.type !== "image_url") {
+        continue;
+      }
+      await pushImageDataUrl(
+        undefined,
+        String(part.image_url?.url || "").trim(),
+        urls,
+        seen
+      );
+    }
+  }
+  return {
+    urls,
+    fromCurrent,
+    fromHistory: Math.max(0, urls.length - fromCurrent),
+  };
+}
+
+function historyVisionNudge(lang: "en" | "ru"): string {
+  return lang === "ru"
+    ? "К этому сообщению снова приложены изображения из более ранних реплик чата. Если вопрос про картинку — смотри их, не выдумывай другую сцену."
+    : "Images from earlier in this conversation are attached again. If the question refers to a picture, use those images; do not invent a different scene.";
+}
+
+/** Follow-up like «что на скрине слева?» — not «какая версия у проекта». */
+function userQuestionRefersToPriorImages(text: string): boolean {
+  return /картинк|изображен|скрин(?:шот)?|вложен|макет|на фото|это фото|аттач|attachments?|screenshots?|mockups?|\bimages?\b|\bpictures?\b|\bphotos?\b|\bdiagrams?\b/i.test(
+    String(text || "")
+  );
+}
+
+const HISTORY_VISION_NUDGE_PREFIX =
+  /^(?:К этому сообщению снова приложены изображения[\s\S]*?\n\n|Images from earlier in this conversation are attached again\.[\s\S]*?\n\n)/;
+
+/** Drop per-turn IDE dump from stored Cline user rows so a fork is not 50k+ tokens of app.tsx before the pixels. */
+function harborUserTextForClineHistory(text: string): string {
+  let s = String(text || "").trim();
+  s = s.replace(HISTORY_VISION_NUDGE_PREFIX, "");
+  const marker = "[Harbor turn context]";
+  const idx = s.indexOf(marker);
+  if (idx >= 0) {
+    s = s.slice(0, idx).trim();
+  }
+  return s;
+}
+
+function harborUserHadImage(msg: ChatMessage): boolean {
+  if ((msg.attachments || []).some((att) => isImageAttachmentLike(att))) {
+    return true;
+  }
+  if (!Array.isArray(msg.content)) {
+    return false;
+  }
+  return msg.content.some(
+    (part) => part && typeof part === "object" && part.type === "image_url"
+  );
+}
+
+function lastHistoryImageAttachments(
   history: ChatMessage[]
-): ClineHistoryMessage[] {
+): MessageAttachment[] | undefined {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const msg = history[i];
+    if (msg?.role !== "user") {
+      continue;
+    }
+    const atts = (msg.attachments || []).filter((att) =>
+      isImageAttachmentLike(att)
+    );
+    if (atts.length) {
+      return atts;
+    }
+  }
+  return undefined;
+}
+
+/** Cline ImageContent: `{ type:"image", data: rawBase64, mediaType }` — not `{ image: dataUrl }`. */
+function clineImageFromDataUrl(
+  url: string | undefined
+): { type: "image"; mediaType: string; data: string } | undefined {
+  const value = String(url || "").trim();
+  const match = value.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match?.[1] || !match[2] || !isUsableImageDataUrl(value)) {
+    return undefined;
+  }
+  return { type: "image", mediaType: match[1], data: match[2] };
+}
+
+async function clineImageBlocksForHarborUser(
+  msg: ChatMessage,
+  storageUri: vscode.Uri | undefined
+): Promise<Array<{ type: "image"; mediaType: string; data: string }>> {
+  const blocks: Array<{ type: "image"; mediaType: string; data: string }> = [];
+  const seen = new Set<string>();
+  const push = (url: string | undefined) => {
+    const block = clineImageFromDataUrl(url);
+    if (!block || seen.has(block.data) || blocks.length >= MAX_HISTORY_IMAGES) {
+      return;
+    }
+    seen.add(block.data);
+    blocks.push(block);
+  };
+  for (const att of msg.attachments || []) {
+    if (!isImageAttachmentLike(att)) {
+      continue;
+    }
+    push(await attachmentPreviewDataUrl(att, storageUri));
+  }
+  if (!Array.isArray(msg.content)) {
+    return blocks;
+  }
+  for (const part of msg.content) {
+    if (!part || typeof part !== "object" || part.type !== "image_url") {
+      continue;
+    }
+    push(String(part.image_url?.url || "").trim());
+  }
+  return blocks;
+}
+
+async function harborHistoryToClineMessages(
+  history: ChatMessage[],
+  storageUri?: vscode.Uri,
+  priorUiMessages?: UiMessage[]
+): Promise<ClineHistoryMessage[]> {
+  // Put pixels on the original user rows in Cline's ImageContent shape.
+  // A fork / model-switch starts a *new* Cline session; without this, GLM
+  // only sees images on the latest prompt (often after a huge text dump).
   const out: ClineHistoryMessage[] = [];
   let n = 0;
   for (const msg of history) {
@@ -617,17 +1023,30 @@ function harborHistoryToClineMessages(
               .join("")
           : "";
     const trimmed = text.trim();
-    if (!trimmed) {
+    const images =
+      msg.role === "user"
+        ? await clineImageBlocksForHarborUser(msg, storageUri)
+        : [];
+    const textForHistory =
+      msg.role === "user"
+        ? harborUserTextForClineHistory(trimmed) ||
+          (images.length || harborUserHadImage(msg) ? "(image)" : "")
+        : trimmed;
+    if (!textForHistory && !images.length) {
       continue;
     }
     n += 1;
-    const content: ClineMessageContent =
-      msg.role === "assistant" && msg.reasoning_content
-        ? [
-            { type: "thinking", thinking: String(msg.reasoning_content) },
-            { type: "text", text: trimmed },
-          ]
-        : trimmed;
+    let content: ClineMessageContent;
+    if (msg.role === "assistant" && msg.reasoning_content) {
+      content = [
+        { type: "thinking", thinking: String(msg.reasoning_content) },
+        { type: "text", text: textForHistory },
+      ];
+    } else if (images.length) {
+      content = [...images, { type: "text", text: textForHistory || "(image)" }];
+    } else {
+      content = textForHistory;
+    }
     out.push({
       role: msg.role,
       content,
@@ -635,7 +1054,114 @@ function harborHistoryToClineMessages(
       ts: Date.now() - (history.length - n) * 1000,
     });
   }
+  // Seed a fresh session with a compact digest of prior tool activity. The
+  // live Cline session is replayed only when reused; idle-eviction / reload /
+  // fingerprint change start a fresh session that would otherwise see just
+  // user+assistant text and lose "what was read/edited/ran". The digest is a
+  // single assistant message summarizing tool calls so the model does not
+  // re-read files it already inspected.
+  const digest = toolActivityDigest(priorUiMessages);
+  if (digest) {
+    n += 1;
+    out.push({
+      role: "assistant",
+      content: digest,
+      id: `harbor-tool-digest-${n}`,
+      ts: Date.now(),
+    });
+  }
   return out;
+}
+
+/**
+ * Build a compact textual digest of persisted tool / compaction / checkpoint
+ * steps for seeding a fresh Cline session. Only completed (status "done")
+ * tool steps are included — in-flight / errored rows from an aborted turn are
+ * dropped so the model does not act on half-finished work. Returns undefined
+ * when there is nothing worth replaying.
+ */
+function toolActivityDigest(
+  uiMessages: UiMessage[] | undefined
+): string | undefined {
+  if (!uiMessages || !uiMessages.length) {
+    return undefined;
+  }
+  const lines: string[] = [];
+  for (const m of uiMessages) {
+    if (m.role !== "tool" || !m.step) {
+      continue;
+    }
+    const step = m.step;
+    // Skip transient phases: keep only settled tool calls, not compaction /
+    // checkpoint / retry markers or todo progress cards (those reseed via UI).
+    if (step.kind !== "tool") {
+      continue;
+    }
+    if (step.status && step.status !== "done") {
+      continue;
+    }
+    const name = String(step.name || "tool").trim();
+    const args = String(step.argsPreview || "").trim();
+    const result = String(step.resultPreview || "").trim();
+    let line = `- ${name}`;
+    if (args) {
+      line += `(${args})`;
+    }
+    if (result) {
+      // Keep the digest compact; step result previews are already truncated.
+      line += ` → ${result}`;
+    }
+    lines.push(line);
+  }
+  if (!lines.length) {
+    return undefined;
+  }
+  return [
+    "[Ранее в этом чате уже выполнены инструменты:]",
+    ...lines,
+    "Учитывай эту проделанную работу и не повторяй уже сделанные чтения/правки.",
+  ].join("\n");
+}
+
+function mergeUserAttachmentsOntoHistory(
+  mapped: ChatMessage[],
+  prior: ChatMessage[],
+  current?: MessageAttachment[]
+): ChatMessage[] {
+  const priorUsers = prior.filter((m) => m.role === "user");
+  const userIndexes = mapped
+    .map((m, i) => (m.role === "user" ? i : -1))
+    .filter((i) => i >= 0);
+  const lastUserIndex = userIndexes[userIndexes.length - 1];
+  let u = 0;
+  return mapped.map((msg, index) => {
+    if (msg.role !== "user") {
+      return msg;
+    }
+    const fromPrior = priorUsers[u]?.attachments;
+    u += 1;
+    const atts =
+      index === lastUserIndex && current?.length ? current : fromPrior;
+    if (!atts?.length) {
+      return msg;
+    }
+    return {
+      ...msg,
+      attachments: atts.map((a) => stripAttachmentPayload(a)),
+    };
+  });
+}
+
+function clineContentHasImages(content: ClineMessageContent | undefined): boolean {
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  return content.some((part) => {
+    if (!part || typeof part !== "object") {
+      return false;
+    }
+    return part.type === "image" || part.type === "image_url";
+  });
 }
 
 function clineMessagesToHarborHistory(
@@ -645,7 +1171,7 @@ function clineMessagesToHarborHistory(
   for (const msg of messages) {
     if (msg.role === "user") {
       const text = textFromMessageContent(msg.content).trim();
-      if (text) {
+      if (text || clineContentHasImages(msg.content)) {
         out.push({ role: "user", content: text });
       }
       continue;
@@ -780,6 +1306,28 @@ function spawnAgentResultPreview(
     }
   }
   return previewJson(output, 240);
+}
+
+/**
+ * spawn_agent input starts with a long systemPrompt, so a plain 180-char
+ * previewJson truncation loses the task and every step card renders as an
+ * anonymous "Субагент". Keep the task first and cap it so it survives.
+ */
+function spawnAgentArgsPreview(toolName: string, input: unknown): string {
+  if (toolName === "spawn_agent" && input && typeof input === "object") {
+    const row = input as { task?: unknown; prompt?: unknown };
+    const task =
+      typeof row.task === "string"
+        ? row.task.trim()
+        : typeof row.prompt === "string"
+          ? row.prompt.trim()
+          : "";
+    if (task) {
+      const capped = task.length > 150 ? `${task.slice(0, 147)}…` : task;
+      return JSON.stringify({ task: capped });
+    }
+  }
+  return previewJson(input);
 }
 
 type ToolResultRow = {
@@ -947,7 +1495,7 @@ function emitStep(
 }
 
 function newSessionId(): string {
-  return `harbor-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  return `harbor-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 9)}`;
 }
 
 function clineSessionFingerprint(parts: {
@@ -959,6 +1507,10 @@ function clineSessionFingerprint(parts: {
   compact: boolean;
   reasoning: string;
   mcp: string;
+  approvals: string;
+  checkpoints: boolean;
+  promptCache: boolean;
+  prompt: string;
 }): string {
   return [
     parts.mode,
@@ -969,6 +1521,10 @@ function clineSessionFingerprint(parts: {
     parts.compact ? "1" : "0",
     parts.reasoning,
     parts.mcp,
+    parts.approvals,
+    parts.checkpoints ? "1" : "0",
+    parts.promptCache ? "1" : "0",
+    parts.prompt,
   ].join("|");
 }
 
@@ -1000,6 +1556,7 @@ export async function discardClineChatSession(
   if (!id) {
     return;
   }
+  clearIdleEvictTimer(id);
   const live = liveClineByChatId.get(id);
   if (!live) {
     return;
@@ -1017,8 +1574,146 @@ export async function discardClineChatSessions(
 }
 
 export async function discardAllClineChatSessions(): Promise<void> {
+  clearAllIdleEvictTimers();
   const ids = [...liveClineByChatId.keys()];
   await discardClineChatSessions(ids);
+}
+
+/** Keep the live session (chat is viewed or about to run). */
+export function retainClineChatSession(chatId: string | undefined): void {
+  const id = String(chatId || "").trim();
+  if (!id) {
+    return;
+  }
+  clearIdleEvictTimer(id);
+  lastRetainedChatId = id;
+  touchLiveClineChat(id);
+}
+
+/**
+ * Stop the Cline session after idle if the chat is not retained again.
+ * No-op when there is no live session.
+ */
+export function scheduleClineChatIdleEvict(
+  chatId: string | undefined,
+  delayMs: number = CLINE_SESSION_IDLE_EVICT_MS
+): void {
+  const id = String(chatId || "").trim();
+  if (!id || !liveClineByChatId.has(id)) {
+    return;
+  }
+  clearIdleEvictTimer(id);
+  const wait = Math.max(0, Math.floor(delayMs));
+  const timer = setTimeout(() => {
+    idleEvictTimers.delete(id);
+    void discardClineChatSession(id);
+  }, wait);
+  const nodeTimer = timer as NodeJS.Timeout;
+  if (typeof nodeTimer.unref === "function") {
+    nodeTimer.unref();
+  }
+  idleEvictTimers.set(id, timer);
+}
+
+/**
+ * User left `previousChatId` for `nextChatId`. Idle-evict the previous
+ * session unless a turn is still running there (host schedules after the run).
+ */
+export function onClineActiveChatChanged(input: {
+  previousChatId?: string;
+  nextChatId?: string;
+  previousStillRunning?: boolean;
+}): void {
+  const prev = String(input.previousChatId || "").trim();
+  const next = String(input.nextChatId || "").trim();
+  if (prev && prev !== next) {
+    if (!input.previousStillRunning) {
+      scheduleClineChatIdleEvict(prev);
+    }
+  }
+  if (next) {
+    retainClineChatSession(next);
+  }
+}
+
+/** Restore workspace files from a Cline checkpoint for this Harbor chat. */
+export async function restoreClineChatCheckpoint(
+  chatId: string,
+  options?: { checkpointRunCount?: number }
+): Promise<{ ok: boolean; error?: string }> {
+  const id = String(chatId || "").trim();
+  retainClineChatSession(id);
+  const live = id ? liveClineByChatId.get(id) : undefined;
+  if (!live?.sessionId) {
+    return { ok: false, error: "No live session checkpoint" };
+  }
+  const runCount =
+    Number(options?.checkpointRunCount) > 0
+      ? Number(options?.checkpointRunCount)
+      : live.lastCheckpointRunCount;
+  if (!runCount) {
+    return { ok: false, error: "No checkpoint yet in this chat" };
+  }
+  try {
+    const bundle = loadClineBundle();
+    const core = await getClineCore(bundle);
+    if (typeof core.restore !== "function") {
+      return { ok: false, error: "Checkpoints are not available in this runtime" };
+    }
+    await core.restore({
+      sessionId: live.sessionId,
+      checkpointRunCount: runCount,
+      cwd: workspaceCwd(),
+      restore: { messages: false, workspace: true },
+    });
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Compare a Cline checkpoint against the current workspace: returns per-file
+ * content diffs (checkpoint snapshot on the left, worktree on the right).
+ */
+export async function compareClineChatCheckpoint(
+  chatId: string,
+  options?: { checkpointRunCount?: number }
+): Promise<{
+  ok: boolean;
+  diffs?: Array<{ filePath: string; leftContent: string; rightContent: string }>;
+  error?: string;
+}> {
+  const id = String(chatId || "").trim();
+  retainClineChatSession(id);
+  const live = id ? liveClineByChatId.get(id) : undefined;
+  if (!live?.sessionId) {
+    return { ok: false, error: "No live session checkpoint" };
+  }
+  const runCount =
+    Number(options?.checkpointRunCount) > 0
+      ? Number(options?.checkpointRunCount)
+      : live.lastCheckpointRunCount;
+  if (!runCount) {
+    return { ok: false, error: "No checkpoint yet in this chat" };
+  }
+  try {
+    const bundle = loadClineBundle();
+    const core = await getClineCore(bundle);
+    if (typeof core.compareCheckpoint !== "function") {
+      return { ok: false, error: "Checkpoint compare is not available in this runtime" };
+    }
+    const result = await core.compareCheckpoint({
+      sessionId: live.sessionId,
+      checkpointRunCount: runCount,
+      cwd: workspaceCwd(),
+    });
+    return { ok: true, diffs: result.diffs || [] };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: message };
+  }
 }
 
 /** Extension shutdown: stop chats and dispose the shared ClineCore host. */
@@ -1042,10 +1737,33 @@ export async function disposeClineRuntime(): Promise<void> {
  * bodies. Without this, openai-compatible / LiteLLM/OpenRouter rejections arrive
  * as bare "Request failed with status code 400" and the real cause is invisible —
  * especially painful for spawn_agent children.
+ *
+ * With per-provider prompt-cache enabled (agentPanel.providers[].promptCache,
+ * falling back to agentPanel.promptCache.enabled) also carries gateway routing
+ * metadata so the Cline gateway emits Anthropic-style cache_control markers for
+ * this model (the session providerConfig.metadata is forwarded into the gateway
+ * by the vendor handler-factory patch; without it the metadata is silently dropped).
  */
-function buildHarborProviderConfig(): {
+function buildHarborProviderConfig(
+  modelInfo?: ClineKnownModelInfo,
+  options?: { promptCache?: boolean; providerId?: string }
+): {
   providerId: string;
   fetch: typeof fetch;
+  modelInfo?: ClineKnownModelInfo;
+  knownModels?: Record<string, ClineKnownModelInfo>;
+  metadata?: {
+    routing: {
+      promptCache: {
+        format: "anthropic-cache-control";
+        routes: Array<{
+          matcher: "model-id";
+          modelId: string;
+          requiredCapability: "prompt-cache";
+        }>;
+      };
+    };
+  };
   options: {
     onResponseError: (response: {
       status: number;
@@ -1053,9 +1771,34 @@ function buildHarborProviderConfig(): {
     }) => Promise<void>;
   };
 } {
+  const promptCacheEnabled = Boolean(options?.promptCache);
   return {
-    providerId: "openai-compatible",
+    providerId: options?.providerId || "openai-compatible",
     fetch: harborFetch as typeof fetch,
+    ...(modelInfo
+      ? {
+          modelInfo,
+          knownModels: { [modelInfo.id]: modelInfo },
+        }
+      : {}),
+    ...(promptCacheEnabled && modelInfo
+      ? {
+          metadata: {
+            routing: {
+              promptCache: {
+                format: "anthropic-cache-control" as const,
+                routes: [
+                  {
+                    matcher: "model-id" as const,
+                    modelId: modelInfo.id,
+                    requiredCapability: "prompt-cache" as const,
+                  },
+                ],
+              },
+            },
+          },
+        }
+      : {}),
     options: {
       onResponseError: async (response) => {
         if (response.status < 400) {
@@ -1097,6 +1840,9 @@ export async function runClineAgentTurn(options: {
   chatId?: string;
   /** Regenerate / edit: drop the live session and re-seed from history. */
   resetSession?: boolean;
+  /** Persisted UI steps (tool cards) — seed a fresh Cline session with a
+   *  compact tool-activity digest when the live session cannot be reused. */
+  priorUiMessages?: UiMessage[];
 }): Promise<ChatMessage[]> {
   const { callbacks } = options;
   const bundle = loadClineBundle();
@@ -1109,6 +1855,12 @@ export async function runClineAgentTurn(options: {
       "Нет провайдера для модели. Откройте Settings → Providers."
     );
   }
+
+  // Map Harbor provider protocol → Cline gateway providerId.
+  // "anthropic" protocol → native Anthropic provider (Messages API /v1/messages).
+  // Everything else (including unset) → "openai-compatible" (Chat Completions).
+  const clineProviderId =
+    endpoint.protocol === "anthropic" ? "anthropic" : "openai-compatible";
 
   const cwd = workspaceCwd();
   const clineMode = mapHarborModeToCline(
@@ -1124,6 +1876,9 @@ export async function runClineAgentTurn(options: {
   // stays intact instead of being replaced wholesale.
   const uiLang = resolveUiLanguage(getConfig().language);
   const enableSpawnAgent = config.subagents.enabled !== false;
+  /** update_todo plan card — Agent/Plan only (Ask is Q&A, not multi-step work). */
+  const harborModeId = String(options.agentMode || "agent").toLowerCase();
+  const enableTodoTool = harborModeId !== "ask";
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
@@ -1133,12 +1888,31 @@ export async function runClineAgentTurn(options: {
   const modePrompt = String(modeDef.prompt || "").trim();
   const harborRules = [
     customRules,
+    // Truthful self-identification: the UI-selected model id, ahead of any
+    // model names quoted by workspace AGENTS.md / rules docs.
+    harborModelIdentityRulesForLanguage(options.model, uiLang),
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
+    // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
+    enableTodoTool ? harborTodoRulesForLanguage(uiLang) : "",
+    resolveModelSupportsVision(options.model)
+      ? ""
+      : harborVisionInspectRulesForLanguage(uiLang),
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
+      : "",
+    // Focus chain: checklist rules for Agent/Plan when enabled (Ask is Q&A).
+    config.focusChain.enabled !== false &&
+    String(options.agentMode || "").toLowerCase() !== "ask"
+      ? harborFocusChainRulesForLanguage(uiLang)
+      : "",
+    // Ask shares Cline's "plan" mode under the hood (see mapHarborModeToCline),
+    // so Cline's base prompt always says "Plan mode" / "toggle to Act mode".
+    // Override that framing so the model calls itself "Ask" to the user.
+    String(options.agentMode || "").toLowerCase() === "ask"
+      ? harborAskModeRulesForLanguage(uiLang)
       : "",
     modePrompt
       ? `# Mode: ${modeDef.label || modeDef.id}\n${modePrompt}`
@@ -1165,16 +1939,28 @@ export async function runClineAgentTurn(options: {
   const core = await getClineCore(bundle);
   const enableParallelToolCalls = config.parallelToolCalls.enabled !== false;
   const enableAutoCompact = config.autoCompact.enabled !== false;
+  const enableCheckpoints = config.checkpoints.enabled !== false;
+  const enablePromptCache = resolveModelPromptCache(options.model);
   /** Default matches Cline AgentConfigSchema (8 → parallel). */
   const maxParallelToolCalls = enableParallelToolCalls ? 8 : 1;
   const chatId = String(options.chatId || "").trim();
   const persistSession = Boolean(chatId);
+  if (persistSession) {
+    liveClineBusyChatIds.add(chatId);
+  }
   const reasoningKey = resolveModelSupportsReasoningEffort(options.model)
     ? String(
         options.reasoningEffort || resolveModelReasoningEffort(options.model) || ""
       )
     : "";
   const mcpFingerprint = await harborMcpToolFingerprint(clineMode === "plan");
+  // systemPrompt is fixed at core.start and core.send cannot update it, so
+  // any prompt-affecting change (Harbor rules, custom system prompt, Cline
+  // bundle update) must recreate the session via the fingerprint.
+  const promptHash = createHash("sha1")
+    .update(baseSystemPrompt)
+    .digest("hex")
+    .slice(0, 12);
   const fingerprint = clineSessionFingerprint({
     mode: String(options.agentMode || "agent").toLowerCase(),
     model: options.model,
@@ -1184,6 +1970,10 @@ export async function runClineAgentTurn(options: {
     compact: enableAutoCompact,
     reasoning: reasoningKey,
     mcp: mcpFingerprint,
+    approvals: harborToolApprovalsFingerprint(),
+    checkpoints: enableCheckpoints,
+    promptCache: enablePromptCache,
+    prompt: promptHash,
   });
 
   if (persistSession && options.resetSession) {
@@ -1195,14 +1985,27 @@ export async function runClineAgentTurn(options: {
     await stopLiveClineSession(live);
     live = undefined;
   }
+  if (live) {
+    touchLiveClineChat(chatId);
+  }
   let sessionId = live?.sessionId || newSessionId();
   let reusedSession = Boolean(live);
 
   const edits: FileEditStat[] = [];
   let assistantText = "";
+  /**
+   * Assistant text blocks this turn, one per model round (`content_end`).
+   * Blocks that precede tool rounds are flushed as `text` step cards inside
+   * the collapsed tool group so mid-turn lists / answers are not wiped when
+   * the finale-only bubble replaces the stream.
+   */
+  const textBlocks: Array<{ text: string; flushed: boolean }> = [];
+  let currentTextBlock = "";
+  let textBlockSeq = 0;
   let reasoningText = "";
   let submitSummary = "";
   let stepSeq = 0;
+  let turnCheckpointRunCount: number | undefined;
   const toolInputs = new Map<string, unknown>();
   /** Sum turn deltas so parent + forwarded child usage both count. */
   let usagePromptTokens = 0;
@@ -1229,6 +2032,68 @@ export async function runClineAgentTurn(options: {
     callbacks.onPhase("cline", text);
   };
 
+  /**
+   * Flush completed text blocks that precede the current tool round as
+   * `text` step cards (rendered inside the collapsed tool group) and drop
+   * the streaming bubble so the block is not displayed twice. Called when a
+   * tool call starts — at that point the block is known to be intermediate,
+   * not the turn finale. Exception: before submit_and_exit a plan-tagged
+   * block stays pending so it can still become the Plan-card finale
+   * (pickFinalAssistantText prefers it over the submit summary).
+   */
+  const flushIntermediateTextBlocks = (keepPlanTaggedPending: boolean): void => {
+    let flushedAny = false;
+    for (const block of textBlocks) {
+      if (block.flushed) {
+        continue;
+      }
+      if (
+        keepPlanTaggedPending &&
+        PROPOSED_PLAN_TAGS_RE.test(block.text)
+      ) {
+        continue;
+      }
+      block.flushed = true;
+      textBlockSeq += 1;
+      emitStep(callbacks, {
+        stepId: `text-block-${textBlockSeq}`,
+        kind: "text",
+        status: "done",
+        text: block.text,
+      });
+      flushedAny = true;
+    }
+    if (flushedAny) {
+      callbacks.onAssistantStreamClear?.();
+    }
+  };
+
+  /** Text not yet shown as a card: pending blocks + the partial stream. */
+  const pendingTextTail = (): string =>
+    [
+      ...textBlocks.filter((block) => !block.flushed).map((block) => block.text),
+      currentTextBlock.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+  /** All assistant text this turn — the model-side history keeps everything. */
+  const fullTurnText = (): string =>
+    [...textBlocks.map((block) => block.text), currentTextBlock.trim()]
+      .filter(Boolean)
+      .join("\n\n");
+
+  /** True when the candidate was already flushed to a `text` step card. */
+  const isFlushedTextBlock = (candidate: string): boolean => {
+    const value = String(candidate || "").trim();
+    if (!value) {
+      return false;
+    }
+    return textBlocks.some(
+      (block) => block.flushed && block.text.trim() === value
+    );
+  };
+
   const handleAgentEvent = (event: ClineAgentEvent) => {
     switch (event.type) {
       case "content_start": {
@@ -1236,6 +2101,11 @@ export async function runClineAgentTurn(options: {
           const chunk = String(event.text || "");
           if (chunk) {
             assistantText += chunk;
+            // `accumulated` is the per-message stream state from Cline;
+            // prefer it when present so missed chunks cannot desync us.
+            const accumulated =
+              typeof event.accumulated === "string" ? event.accumulated : "";
+            currentTextBlock = accumulated || currentTextBlock + chunk;
             callbacks.onAssistantDelta?.(chunk);
           }
           break;
@@ -1257,6 +2127,10 @@ export async function runClineAgentTurn(options: {
           stepSeq += 1;
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
+          // A tool call starting here proves earlier text blocks were
+          // intermediate (not the finale) — flush them as `text` cards.
+          // Before submit_and_exit keep plan-tagged blocks pending (finale).
+          flushIntermediateTextBlocks(isSubmitAndExitToolName(name));
           if (event.input !== undefined) {
             toolInputs.set(toolCallId, event.input);
           }
@@ -1266,7 +2140,12 @@ export async function runClineAgentTurn(options: {
               submitSummary = summary;
             }
           }
-          const argsPreview = previewJson(event.input);
+          // update_todo renders as the dedicated plan card (emitted by the
+          // tool's execute) — skip the generic tool row to avoid duplicates.
+          if (name === TODO_TOOL) {
+            break;
+          }
+          const argsPreview = spawnAgentArgsPreview(name, event.input);
           emitStep(callbacks, {
             stepId: toolCallId,
             kind: "tool",
@@ -1282,8 +2161,13 @@ export async function runClineAgentTurn(options: {
       case "content_end": {
         if (event.contentType === "text") {
           const finalText = String(event.text || "").trim();
+          const blockText = finalText || currentTextBlock.trim();
+          currentTextBlock = "";
           if (finalText && !assistantText.trim()) {
             assistantText = finalText;
+          }
+          if (blockText) {
+            textBlocks.push({ text: blockText, flushed: false });
           }
           break;
         }
@@ -1317,12 +2201,26 @@ export async function runClineAgentTurn(options: {
                   : "";
           const failed = Boolean(errMsg) || toolOutputIsSoftFail(event.output);
           const metrics = parseToolMetrics(name, event.output, input);
+          if (name === TODO_TOOL) {
+            // Plan card is rendered from the execute-side event; on failure
+            // surface the error there instead of a duplicate tool row.
+            if (failed) {
+              emitStep(callbacks, {
+                stepId: TODO_STEP_ID,
+                kind: "todo",
+                name: TODO_TOOL,
+                status: "error",
+                resultPreview: errMsg.slice(0, 200),
+              });
+            }
+            break;
+          }
           emitStep(callbacks, {
             stepId: toolCallId,
             kind: "tool",
             toolCallId,
             name,
-            argsPreview: previewJson(input),
+            argsPreview: spawnAgentArgsPreview(name, input),
             status: failed ? "error" : "done",
             resultPreview: spawnAgentResultPreview(name, event.output, errMsg),
             ...(metrics ? { metrics } : {}),
@@ -1377,26 +2275,28 @@ export async function runClineAgentTurn(options: {
         break;
       }
       case "usage": {
-        // Prefer per-turn deltas so parent + child (forwarded to root) sum.
-        const inDelta = Number(event.inputTokens ?? 0);
-        const outDelta = Number(event.outputTokens ?? 0);
-        if (inDelta > 0 || outDelta > 0) {
-          usagePromptTokens += inDelta;
-          usageCompletionTokens += outDelta;
-        } else {
-          usagePromptTokens = Math.max(
-            usagePromptTokens,
-            Number(event.totalInputTokens ?? 0)
-          );
-          usageCompletionTokens = Math.max(
-            usageCompletionTokens,
-            Number(event.totalOutputTokens ?? 0)
-          );
-        }
+        // inputTokens/outputTokens are per-API-call deltas (just this
+        // iteration's tokens).  totalInputTokens/totalOutputTokens are
+        // cumulative sums across all iterations — useful for billing but
+        // NOT for context-window fill (which is what the UI ring shows).
+        // Use the latest delta to match what Cline native displays:
+        // context-window occupancy of the last API call.
+        // cacheRead/cacheWrite are per-call too; the matching `total*` fields
+        // are cumulative and drive the per-chat token totals in the UI.
+        usagePromptTokens = Number(event.inputTokens ?? 0);
+        usageCompletionTokens = Number(event.outputTokens ?? 0);
+        const cacheRead = Number(event.cacheReadTokens ?? 0);
+        const cacheWrite = Number(event.cacheWriteTokens ?? 0);
         callbacks.onUsage?.({
           used: usagePromptTokens + usageCompletionTokens,
           promptTokens: usagePromptTokens,
           completionTokens: usageCompletionTokens,
+          cacheReadTokens: cacheRead,
+          cacheWriteTokens: cacheWrite,
+          totalInputTokens: Number(event.totalInputTokens ?? 0),
+          totalOutputTokens: Number(event.totalOutputTokens ?? 0),
+          totalCacheReadTokens: Number(event.totalCacheReadTokens ?? 0),
+          totalCacheWriteTokens: Number(event.totalCacheWriteTokens ?? 0),
         });
         break;
       }
@@ -1420,6 +2320,32 @@ export async function runClineAgentTurn(options: {
             stepId: `compaction-${stepSeq}`,
             kind: "compaction",
             text: label,
+          });
+        }
+        if (
+          /checkpoint/i.test(noticeReason) ||
+          /checkpoint/i.test(String(event.message || ""))
+        ) {
+          const metaCount = Number(
+            event.metadata?.runCount ?? event.metadata?.checkpointRunCount ?? 0
+          );
+          turnCheckpointRunCount =
+            Number.isFinite(metaCount) && metaCount > 0
+              ? metaCount
+              : (turnCheckpointRunCount || live?.lastCheckpointRunCount || 0) +
+                1;
+          if (persistSession) {
+            const row = liveClineByChatId.get(chatId);
+            if (row) {
+              row.lastCheckpointRunCount = turnCheckpointRunCount;
+            }
+          }
+          stepSeq += 1;
+          emitStep(callbacks, {
+            stepId: `checkpoint-${stepSeq}`,
+            kind: "checkpoint",
+            text: "Workspace checkpoint saved — click to restore files",
+            checkpointRunCount: turnCheckpointRunCount,
           });
         }
         break;
@@ -1476,6 +2402,16 @@ export async function runClineAgentTurn(options: {
     }
   }
 
+  const imageBundle = await collectTurnImageDataUrls(
+    options.attachments,
+    options.history,
+    options.storageUri
+  );
+  const currentImageUrls = imageBundle.urls.slice(0, imageBundle.fromCurrent);
+  const currentHasImage = currentImageUrls.length > 0;
+  let userImages = imageBundle.urls;
+  const chatSeesImages = resolveModelSupportsVision(options.model);
+
   let userPrompt = String(options.userText || "").trim();
   const inlined = await buildInlinedAttachmentsPrompt(
     options.userText,
@@ -1486,37 +2422,130 @@ export async function runClineAgentTurn(options: {
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
-  const turnContext = await buildTurnContextBlock({
-    skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
-    lastAgentEditedPaths: options.lastAgentEditedPaths,
-  });
+  // Special @problems / @terminal / @url mentions inject live snapshots.
+  const specialMentions = await buildSpecialMentionsPrompt(
+    String(options.userText || "")
+  );
+  if (specialMentions) {
+    userPrompt = userPrompt
+      ? `${userPrompt}\n\n${specialMentions}`
+      : specialMentions;
+  }
+  // Do not skip IDE context just because an earlier turn had a screenshot.
+  // Follow-up turns of a live session can slim down or drop the block
+  // (agentPanel.turnContext.followUps): the heavy parts went with the
+  // session's first turn and old blocks stay in the session history anyway.
+  const followUpContextMode = reusedSession
+    ? config.turnContext.followUps
+    : "full";
+  const turnContext =
+    currentHasImage || followUpContextMode === "none"
+      ? ""
+      : await buildTurnContextBlock({
+          skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
+          lastAgentEditedPaths: options.lastAgentEditedPaths,
+          slim: followUpContextMode === "slim",
+        });
   if (turnContext) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${turnContext}`
       : turnContext;
   }
+  // Focus chain: re-inject the latest assistant checklist on follow-up turns.
+  if (config.focusChain.enabled !== false && options.history?.length) {
+    const focusChain = buildFocusChainBlock(options.history);
+    if (focusChain) {
+      userPrompt = userPrompt
+        ? `${userPrompt}\n\n${focusChain}`
+        : focusChain;
+    }
+  }
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
   }
+  if (!chatSeesImages) {
+    const describeHistoryFollowUp =
+      !currentHasImage &&
+      imageBundle.fromHistory > 0 &&
+      userQuestionRefersToPriorImages(String(options.userText || ""));
+    const describeUrls = currentHasImage
+      ? currentImageUrls
+      : describeHistoryFollowUp
+        ? imageBundle.urls
+        : [];
+    if (describeUrls.length) {
+      emitStep(callbacks, {
+        stepId: "vision-helper",
+        kind: "tool",
+        name: "vision",
+        status: "running",
+        argsPreview: options.model,
+      });
+      try {
+        const helper = await describeChatImagesForMainModel({
+          imageDataUrls: describeUrls,
+          userQuestion: String(options.userText || "").trim(),
+          chatModelId: options.model,
+          signal: options.signal,
+        });
+        emitStep(callbacks, {
+          stepId: "vision-helper",
+          kind: "tool",
+          name: "vision",
+          status: helper.text ? "done" : "error",
+          argsPreview: helper.visionModelId || options.model,
+          resultPreview: (helper.text || "").slice(0, 400),
+        });
+        if (helper.text) {
+          userPrompt = `${helper.text}\n\n${userPrompt}`;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emitStep(callbacks, {
+          stepId: "vision-helper",
+          kind: "tool",
+          name: "vision",
+          status: "error",
+          resultPreview: message.slice(0, 400),
+        });
+      }
+    }
+    // Text model cannot use pixels; sending them only makes it deny the image.
+    userImages = [];
+  }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
+  // Model identity rides on every turn: reused sessions keep the system
+  // prompt from core.start, so only a turn-local nudge reaches old chats.
+  userPrompt = appendModelIdentityRuntimeNudge(
+    userPrompt,
+    options.model,
+    uiLang
+  );
+  // update_todo plan card — build it at the very start of every Agent/Plan turn.
+  userPrompt = appendTodoRuntimeNudge(userPrompt, enableTodoTool, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(
     userPrompt,
     enableSpawnAgent,
     uiLang
   );
-
-  const userImages: string[] = [];
-  for (const att of options.attachments || []) {
-    if (att.kind !== "image") {
-      continue;
-    }
-    const dataUrl = await attachmentPreviewDataUrl(att, options.storageUri);
-    if (dataUrl) {
-      userImages.push(dataUrl);
-    }
+  userPrompt = appendVisionInspectRuntimeNudge(
+    userPrompt,
+    !chatSeesImages && imageBundle.urls.length > 0,
+    uiLang
+  );
+  if (
+    chatSeesImages &&
+    imageBundle.fromHistory > 0 &&
+    !currentHasImage
+  ) {
+    userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
-  const initialMessages = harborHistoryToClineMessages(options.history);
+  const initialMessages = await harborHistoryToClineMessages(
+    options.history,
+    options.storageUri,
+    options.priorUiMessages
+  );
 
   const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
     ? toClineReasoningOptions(
@@ -1527,6 +2556,22 @@ export async function runClineAgentTurn(options: {
   // Resolve real context window / max output so Cline budgets auto-compact and
   // output caps against the model's actual limits instead of a blind default.
   const modelInfoData = buildClineModelInfo(options.model);
+  // Harbor always sends capabilities:["tools"] (so Cline does not emit
+  // Anthropic-shaped thinking). Missing "images" then fail-closes: Cline
+  // replaces pixels with "[Image attached — this model cannot view images]".
+  // Advertise image input only when this chat model can actually view pixels.
+  // GLM-5.2 is text-only: sending `"images"` makes Cline attach bytes the
+  // model ignores, then it answers «не вижу картинку».
+  if (
+    chatSeesImages &&
+    (userImages.length ||
+      harborTurnHasImages(options.history, options.attachments))
+  ) {
+    const entry = modelInfoData.knownModels[options.model];
+    if (entry && !entry.capabilities?.includes("images")) {
+      entry.capabilities = [...(entry.capabilities || ["tools"]), "images"];
+    }
+  }
 
   const skillsConfig = config.skills;
   const hasSkillsFactory =
@@ -1557,31 +2602,48 @@ export async function runClineAgentTurn(options: {
 
   try {
     let result: ClineStartResult["result"];
-    if (reusedSession) {
-      try {
-        result = await core.send({
-          sessionId,
+    const runTurn = async (): Promise<void> => {
+      if (reusedSession) {
+        try {
+          result = await core.send({
+            sessionId,
+            prompt: userPrompt,
+            ...(userImages.length ? { userImages } : {}),
+            mode: clineMode,
+          });
+        } catch (error) {
+          if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
+            throw error;
+          }
+          // Session is gone or stuck (session_not_found / session_run_in_progress).
+          // discardClineChatSession aborts the in-flight run, stops the session
+          // (shutdown awaits finalization), and drops it from the live map — no
+          // leak into the shared Cline core. Fall through to core.start below.
+          await discardClineChatSession(chatId);
+          reusedSession = false;
+          sessionId = newSessionId();
+        }
+        if (reusedSession && result === undefined) {
+          // core.send returned undefined = the session was still busy from a
+          // prior (e.g. hung) turn and the prompt was silently queued. We
+          // cannot await a queued prompt's result and retrying core.send would
+          // duplicate it, so discard this session (aborts the stuck run, drops
+          // the queued prompt) and start a fresh one from Harbor history.
+          // Without this, the turn ended with an empty finale and a follow-up
+          // "continue" saw no context of what had been done.
+          await discardClineChatSession(chatId);
+          reusedSession = false;
+          sessionId = newSessionId();
+        }
+      }
+
+      if (!reusedSession) {
+        const startResult = await core.start({
+          source: "vscode",
+          interactive: persistSession,
           prompt: userPrompt,
           ...(userImages.length ? { userImages } : {}),
-          mode: clineMode,
-        });
-      } catch (error) {
-        if (options.signal?.aborted || !isUnusableClineSessionError(error)) {
-          throw error;
-        }
-        liveClineByChatId.delete(chatId);
-        reusedSession = false;
-        sessionId = newSessionId();
-      }
-    }
-
-    if (!reusedSession) {
-      const startResult = await core.start({
-        source: "vscode",
-        interactive: persistSession,
-        prompt: userPrompt,
-        ...(userImages.length ? { userImages } : {}),
-        ...(initialMessages.length ? { initialMessages } : {}),
+          ...(initialMessages.length ? { initialMessages } : {}),
         ...(userInstructionService
           ? {
               localRuntime: {
@@ -1596,7 +2658,7 @@ export async function runClineAgentTurn(options: {
             }),
         config: {
           sessionId,
-          providerId: "openai-compatible",
+          providerId: clineProviderId,
           modelId: options.model,
           apiKey: endpoint.apiKey || "no-key",
           baseUrl: endpoint.baseUrl,
@@ -1608,6 +2670,10 @@ export async function runClineAgentTurn(options: {
           enableAgentTeams: true,
           disableMcpSettingsTools: true,
           maxParallelToolCalls,
+          // Harbor plan card (Cline focus_chain analog) — Agent/Plan only.
+          ...(enableTodoTool
+            ? { extraTools: [createTodoTool(bundle.createTool)] }
+            : {}),
           // TLS: pass Harbor fetch so corporate self-signed proxies work when
           // Advanced → Validate TLS is off (default).
           fetch: harborFetch as typeof fetch,
@@ -1619,6 +2685,8 @@ export async function runClineAgentTurn(options: {
                 },
               }
             : {}),
+          ...(enableCheckpoints ? { checkpoint: { enabled: true } } : {}),
+          toolPolicies: harborClineToolPolicies(),
           // Iteration budget: leave unset so Cline treats it as unlimited
           // (Harbor maxToolRounds no longer caps the turn).
           systemPrompt: baseSystemPrompt,
@@ -1631,15 +2699,35 @@ export async function runClineAgentTurn(options: {
           ...modelInfoData,
           // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
           // "Request failed with status code N" — critical for spawn_agent children.
-          providerConfig: buildHarborProviderConfig(),
+          providerConfig: buildHarborProviderConfig(
+            modelInfoData.knownModels[options.model],
+            { promptCache: enablePromptCache, providerId: clineProviderId }
+          ),
         },
       });
       sessionId = String(startResult.sessionId || sessionId);
       result = startResult.result;
     }
+    };
+    await withInspectableImages(imageBundle.urls, () =>
+      // update_todo executes inside the Cline session; bridge its step events
+      // to this turn's Harbor callbacks (ALS, same as inspect_images).
+      withTodoStepEmitter(
+        (step) => emitStep(callbacks, step),
+        () => withTurnImages(userImages, runTurn)
+      )
+    );
 
     if (persistSession) {
-      liveClineByChatId.set(chatId, { sessionId, fingerprint });
+      const prev = liveClineByChatId.get(chatId);
+      liveClineByChatId.delete(chatId);
+      liveClineByChatId.set(chatId, {
+        sessionId,
+        fingerprint,
+        lastCheckpointRunCount:
+          turnCheckpointRunCount ?? prev?.lastCheckpointRunCount,
+      });
+      enforceLiveClineSessionCap(chatId);
     }
 
     unsubscribe();
@@ -1651,19 +2739,24 @@ export async function runClineAgentTurn(options: {
       finishReason === "aborted" ||
       finishReason === "cancelled";
 
+    const resultText = String(result?.text || "");
+    const messagesText = lastAssistantTextFromMessages(result?.messages);
+    // Blocks already flushed to `text` step cards must not repeat in the
+    // finale; the finale comes from the still-pending tail instead.
     const finalText = pickFinalAssistantText({
-      resultText: String(result?.text || ""),
-      streamedText: assistantText,
+      resultText: isFlushedTextBlock(resultText) ? "" : resultText,
+      streamedText: pendingTextTail(),
       submitSummary:
         submitSummary ||
         submitSummaryFromToolCalls(result?.toolCalls) ||
         submitSummaryFromMessages(result?.messages),
-      messagesText: lastAssistantTextFromMessages(result?.messages),
+      messagesText: isFlushedTextBlock(messagesText) ? "" : messagesText,
       aborted,
     });
 
     // Do not clear the stream bubble first: if finalText were empty we would
-    // wipe a visible plan and never re-append. assistantDone updates in place.
+    // wipe a visible plan and never re-append. assistantDone updates in place
+    // (intermediate blocks were already flushed to `text` step cards).
     setClineStatus(
       aborted ? "aborted" : finishReason || "completed"
     );
@@ -1672,37 +2765,57 @@ export async function runClineAgentTurn(options: {
     });
     await callbacks.onReview(edits);
 
+    const attachmentsForHistory =
+      options.attachments?.length
+        ? options.attachments
+        : lastHistoryImageAttachments(options.history);
+
     if (result?.messages?.length) {
-      return clineMessagesToHarborHistory(result.messages);
+      return mergeUserAttachmentsOntoHistory(
+        clineMessagesToHarborHistory(result.messages),
+        options.history,
+        attachmentsForHistory
+      );
     }
-    return [
-      ...options.history,
-      { role: "user", content: userPrompt },
-      {
-        role: "assistant",
-        content: finalText,
-        ...(reasoningText ? { reasoning_content: reasoningText } : {}),
-      },
-    ];
+    return mergeUserAttachmentsOntoHistory(
+      [
+        ...options.history,
+        { role: "user", content: userPrompt },
+        {
+          role: "assistant",
+          // Model-side history keeps the whole turn (flushed blocks too);
+          // the finale bubble shows only the pending tail.
+          content: fullTurnText().trim() || finalText,
+          ...(reasoningText ? { reasoning_content: reasoningText } : {}),
+        },
+      ],
+      options.history,
+      attachmentsForHistory
+    );
   } catch (error) {
     unsubscribe();
     options.signal?.removeEventListener("abort", onAbort);
     if (options.signal?.aborted) {
       setClineStatus("aborted");
-      const partial = assistantText.trim() || "(остановлено)";
+      // Flushed blocks are already on screen as `text` cards — the partial
+      // bubble keeps only the un-flushed tail so nothing is shown twice.
+      // The model-side history still gets the full turn text.
+      const partial = pendingTextTail().trim() || "(остановлено)";
       callbacks.onAssistant(partial);
       await callbacks.onReview(edits);
       return [
         ...options.history,
         { role: "user", content: userPrompt },
-        { role: "assistant", content: partial },
+        { role: "assistant", content: fullTurnText().trim() || partial },
       ];
     }
     const message = error instanceof Error ? error.message : String(error);
     setClineStatus(message || "failed");
     throw error;
   } finally {
-    if (!persistSession) {
+    if (persistSession) {
+      liveClineBusyChatIds.delete(chatId);
+    } else {
       try {
         await core.stop(sessionId);
       } catch {

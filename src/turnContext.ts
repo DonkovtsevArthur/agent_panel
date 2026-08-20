@@ -1,6 +1,6 @@
 /**
  * Per-turn context injected into the Cline user prompt (not the system
- * prompt): editor, git, diagnostics, recently edited files.
+ * prompt): editor, git, diagnostics, recently edited files, terminal, rules.
  * Changes every message, so it must not be baked into a persistent session
  * system prompt.
  */
@@ -11,6 +11,12 @@ import {
   getActiveFileRelativePath,
 } from "./editorContext";
 import { buildGitSnapshotMessage } from "./gitStatus";
+import { buildTerminalSnapshotMessage } from "./terminalContext";
+import {
+  buildEnclosingSymbolMessage,
+  formatEnclosingSymbolMessage,
+} from "./editorSymbols";
+import { loadWorkspaceRules } from "./workspaceRules";
 
 const DIAGNOSTIC_MAX_ITEMS = 20;
 const DIAGNOSTIC_MESSAGE_CHARS = 180;
@@ -155,9 +161,118 @@ function buildRecentlyEditedMessage(paths: string[] | undefined): string {
   ].join("\n");
 }
 
+function harborIdeExtras(): {
+  enclosingSymbol?: { name?: string; kind?: string; line?: number; detail?: string };
+  terminal?: {
+    name?: string;
+    command?: string;
+    cwd?: string;
+    output?: string;
+    exitCode?: number;
+  };
+  recentFiles?: string[];
+} {
+  try {
+    const extras = (
+      vscode as unknown as {
+        HarborHeadless?: { getIdeExtras?: () => unknown };
+      }
+    ).HarborHeadless?.getIdeExtras?.();
+    if (extras && typeof extras === "object") {
+      return extras as ReturnType<typeof harborIdeExtras>;
+    }
+  } catch {
+    /* real vscode module */
+  }
+  return {};
+}
+
+function relativeFromFsPath(fsPath: string): string {
+  try {
+    return vscode.workspace.asRelativePath(fsPath, false) || fsPath;
+  } catch {
+    return fsPath;
+  }
+}
+
+function buildRecentlyViewedMessage(extraPaths: string[] = []): string {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  const push = (rel: string) => {
+    const key = rel.replace(/\\/g, "/").trim();
+    if (!key || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    paths.push(key);
+  };
+  for (const extra of extraPaths) {
+    push(String(extra || ""));
+  }
+  try {
+    const groups = (
+      vscode.window as unknown as {
+        tabGroups?: { all?: Array<{ tabs?: Array<{ input?: { uri?: vscode.Uri } }> }> };
+      }
+    ).tabGroups;
+    if (Array.isArray(groups?.all)) {
+      for (const group of groups.all) {
+        for (const tab of group.tabs || []) {
+          const uri = tab.input?.uri;
+          if (uri && uri.scheme === "file") {
+            push(relativeFromFsPath(uri.fsPath));
+          }
+        }
+      }
+    }
+  } catch {
+    /* stub without tabGroups */
+  }
+  for (const editor of vscode.window.visibleTextEditors || []) {
+    const uri = editor?.document?.uri;
+    if (uri && uri.scheme === "file") {
+      push(relativeFromFsPath(uri.fsPath));
+    }
+  }
+  const shown = paths.slice(0, 12);
+  if (!shown.length) {
+    return "";
+  }
+  return ["Recently viewed / open files:", ...shown.map((p) => `- ${p}`)].join(
+    "\n"
+  );
+}
+
+function openFileTargetPaths(): string[] {
+  const paths: string[] = [];
+  const active = getActiveFileRelativePath();
+  if (active) {
+    paths.push(active);
+  }
+  for (const editor of [
+    vscode.window.activeTextEditor,
+    ...(vscode.window.visibleTextEditors || []),
+  ]) {
+    const uri = editor?.document?.uri;
+    if (!uri || uri.scheme !== "file") {
+      continue;
+    }
+    paths.push(relativeFromFsPath(uri.fsPath));
+  }
+  return [...new Set(paths.map((p) => p.replace(/\\/g, "/")).filter(Boolean))];
+}
+
 export async function buildTurnContextBlock(options: {
   skipActiveFilePrefetch?: boolean;
   lastAgentEditedPaths?: string[];
+  /**
+   * Follow-up turn of a live session: keep the cheap live-state parts
+   * (editor state, git, diagnostics, enclosing symbol, agent-edited paths)
+   * and drop the heavy ones (active-file prefetch, workspace rules,
+   * terminal snapshot, recently viewed) — they were already sent on the
+   * session's first turn and stay in its history.
+   */
+  slim?: boolean;
 }): Promise<string> {
   const parts: string[] = [];
   try {
@@ -169,7 +284,7 @@ export async function buildTurnContextBlock(options: {
     /* headless / stub */
   }
 
-  if (!options.skipActiveFilePrefetch) {
+  if (!options.slim && !options.skipActiveFilePrefetch) {
     try {
       const prefetch = buildActiveFilePrefetchMessage();
       if (prefetch.trim()) {
@@ -180,7 +295,28 @@ export async function buildTurnContextBlock(options: {
     }
   }
 
-  const git = await buildGitSnapshotMessage();
+  // Git snapshot, enclosing symbol and workspace rules are independent —
+  // started together here, awaited in their original positions below so the
+  // part order (and thus the prompt layout) stays stable.
+  const gitPromise = buildGitSnapshotMessage().catch(() => "");
+  const symbolPromise = buildEnclosingSymbolMessage().catch(() => "");
+  let rulesPromise: Promise<string | undefined> | undefined;
+  if (!options.slim) {
+    try {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (folder) {
+        rulesPromise = loadWorkspaceRules(folder.uri.fsPath, {
+          omitAgentsMd: true,
+          targetPaths: openFileTargetPaths(),
+          charCap: 6_000,
+        }).catch(() => undefined);
+      }
+    } catch {
+      /* no rules dir */
+    }
+  }
+
+  const git = await gitPromise;
   if (git.trim()) {
     parts.push(git.trim());
   }
@@ -190,9 +326,69 @@ export async function buildTurnContextBlock(options: {
     parts.push(diagnostics.trim());
   }
 
+  const extras = harborIdeExtras();
+
+  try {
+    const symbol =
+      (await symbolPromise) ||
+      formatEnclosingSymbolMessage(
+        extras.enclosingSymbol?.name
+          ? {
+              name: String(extras.enclosingSymbol.name),
+              kind: extras.enclosingSymbol.kind,
+              line: extras.enclosingSymbol.line,
+              detail: extras.enclosingSymbol.detail,
+            }
+          : undefined
+      );
+    if (symbol.trim()) {
+      parts.push(symbol.trim());
+    }
+  } catch {
+    /* headless / no LSP */
+  }
+
+  if (!options.slim) {
+    try {
+      const terminal = buildTerminalSnapshotMessage(
+        extras.terminal?.output
+          ? {
+              name: String(extras.terminal.name || "Run"),
+              command: extras.terminal.command,
+              cwd: extras.terminal.cwd,
+              output: String(extras.terminal.output),
+              exitCode: extras.terminal.exitCode,
+            }
+          : undefined
+      );
+      if (terminal.trim()) {
+        parts.push(terminal.trim());
+      }
+    } catch {
+      /* no terminal API */
+    }
+  }
+
+  const recentViewed = options.slim
+    ? ""
+    : buildRecentlyViewedMessage(extras.recentFiles || []);
+  if (recentViewed) {
+    parts.push(recentViewed);
+  }
+
   const recent = buildRecentlyEditedMessage(options.lastAgentEditedPaths);
   if (recent) {
     parts.push(recent);
+  }
+
+  const rules = await rulesPromise;
+  if (rules?.trim()) {
+    parts.push(
+      [
+        "Matching workspace rules for the current file(s) (glob / alwaysApply; AGENTS.md is already in session rules):",
+        rules.trim(),
+      ].join("\n")
+    );
   }
 
   if (!parts.length) {

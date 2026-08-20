@@ -17,11 +17,35 @@ import {
   resolveModelCapabilities,
   resolveModelContextWindow,
 } from "./modelCapabilities";
+import { readModelTokenLimits } from "./modelTokenLimits";
 import { normalizeReasoningEffort } from "./reasoningEffort";
 import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
+
+/** Tool groups for granular auto-approve (agentPanel.tools.approvals). */
+export type ToolApprovalGroup =
+  | "reads"
+  | "web"
+  | "edits"
+  | "commands"
+  | "mcp"
+  | "subagents";
+
+export const TOOL_APPROVAL_GROUPS: ToolApprovalGroup[] = [
+  "reads",
+  "web",
+  "edits",
+  "commands",
+  "mcp",
+  "subagents",
+];
+
+/** Explicit per-group override; unset groups follow the master autoApprove flag. */
+export type ToolApprovalsConfig = Partial<
+  Record<ToolApprovalGroup, boolean>
+>;
 
 export interface AgentProvider {
   id: string;
@@ -33,6 +57,51 @@ export interface AgentProvider {
    * Пусто или равен baseUrl → `{baseUrl}/models`.
    */
   statusUrl?: string;
+  /**
+   * Per-provider opt-in for Anthropic-style `cache_control` prompt-cache markers
+   * on OpenAI-compatible chat turns. Overrides the global
+   * `agentPanel.promptCache.enabled`:
+   * - `true`  — emit markers (only safe for upstreams that accept them:
+   *   LiteLLM / OpenRouter with Claude|Qwen upstreams, Anthropic-compatible
+   *   endpoints).
+   * - `false` — never emit, even if the global flag is on.
+   * - unset  — follow `agentPanel.promptCache.enabled` (backward compatible).
+   *
+   * Strict OpenAI (`api.openai.com`) rejects the marker with 400, so leave it
+   * off for plain OpenAI endpoints. Auto-suggested at "on" in Settings when the
+   * baseUrl looks like litellm / openrouter / anthropic.
+   */
+  promptCache?: boolean;
+  /**
+   * Wire protocol the provider speaks.
+   * - `"openai-compatible"` (default) — OpenAI Chat Completions (`/chat/completions`).
+   * - `"anthropic"` — Anthropic Messages API (`/v1/messages`).
+   */
+  protocol?: "openai-compatible" | "anthropic";
+}
+
+/**
+ * Heuristic for the Settings "smart default": flip the per-provider promptCache
+ * checkbox on by default when the baseUrl is one of the upstreams known to
+ * accept Anthropic-style `cache_control` on OpenAI-format bodies.
+ * Intentionally conservative — misses are fine (the user can still toggle on),
+ * false positives would 400 every request on that provider.
+ */
+export function baseUrlSuggestsPromptCache(baseUrl: string): boolean {
+  const url = String(baseUrl || "").toLowerCase();
+  if (!url) {
+    return false;
+  }
+  if (/api\.openai\.com/.test(url)) {
+    return false;
+  }
+  return (
+    /litellm/.test(url) ||
+    /openrouter\.ai/.test(url) ||
+    /anthropic\.com/.test(url) ||
+    /claude\.ai/.test(url) ||
+    /aihubmix|sapaicore|vertex|ai-sdk/.test(url)
+  );
 }
 
 export interface AgentModel {
@@ -54,8 +123,8 @@ export interface AgentModel {
    */
   supportsVision?: boolean;
   /**
-   * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4 через
-   * OpenAI-compatible гейтвей). Пусто = default по capability ("high").
+   * Уровень reasoning_effort для thinking-моделей (Claude 3.5+/4, Kimi,
+   * GLM-4.5+ через OpenAI-compatible гейтвей). Пусто = default по capability ("high").
    * Допустимо: "low" | "medium" | "high" | "xhigh".
    * Если задано — модель считается поддерживающей reasoning в UI селекторе.
    */
@@ -73,6 +142,8 @@ export interface ModelEndpoint {
   providerName: string;
   /** Полный URL для GET-проверки статуса (см. resolveProviderProbeUrl). */
   statusUrl?: string;
+  /** Wire protocol: `"openai-compatible"` (default) or `"anthropic"`. */
+  protocol?: "openai-compatible" | "anthropic";
 }
 
 /** URL для проверки доступности провайдера. */
@@ -92,6 +163,19 @@ export function resolveProviderProbeUrl(provider: {
 }
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
+
+export const UI_FONT_SIZE_MIN = 11;
+export const UI_FONT_SIZE_MAX = 20;
+export const UI_FONT_SIZE_DEFAULT = 13;
+
+export function clampUiFontSize(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    return UI_FONT_SIZE_DEFAULT;
+  }
+  return Math.min(UI_FONT_SIZE_MAX, Math.max(UI_FONT_SIZE_MIN, Math.round(n)));
+}
+
 export const DEFAULT_PROVIDER_ID = "default";
 
 const DEFAULT_MODELS: AgentModel[] = [
@@ -123,6 +207,8 @@ const DEFAULT_MODELS: AgentModel[] = [
 
 export interface AgentPanelConfig {
   language: "auto" | "en" | "ru";
+  /** Panel chat + composer font size in pixels. */
+  fontSize: number;
   /** @deprecated legacy mirror of primary provider.baseUrl */
   baseUrl: string;
   /** @deprecated legacy mirror of primary provider.apiKey */
@@ -138,12 +224,12 @@ export interface AgentPanelConfig {
   maxTokens: number;
   maxResponseChars: number;
   /**
-   * Deprecated: Harbor no longer swaps chat models for image attachments.
-   * Images go to Cline as `image` parts; vision is left to the selected model.
-   * Kept for config backward compatibility.
+   * Preferred vision models for under-the-hood image describe when the
+   * selected chat model cannot view images (e.g. GLM-5.2). Also used for
+   * Figma MCP screenshots.
    */
   visionRouting: {
-    /** Ordered preferred vision model ids; unused by chat turns. */
+    /** Ordered preferred vision model ids. */
     preferredModelIds: string[];
   };
   soundNotifications: {
@@ -168,6 +254,48 @@ export interface AgentPanelConfig {
    * approaches the model input budget (`compaction.enabled`).
    */
   autoCompact: {
+    enabled: boolean;
+  };
+  /**
+   * Emit Anthropic-style prompt-cache markers (`cache_control`) on chat turns
+   * for OpenAI-compatible upstreams that accept them (LiteLLM/OpenRouter with
+   * Claude/Qwen upstreams, Anthropic-compatible endpoints). Off by default:
+   * strict OpenAI endpoints reject the unknown content-part field.
+   */
+  promptCache: {
+    enabled: boolean;
+  };
+  /**
+   * Auto-approve Cline tools (current Harbor default). Off → confirm each tool.
+   * `approvals` groups override the master flag per tool group
+   * (unset = follow the master flag).
+   */
+  tools: {
+    autoApprove: boolean;
+    approvals: ToolApprovalsConfig;
+  };
+  /**
+   * Focus chain: the agent keeps a markdown task checklist and Harbor
+   * re-injects the latest one into follow-up turns.
+   */
+  focusChain: {
+    enabled: boolean;
+  };
+  /**
+   * `[Harbor turn context]` IDE block on follow-up turns of a live Cline
+   * session. The session's first turn always gets the full block; follow-ups
+   * re-send it and the old blocks stay in the session history, which is what
+   * inflates long chats. `full` keeps the legacy behavior, `slim` drops the
+   * heavy parts (active-file prefetch, workspace rules, terminal snapshot,
+   * recently viewed files), `none` sends no block on follow-ups.
+   */
+  turnContext: {
+    followUps: "full" | "slim" | "none";
+  };
+  /**
+   * Cline git checkpoints at the start of each root-agent run (restore via UI).
+   */
+  checkpoints: {
     enabled: boolean;
   };
   /**
@@ -232,8 +360,8 @@ export interface AgentPanelConfig {
   caBundlePath: string;
   commitMessage: {
     prompt: string;
-    /** Empty = auto light/utility model. */
-    modelId: string;
+    /** Ordered model ids for commit generation. Empty = auto light/utility model. */
+    modelIds: string[];
     language: "auto" | "en" | "ru";
     /** Откуда сейчас действуют настройки commit message. */
     scope: "global" | "workspace";
@@ -269,6 +397,8 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
       baseUrl?: unknown;
       apiKey?: unknown;
       statusUrl?: unknown;
+      promptCache?: unknown;
+      protocol?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     const baseUrl = normalizeBaseUrl(
@@ -290,6 +420,15 @@ function readProviders(cfg: vscode.WorkspaceConfiguration): AgentProvider[] {
     );
     if (statusUrl && statusUrl !== baseUrl) {
       provider.statusUrl = statusUrl;
+    }
+    if (typeof row.promptCache === "boolean") {
+      provider.promptCache = row.promptCache;
+    }
+    if (
+      typeof row.protocol === "string" &&
+      (row.protocol === "openai-compatible" || row.protocol === "anthropic")
+    ) {
+      provider.protocol = row.protocol;
     }
     providers.push(provider);
   }
@@ -359,8 +498,6 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       id?: unknown;
       label?: unknown;
       providerId?: unknown;
-      contextWindow?: unknown;
-      maxOutputTokens?: unknown;
       enabled?: unknown;
       favorite?: unknown;
       supportsVision?: unknown;
@@ -378,18 +515,9 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       typeof row.providerId === "string" && row.providerId.trim()
         ? row.providerId.trim()
         : undefined;
-    const contextWindow =
-      typeof row.contextWindow === "number" &&
-      Number.isFinite(row.contextWindow) &&
-      row.contextWindow > 0
-        ? Math.floor(row.contextWindow)
-        : undefined;
-    const maxOutputTokens =
-      typeof row.maxOutputTokens === "number" &&
-      Number.isFinite(row.maxOutputTokens) &&
-      row.maxOutputTokens > 0
-        ? Math.floor(row.maxOutputTokens)
-        : undefined;
+    const limits = readModelTokenLimits(item);
+    const contextWindow = limits.contextWindow;
+    const maxOutputTokens = limits.maxOutputTokens;
     const model: AgentModel = { id };
     if (label) {
       model.label = label;
@@ -474,6 +602,7 @@ function resolveCommitMessageScope(
   for (const key of [
     "commitMessage.prompt",
     "commitMessage.language",
+    "commitMessage.modelIds",
     "commitMessage.modelId",
   ]) {
     const info = cfg.inspect(key);
@@ -516,6 +645,7 @@ export function getConfig(): AgentPanelConfig {
 
   return {
     language,
+    fontSize: clampUiFontSize(cfg.get<number>("fontSize")),
     baseUrl: primary?.baseUrl || legacyBaseUrl,
     apiKey: primary?.apiKey || legacyApiKey,
     providers,
@@ -561,6 +691,39 @@ export function getConfig(): AgentPanelConfig {
     },
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
+    },
+    promptCache: {
+      enabled: cfg.get<boolean>("promptCache.enabled") === true,
+    },
+    tools: (() => {
+      const raw = cfg.get<unknown>("tools.approvals");
+      const approvals: ToolApprovalsConfig = {};
+      if (raw && typeof raw === "object") {
+        for (const group of TOOL_APPROVAL_GROUPS) {
+          const value = (raw as Record<string, unknown>)[group];
+          if (typeof value === "boolean") {
+            approvals[group] = value;
+          }
+        }
+      }
+      return {
+        autoApprove: cfg.get<boolean>("tools.autoApprove") !== false,
+        approvals,
+      };
+    })(),
+    focusChain: {
+      enabled: cfg.get<boolean>("focusChain.enabled") !== false,
+    },
+    turnContext: {
+      followUps:
+        cfg.get("turnContext.followUps") === "none"
+          ? "none"
+          : cfg.get("turnContext.followUps") === "slim"
+            ? "slim"
+            : "full",
+    },
+    checkpoints: {
+      enabled: cfg.get<boolean>("checkpoints.enabled") !== false,
     },
     skills: (() => {
       const extraRaw = cfg.get<unknown>("skills.extraDirectories");
@@ -625,7 +788,7 @@ export function getConfig(): AgentPanelConfig {
     selectionHints: {
       enabled: cfg.get<boolean>("selectionHints.enabled") !== false,
     },
-    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? false,
+    rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? true,
     caBundlePath: "",
     commitMessage: (() => {
       const commitLanguage = readCommitMessageLanguage(
@@ -638,11 +801,22 @@ export function getConfig(): AgentPanelConfig {
       const storedPrompt = String(
         cfg.get<string>("commitMessage.prompt") || ""
       ).trim();
+      const rawModelIds = cfg.get<unknown>("commitMessage.modelIds");
+      const modelIds = Array.isArray(rawModelIds)
+        ? rawModelIds
+            .map((v) => String(v || "").trim())
+            .filter(Boolean)
+            .filter((id, i, all) => all.indexOf(id) === i)
+        : [];
+      // Backward compat: if modelIds is empty, try the old single-modelId string.
+      const legacyModelId = String(
+        cfg.get<string>("commitMessage.modelId") || ""
+      ).trim();
       return {
         prompt: isBuiltinCommitMessagePrompt(storedPrompt)
           ? defaultCommitMessagePromptForLanguage(commitLangResolved)
           : storedPrompt,
-        modelId: String(cfg.get<string>("commitMessage.modelId") || "").trim(),
+        modelIds: modelIds.length > 0 ? modelIds : legacyModelId ? [legacyModelId] : [],
         language: commitLanguage,
         scope: resolveCommitMessageScope(cfg),
       };
@@ -688,22 +862,28 @@ export function guessModelSupportsVision(modelId: string): boolean {
   return resolveModelCapabilities(modelId).supportsVision;
 }
 
-/** Итоговое supportsVision: явный флаг модели → known/эвристика. */
+/**
+ * Итоговое supportsVision.
+ * Явный `true` в Settings включает vision у неизвестных id.
+ * Эвристика по id (claude / gpt-4o / gemini / …) не должна гаситься
+ * устаревшим `supportsVision: false` из API — иначе Cline подменяет
+ * пиксели плейсхолдером «this model cannot view images».
+ */
 export function resolveModelSupportsVision(
   modelOrId: AgentModel | string | undefined
 ): boolean {
   if (!modelOrId) {
     return false;
   }
-  if (typeof modelOrId === "string") {
-    const fromConfig = getConfig().models.find((m) => m.id === modelOrId);
-    return resolveModelCapabilities(modelOrId, {
-      supportsVision: fromConfig?.supportsVision,
-    }).supportsVision;
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  const stored =
+    typeof modelOrId === "string"
+      ? getConfig().models.find((m) => m.id === modelOrId)?.supportsVision
+      : modelOrId.supportsVision;
+  if (stored === true) {
+    return true;
   }
-  return resolveModelCapabilities(modelOrId.id, {
-    supportsVision: modelOrId.supportsVision,
-  }).supportsVision;
+  return resolveModelCapabilities(id).supportsVision;
 }
 
 /**
@@ -711,10 +891,14 @@ export function resolveModelSupportsVision(
  * undefined — модель не поддерживает reasoning_effort (не отправляем поле).
  */
 export function resolveModelReasoningEffort(
-  modelId: string
+  modelOrId: string | AgentModel
 ): string | undefined {
-  const fromConfig = getConfig().models.find((m) => m.id === modelId);
-  const capabilities = resolveModelCapabilities(modelId, {
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  const fromConfig =
+    typeof modelOrId === "string"
+      ? getConfig().models.find((m) => m.id === id)
+      : modelOrId;
+  const capabilities = resolveModelCapabilities(id, {
     reasoningEffort: fromConfig?.reasoningEffort,
   });
   if (!capabilities.supportsReasoningEffort) {
@@ -727,7 +911,7 @@ export function resolveModelReasoningEffort(
   );
 }
 
-/** Модель принимает reasoning_effort (Claude 3.5+/4 или явный override в Settings). */
+/** Модель принимает reasoning_effort (Claude 3.5+/4, Kimi, GLM-4.5+ или override в Settings). */
 export function resolveModelSupportsReasoningEffort(
   modelOrId: string | AgentModel
 ): boolean {
@@ -741,9 +925,38 @@ export function resolveModelSupportsReasoningEffort(
   }).supportsReasoningEffort;
 }
 
-/** Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху. */
+/**
+ * Сырой ключ настроек, от которых зависит getEnabledModels(): models/providers
+ * (providerId моделей) + legacy baseUrl/apiKey (fallback-провайдер). Смена
+ * любого значения → пересчёт; чтение четырёх значений и сравнение строк дешевле
+ * полного парса конфига, поэтому инвалидация по событиям не нужна.
+ */
+let enabledModelsCache: AgentModel[] | undefined;
+let enabledModelsCacheKey: string | undefined;
+
+function enabledModelsSettingsKey(
+  cfg: vscode.WorkspaceConfiguration
+): string {
+  return JSON.stringify([
+    cfg.get<unknown>("models"),
+    cfg.get<unknown>("providers"),
+    cfg.get<unknown>("baseUrl"),
+    cfg.get<unknown>("apiKey"),
+  ]);
+}
+
+/**
+ * Модели, доступные в селекторе чата (enabled !== false). Избранные — сверху.
+ * Мемоизировано: до смены models/providers возвращается тот же массив —
+ * результат read-only, не сортировать и не мутировать на месте.
+ */
 export function getEnabledModels(): AgentModel[] {
-  return getConfig()
+  const cfg = vscode.workspace.getConfiguration("agentPanel");
+  const key = enabledModelsSettingsKey(cfg);
+  if (enabledModelsCache && key === enabledModelsCacheKey) {
+    return enabledModelsCache;
+  }
+  const models = getConfig()
     .models.filter((m) => m.enabled !== false)
     .slice()
     .sort(compareModelsByFavoriteThenLabel)
@@ -751,8 +964,11 @@ export function getEnabledModels(): AgentModel[] {
       ...m,
       supportsVision: resolveModelSupportsVision(m),
       supportsReasoningEffort: resolveModelSupportsReasoningEffort(m),
-      reasoningEffortDefault: resolveModelReasoningEffort(m.id),
+      reasoningEffortDefault: resolveModelReasoningEffort(m),
     }));
+  enabledModelsCache = models;
+  enabledModelsCacheKey = key;
+  return models;
 }
 
 /**
@@ -796,5 +1012,29 @@ export function resolveModelEndpoint(modelId: string): ModelEndpoint {
     providerId: provider.id,
     providerName: provider.name || provider.id,
     statusUrl: statusUrl && statusUrl !== baseUrl ? statusUrl : undefined,
+    protocol: provider.protocol,
   };
+}
+
+/**
+ * Effective prompt-cache flag for a model: provider override → global setting.
+ * - `true` emits Anthropic-style `cache_control` markers on chat turns for
+ *   upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible).
+ * - `false` (default) keeps the legacy markerless behavior.
+ *
+ * Used by `clineRuntime` to set the `prompt-cache` model capability and the
+ * gateway `routing.promptCache` metadata. Part of the Cline session fingerprint
+ * so toggling restarts the session for that provider only.
+ */
+export function resolveModelPromptCache(modelId: string): boolean {
+  const config = getConfig();
+  const model = config.models.find((m) => m.id === modelId);
+  const wantedId = model?.providerId?.trim() || "";
+  const provider = wantedId
+    ? config.providers.find((p) => p.id === wantedId)
+    : primaryProvider(config.providers);
+  if (provider && typeof provider.promptCache === "boolean") {
+    return provider.promptCache;
+  }
+  return config.promptCache.enabled === true;
 }

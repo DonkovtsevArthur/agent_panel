@@ -1,6 +1,7 @@
+import { randomUUID } from "crypto";
 import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiClient";
-import type { ToolStepMetrics } from "./agentSteps";
+import type { ToolStepMetrics, TodoStepItem } from "./agentSteps";
 
 export type UiMessageRole =
   | "user"
@@ -15,7 +16,7 @@ export type { MessageAttachment };
 /** Persisted structured step for tool / compaction / retry replay in the webview. */
 export interface UiMessageStep {
   stepId: string;
-  kind: "tool" | "compaction" | "retry" | "thinking" | "text";
+  kind: "tool" | "compaction" | "checkpoint" | "retry" | "thinking" | "text" | "todo";
   toolCallId?: string;
   name?: string;
   argsPreview?: string;
@@ -25,6 +26,9 @@ export interface UiMessageStep {
   attempt?: number;
   maxAttempts?: number;
   metrics?: ToolStepMetrics;
+  checkpointRunCount?: number;
+  /** `update_todo` plan items rendered as a progress card. */
+  steps?: TodoStepItem[];
 }
 
 export interface UiMessage {
@@ -150,14 +154,30 @@ export interface ChatSession {
   history: ChatMessage[];
   uiMessages: UiMessage[];
   updatedAt: number;
+  /** Когда чат создан. Не меняется при persist / новых сообщениях. */
+  createdAt?: number;
   /** Если задано — чат в архиве и скрыт из основного списка */
   archivedAt?: number;
   /** Последний известный расход контекста (токены). */
   contextTokens?: number;
+  /**
+   * Накопленный биллинг по чату: суммарные input токены всех итераций
+   * (включая повторы и спавны). Не то же, что contextTokens (занятость окна
+   * последнего вызова). Обновляется из Cline usage events с total* полями.
+   */
+  totalInputTokens?: number;
+  /** Накопленный output по чату (биллинг). */
+  totalOutputTokens?: number;
+  /** Накопленные чтения из prompt-кэша по чату (Anthropic cache_read / OpenAI cached). */
+  totalCacheReadTokens?: number;
+  /** Накопленные записи в prompt-кэш по чату (Anthropic cache_creation). */
+  totalCacheWriteTokens?: number;
   /** Чат, от которого ответвились. */
   parentChatId?: string;
   /** Индекс ui-сообщения в родителе, от которого создана ветка. */
   branchedFromUiIndex?: number;
+  /** Короткое имя вкладки форка (utility-модель). Пока нет — обрезка промпта. */
+  tabTitle?: string;
   /** Последняя позиция скролла в окне чата. */
   scrollTop?: number;
   /**
@@ -170,14 +190,27 @@ export interface ChatSession {
 export interface AgentRecord {
   id: string;
   name: string;
+  /**
+   * How `name` was set. Missing on old stores — inferred by
+   * {@link resolveAgentNameSource}.
+   */
+  nameSource?: AgentNameSource;
   /** Активный чат агента (текущая ветка). */
   chatId: string;
   /** Все чаты/ветки агента (включая chatId). */
   chatIds: string[];
   updatedAt: number;
+  /** Когда агент создан. Не меняется при persist / новых сообщениях. */
+  createdAt?: number;
   /** Если задано — агент в архиве и скрыт из основного списка */
   archivedAt?: number;
 }
+
+export type AgentNameSource =
+  | "default"
+  | "first_message"
+  | "generated"
+  | "user";
 
 export type PanelScreen = "agents" | "chat" | "archive" | "settings";
 
@@ -205,6 +238,7 @@ export interface AgentListItem {
   model: string;
   preview: string;
   updatedAt: number;
+  createdAt: number;
   active: boolean;
   contextUsed: number;
   selectedModel: string;
@@ -213,9 +247,9 @@ export interface AgentListItem {
 }
 
 function uid(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  return `${prefix}_${Date.now().toString(36)}_${randomUUID()
+    .replace(/-/g, "")
+    .slice(0, 8)}`;
 }
 
 export function chatHasMessages(uiMessages: UiMessage[] | undefined): boolean {
@@ -315,12 +349,120 @@ function isMeaningfulTitle(value: string | undefined): boolean {
   return !isDefaultTitle(value) && String(value || "").trim() !== "Chat";
 }
 
-function titleFromMessages(uiMessages: UiMessage[]): string {
-  const firstUser = uiMessages.find((m) => m.role === "user" && m.text.trim());
+export function titleFromMessages(uiMessages: UiMessage[]): string {
+  const firstUser = uiMessages.find(
+    (m) =>
+      m.role === "user" &&
+      (m.text.trim() || (m.attachments && m.attachments.length))
+  );
   if (!firstUser) {
     return "New Agent";
   }
   return truncateSummary(firstUser.text, 48) || "New Agent";
+}
+
+const NAME_SOURCES: ReadonlySet<string> = new Set([
+  "default",
+  "first_message",
+  "generated",
+  "user",
+]);
+
+function asNameSource(value: unknown): AgentNameSource | undefined {
+  const id = String(value || "").trim();
+  return NAME_SOURCES.has(id) ? (id as AgentNameSource) : undefined;
+}
+
+/** Effective name source, including inference for stores without the field. */
+export function resolveAgentNameSource(
+  agent: AgentRecord,
+  chat?: ChatSession
+): AgentNameSource {
+  const stored = asNameSource(agent.nameSource);
+  if (stored) {
+    return stored;
+  }
+  if (isDefaultTitle(agent.name)) {
+    return "default";
+  }
+  if (!chat || chat.parentChatId) {
+    return "first_message";
+  }
+  const fromFirst = titleFromMessages(chat.uiMessages || []);
+  if (String(agent.name || "").trim() === fromFirst) {
+    return "first_message";
+  }
+  return "user";
+}
+
+function rewriteForkTitlesForRename(
+  store: AgentsStoreV2,
+  agent: AgentRecord,
+  oldName: string,
+  newName: string
+): void {
+  const prev = String(oldName || "").trim();
+  const next = String(newName || "").trim();
+  if (!prev || !next || prev === next) {
+    return;
+  }
+  for (const id of getAgentChatIds(agent)) {
+    const chat = store.chats[id];
+    if (!chat?.parentChatId) {
+      continue;
+    }
+    const title = String(chat.title || "").trim();
+    const m = /^(.*) · (\d+)$/.exec(title);
+    if (m && m[1] === prev) {
+      chat.title = `${next} · ${m[2]}`;
+    }
+  }
+}
+
+/** Set agent name + lock source; rewrite `{old} · N` fork titles. */
+export function applyAgentName(
+  store: AgentsStoreV2,
+  agentId: string,
+  name: string,
+  source: AgentNameSource
+): boolean {
+  const agent = store.agents.find((a) => a.id === agentId);
+  const next = String(name || "").trim().slice(0, 80);
+  if (!agent || !next) {
+    return false;
+  }
+  const oldName = String(agent.name || "").trim();
+  const prevSource = agent.nameSource;
+  agent.name = next;
+  agent.nameSource = source;
+  agent.updatedAt = Date.now();
+  const ids = getAgentChatIds(agent);
+  const rootId = ids.find((id) => !store.chats[id]?.parentChatId) || agent.chatId;
+  const root = store.chats[rootId];
+  if (root && !root.parentChatId) {
+    root.title = next;
+  }
+  rewriteForkTitlesForRename(store, agent, oldName, next);
+  return oldName !== next || prevSource !== source;
+}
+
+/** Имя вкладки форка; корень агента не трогает. */
+export function applyBranchTabTitle(
+  store: AgentsStoreV2,
+  chatId: string,
+  title: string
+): boolean {
+  const chat = store.chats[chatId];
+  const next = String(title || "").trim().slice(0, 80);
+  if (!chat?.parentChatId || !next) {
+    return false;
+  }
+  if (String(chat.tabTitle || "").trim() === next) {
+    return false;
+  }
+  chat.tabTitle = next;
+  chat.updatedAt = Date.now();
+  return true;
 }
 
 export function getAgentDisplayName(
@@ -349,6 +491,7 @@ function createEmptyChat(selectedModel = ""): ChatSession {
     selectedMode: "agent",
     history: [],
     uiMessages: [],
+    createdAt: now,
     updatedAt: now,
   };
 }
@@ -397,6 +540,7 @@ export function createEmptyAgent(selectedModel = ""): {
       name: "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
+      createdAt: now,
       updatedAt: now,
     },
     chat,
@@ -417,21 +561,44 @@ function uniqueAgentId(id: string, used: Set<string>): string {
   return next;
 }
 
+function frozenCreatedAt(...candidates: Array<number | undefined>): number {
+  for (const n of candidates) {
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      return n;
+    }
+  }
+  return Date.now();
+}
+
+/** Убирает null/примитивы из сохранённых списков сообщений — стор могли писать старые версии схемы. */
+function sanitizeMessages<T>(list: unknown): T[] {
+  return Array.isArray(list)
+    ? (list.filter((m) => m && typeof m === "object") as T[])
+    : [];
+}
+
 function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
+  const updatedAt = chat.updatedAt || Date.now();
+  const uiMessages = sanitizeMessages<UiMessage>(chat.uiMessages);
   const next: ChatSession = {
     ...chat,
-    title: chat.title || titleFromMessages(chat.uiMessages || []),
+    title: chat.title || titleFromMessages(uiMessages),
     selectedModel: chat.selectedModel || fallbackModel,
     selectedMode: normalizeSelectedMode(chat.selectedMode),
-    history: Array.isArray(chat.history) ? chat.history : [],
-    uiMessages: Array.isArray(chat.uiMessages) ? chat.uiMessages : [],
-    updatedAt: chat.updatedAt || Date.now(),
+    history: sanitizeMessages<ChatMessage>(chat.history),
+    uiMessages,
+    createdAt: frozenCreatedAt(chat.createdAt, updatedAt),
+    updatedAt,
   };
   if (chat.parentChatId) {
     next.parentChatId = chat.parentChatId;
   }
   if (typeof chat.branchedFromUiIndex === "number") {
     next.branchedFromUiIndex = chat.branchedFromUiIndex;
+  }
+  const tabTitle = String(chat.tabTitle || "").trim();
+  if (tabTitle) {
+    next.tabTitle = tabTitle.slice(0, 80);
   }
   if (typeof chat.scrollTop === "number" && Number.isFinite(chat.scrollTop)) {
     next.scrollTop = chat.scrollTop;
@@ -488,13 +655,22 @@ function normalizeAgents(
       ...chatIds.map((cid) => chats[cid]?.updatedAt || 0),
       0
     );
+    const earliestChatCreated = Math.min(
+      ...chatIds.map((cid) =>
+        frozenCreatedAt(chats[cid]?.createdAt, chats[cid]?.updatedAt)
+      )
+    );
     agents.push({
       id,
       name: rawAgent.name || "New Agent",
       chatId,
       chatIds,
+      createdAt: frozenCreatedAt(rawAgent.createdAt, earliestChatCreated),
       updatedAt: Math.max(rawAgent.updatedAt || 0, latestChatUpdated),
       archivedAt: rawAgent.archivedAt,
+      ...(asNameSource(rawAgent.nameSource)
+        ? { nameSource: asNameSource(rawAgent.nameSource) }
+        : {}),
     });
   }
 
@@ -511,6 +687,7 @@ function normalizeAgents(
       name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId,
       chatIds: [chatId],
+      createdAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
       updatedAt: chat.updatedAt || Date.now(),
       archivedAt: chat.archivedAt,
     });
@@ -559,13 +736,15 @@ export function migrateToStoreV2(
 
   const v1 = raw as PersistedSessionV1 | undefined;
   if (v1 && (Array.isArray(v1.history) || Array.isArray(v1.uiMessages))) {
+    const v1UiMessages = sanitizeMessages<UiMessage>(v1.uiMessages);
     const chat: ChatSession = {
       id: uid("chat"),
-      title: titleFromMessages(v1.uiMessages || []),
+      title: titleFromMessages(v1UiMessages),
       selectedModel: v1.selectedModel || fallbackModel,
       selectedMode: "agent",
-      history: Array.isArray(v1.history) ? v1.history : [],
-      uiMessages: Array.isArray(v1.uiMessages) ? v1.uiMessages : [],
+      history: sanitizeMessages<ChatMessage>(v1.history),
+      uiMessages: v1UiMessages,
+      createdAt: v1.updatedAt || Date.now(),
       updatedAt: v1.updatedAt || Date.now(),
     };
     const agent: AgentRecord = {
@@ -573,6 +752,7 @@ export function migrateToStoreV2(
       name: isMeaningfulTitle(chat.title) ? chat.title : "New Agent",
       chatId: chat.id,
       chatIds: [chat.id],
+      createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
     };
     return {
@@ -608,6 +788,34 @@ export function getActiveChat(store: AgentsStoreV2): ChatSession | undefined {
   return store.chats[store.activeChatId];
 }
 
+function uiActivityKey(msgs: UiMessage[] | undefined): string {
+  const list = msgs || [];
+  const last = list[list.length - 1];
+  if (!last) {
+    return "0";
+  }
+  return `${list.length}:${last.role}:${last.text}:${last.reasoning || ""}`;
+}
+
+function shouldBumpChatTime(
+  chat: ChatSession,
+  patch: Partial<ChatSession>
+): boolean {
+  if (
+    Array.isArray(patch.uiMessages) &&
+    uiActivityKey(chat.uiMessages) !== uiActivityKey(patch.uiMessages)
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(patch.history) &&
+    (chat.history?.length || 0) !== patch.history.length
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function touchChat(
   store: AgentsStoreV2,
   chatId: string,
@@ -620,30 +828,45 @@ export function touchChat(
   if (Array.isArray(patch.uiMessages)) {
     capUiMessageReasoning(patch.uiMessages);
   }
+  const bumpTime = shouldBumpChatTime(chat, patch);
   const next: ChatSession = {
     ...chat,
     ...patch,
-    updatedAt: Date.now(),
+    createdAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
+    updatedAt: bumpTime ? Date.now() : chat.updatedAt,
   };
-  // Ветки держат своё имя («Ветка N»); не перетирать первым сообщением — у форков оно одинаковое.
+  const agent = findAgentByChatId(store, chatId);
+  const nameSource = agent
+    ? resolveAgentNameSource(agent, next)
+    : "default";
+  // Ветки и ручные/сгенерированные имена не перетираем первым сообщением.
   if (
     !next.parentChatId &&
     Array.isArray(next.uiMessages) &&
-    next.uiMessages.length
+    next.uiMessages.length &&
+    nameSource !== "generated" &&
+    nameSource !== "user"
   ) {
     next.title = titleFromMessages(next.uiMessages);
   }
   store.chats[chatId] = next;
 
-  const agent = findAgentByChatId(store, chatId);
   if (agent) {
-    agent.updatedAt = next.updatedAt;
+    if (!agent.createdAt) {
+      agent.createdAt = frozenCreatedAt(next.createdAt, agent.updatedAt);
+    }
+    if (bumpTime) {
+      agent.updatedAt = next.updatedAt;
+    }
     if (
       !next.parentChatId &&
+      nameSource !== "generated" &&
+      nameSource !== "user" &&
       isDefaultTitle(agent.name) &&
       isMeaningfulTitle(next.title)
     ) {
       agent.name = next.title;
+      agent.nameSource = "first_message";
     }
   }
 }
@@ -663,6 +886,12 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
         model: chat?.selectedModel || "",
         preview: chat ? previewFromMessages(chat.uiMessages) : "Empty chat",
         updatedAt: agent.updatedAt,
+        createdAt: frozenCreatedAt(
+          chat?.createdAt,
+          agent.createdAt,
+          chat?.updatedAt,
+          agent.updatedAt
+        ),
         active: agent.id === store.activeAgentId,
         contextUsed:
           typeof chat?.contextTokens === "number" && chat.contextTokens > 0
@@ -833,25 +1062,36 @@ export function formatListTime(
   const d = new Date(ts);
   const now = new Date();
   const locale = lang === "ru" ? "ru-RU" : "en-US";
+  const diffMs = Math.max(0, now.getTime() - d.getTime());
+  const diffMin = Math.floor(diffMs / 60_000);
+  const diffHour = Math.floor(diffMs / 3_600_000);
+  const diffDay = Math.floor(diffMs / 86_400_000);
   const sameDay =
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString(locale, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (
+  const isYesterday =
     d.getFullYear() === yesterday.getFullYear() &&
     d.getMonth() === yesterday.getMonth() &&
-    d.getDate() === yesterday.getDate()
-  ) {
+    d.getDate() === yesterday.getDate();
+
+  if (diffMin < 1) {
+    return lang === "ru" ? "сейчас" : "now";
+  }
+  if (diffMin < 60) {
+    return lang === "ru" ? `${diffMin} мин` : `${diffMin}m`;
+  }
+  if (sameDay) {
+    const hours = Math.max(1, diffHour);
+    return lang === "ru" ? `${hours} ч` : `${hours}h`;
+  }
+  if (isYesterday) {
     return lang === "ru" ? "вчера" : "yesterday";
+  }
+  if (diffDay < 7) {
+    return lang === "ru" ? `${diffDay} дн` : `${diffDay}d`;
   }
   return d.toLocaleDateString(locale, { day: "numeric", month: "short" });
 }
@@ -893,6 +1133,29 @@ function cloneHistoryMessage(msg: ChatMessage): ChatMessage {
     }));
   }
   return next;
+}
+
+/** Copy image/file chips from UI user bubbles onto matching history user rows. */
+export function copyUiAttachmentsOntoHistory(
+  history: ChatMessage[],
+  uiMessages: UiMessage[]
+): ChatMessage[] {
+  const uiUsers = uiMessages.filter((m) => m.role === "user");
+  let u = 0;
+  return history.map((msg) => {
+    if (msg.role !== "user") {
+      return msg;
+    }
+    const ui = uiUsers[u];
+    u += 1;
+    if (msg.attachments?.length || !ui?.attachments?.length) {
+      return msg;
+    }
+    return {
+      ...msg,
+      attachments: ui.attachments.map((a) => ({ ...a })),
+    };
+  });
 }
 
 /** Префикс истории/UI до сообщения включительно — для новой ветки. */
@@ -940,6 +1203,49 @@ export function historyPrefixForBranch(
   };
 }
 
+const BRANCH_TAB_LABEL_MAX = 80;
+
+function userPromptTabLabel(msg: UiMessage | undefined): string {
+  if (!msg || msg.role !== "user") {
+    return "";
+  }
+  const fromText = truncateSummary(msg.text, BRANCH_TAB_LABEL_MAX);
+  if (fromText) {
+    return fromText;
+  }
+  const attName = String(msg.attachments?.[0]?.name || "").trim();
+  return attName ? truncateSummary(attName, BRANCH_TAB_LABEL_MAX) : "";
+}
+
+function firstUserMessage(messages: UiMessage[]): UiMessage | undefined {
+  return messages.find(
+    (m) =>
+      m.role === "user" &&
+      (String(m.text || "").trim() || Boolean(m.attachments?.length))
+  );
+}
+
+/** Подпись вкладки: сгенерированное имя форка, иначе обрезка промпта. */
+function branchTabLabel(chat: ChatSession): string {
+  const generated = String(chat.tabTitle || "").trim();
+  if (generated) {
+    return generated;
+  }
+  const ui = chat.uiMessages || [];
+  const branchAt = chat.branchedFromUiIndex;
+  if (typeof branchAt === "number" && branchAt >= 0) {
+    const afterFork = userPromptTabLabel(firstUserMessage(ui.slice(branchAt + 1)));
+    if (afterFork) {
+      return afterFork;
+    }
+    const atPoint = userPromptTabLabel(ui[branchAt]);
+    if (atPoint) {
+      return atPoint;
+    }
+  }
+  return userPromptTabLabel(firstUserMessage(ui));
+}
+
 export function buildBranchesList(
   store: AgentsStoreV2,
   agentId: string
@@ -948,7 +1254,6 @@ export function buildBranchesList(
   if (!agent) {
     return [];
   }
-  const agentName = String(agent.name || "").trim() || "Agent";
   const ids = getAgentChatIds(agent);
   const canDelete =
     ids.filter((id) => {
@@ -956,21 +1261,14 @@ export function buildBranchesList(
       return Boolean(chat) && !chat.archivedAt;
     }).length > 1;
   return ids
-    .map((id, index) => {
+    .map((id) => {
       const chat = store.chats[id];
       if (!chat || chat.archivedAt) {
         return null;
       }
-      // Корень — «Main»; форки — стабильный chat.title («Имя · N»), без
-      // перенумерации после удаления середины (иначе «удалил ·2 — остался ·2»).
-      const forkTitle = String(chat.title || "").trim();
-      const label =
-        index === 0
-          ? "Main"
-          : forkTitle || `${agentName} · ${index + 1}`;
       const item: ChatBranchItem = {
         id,
-        label,
+        label: branchTabLabel(chat),
         active: id === store.activeChatId,
         canDelete,
       };
@@ -1032,8 +1330,9 @@ export function branchChatFromMessage(
     ...(source.selectedReasoningEffort
       ? { selectedReasoningEffort: source.selectedReasoningEffort }
       : {}),
-    history: prefix.history,
+    history: copyUiAttachmentsOntoHistory(prefix.history, prefix.uiMessages),
     uiMessages: prefix.uiMessages,
+    createdAt: now,
     updatedAt: now,
     parentChatId: fromChatId,
     branchedFromUiIndex: uiIndex,
@@ -1261,7 +1560,7 @@ export function searchChatMessages(
           messageIndex: i,
           role: msg.role,
           snippet: makeSearchSnippet(text, query),
-          updatedAt: chat.updatedAt,
+          updatedAt: frozenCreatedAt(chat.createdAt, chat.updatedAt),
         });
         if (hits.length >= limit) {
           return hits;

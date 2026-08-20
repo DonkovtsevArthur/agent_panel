@@ -57,6 +57,7 @@ class HarborJcefSession(
     HarborFileDrop.install(
       browser.component,
       onAttachments = { attachments ->
+        HarborAttachmentStore.remember(attachments)
         hostBridge.postToWebview(
           HarborFileDrop.attachmentsJson(attachments),
           forceRepaint = true,
