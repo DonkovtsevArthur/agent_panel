@@ -404,9 +404,58 @@ export function mergeUnique(base: string[], next: Iterable<string>): string[] {
 	return [...seen].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Editor and apply_patch soft-fail as a JSON payload (`{ success: false,
+ * error }`) instead of throwing, and hard failures surface as `is_error`
+ * blocks. Both mean the file was NOT edited — a compaction summary that
+ * still lists such a file as modified teaches the model a false fact and it
+ * skips re-checking the file. Only ever consulted for tool_use ids that are
+ * known to belong to editor/apply_patch calls.
+ */
+function isFailedToolResult(block: ToolResultContent): boolean {
+	if (block.is_error) {
+		return true;
+	}
+	const text =
+		typeof block.content === "string"
+			? block.content
+			: block.content
+					.map((part) => (part.type === "text" ? part.text : ""))
+					.join("\n");
+	try {
+		const parsed = JSON.parse(text) as { success?: unknown; error?: unknown };
+		if (parsed && typeof parsed === "object") {
+			if (parsed.success === false) {
+				return true;
+			}
+			return typeof parsed.error === "string" && parsed.error.trim() !== "";
+		}
+	} catch {
+		// Not a JSON payload (plain-text result); nothing to inspect.
+	}
+	return false;
+}
+
 export function extractFileOps(
 	messages: MessageWithMetadata[],
 ): FileOperationSummary {
+	// Tool results arrive after their tool_use, so one pre-pass over the
+	// whole span pairs every edit call with its outcome regardless of order.
+	const failedToolUseIds = new Set<string>();
+	for (const message of messages) {
+		if (!Array.isArray(message.content)) {
+			continue;
+		}
+		for (const block of message.content) {
+			if (
+				block.type === "tool_result" &&
+				isFailedToolResult(block)
+			) {
+				failedToolUseIds.add(block.tool_use_id);
+			}
+		}
+	}
+
 	let readFiles: string[] = [];
 	let modifiedFiles: string[] = [];
 	for (const message of messages) {
@@ -436,7 +485,14 @@ export function extractFileOps(
 				continue;
 			}
 			if (block.name === "editor" || block.name === "apply_patch") {
-				modifiedFiles = mergeUnique(modifiedFiles, paths);
+				// A call whose result reported failure did not modify anything:
+				// listing it would make the post-compaction model trust an edit
+				// that never landed. Unpaired calls keep counting as edits —
+				// their result sits outside the span and re-running a real edit
+				// is cheaper than duplicating content that did land.
+				if (!failedToolUseIds.has(block.id)) {
+					modifiedFiles = mergeUnique(modifiedFiles, paths);
+				}
 			}
 		}
 	}
@@ -601,16 +657,23 @@ export function summarizeToolActivity(
 				if (!path) {
 					continue;
 				}
+				editorPathsByToolUseId.delete(block.tool_use_id);
+				if (isFailedToolResult(block)) {
+					// The edit never landed; counting it would teach the model
+					// a false "edited" fact after compaction.
+					continue;
+				}
 				const range = extractDiffLineRange(block.content);
 				pushUniqueEntry(
 					editedFiles,
 					range ? `${path}:${range.start}-${range.end}` : path,
 				);
-				editorPathsByToolUseId.delete(block.tool_use_id);
 			}
 		}
 	}
-	// Editor calls whose results fell outside the span still count as edits.
+	// Editor calls whose results fell outside the span still count as edits:
+	// assuming they failed and re-running them could duplicate content that
+	// did land.
 	for (const path of editorPathsByToolUseId.values()) {
 		pushUniqueEntry(editedFiles, path);
 	}

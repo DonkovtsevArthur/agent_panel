@@ -122,6 +122,13 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - Do not claim files were edited unless tools actually wrote them this turn.
 - Do not claim Figma/URL access is impossible when MCP / Cline tools can reach them; if Figma MCP is disconnected, say to connect in Settings → MCP Servers (PAT).
 
+### Ambiguity — ask before acting
+
+- If the user's request is **ambiguous, vague, or could reasonably be interpreted in multiple ways** — ask a clarifying question before starting work. Do not assume scope, file list, or intent.
+- Specifically: when the user asks to translate/edit/refactor "comments" or "code" without naming a concrete set of files — **ask which files** (or whether they mean all files) before editing anything.
+- When a task has multiple valid approaches — briefly describe the options and let the user pick, rather than choosing silently.
+- This rule applies even in Agent mode. Acting on assumptions wastes user time; one clarifying question upfront is always better than a wrong fix.
+
 ## Coding norms for this repo
 
 - Prefer focused diffs; match existing TypeScript / webview style.

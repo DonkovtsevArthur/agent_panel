@@ -24,6 +24,15 @@ function trimOutput(text: string): string {
   return raw.slice(-MAX_OUTPUT_CHARS);
 }
 
+/**
+ * Drop the cached snapshot. Called on chat switch/new chat: the module-level
+ * snapshot belongs to the previous chat's activity and must not leak into
+ * the first turn of the next chat.
+ */
+export function resetTerminalSnapshot(): void {
+  lastSnapshot = undefined;
+}
+
 export function recordTerminalSnapshot(snapshot: TerminalSnapshot | undefined): void {
   if (!snapshot || !String(snapshot.output || "").trim()) {
     return;

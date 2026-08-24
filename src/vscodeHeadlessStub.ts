@@ -665,6 +665,10 @@ export const HarborHeadless = {
   applyIdeContext(raw: unknown): void {
     applyIdeContextSnapshot(raw);
   },
+  /** Drop the cached terminal snapshot on chat switch/new chat. */
+  resetIdeTerminalSnapshot(): void {
+    state.ideExtras.terminal = undefined;
+  },
   getIdeExtras(): typeof state.ideExtras {
     return state.ideExtras;
   },

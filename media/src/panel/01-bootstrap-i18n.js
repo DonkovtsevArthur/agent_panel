@@ -980,7 +980,17 @@
       textStepLabel: "Сообщение",
       zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
-      stepsMany: (n) => `${n} шагов`,
+      stepsMany: (n) => {
+        const abs = Math.abs(n) % 100;
+        const last = abs % 10;
+        if (abs > 10 && abs < 20) {
+          return `${n} шагов`;
+        }
+        if (last > 1 && last < 5) {
+          return `${n} шага`;
+        }
+        return `${n} шагов`;
+      },
       toolHumanRead: (path) => (path ? `чтение ${path}` : "чтение"),
       toolHumanWrite: (path) => (path ? `запись ${path}` : "запись"),
       toolHumanReplace: (path) => (path ? `правка ${path}` : "правка"),

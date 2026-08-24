@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harbor — легкость: варианты</title>
+<style>
+  :root {
+    --desk: #20222a;
+    --bg: #f7f7f7;
+    --chat: #fafafa;
+    --fg: #3b3b3b;
+    --muted: #71717a;
+    --faint: #9c9ca4;
+    --line: rgba(60, 60, 67, 0.10);
+    --user-tint: #8fa4b8;
+    --accent: #2f7dd1;
+    --add: #1a7f37;
+    --del: #cf222e;
+    --radius-sm: 4px;
+    --inset: 12px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 50% -10%, #2b2e38, transparent 70%),
+      var(--desk);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 22px 16px 28px;
+    font-family: var(--font);
+    color: var(--fg);
+    min-height: 100%;
+  }
+
+  /* ---------- switcher ---------- */
+  .switcher {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .switcher button {
+    font: 500 12.5px/1 var(--font);
+    color: #c9cbd4;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .switcher button:hover { color: #fff; background: rgba(255,255,255,0.12); }
+  .switcher button.on {
+    color: #16181d;
+    background: #e8e9ee;
+    border-color: transparent;
+  }
+  .caption {
+    margin: 0;
+    max-width: 560px;
+    text-align: center;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #9a9ca6;
+  }
+  .caption b { color: #d6d8df; font-weight: 600; }
+
+  /* ---------- panel shell ---------- */
+  .panel {
+    width: 460px;
+    max-width: 100%;
+    height: min(860px, calc(100vh - 190px));
+    min-height: 560px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
+  }
+
+  /* ---------- header ---------- */
+  .p-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px 8px;
+    border-bottom: 1px solid var(--line);
+    flex: none;
+    transition: padding .2s ease;
+  }
+  .p-title { font-size: 13px; font-weight: 600; }
+  .p-icons { display: flex; gap: 2px; }
+  .p-icons .ib {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    color: var(--muted);
+    background: none; border: none; padding: 0; cursor: pointer;
+  }
+  .p-icons .ib:hover { background: rgba(60,60,67,0.08); color: var(--fg); }
+  .ib svg { width: 15px; height: 15px; }
+
+  /* ---------- chat ---------- */
+  .chat {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 6px;                 /* v0 */
+    padding: 8px 4px 2px;
+    background: var(--chat);
+  }
+  .turn { display: flex; flex-direction: column; gap: 6px; padding: 0 8px; }
+
+  /* user bubble — v0: full-width tinted block */
+  .bubble {
+    align-self: stretch;
+    background: color-mix(in srgb, var(--user-tint) 14%, var(--chat));
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--fg);
+    white-space: pre-line;
+  }
+  .a-msg {
+    margin: 0 var(--inset);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--fg);
+    white-space: pre-line;
+  }
+  .a-msg b { font-weight: 600; }
+  .mono { font-family: var(--mono); font-size: 11.5px; background: rgba(60,60,67,0.06); padding: 1px 4px; border-radius: 3px; }
+
+  /* ---------- timeline ---------- */
+  .timeline { margin: 0 var(--inset); display: flex; flex-direction: column; }
+  .tl-sum {
+    align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 4px;
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--muted);
+    font: 500 11px/1.3 var(--font);
+    opacity: .92;
+  }
+  .tl-sum .chev { width: 12px; height: 12px; transition: transform .12s ease; }
+  .tl-sum .extra { display: none; font-weight: 400; }
+  .tl-body {
+    display: flex; flex-direction: column; gap: 6px;
+    border-left: 1px solid rgba(60,60,67,0.12);
+    padding: 4px 0 2px 10px;
+    margin-top: 4px;
+  }
+  .step {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 12.4px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+  .step svg { width: 14px; height: 14px; flex: none; margin-top: 1.5px; opacity: .75; }
+  .step .add { color: var(--add); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .step .del { color: var(--del); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .step .mono { background: none; padding: 0; }
+
+  /* ---------- scm chips ---------- */
+  .scm-row {
+    display: flex; gap: 6px; justify-content: flex-end;
+    padding: 0 12px; margin: 2px 0 6px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    min-height: 24px; padding: 3px 9px;
+    font: 500 11px/1 var(--font);
+    color: var(--fg);
+    background: rgba(60,60,67,0.05);
+    border: 1px solid rgba(60,60,67,0.16);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .chip svg { width: 13px; height: 13px; }
+  .chip .add { color: var(--add); font-weight: 600; }
+  .chip .del { color: var(--del); font-weight: 600; }
+  .chip.stats { font-variant-numeric: tabular-nums; }
+
+  /* ---------- composer ---------- */
+  .composer {
+    flex: none;
+    margin: 0 10px 10px;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 12px 12px 10px;
+    background: #fff;
+    border: 1px solid rgba(60,60,67,0.10);
+    border-radius: var(--radius-sm);
+    transition: padding .2s ease, border-radius .2s ease;
+  }
+  .ph { font-size: 13px; color: var(--faint); line-height: 1.5; }
+  .ph .hint { font-size: 11.5px; opacity: .8; }
+  .c-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .c-left, .c-right { display: flex; align-items: center; gap: 6px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    min-height: 24px; padding: 3px 10px;
+    font: 500 11px/1 var(--font);
+    color: var(--muted);
+    background: none;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .pill:hover { background: rgba(60,60,67,0.07); color: var(--fg); }
+  .iconbtn {
+    width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px; border: none; background: none;
+    color: var(--muted); cursor: pointer;
+  }
+  .iconbtn:hover { background: rgba(60,60,67,0.07); color: var(--fg); }
+  .iconbtn svg { width: 14px; height: 14px; }
+  .send {
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer;
+    transition: width .2s ease, height .2s ease;
+  }
+  .send svg { width: 14px; height: 14px; }
+  .footnote {
+    font-size: 11.5px; color: #77797f; line-height: 1.6;
+    max-width: 560px; text-align: center; margin: 0;
+  }
+  .footnote code { font-family: var(--mono); font-size: 10.5px; color: #9fa1a8; }
+
+  /* =========================================================
+     ВАРИАНТ A — «Воздух»: только CSS (отступы, вес, радиусы)
+     ========================================================= */
+  .panel[data-v="a"] .chat { gap: 16px; padding: 12px 2px 4px; }
+  .panel[data-v="a"] .turn { gap: 6px; padding: 0 6px; }
+  .panel[data-v="a"] .p-head { padding: 7px 12px 6px; border-bottom-color: rgba(60,60,67,0.06); }
+  .panel[data-v="a"] .p-title { font-size: 12.5px; }
+  .panel[data-v="a"] .bubble {
+    align-self: flex-end;
+    max-width: 86%;
+    background: color-mix(in srgb, var(--user-tint) 8%, var(--chat));
+    border-radius: 12px 12px 4px 12px;
+    padding: 7px 12px;
+  }
+  .panel[data-v="a"] .a-msg { line-height: 1.62; }
+  .panel[data-v="a"] .tl-body {
+    border-left-color: rgba(60,60,67,0.07);
+    gap: 7px;
+    padding-left: 9px;
+  }
+  .panel[data-v="a"] .step { color: color-mix(in srgb, var(--muted) 82%, var(--chat)); }
+  .panel[data-v="a"] .step svg { opacity: .55; }
+  .panel[data-v="a"] .composer {
+    padding: 9px 11px 8px;
+    border-radius: 10px;
+    border-color: rgba(60,60,67,0.07);
+    gap: 7px;
+  }
+  .panel[data-v="a"] .pill, .panel[data-v="a"] .iconbtn { min-height: 22px; height: 22px; }
+  .panel[data-v="a"] .send { width: 24px; height: 24px; }
+  .panel[data-v="a"] .scm-row { margin-bottom: 4px; }
+
+  /* =========================================================
+     ВАРИАНТ B — «Тихая лента»: A + шаги одной строкой, ghost-SCM
+     (требует чуть JS: авто-сворачивание выполненных шагов)
+     ========================================================= */
+  .panel[data-v="b"] { }
+  .panel[data-v="b"] .chat { gap: 18px; }
+  .panel[data-v="b"] .tl-body { display: none; }
+  .panel[data-v="b"] .timeline { margin: 0 calc(var(--inset) + 2px); position: relative; }
+  .panel[data-v="b"] .tl-sum {
+    font-size: 11px;
+    opacity: .78;
+    padding-left: 12px;
+  }
+  .panel[data-v="b"] .timeline::before {
+    content: "";
+    position: absolute; left: 1px; top: 4px;
+    width: 5px; height: 5px; border-radius: 99px;
+    background: var(--faint); opacity: .6;
+  }
+  .panel[data-v="b"] .tl-sum .extra { display: inline; }
+  .panel[data-v="b"] .tl-sum .chev { transform: rotate(-90deg); }
+  .panel[data-v="b"] .turn .files-step-row { display: none; }   /* файлы живут в scm-чипе */
+  .panel[data-v="b"] .scm-row { justify-content: flex-end; }
+  .panel[data-v="b"] .chip {
+    background: none;
+    border-color: rgba(60,60,67,0.10);
+    color: var(--muted);
+  }
+  .panel[data-v="b"] .chip:hover { color: var(--fg); }
+
+  /* =========================================================
+     ВАРИАНТ C — «Без пузырей»: максимум воздуха, текст сам по себе
+     ========================================================= */
+  .panel[data-v="c"] .chat { gap: 22px; }
+  .panel[data-v="c"] .p-head { border-bottom: none; }
+  .panel[data-v="c"] .bubble {
+    align-self: flex-end;
+    max-width: 82%;
+    background: none;
+    border-radius: 0;
+    padding: 0 2px 0 0;
+    color: #4b5563;
+  }
+  .panel[data-v="c"] .a-msg { line-height: 1.66; }
+  .panel[data-v="c"] .timeline { margin: 0 14px; }
+  .panel[data-v="c"] .tl-body { display: none; }
+  .panel[data-v="c"] .tl-sum { opacity: .62; font-size: 10.5px; padding-left: 11px; }
+  .panel[data-v="c"] .tl-sum .extra { display: inline; }
+  .panel[data-v="c"] .tl-sum .chev { transform: rotate(-90deg); }
+  .panel[data-v="c"] .timeline::before {
+    content: ""; position: absolute; left: 0; top: 3.5px;
+    width: 4px; height: 4px; border-radius: 99px;
+    background: var(--faint); opacity: .55;
+  }
+  .panel[data-v="c"] .timeline { position: relative; }
+  .panel[data-v="c"] .turn .files-step-row { display: none; }
+  .panel[data-v="c"] .scm-row { justify-content: flex-end; padding: 0 14px; }
+  .panel[data-v="c"] .chip {
+    background: none; border: none; color: var(--faint);
+    min-height: 20px; padding: 2px 4px;
+  }
+  .panel[data-v="c"] .chip:hover { color: var(--fg); }
+  .panel[data-v="c"] .composer {
+    border: none;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    margin: 0;
+    padding: 10px 14px 10px;
+    background: var(--bg);
+  }
+  .panel[data-v="c"] .c-foot .pill { color: var(--faint); }
+
+  /* duplicate A base for B and C (they build on A) */
+  .panel[data-v="b"] .bubble,
+  .panel[data-v="c"] .bubble.c-bubble { }
+  .panel[data-v="b"] .p-head { padding: 7px 12px 6px; border-bottom-color: rgba(60,60,67,0.06); }
+  .panel[data-v="b"] .p-title { font-size: 12.5px; }
+  .panel[data-v="b"] .a-msg { line-height: 1.62; }
+  .panel[data-v="b"] .step { color: color-mix(in srgb, var(--muted) 82%, var(--chat)); }
+  .panel[data-v="b"] .composer {
+    padding: 9px 11px 8px;
+    border-radius: 10px;
+    border-color: rgba(60,60,67,0.07);
+    gap: 7px;
+  }
+  .panel[data-v="b"] .send { width: 24px; height: 24px; }
+  .panel[data-v="c"] .p-head { padding: 7px 12px 4px; }
+  .panel[data-v="c"] .p-title { font-size: 12.5px; }
+  .panel[data-v="c"] .send { width: 24px; height: 24px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+      <circle cx="6.8" cy="6.8" r="4.4"/><path d="M10.4 10.4 14 14"/>
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+      <path d="M9 1.5H3.5A1 1 0 0 0 2.5 2.5v11a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V6z"/><path d="M9 1.5V6h4.5"/>
+    </symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+      <path d="M11.3 1.9 14 4.6 5.6 13H3v-2.6z"/><path d="M9.8 3.4 12.6 6.2"/>
+    </symbol>
+    <symbol id="i-term" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.6"/><path d="M4.5 6.5 6.5 8l-2 1.5M8.5 10h3"/>
+    </symbol>
+    <symbol id="i-diff" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+      <path d="M4 2v8M0.8 6h6.4M12 6v8M9.2 10h5.6"/>
+    </symbol>
+    <symbol id="i-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M4 9.5 8 5.5l4 4"/>
+    </symbol>
+    <symbol id="i-hist" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+      <circle cx="8" cy="8" r="6.2"/><path d="M8 4.8V8l2.3 1.6"/>
+    </symbol>
+    <symbol id="i-new" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+      <path d="M8 3v10M3 8h10"/>
+    </symbol>
+    <symbol id="i-gear" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2">
+      <circle cx="8" cy="8" r="2.2"/>
+      <path d="M8 1.8 9 3.6l2-.3.6 2-1.8 1.1.5 2-2 .6-.9 1.8-1.9-.7-1.4 1.4-1.4-1.5.8-1.9L2.2 7l1.2-1.6-1-1.8 2-.5.5-2 2 .7z" opacity=".0"/>
+      <path d="M8 2.4v1.9M8 11.7v1.9M2.4 8h1.9M11.7 8h1.9M4 4l1.3 1.3M10.7 10.7 12 12M12 4l-1.3 1.3M5.3 10.7 4 12"/>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path d="M8 3.5v9M3.5 8h9"/>
+    </symbol>
+    <symbol id="i-up" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
+      <path d="M8 12.5v-9M4 7l4-3.5L12 7"/>
+    </symbol>
+    <symbol id="i-commit" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+      <circle cx="8" cy="8" r="3.2"/><path d="M11.2 8H15M1 8h3.8"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="switcher" id="switcher">
+  <button data-v="" class="on">Сейчас</button>
+  <button data-v="a">A · Воздух</button>
+  <button data-v="b">B · Тихая лента</button>
+  <button data-v="c">C · Без пузырей</button>
+</div>
+<p class="caption" id="caption"></p>
+
+<aside class="panel" id="panel">
+
+  <header class="p-head">
+    <span class="p-title">Агент</span>
+    <div class="p-icons">
+      <button class="ib"><svg><use href="#i-hist"/></svg></button>
+      <button class="ib"><svg><use href="#i-new"/></svg></button>
+      <button class="ib"><svg><use href="#i-gear"/></svg></button>
+    </div>
+  </header>
+
+  <main class="chat">
+
+    <section class="turn">
+      <div class="bubble">На прежней версии работает</div>
+    </section>
+
+    <section class="turn">
+      <div class="a-msg">Отлично! Значит всё работает — и в Rider 2025.3, и в WebStorm. Исправления в этом релизе и добрались до твоего набора плагинов.</div>
+    </section>
+
+    <section class="turn">
+      <div class="bubble">погоди на Rider 2025.3.0-3 — устанавливается и по клику на плагин выдает Failed to start Harbor sidecar: Cannot run program "node": CreateProcess error=2, Не удается найти указанный файл</div>
+      <div class="a-msg">Ошибка показывает harbor-sidecar-2.0.10 — это старая версия. Фикс с поиском node в Windows вошёл в 2.0.16.</div>
+      <div class="a-msg">Переустанови в Rider: Settings → Plugins → ⚙ → <b>Install Plugin from Disk…</b> → выбери harbor-agents-2.0.16.zip. И проверь, что Node.js вообще установлен на Windows.</div>
+      <div class="timeline">
+        <button class="tl-sum">
+          Выполнено · 4 шага
+          <span class="extra">· 1 файл · <span style="color:var(--add);font-weight:600">+78</span> <span style="color:var(--del);font-weight:600">−5</span></span>
+          <svg class="chev"><use href="#i-chev"/></svg>
+        </button>
+        <div class="tl-body">
+          <div class="step"><svg><use href="#i-search"/></svg><span>Поиск «harbor-sidecar» · 12 совпадений</span></div>
+          <div class="step"><svg><use href="#i-file"/></svg><span>Чтение <span class="mono">HarborSidecarProcess.kt</span></span></div>
+          <div class="step"><svg><use href="#i-edit"/></svg><span>Правка <span class="mono">HarborSidecarProcess.kt</span>&nbsp; <span class="add">+78</span> <span class="del">−5</span></span></div>
+          <div class="step"><svg><use href="#i-term"/></svg><span><span class="mono">npm run build:sidecar</span></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="turn">
+      <div class="bubble">а если не установлен и ставить не хочет тогда что?</div>
+      <div class="a-msg"><b>Готово.</b> harbor-agents-2.0.16.zip пересобран. Два исправления:
+1. <b>PATH для Windows</b> — теперь Program Files\nodejs добавляется через «;», а не «:», поэтому sidecar находит node без перезапуска IDE.
+2. <b>Понятное сообщение</b> — вместо «Cannot run program node» теперь «Harbor: Node.js not found. Install it from nodejs.org and restart the IDE».</div>
+      <div class="timeline files-step-row">
+        <div class="tl-body" style="display:flex">
+          <div class="step"><svg><use href="#i-diff"/></svg><span>Изменённые файлы: 1 · <span class="mono">HarborSidecarProcess.kt</span>&nbsp; <span class="add">+78</span> <span class="del">−5</span></span></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="scm-row">
+    <button class="chip"><svg><use href="#i-commit"/></svg> Закоммитить</button>
+    <button class="chip stats">Изменения <span class="add">+220</span> <span class="del">−5</span></button>
+  </div>
+
+  <footer class="composer">
+    <div class="ph">Задача для агента… <span class="hint">@ — файл</span></div>
+    <div class="c-foot">
+      <div class="c-left">
+        <button class="pill">Агент ▾</button>
+        <button class="iconbtn"><svg><use href="#i-plus"/></svg></button>
+      </div>
+      <div class="c-right">
+        <button class="pill">mimo-v2.5-pro ▾</button>
+        <button class="send"><svg><use href="#i-up"/></svg></button>
+      </div>
+    </div>
+  </footer>
+
+</aside>
+
+<p class="footnote">
+  Правки вживую: <code>media/panel.css</code> + <code>media/src/panel/09-timeline-tools.js</code> (сворачивание шагов),
+  кнопка «Закоммитить» — <code>15-plan-build-scm.js</code>. Пузырь пользователя — <code>.msg.user</code>.
+</p>
+
+<script>
+  const panel = document.getElementById("panel");
+  const caption = document.getElementById("caption");
+  const caps = {
+    "":  "<b>Сейчас.</b> Пузырь пользователя на всю ширину, шаги списком, карточка изменений с кнопками-пилюлями. Всё честно, но плотно.",
+    a: "<b>A · Воздух.</b> Только CSS: +вертикальные отступы между ходами, пузырь уже и светлее (8% вместо 14%), шаги тише, композер и шапка тоньше. Ничего не перемещается, риск минимальный.",
+    b: "<b>B · Тихая лента.</b> Всё из «А» + выполненные шаги сворачиваются в одну строку «4 шага · 1 файл · +78 −5» (hover — раскрыть), карточка изменений превращается в ghost-чипы без рамок. Нужно немного JS.",
+    c: "<b>C · Без пузырей.</b> Максимум воздуха: сообщение пользователя — просто текст, прижатый вправо, шаги — точка и строка, композер без коробки. Самый «легкий», но самый непривычный."
+  };
+  document.getElementById("switcher").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-v]");
+    if (!btn) return;
+    document.querySelectorAll("#switcher button").forEach(b => b.classList.toggle("on", b === btn));
+    const v = btn.dataset.v;
+    panel.dataset.v = v;
+    caption.innerHTML = caps[v] || caps[""];
+  });
+  caption.innerHTML = caps[""];
+</script>
+
+</body>
+</html>

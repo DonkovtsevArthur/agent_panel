@@ -980,7 +980,17 @@
       textStepLabel: "Сообщение",
       zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
-      stepsMany: (n) => `${n} шагов`,
+      stepsMany: (n) => {
+        const abs = Math.abs(n) % 100;
+        const last = abs % 10;
+        if (abs > 10 && abs < 20) {
+          return `${n} шагов`;
+        }
+        if (last > 1 && last < 5) {
+          return `${n} шага`;
+        }
+        return `${n} шагов`;
+      },
       toolHumanRead: (path) => (path ? `чтение ${path}` : "чтение"),
       toolHumanWrite: (path) => (path ? `запись ${path}` : "запись"),
       toolHumanReplace: (path) => (path ? `правка ${path}` : "правка"),
@@ -7305,7 +7315,46 @@
     if (n === 1) {
       return t("stepsOne");
     }
-    return t("stepsMany")(n);
+    return t("stepsMany", n);
+  }
+
+  /** Steps users perceive as actions: tool calls only (no thinking/text). */
+  function timelineToolStepsCount(group) {
+    if (!group) {
+      return 0;
+    }
+    return group.querySelectorAll(
+      ".agent-step[data-step-kind='tool']"
+    ).length;
+  }
+
+  /** Unique edited-file count across write/edit steps (for the sealed summary). */
+  function timelineEditedFilesCount(group) {
+    if (!group) {
+      return 0;
+    }
+    const files = new Set();
+    for (const el of group.querySelectorAll(
+      ".agent-step[data-step-kind='tool'][data-tool-name]"
+    )) {
+      const name = canonicalToolName(el.dataset.toolName || "");
+      if (name !== "editor" && name !== "apply_patch") {
+        continue;
+      }
+      let metrics = null;
+      try {
+        metrics = JSON.parse(el.dataset.metrics || "null");
+      } catch {
+        metrics = null;
+      }
+      for (const f of Array.isArray(metrics?.files) ? metrics.files : []) {
+        const p = String(f || "").trim();
+        if (p) {
+          files.add(p);
+        }
+      }
+    }
+    return files.size;
   }
 
   function timelineLooksLikeTransportFailure(group) {
@@ -7387,8 +7436,20 @@
     scrollToBottom();
   }
 
-  function sealToolGroups() {
+  /**
+   * Run finished (idle/stopped/error): flip timelines that were sealed
+   * mid-run from «выполняю» to «выполнено» and stop their pulsing dot.
+   */
+  function finalizeRunningTimelines() {
     for (const group of messagesEl.querySelectorAll(
+      ".tool-group.agent-timeline.is-run-working"
+    )) {
+      group.classList.remove("is-run-working");
+      updateToolGroupSummary(group);
+    }
+  }
+
+  function sealToolGroups() {    for (const group of messagesEl.querySelectorAll(
       ".tool-group:not([data-sealed])"
     )) {
       if (countAgentSteps(group) === 0) {
@@ -7403,6 +7464,19 @@
       }
       group.dataset.sealed = "1";
       dropRawToolRows(group);
+      // Промежуточный текст модели запечатывает ленту посреди хода —
+      // ход ещё идёт, поэтому сводка остаётся «выполняю» до конца всего
+      // запуска (idle/stopped снимает флаг через finalizeRunningTimelines).
+      // Флаг — только лентам ТЕКУЩЕГО хода и только ЖИВОМУ потоку:
+      // при перерисовке истории (редактирование/повторная отправка,
+      // messagesReplaced, init/showChat) restoringChatScroll = true и
+      // запечатанные ленты прошлых ходов остаются «выполнено».
+      if (busy && !restoringChatScroll) {
+        const turn = group.closest(".chat-turn");
+        if (!currentChatTurnEl || !turn || turn === currentChatTurnEl) {
+          group.classList.add("is-run-working");
+        }
+      }
       // Collapse the whole work timeline into a single header («N шагов»).
       group.classList.add("is-collapsed");
       const toggle = group.querySelector(".tool-group-toggle");
@@ -7977,18 +8051,48 @@
     const summary = group.querySelector(".tool-group-summary");
     if (summary) {
       const types = toolTypesSummary(group);
-      const base = group.dataset.failed === "1"
-        ? t("runFailedSummary")
-        : group.dataset.sealed === "1"
-          ? t("runDone")
-          : t("runWorking");
-      summary.textContent = types ? `${base} · ${types}` : base;
+      if (group.dataset.failed === "1") {
+        summary.textContent = t("runFailedSummary");
+      } else if (group.dataset.sealed === "1") {
+        // Тихая лента: законченный ход сворачивается в счётчики
+        // («выполнено · 4 шага · 2 файла · +12 −3»), полный список
+        // того, что делалось, — в тултипе переключателя. Шагами считаем
+        // только вызовы инструментов — карточки «Мысли» не входят.
+        // Лента, запечатанная посреди хода, остаётся «выполняю».
+        const base = group.classList.contains("is-run-working")
+          ? t("runWorking")
+          : t("runDone");
+        const parts = [stepsCountLabel(timelineToolStepsCount(group))].filter(
+          Boolean
+        );
+        const files = timelineEditedFilesCount(group);
+        if (files > 0) {
+          parts.push(t("toolFiles", files));
+        }
+        const reviewAdd = Number(group.dataset.reviewAdded) || 0;
+        const reviewDel = Number(group.dataset.reviewRemoved) || 0;
+        if (reviewAdd > 0 || reviewDel > 0) {
+          parts.push(`+${reviewAdd} −${reviewDel}`);
+        }
+        summary.textContent = `${base}${
+          parts.length ? ` · ${parts.join(" · ")}` : ""
+        }`;
+      } else {
+        const base = t("runWorking");
+        summary.textContent = types ? `${base} · ${types}` : base;
+      }
     }
     if (toggle) {
+      const sealedTypes =
+        group.dataset.sealed === "1" && group.dataset.failed !== "1"
+          ? toolTypesSummary(group)
+          : "";
       toggle.title = !hasSteps
         ? ""
         : group.classList.contains("is-collapsed")
-          ? t("showSteps")
+          ? sealedTypes
+            ? `${t("showSteps")} · ${sealedTypes}`
+            : t("showSteps")
           : t("hideSteps");
     }
   }
@@ -8001,6 +8105,7 @@
       `<span class="tool-group-summary">${escapeHtml(t("runWorking"))}</span>` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true" hidden>expand_more</span>` +
       `</button>` +
+      `<div class="tool-group-live-note"></div>` +
       `<div class="tool-group-body agent-timeline-body"></div>`;
     return group;
   }
@@ -8050,6 +8155,27 @@
     const existing = getActiveToolGroup();
     if (existing) {
       return existing;
+    }
+    // Промежуточный текст модели запечатал ленту, но ход продолжается:
+    // переоткрываем её вместо создания второй строки «выполняю» —
+    // один ход, одна лента (итог сводки считается по всем раундам).
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    const reopenable = [
+      ...scope.querySelectorAll(
+        ".tool-group.agent-timeline.is-run-working[data-sealed]"
+      ),
+    ];
+    if (reopenable.length) {
+      const group = reopenable[reopenable.length - 1];
+      group.classList.remove("is-run-working");
+      delete group.dataset.sealed;
+      updateToolGroupSummary(group);
+      keepStatusAtEnd();
+      return group;
     }
     // Always start collapsed; user can expand via the toggle. Summary still
     // updates with the current step while the run is live.
@@ -8173,12 +8299,28 @@
     el.dataset.stepKind = "text";
     el.dataset.status = "done";
     el.classList.add("agent-step-text");
+    // Комментарий модели — обычная строка ленты (иконка + текст),
+    // идёт в общем порядке событий перед вызванным инструментом.
     el.innerHTML =
-      `<div class="agent-step-head">` +
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">subject</span>` +
-      `<span class="agent-step-label">${escapeHtml(t("textStepLabel"))}</span>` +
-      `</div>` +
-      `<div class="agent-step-text-body">${renderInlineMarkdown(raw)}</div>`;
+      `<span class="agent-step-label agent-step-text-label"></span>`;
+    const textLabel = el.querySelector(".agent-step-text-label");
+    if (textLabel) {
+      textLabel.innerHTML = renderInlineMarkdown(raw);
+    }
+    // «Живая» строка под статусом: последний комментарий модели, пока
+    // лента свёрнута (CSS прячет её в развёрнутом виде и после финиша).
+    // Только живой поток — при перерисовке истории тикер не оживляем.
+    if (!restoringChatScroll) {
+      let note = group.querySelector(".tool-group-live-note");
+      if (!note) {
+        note = document.createElement("div");
+        note.className = "tool-group-live-note";
+        const body = group.querySelector(".tool-group-body");
+        group.insertBefore(note, body || null);
+      }
+      note.textContent = raw;
+    }
     keepStatusAtEnd();
     scrollToBottom();
     return el;
@@ -8305,6 +8447,13 @@
     if (step.name) {
       el.dataset.toolName = step.name;
     }
+    if (step.metrics) {
+      try {
+        el.dataset.metrics = JSON.stringify(step.metrics);
+      } catch {
+        /* metrics are optional display hints — ignore unparsable payloads */
+      }
+    }
     if (step.kind === "tool") {
       el.dataset.toolMatchKey = toolStepMatchKey(
         step.name,
@@ -8390,34 +8539,10 @@
           );
         }
       }
-      // Restore description preserved across status updates (running → done).
-      const savedHtml = el.dataset.descriptionHtml;
-      if (savedHtml) {
-        let descDiv = el.querySelector(".agent-step-description");
-        if (!descDiv) {
-          descDiv = document.createElement("div");
-          descDiv.className = "agent-step-description";
-          el.appendChild(descDiv);
-        }
-        descDiv.innerHTML = savedHtml;
-      }
-      // Merge preceding text step content into this tool card so the
-      // model's explanation is shown inline rather than as a separate card.
-      const prevText = el.previousElementSibling;
-      if (prevText && prevText.dataset.stepKind === "text") {
-        const textBody = prevText.querySelector(".agent-step-text-body");
-        if (textBody && textBody.innerHTML.trim()) {
-          el.dataset.descriptionHtml = textBody.innerHTML;
-          let descDiv = el.querySelector(".agent-step-description");
-          if (!descDiv) {
-            descDiv = document.createElement("div");
-            descDiv.className = "agent-step-description";
-            el.appendChild(descDiv);
-          }
-          descDiv.innerHTML = textBody.innerHTML;
-        }
-        prevText.remove();
-      }
+      // Комментарий модели («Нашёл версию, правлю…») остаётся
+      // самостоятельной строкой ленты ПЕРЕД инструментом — хронологичный
+      // список: текст, затем шаг. Раньше текст приклеивался описанием
+      // в карточку инструмента.
     } else {
       el.classList.remove("agent-step-thinking");
       const icon = agentStepStatusIcon(step.status, step.kind);
@@ -13162,34 +13287,16 @@
 
     const title = document.createElement("div");
     title.className = "review-title";
-    const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
-    const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
-    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
     card.appendChild(title);
 
     const fileList = document.createElement("div");
     fileList.className = "review-files";
-    for (const file of list) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "review-file";
-      row.title = t("openChanges");
-      row.innerHTML =
-        `<span class="review-file-path"></span>` +
-        `<span class="review-file-stats">` +
-        `<span class="add">+${file.added || 0}</span> ` +
-        `<span class="del">−${file.removed || 0}</span>` +
-        `</span>`;
-      row.querySelector(".review-file-path").textContent = file.path;
-      row.addEventListener("click", () => {
-        host.postMessage({ type: "openFileDiff", path: file.path });
-      });
-      fileList.appendChild(row);
-    }
     card.appendChild(fileList);
-    card.dataset.paths = list.map((f) => f.path).join("\n");
     const mount = ensureChatTurn();
     mount.appendChild(card);
+    // Общее построение (заголовок, строки, диф-итоги в сводку шагов) —
+    // в одном месте, чтобы live-рендер и SCM-обновления не расходились.
+    renderReviewCardBody(card, list);
     setComposerScmActions(list, Boolean(parsed.showScm));
     syncComposerPlanFromCache({ openEditor: false });
     keepStatusAtEnd();
@@ -13546,7 +13653,21 @@
     }
     const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
     const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
-    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
+    title.textContent = t("changedFiles", list.length, totalAdd, totalDel);
+    // Тихая лента: диф-итоги хода уходят и в свернутую сводку шагов
+    // («выполнено · N шага · +A −D»), чтобы карточку можно было не разворачивать.
+    const turn = card.closest(".chat-turn");
+    if (turn) {
+      const timelines = turn.querySelectorAll(
+        ".tool-group.agent-timeline[data-sealed='1']"
+      );
+      const timeline = timelines[timelines.length - 1];
+      if (timeline) {
+        timeline.dataset.reviewAdded = String(totalAdd);
+        timeline.dataset.reviewRemoved = String(totalDel);
+        updateToolGroupSummary(timeline);
+      }
+    }
     fileList.replaceChildren();
     for (const file of list) {
       const row = document.createElement("button");
@@ -15607,6 +15728,7 @@
     }
     updateSendButton();
     if (!busy) {
+      finalizeRunningTimelines();
       focusPrompt();
     }
   }
@@ -17944,8 +18066,7 @@
     if (
       userMsg &&
       messagesEl.contains(userMsg) &&
-      !userMsg.classList.contains("is-editing") &&
-      !busy
+      !userMsg.classList.contains("is-editing")
     ) {
       const selection = window.getSelection();
       if (
@@ -17956,6 +18077,14 @@
         return;
       }
       event.preventDefault();
+      if (busy) {
+        showCopyToast(
+          UI_LANG === "ru"
+            ? "Дождитесь окончания текущего хода или остановите его."
+            : "Wait for the current turn to finish, or stop it."
+        );
+        return;
+      }
       const editIndex = Number(userMsg.dataset.index);
       if (Number.isInteger(editIndex) && editIndex >= 0) {
         startEditingUserMessage(editIndex);
@@ -18267,9 +18396,16 @@
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
-      case "showChat":
+      case "showChat": {
+        const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
         if (msg.chatId) {
           activeChatId = msg.chatId;
+        }
+        if (chatChanged) {
+          // Не тянуть черновые вложения из предыдущего чата в новый.
+          // Только при смене chatId: тот же чат repost-ится и после
+          // attachmentsAdded (превью только что добавленных вложений).
+          clearPendingAttachments();
         }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel, true);
@@ -18341,6 +18477,7 @@
           }
         }
         break;
+      }
       case "insertComposerText":
         insertComposerText(msg.text || "");
         setBusy(false);
@@ -18418,6 +18555,13 @@
         pickAttachmentsForEdit = false;
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
+        // The remount wiped the live «выполняю» line the submit click had
+        // opened; the replacement run reports its first step only after
+        // session bootstrap + model TTFB. Recreate the run line now.
+        if (busy) {
+          ensureActiveToolGroup();
+          scrollToBottom();
+        }
         break;
       case "copied":
         showCopyToast(t("copied"));
@@ -18614,10 +18758,14 @@
         streamingEl = null;
         streamingRenderScheduled = false;
         completeRunningTodoPlans();
-        editingUserIndex = null;
-        editingUserText = "";
-        editingModelId = "";
-        editingModeId = "";
+        // A duplicate catch-up finale must not clear an open edit composer —
+        // Save silently no-ops once editingUserIndex is gone.
+        if (!Number.isInteger(editingUserIndex)) {
+          editingUserIndex = null;
+          editingUserText = "";
+          editingModelId = "";
+          editingModeId = "";
+        }
         setBusy(false);
         ensureRegenerateButton();
         // Re-sync Build from history: hide if Build already ran; show only for

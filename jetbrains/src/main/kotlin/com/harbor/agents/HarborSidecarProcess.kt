@@ -51,7 +51,18 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       )
       return
     }
-    val node = resolveNodeBinary()
+    var node = resolveNodeBinary()
+    // If no working node found, try auto-downloading a portable one
+    if (!isNodeWorking(node)) {
+      node = NodeProvisioner.ensureNode(project) ?: run {
+        notify(
+          "Harbor: Node.js not found. Install it from <a href='https://nodejs.org'>nodejs.org</a> " +
+            "(LTS recommended) and restart the IDE. You can also set the HARBOR_NODE env variable " +
+            "to the full path of your node binary."
+        )
+        started.set(false); return
+      }
+    }
     val workspace = project.basePath ?: System.getProperty("user.home")
     log.info(
       "Harbor sidecar start script=${script.absolutePath} " +
@@ -62,8 +73,17 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
         .directory(script.parentFile)
         .redirectErrorStream(false)
       val env = pb.environment()
-      val extras = "/opt/homebrew/bin:/usr/local/bin:/usr/bin"
-      env["PATH"] = "$extras:${env["PATH"] ?: ""}"
+      val isWindows = System.getProperty("os.name", "").lowercase().contains("win")
+      if (isWindows) {
+        // On Windows the PATH separator is ';'; keep it intact.
+        val programFiles = System.getenv("ProgramFiles") ?: """C:\Program Files"""
+        val extraWin = """$programFiles\nodejs"""
+        val existing = env["PATH"] ?: ""
+        env["PATH"] = "$extraWin;$existing"
+      } else {
+        val extras = "/opt/homebrew/bin:/usr/local/bin:/usr/bin"
+        env["PATH"] = "$extras:${env["PATH"] ?: ""}"
+      }
       env["HARBOR_WORKSPACE"] = workspace
       env["HARBOR_IDE"] = "jetbrains"
       env["HARBOR_OUT_DIR"] = script.parentFile.absolutePath
@@ -112,7 +132,21 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       }
     } catch (t: Throwable) {
       log.warn("Failed to start Harbor sidecar", t)
-      notify("Failed to start Harbor sidecar: ${t.message}")
+      val msg = t.message ?: ""
+      val isNodeMissing = msg.contains("node", ignoreCase = true) &&
+        (msg.contains("Cannot run program", ignoreCase = true) ||
+         msg.contains("CreateProcess", ignoreCase = true) ||
+         msg.contains("No such file", ignoreCase = true) ||
+         msg.contains("not found", ignoreCase = true))
+      if (isNodeMissing) {
+        notify(
+          "Harbor: Node.js not found. Install it from <a href='https://nodejs.org'>nodejs.org</a> " +
+            "(LTS recommended) and restart the IDE. You can also set the HARBOR_NODE env variable " +
+            "to the full path of your node binary."
+        )
+      } else {
+        notify("Failed to start Harbor sidecar: $msg")
+      }
       started.set(false)
     }
   }
@@ -194,7 +228,37 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
   private fun resolveNodeBinary(): String {
     val fromEnv = System.getenv("HARBOR_NODE")
     if (!fromEnv.isNullOrBlank()) return fromEnv
-    val candidates = listOf("node", "/usr/local/bin/node", "/opt/homebrew/bin/node")
+
+    val isWindows = System.getProperty("os.name", "").lowercase().contains("win")
+    val candidates = mutableListOf("node")
+
+    if (isWindows) {
+      // Common Windows install locations
+      val programFiles = System.getenv("ProgramFiles") ?: """C:\Program Files"""
+      val programFilesX86 = System.getenv("ProgramFiles(x86)") ?: """C:\Program Files (x86)"""
+      val localAppData = System.getenv("LOCALAPPDATA") ?: ""
+      candidates += """$programFiles\nodejs\node.exe"""
+      candidates += """$programFilesX86\nodejs\node.exe"""
+      if (localAppData.isNotBlank()) {
+        // nvm-windows, fnm, volta defaults
+        candidates += """$localAppData\nvm\node.exe"""
+        candidates += """$localAppData\fnm\node.exe"""
+        candidates += """$localAppData\volta\bin\node.exe"""
+      }
+      // PATH-based lookup via `where`
+      try {
+        val p = ProcessBuilder("where", "node").start()
+        if (p.waitFor(3, TimeUnit.SECONDS) && p.exitValue() == 0) {
+          val found = p.inputStream.bufferedReader().readLine()?.trim()
+          if (!found.isNullOrBlank()) candidates.add(0, found)
+        }
+      } catch (_: Exception) {
+      }
+    } else {
+      candidates += "/usr/local/bin/node"
+      candidates += "/opt/homebrew/bin/node"
+    }
+
     for (c in candidates) {
       try {
         val p = ProcessBuilder(c, "-v").start()
@@ -205,6 +269,15 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       }
     }
     return "node"
+  }
+
+  private fun isNodeWorking(node: String): Boolean {
+    return try {
+      val p = ProcessBuilder(node, "-v").start()
+      p.waitFor(3, TimeUnit.SECONDS) && p.exitValue() == 0
+    } catch (_: Exception) {
+      false
+    }
   }
 
   /**

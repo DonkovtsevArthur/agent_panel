@@ -19,7 +19,10 @@ import {
 	type PatchChunk,
 	PatchParser,
 	type PatchWarning,
+	calculateSimilarity,
+	canonicalize,
 } from "./apply-patch-parser";
+import { withFileLocks } from "./file-locks";
 
 export interface PatchFileChange {
 	type: PatchActionType;
@@ -153,6 +156,47 @@ function extractFilesForOperations(
 	return [...files];
 }
 
+/**
+ * Fuzzy context matching can anchor a chunk at a position where the lines it
+ * deletes do not resemble the patch's `-` lines at all; skipping them blind
+ * then corrupts the file. Verify each deleted line against the actual
+ * content: exact canonicalized equality, trimEnd equality, or the same
+ * 0.66 similarity tier the context matcher itself uses all pass (models
+ * quote file content imperfectly at the correct position too); anything
+ * less similar means the chunk landed in the wrong place.
+ */
+function verifyDeletions(
+	lines: string[],
+	chunk: PatchChunk,
+	filePath: string,
+): void {
+	if (chunk.delLines.length === 0) {
+		return;
+	}
+	if (chunk.origIndex + chunk.delLines.length > lines.length) {
+		throw new DiffError(
+			`${filePath}: deletion at line ${chunk.origIndex + 1} runs past end of file (${lines.length} lines)`,
+		);
+	}
+	for (let i = 0; i < chunk.delLines.length; i++) {
+		const expected = canonicalize(chunk.delLines[i] ?? "");
+		const actualRaw = lines[chunk.origIndex + i] ?? "";
+		const actual = canonicalize(actualRaw);
+		if (
+			actual === expected ||
+			canonicalize(actualRaw.trimEnd()) === canonicalize((chunk.delLines[i] ?? "").trimEnd())
+		) {
+			continue;
+		}
+		if (calculateSimilarity(actual, expected) >= 0.66) {
+			continue;
+		}
+		throw new DiffError(
+			`${filePath}: context matched but line ${chunk.origIndex + i + 1} to delete does not match file content. Patch not applied.`,
+		);
+	}
+}
+
 function applyChunks(
 	content: string,
 	chunks: PatchChunk[],
@@ -178,6 +222,7 @@ function applyChunks(
 			);
 		}
 		result.push(...lines.slice(currentIndex, chunk.origIndex));
+		verifyDeletions(lines, chunk, filePath);
 		result.push(...chunk.insLines);
 		currentIndex = chunk.origIndex + chunk.delLines.length;
 	}
@@ -365,11 +410,31 @@ export function createApplyPatchExecutor(
 		cwd: string,
 		_context: AgentToolContext,
 	): Promise<string> => {
-		const { changes, fuzz } = await computePatchChanges(input.input, cwd, {
-			encoding,
-			restrictToCwd,
+		// Resolve every path the patch touches (including move targets) and
+		// hold their locks across both the read/compute and the write phases:
+		// a parallel editor call or patch racing between them would make the
+		// computed changes stale before they are written.
+		const normalizedInput = normalizePatchInput(input.input);
+		const lockPaths = extractFilesForOperations(normalizedInput.lines, [
+			PATCH_MARKERS.UPDATE,
+			PATCH_MARKERS.DELETE,
+			PATCH_MARKERS.ADD,
+			PATCH_MARKERS.MOVE,
+		]).map((filePath) => resolveFilePath(cwd, filePath, restrictToCwd));
+
+		const { fuzz, touched } = await withFileLocks(lockPaths, async () => {
+			const { changes, fuzz } = await computePatchChanges(input.input, cwd, {
+				encoding,
+				restrictToCwd,
+			});
+			const touched = await applyChanges(
+				changes,
+				cwd,
+				encoding,
+				restrictToCwd,
+			);
+			return { fuzz, touched };
 		});
-		const touched = await applyChanges(changes, cwd, encoding, restrictToCwd);
 
 		const responseLines = [
 			"Successfully applied patch to the following files:",

@@ -144,7 +144,8 @@ export class HeadlessPanelHost {
   private selectedMode = "agent";
   private selectedReasoningEffort = "";
   private contextTokens = 0;
-  private abort?: AbortController;
+  /** Live turn per chat — parallel chats may run simultaneously (VS Code parity). */
+  private readonly chatRuns = new Map<string, AbortController>();
   private readonly opts: HeadlessPanelOptions;
   private readonly providerConnStatuses = new Map<string, ProviderConnStatus>();
   private lastTurnModel = "";
@@ -368,16 +369,18 @@ export class HeadlessPanelHost {
           agentMode?: unknown;
           reasoningEffort?: unknown;
         });
-      case "stop":
-        this.abort?.abort();
-        this.abort = undefined;
-        if (this.store.activeChatId) {
-          this.setRunStateForChat(this.store.activeChatId);
-          this.setStatusForChat(this.store.activeChatId, "", true);
+      case "stop": {
+        // Per-chat: stop only the run of the chat the user is looking at.
+        // Background runs in other chats keep going.
+        const stopChatId = this.store.activeChatId || "";
+        this.abortChatRun(stopChatId);
+        if (stopChatId) {
+          this.setStatusForChat(stopChatId, "", true);
         }
-        this.post({ type: "stopped" });
-        this.post({ type: "idle", chatId: this.store.activeChatId });
+        this.post({ type: "stopped", chatId: stopChatId });
+        this.post({ type: "idle", chatId: stopChatId });
         return { ok: true };
+      }
       case "toolApprovalResult":
         resolveToolApproval(
           String(msg.requestId || ""),
@@ -1227,9 +1230,10 @@ export class HeadlessPanelHost {
       return { ok: false };
     }
     const chatIds = getAgentChatIds(agent);
-    if (chatIds.some((id) => this.chatRunState.get(id) === "running")) {
-      this.abort?.abort();
-      this.abort = undefined;
+    for (const id of chatIds) {
+      if (this.chatRunState.get(id) === "running") {
+        this.abortChatRun(id);
+      }
     }
     await discardClineChatSessions(chatIds);
     if (!archiveAgentInStore(this.store, agentId)) {
@@ -1259,6 +1263,11 @@ export class HeadlessPanelHost {
     const preferArchive = this.store.screen === "archive";
     const agent = this.store.agents.find((a) => a.id === agentId);
     if (agent) {
+      for (const id of getAgentChatIds(agent)) {
+        if (this.chatRunState.get(id) === "running") {
+          this.abortChatRun(id);
+        }
+      }
       await discardClineChatSessions(getAgentChatIds(agent));
     }
     if (!deleteAgentFromStore(this.store, agentId)) {
@@ -1305,10 +1314,8 @@ export class HeadlessPanelHost {
     }
     // Match VS Code: stop a run on the branch being deleted, then flush.
     if (this.chatRunState.get(chatId) === "running") {
-      this.abort?.abort();
-      this.abort = undefined;
-      this.setRunStateForChat(chatId);
-      this.post({ type: "stopped" });
+      this.abortChatRun(chatId);
+      this.post({ type: "stopped", chatId });
       this.post({ type: "idle", chatId });
     }
     this.flushActiveChatToStore();
@@ -1595,7 +1602,7 @@ export class HeadlessPanelHost {
 
   private async onDiscardChanges(rawPaths: unknown[]): Promise<unknown> {
     const chatId = this.store.activeChatId;
-    if (!chatId || this.abort) {
+    if (!chatId || this.chatRuns.has(chatId)) {
       this.post({ type: "discardCancelled", chatId });
       this.post({ type: "idle", chatId });
       return { ok: false, error: "busy" };
@@ -1673,7 +1680,26 @@ export class HeadlessPanelHost {
   }
 
   private isChatRunning(chatId: string | undefined): boolean {
-    return Boolean(chatId) && this.chatRunState.get(chatId || "") === "running";
+    return Boolean(chatId && this.chatRuns.has(chatId));
+  }
+
+  /**
+   * Abort and deregister the live turn of one chat (VS Code parity).
+   * Leaves runs of other chats untouched.
+   */
+  private abortChatRun(chatId: string | undefined): void {
+    if (!chatId) {
+      return;
+    }
+    const controller = this.chatRuns.get(chatId);
+    if (controller) {
+      this.chatRuns.delete(chatId);
+      controller.abort();
+    }
+    // Clear the rail loader immediately — do not wait for the async turn catch.
+    if (this.chatRunState.get(chatId) === "running") {
+      this.setRunStateForChat(chatId);
+    }
   }
 
   /**
@@ -1686,6 +1712,7 @@ export class HeadlessPanelHost {
       nextChatId,
       previousStillRunning: this.isChatRunning(this.store.activeChatId),
     });
+    HarborHeadless.resetIdeTerminalSnapshot();
   }
 
   private async onNewAgent(): Promise<unknown> {
@@ -1870,6 +1897,12 @@ export class HeadlessPanelHost {
       lastAgentEditedPaths?: string[];
     }
   ): void {
+    // A newer run already owns this chat (Stop → immediate resend, edit+rerun):
+    // its snapshot, run state and webview busy belong to it — ours must not
+    // clobber them.
+    if (this.chatRuns.has(chatId)) {
+      return;
+    }
     // Find and remove the todo plan card (may be anywhere in the array).
     const todoIx = uiMessages.findIndex(
       (m) =>
@@ -1991,8 +2024,7 @@ export class HeadlessPanelHost {
       }
     }
 
-    this.abort?.abort();
-    this.abort = undefined;
+    this.abortChatRun(this.store.activeChatId);
 
     const agentMode = String(msg.agentMode || this.selectedMode || "agent");
     const model =
@@ -2052,8 +2084,7 @@ export class HeadlessPanelHost {
       this.post({ type: "idle", chatId: this.store.activeChatId });
       return { ok: false, error: "cannot regenerate" };
     }
-    this.abort?.abort();
-    this.abort = undefined;
+    this.abortChatRun(this.store.activeChatId);
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
@@ -2108,7 +2139,7 @@ export class HeadlessPanelHost {
     resetSession?: unknown;
   }): Promise<unknown> {
     const text = String(msg.text || "").trim();
-    if (this.abort) {
+    if (this.chatRuns.has(this.store.activeChatId || "")) {
       // The webview renders the user bubble optimistically before this RPC
       // returns; a silent rejection ghosts the message with no feedback.
       const lang = resolveUiLanguage(getConfig().language);
@@ -2207,17 +2238,24 @@ export class HeadlessPanelHost {
     };
 
     const postToRun = (message: Record<string, unknown>): void => {
+      // VS Code parity (postToRunChat): stream only into the chat being
+      // viewed. Background runs update the store via syncRunChat and the
+      // rail via agentsList; the webview repaints them on switch.
+      if (this.store.activeChatId !== runChatId) {
+        return;
+      }
       this.post({ ...message, chatId: runChatId });
     };
 
     // Own the run before the first syncRunChat call — syncRunChat checks
     // runActive(), and runActive must already be initialized there (TDZ).
+    // Replaces any zombie run still registered for this chat.
     const ac = new AbortController();
-    const savedAc = ac;
     /** False after Stop (signal.aborted) or after a newer run replaced us. */
     const runActive = (): boolean =>
-      !ac.signal.aborted && this.abort === savedAc;
-    this.abort = ac;
+      !ac.signal.aborted && this.chatRuns.get(runChatId) === ac;
+    this.abortChatRun(runChatId);
+    this.chatRuns.set(runChatId, ac);
     retainClineChatSession(runChatId);
 
     if (!msg.hideUser) {
@@ -2489,15 +2527,15 @@ export class HeadlessPanelHost {
       }
       this.scheduleScmRefresh(500);
       return { ok: false, error: message };
-    } finally {
-      // Race guard: if a newer run is active or we were stopped, do not
-      // clear its abort controller and do not post idle — that would
-      // kill the new run's preloader and reset visible steps.
-      if (runActive()) {
-        this.abort = undefined;
-        this.setStatusForChat(runChatId, "", true);
-        postToRun({ type: "idle" });
-      }
+      } finally {
+        // Race guard: if a newer run is active or we were stopped, do not
+        // clear its abort controller and do not post idle — that would
+        // kill the new run's preloader and reset visible steps.
+        if (runActive()) {
+          this.chatRuns.delete(runChatId);
+          this.setStatusForChat(runChatId, "", true);
+          postToRun({ type: "idle" });
+        }
       onClineActiveChatChanged({
         previousChatId: runChatId,
         nextChatId: this.store.activeChatId,

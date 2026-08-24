@@ -25,10 +25,12 @@ export function withTurnImages<T>(
   const clean = urls.filter(
     (url) => typeof url === "string" && url.startsWith("data:image/")
   );
-  if (!clean.length) {
-    return fn();
+  if (clean.length) {
+    visionLog(`turn images=${clean.length}`);
   }
-  visionLog(`turn images=${clean.length}`);
+  // Pin the module fallback for the whole turn — image-less turns included —
+  // so a concurrent turn's images cannot leak into this turn's fetches that
+  // ran outside the ALS context (event emitter).
   const previous = fallbackTurnImages;
   fallbackTurnImages = clean;
   return turnImages.run(clean, fn).finally(() => {

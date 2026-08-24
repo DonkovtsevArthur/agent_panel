@@ -152,9 +152,16 @@
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
-      case "showChat":
+      case "showChat": {
+        const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
         if (msg.chatId) {
           activeChatId = msg.chatId;
+        }
+        if (chatChanged) {
+          // Не тянуть черновые вложения из предыдущего чата в новый.
+          // Только при смене chatId: тот же чат repost-ится и после
+          // attachmentsAdded (превью только что добавленных вложений).
+          clearPendingAttachments();
         }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel, true);
@@ -226,6 +233,7 @@
           }
         }
         break;
+      }
       case "insertComposerText":
         insertComposerText(msg.text || "");
         setBusy(false);
@@ -303,6 +311,13 @@
         pickAttachmentsForEdit = false;
         setCanRegenerate(msg.canRegenerate);
         renderMessages(msg.uiMessages || []);
+        // The remount wiped the live «выполняю» line the submit click had
+        // opened; the replacement run reports its first step only after
+        // session bootstrap + model TTFB. Recreate the run line now.
+        if (busy) {
+          ensureActiveToolGroup();
+          scrollToBottom();
+        }
         break;
       case "copied":
         showCopyToast(t("copied"));
@@ -499,10 +514,14 @@
         streamingEl = null;
         streamingRenderScheduled = false;
         completeRunningTodoPlans();
-        editingUserIndex = null;
-        editingUserText = "";
-        editingModelId = "";
-        editingModeId = "";
+        // A duplicate catch-up finale must not clear an open edit composer —
+        // Save silently no-ops once editingUserIndex is gone.
+        if (!Number.isInteger(editingUserIndex)) {
+          editingUserIndex = null;
+          editingUserText = "";
+          editingModelId = "";
+          editingModeId = "";
+        }
         setBusy(false);
         ensureRegenerateButton();
         // Re-sync Build from history: hide if Build already ran; show only for

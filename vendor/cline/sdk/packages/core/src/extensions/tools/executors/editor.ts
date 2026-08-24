@@ -9,6 +9,7 @@ import * as path from "node:path";
 import type { AgentToolContext } from "@cline/shared";
 import type { EditFileInput } from "../schemas";
 import type { EditorExecutor } from "../types";
+import { withFileLock } from "./file-locks";
 
 /**
  * Options for the editor executor
@@ -242,30 +243,35 @@ export function createEditorExecutor(
 	): Promise<string> => {
 		const filePath = resolveFilePath(cwd, input.path, restrictToCwd);
 
-		if (input.insert_line != null) {
-			return insertInFile(
+		// The read-modify-write cycles below must be serialized per file:
+		// parallel batches of editor calls otherwise race and silently drop
+		// every write but the last.
+		return withFileLock(filePath, async () => {
+			if (input.insert_line != null) {
+				return insertInFile(
+					filePath,
+					input.insert_line, // One-based index
+					input.new_text,
+					encoding,
+				);
+			}
+
+			if (!(await fileExists(filePath))) {
+				return createFile(filePath, input.new_text, encoding);
+			}
+			if (input.old_text == null) {
+				throw new Error(
+					"Parameter `old_text` is required when editing an existing file without `insert_line`",
+				);
+			}
+
+			return replaceInFile(
 				filePath,
-				input.insert_line, // One-based index
+				input.old_text,
 				input.new_text,
 				encoding,
+				maxDiffLines,
 			);
-		}
-
-		if (!(await fileExists(filePath))) {
-			return createFile(filePath, input.new_text, encoding);
-		}
-		if (input.old_text == null) {
-			throw new Error(
-				"Parameter `old_text` is required when editing an existing file without `insert_line`",
-			);
-		}
-
-		return replaceInFile(
-			filePath,
-			input.old_text,
-			input.new_text,
-			encoding,
-			maxDiffLines,
-		);
+		});
 	};
 }

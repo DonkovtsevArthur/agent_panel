@@ -1582,8 +1582,7 @@
     if (
       userMsg &&
       messagesEl.contains(userMsg) &&
-      !userMsg.classList.contains("is-editing") &&
-      !busy
+      !userMsg.classList.contains("is-editing")
     ) {
       const selection = window.getSelection();
       if (
@@ -1594,6 +1593,14 @@
         return;
       }
       event.preventDefault();
+      if (busy) {
+        showCopyToast(
+          UI_LANG === "ru"
+            ? "Дождитесь окончания текущего хода или остановите его."
+            : "Wait for the current turn to finish, or stop it."
+        );
+        return;
+      }
       const editIndex = Number(userMsg.dataset.index);
       if (Number.isInteger(editIndex) && editIndex >= 0) {
         startEditingUserMessage(editIndex);

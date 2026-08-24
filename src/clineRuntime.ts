@@ -67,6 +67,7 @@ import {
   activeFileAlreadyInlined,
   buildTurnContextBlock,
 } from "./turnContext";
+import { resetTerminalSnapshot } from "./terminalContext";
 import {
   createHarborNoopTelemetry,
   HARBOR_CLINE_DISTINCT_ID,
@@ -1627,6 +1628,9 @@ export function onClineActiveChatChanged(input: {
   const prev = String(input.previousChatId || "").trim();
   const next = String(input.nextChatId || "").trim();
   if (prev && prev !== next) {
+    // The module-level terminal snapshot still holds the previous chat's
+    // last command output; a fresh chat must not inherit it.
+    resetTerminalSnapshot();
     if (!input.previousStillRunning) {
       scheduleClineChatIdleEvict(prev);
     }

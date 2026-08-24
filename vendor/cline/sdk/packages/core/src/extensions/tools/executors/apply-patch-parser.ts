@@ -55,7 +55,7 @@ export class DiffError extends Error {
 	}
 }
 
-function canonicalize(input: string): string {
+export function canonicalize(input: string): string {
 	const punctuationMap: Record<string, string> = {
 		"\u2010": "-",
 		"\u2011": "-",
@@ -309,7 +309,7 @@ export class PatchParser {
 	}
 }
 
-function calculateSimilarity(str1: string, str2: string): number {
+export function calculateSimilarity(str1: string, str2: string): number {
 	const longer = str1.length > str2.length ? str1 : str2;
 	const shorter = str1.length > str2.length ? str2 : str1;
 	if (longer.length === 0) {
@@ -419,12 +419,19 @@ function findContext(
 	};
 
 	if (eof) {
-		let [newIndex, fuzz, similarity] = findCore(lines.length - context.length);
+		const [newIndex, fuzz, similarity] = findCore(
+			lines.length - context.length,
+		);
 		if (newIndex !== -1) {
 			return [newIndex, fuzz, similarity];
 		}
-		[newIndex, fuzz, similarity] = findCore(start);
-		return [newIndex, fuzz + 10000, similarity];
+		// An EOF-anchored context must match the actual end of the file.
+		// Retrying the search from the stream position with a fuzz bonus let
+		// the chunk land on a merely similar earlier window, which inserts
+		// its lines there and re-appends the original tail after them —
+		// duplicated closing lines reported as a successful apply. A miss is
+		// reported as an unmatched chunk so the whole patch fails honestly.
+		return [-1, 0, similarity];
 	}
 
 	return findCore(start);

@@ -102,34 +102,16 @@
 
     const title = document.createElement("div");
     title.className = "review-title";
-    const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
-    const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
-    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
     card.appendChild(title);
 
     const fileList = document.createElement("div");
     fileList.className = "review-files";
-    for (const file of list) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "review-file";
-      row.title = t("openChanges");
-      row.innerHTML =
-        `<span class="review-file-path"></span>` +
-        `<span class="review-file-stats">` +
-        `<span class="add">+${file.added || 0}</span> ` +
-        `<span class="del">−${file.removed || 0}</span>` +
-        `</span>`;
-      row.querySelector(".review-file-path").textContent = file.path;
-      row.addEventListener("click", () => {
-        host.postMessage({ type: "openFileDiff", path: file.path });
-      });
-      fileList.appendChild(row);
-    }
     card.appendChild(fileList);
-    card.dataset.paths = list.map((f) => f.path).join("\n");
     const mount = ensureChatTurn();
     mount.appendChild(card);
+    // Общее построение (заголовок, строки, диф-итоги в сводку шагов) —
+    // в одном месте, чтобы live-рендер и SCM-обновления не расходились.
+    renderReviewCardBody(card, list);
     setComposerScmActions(list, Boolean(parsed.showScm));
     syncComposerPlanFromCache({ openEditor: false });
     keepStatusAtEnd();
@@ -486,7 +468,21 @@
     }
     const totalAdd = list.reduce((s, f) => s + (f.added || 0), 0);
     const totalDel = list.reduce((s, f) => s + (f.removed || 0), 0);
-    title.textContent = `Changed files: ${list.length} · +${totalAdd} −${totalDel}`;
+    title.textContent = t("changedFiles", list.length, totalAdd, totalDel);
+    // Тихая лента: диф-итоги хода уходят и в свернутую сводку шагов
+    // («выполнено · N шага · +A −D»), чтобы карточку можно было не разворачивать.
+    const turn = card.closest(".chat-turn");
+    if (turn) {
+      const timelines = turn.querySelectorAll(
+        ".tool-group.agent-timeline[data-sealed='1']"
+      );
+      const timeline = timelines[timelines.length - 1];
+      if (timeline) {
+        timeline.dataset.reviewAdded = String(totalAdd);
+        timeline.dataset.reviewRemoved = String(totalDel);
+        updateToolGroupSummary(timeline);
+      }
+    }
     fileList.replaceChildren();
     for (const file of list) {
       const row = document.createElement("button");

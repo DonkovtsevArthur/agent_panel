@@ -630,6 +630,7 @@
     }
     updateSendButton();
     if (!busy) {
+      finalizeRunningTimelines();
       focusPrompt();
     }
   }
