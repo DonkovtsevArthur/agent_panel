@@ -211,6 +211,7 @@
     commands: document.getElementById("settingsApprovalCommands"),
     mcp: document.getElementById("settingsApprovalMcp"),
     subagents: document.getElementById("settingsApprovalSubagents"),
+    plan: document.getElementById("settingsApprovalPlan"),
   };
   const settingsFocusChainEnabled = document.getElementById(
     "settingsFocusChainEnabled"

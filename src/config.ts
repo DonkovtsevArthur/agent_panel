@@ -30,7 +30,8 @@ export type ToolApprovalGroup =
   | "edits"
   | "commands"
   | "mcp"
-  | "subagents";
+  | "subagents"
+  | "plan";
 
 export const TOOL_APPROVAL_GROUPS: ToolApprovalGroup[] = [
   "reads",
@@ -39,6 +40,7 @@ export const TOOL_APPROVAL_GROUPS: ToolApprovalGroup[] = [
   "commands",
   "mcp",
   "subagents",
+  "plan",
 ];
 
 /** Explicit per-group override; unset groups follow the master autoApprove flag. */
@@ -305,6 +307,8 @@ export interface AgentPanelConfig {
    */
   sessions: {
     idleEvictMinutes: number;
+    /** Auto-abort a turn after this many minutes of no events from the model/tools. */
+    inactivityTimeoutMinutes: number;
   };
   /**
    * Agent Skills (SKILL.md). Discovery is Harbor-only:
@@ -699,9 +703,12 @@ export function getConfig(): AgentPanelConfig {
     },
     sessions: (() => {
       const raw = Number(cfg.get<unknown>("sessions.idleEvictMinutes"));
+      const inactivityRaw = Number(cfg.get<unknown>("sessions.inactivityTimeoutMinutes"));
       return {
         idleEvictMinutes:
           Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 60,
+        inactivityTimeoutMinutes:
+          Number.isFinite(inactivityRaw) && inactivityRaw > 0 ? Math.floor(inactivityRaw) : 5,
       };
     })(),
     skills: (() => {

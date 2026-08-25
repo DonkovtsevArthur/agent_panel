@@ -392,6 +392,7 @@
       "Commands",
       "Mcp",
       "Subagents",
+      "Plan",
     ];
     const approvalKeyByGroup = {
       Reads: "approvalReads",
@@ -400,6 +401,7 @@
       Commands: "approvalCommands",
       Mcp: "approvalMcp",
       Subagents: "approvalSubagents",
+      Plan: "approvalPlan",
     };
     const approvalOptionLabels = {
       inherit: t("approvalInherit"),

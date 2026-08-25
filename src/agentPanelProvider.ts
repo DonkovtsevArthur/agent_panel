@@ -4120,7 +4120,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       // `idle` post: idle flips the summary from «выполняю» to «выполнено».
       if (runSucceeded && !this.isChatRunning(runChatId)) {
         const runDurationMs = Date.now() - runStartedAt;
-        for (let i = runUiMessages.length - 1; i >= 0; i -= 1) {
+        // Only stamp the last tool step of THIS turn (from runTransientStart),
+        // not the entire chat — otherwise each new turn overwrites the previous
+        // turn's duration with its own value.
+        for (let i = runUiMessages.length - 1; i >= runTransientStart; i -= 1) {
           const ui = runUiMessages[i];
           if (ui?.role === "tool" && ui.step?.stepId) {
             ui.step = { ...ui.step, runDurationMs };
@@ -5613,6 +5616,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       "commands",
       "mcp",
       "subagents",
+      "plan",
     ] as const;
     const approvals: Record<string, boolean> = {};
     const approvalsRaw =
@@ -6464,6 +6468,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   <option value="inherit" id="settingsApprovalSubagentsInherit"></option>
                   <option value="auto" id="settingsApprovalSubagentsAuto"></option>
                   <option value="ask" id="settingsApprovalSubagentsAsk"></option>
+                </select>
+              </label>
+              <label class="settings-toggle-row settings-approval-row">
+                <span class="settings-toggle-text">
+                  <span class="settings-toggle-title" id="settingsApprovalPlanLabel">Plan tools</span>
+                  <span class="settings-toggle-hint" id="settingsApprovalPlanNote">update_todo, inspect_images</span>
+                </span>
+                <select id="settingsApprovalPlan" class="settings-input settings-approval-select">
+                  <option value="inherit" id="settingsApprovalPlanInherit"></option>
+                  <option value="auto" id="settingsApprovalPlanAuto"></option>
+                  <option value="ask" id="settingsApprovalPlanAsk"></option>
                 </select>
               </label>
             </div>
