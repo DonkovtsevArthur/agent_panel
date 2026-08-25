@@ -34,7 +34,7 @@ VS Code stays **in-process**: `src/harborCoreInProcess.ts` → `runAgentTurn` (n
 - Commit-from-review message path (host + sidecar stubs)
 - VFS refresh after reviews
 
-**Out of scope (MVP):** tab autocomplete, CodeLens, chip/next-edit, full Cline turn runner inside sidecar (VS Code already has full turns in-process).
+**Out of scope (MVP):** CodeLens, full Cline turn runner inside sidecar (VS Code already has full turns in-process).
 
 ## JCEF rules (WebStorm 2026 remote / OSR)
 
@@ -112,7 +112,6 @@ Before merging any phase that touches `media/`, `packages/`, or `src/` shared pa
 - [ ] MCP / Figma status
 - [ ] Attachments
 - [ ] Review / commit message
-- [ ] Tab autocomplete still works
 - [ ] Session survives Reload; per-workspace store
 
 **Rule:** red gate → do not merge to `main`; revert shared changes. JetBrains-only PRs still run `npm run compile`.
@@ -125,7 +124,6 @@ Before merging any phase that touches `media/`, `packages/`, or `src/` shared pa
 4. Checkbox / MCP switch toggles once.
 5. Reload Harbor does not multiply agents.
 6. Agents list matches `.idea/harbor/session.v2.json` (no ready duplicates).
-7. Tab autocomplete is **not** shipped in the JetBrains plugin.
 
 ## Next increments
 

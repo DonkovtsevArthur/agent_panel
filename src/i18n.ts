@@ -72,6 +72,97 @@ export function harborModelIdentityRulesForLanguage(
 }
 
 /**
+ * Always-on: chat models sometimes shorten the middle of a file path with a
+ * literal `...`/`…` segment. Harbor renders paths in replies as clickable file
+ * links — an abbreviated path cannot be opened (hosts do resolve the suffix,
+ * but a full path is strictly better).
+ */
+export function harborFullPathRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Пути к файлам в ответах",
+      "Упоминая файлы воркспейса, всегда указывай полный путь от корня воркспейса. Никогда не сокращай середину пути через «...» или «…» — пользователь кликает по этим путям, чтобы открыть файл.",
+    ].join("\n");
+  }
+  return [
+    "# File paths in replies",
+    "When mentioning workspace files, always give the full path from the workspace root. Never shorten the middle of a path with \"...\" or \"…\" — the user clicks these paths to open the file.",
+  ].join("\n");
+}
+
+/**
+ * Fewer model round trips on multi-file work: each tool call costs a full
+ * gateway round trip, so batching independent reads is the single biggest
+ * latency lever. Scoped to reads/searches — edits must wait for read results.
+ */
+export function harborBatchReadsRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Экономия round-trip'ов",
+      "ВАЖНО: все независимые tool calls (read_files, search_codebase, run_commands, fetch_web_content) ОБЯЗАНЫ быть в одном ответе. Никогда не вызывай их по одному — это критически важно для производительности.",
+      "Несколько файлов, которые ты уже решил прочитать, запрашивай ОДНИМ вызовом read_files (список путей), а не по файлу на сообщение; держи батч в пределах ~5 файлов.",
+      "Если тебе нужно прочитать 2 файла — сгенерируй 2 tool_use блока в одном assistant-сообщении, а не 2 отдельных хода.",
+      "Не перечитывай файл, содержимое которого уже есть в контексте (контекст хода, предыдущие чтения).",
+      "В больших файлах при известном регионе запрашивай сразу диапазон start_line/end_line, не листай с первой строки.",
+      "Правки файлов (edit/apply_patch) не объединяй в батч с непрочитанными результатами — выполняй после чтения.",
+    ].join("\n");
+  }
+  return [
+    "# Round-trip economy",
+    "CRITICAL: all independent tool calls (read_files, search_codebase, run_commands, fetch_web_content) MUST be issued in a single response. Never call them one at a time — this is essential for performance.",
+    "When you have already decided to read several files, request them with ONE read_files call (a list of paths), not one file per message; keep a batch within ~5 files.",
+    "If you need to read 2 files — generate 2 tool_use blocks in one assistant message, not 2 separate turns.",
+    "Do not re-read a file whose content is already in context (turn context, earlier reads).",
+    "For large files where you know the region, request the start_line/end_line range directly instead of paging from line 1.",
+    "Never batch file edits (edit/apply_patch) ahead of unread results — run them after reads.",
+  ].join("\n");
+}
+
+/**
+ * Output token safety: models that emit a single very long text response
+ * (no tool calls) can hit the per-call max_tokens ceiling mid-sentence.
+ * The runtime treats that as a failed turn.  These rules nudge the model
+ * to keep plain-text responses compact and route long artefacts through
+ * tool calls (write_to_file, apply_patch) instead.
+ */
+export function harborOutputTokenRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Лимит output-токенов",
+      "Каждый твой ответ (assistant message) имеет жёсткий лимит токенов. Если ответ обрезается на полуслове — ход считается неуспешным.",
+      "Длинные артефакты (код, конфиги, документацию, планы) записывай через tool calls (write_to_file, apply_patch), а не генерируй их целиком в тексте ответа.",
+      "Если объём текста в ответе превышает ~4000 токенов — разбей на несколько шагов с tool calls между ними.",
+      "Вместо длинного объяснения «что и почему» — сначала выполни действие (tool call), потом кратко поясни результат.",
+    ].join("\n");
+  }
+  return [
+    "# Output token limit",
+    "Every assistant message has a hard token limit. If a response is cut off mid-sentence, the turn is treated as failed.",
+    "Route long artefacts (code, configs, documentation, plans) through tool calls (write_to_file, apply_patch) instead of generating them inline as plain text.",
+    "If the text in a single response would exceed ~4000 tokens, split the work into multiple steps with tool calls in between.",
+    "Instead of a long explanation of what and why — execute the action (tool call) first, then briefly explain the result.",
+  ].join("\n");
+}
+
+/**
+ * Appended to the runtime user prompt when the turn references a Figma URL
+ * but the lazy connect failed: the model must say how to connect Figma MCP
+ * instead of claiming Figma access is impossible.
+ */
+export function harborFigmaUnavailableNoteForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "[Harbor] Figma MCP сейчас недоступен (подключение не удалось).",
+      "Не отвечай, что доступ к Figma невозможен принципиально: попроси пользователя подключить PAT в Settings → MCP Servers и прислать ссылку снова.",
+    ].join(" ");
+  }
+  return [
+    "[Harbor] Figma MCP is currently unavailable (connect attempt failed).",
+    "Do not claim Figma access is impossible: ask the user to connect a PAT in Settings → MCP Servers and resend the link.",
+  ].join(" ");
+}
+
+/**
  * Appended to the runtime user prompt (UI text unchanged) on EVERY turn:
  * reused Cline sessions keep the systemPrompt from `core.start` (core.send
  * cannot update it), so a session created before a Harbor update would

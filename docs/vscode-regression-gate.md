@@ -26,5 +26,4 @@ WebStorm acceptance: [docs/jetbrains-port.md](jetbrains-port.md#webstorm-accepta
 - [ ] MCP / Figma
 - [ ] Attachments
 - [ ] Review / commit message
-- [ ] Tab autocomplete
 - [ ] Session persistence / per-workspace

@@ -19,7 +19,6 @@ import {
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { normalizeReasoningEffort } from "./reasoningEffort";
-import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -299,6 +298,15 @@ export interface AgentPanelConfig {
     enabled: boolean;
   };
   /**
+   * Live Cline session retention: an idle session is stopped after this many
+   * minutes; the next message in that chat starts a fresh session replayed
+   * from Harbor history (cold prompt cache). Higher values keep more sessions
+   * alive in memory (hard cap `CLINE_MAX_LIVE_SESSIONS` still applies).
+   */
+  sessions: {
+    idleEvictMinutes: number;
+  };
+  /**
    * Agent Skills (SKILL.md). Discovery is Harbor-only:
    * `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus extraDirectories.
    * Does not auto-scan `.agents` / `.cline` / `.cursor` skill trees.
@@ -315,42 +323,6 @@ export interface AgentPanelConfig {
     disabledExtraDirectories: string[];
     /** Skill names (frontmatter name or dirname) excluded from the tool. */
     disabled: string[];
-  };
-  /**
-   * Inline Tab autocomplete (ghost text). Uses Harbor providers via
-   * openaiClient — not a separate TabCoder profile system.
-   */
-  tabAutocomplete: {
-    enabled: boolean;
-    /** Model id from agentPanel.models (separate from chat selection). */
-    modelId: string;
-    /** How eagerly to request suggestions while typing. */
-    aggressiveness: "low" | "medium" | "high";
-    /**
-     * How many distinct ghost-text alternatives to request in one hole-fill
-     * call (cycle with Alt+[ / Alt+]).
-     */
-    alternatives: 1 | 2 | 3;
-    /**
-     * Glob patterns for paths where Tab should stay silent
-     * (dist / generated / node_modules / …).
-     */
-    excludeGlobs: string[];
-    /**
-     * After accepting a suggestion, offer a one-shot jump to the likely
-     * next edit (e.g. store → events section).
-     */
-    nextEdit: boolean;
-    /**
-     * `chip` — prefetch silently, show with Ctrl+Enter / ⌘⏎.
-     * `inline` — show ghost text automatically when ready.
-     */
-    showMode: "chip" | "inline";
-    /**
-     * Prefer OpenAI-style FIM (`/completions` with prompt+suffix) when the
-     * provider supports it. Falls back to hole-fill chat on failure.
-     */
-    fim: boolean;
   };
   /** Floating CodeLens «Add to Chat» above a non-empty selection. */
   selectionHints: {
@@ -725,6 +697,13 @@ export function getConfig(): AgentPanelConfig {
     checkpoints: {
       enabled: cfg.get<boolean>("checkpoints.enabled") !== false,
     },
+    sessions: (() => {
+      const raw = Number(cfg.get<unknown>("sessions.idleEvictMinutes"));
+      return {
+        idleEvictMinutes:
+          Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 60,
+      };
+    })(),
     skills: (() => {
       const extraRaw = cfg.get<unknown>("skills.extraDirectories");
       const extraDirectories = Array.isArray(extraRaw)
@@ -754,35 +733,6 @@ export function getConfig(): AgentPanelConfig {
         extraDirectories,
         disabledExtraDirectories,
         disabled,
-      };
-    })(),
-    tabAutocomplete: (() => {
-      const rawAgg = String(
-        cfg.get<string>("tabAutocomplete.aggressiveness") || "medium"
-      )
-        .trim()
-        .toLowerCase();
-      const aggressiveness =
-        rawAgg === "low" || rawAgg === "high" ? rawAgg : "medium";
-      const rawAlts = Number(cfg.get<number | string>("tabAutocomplete.alternatives"));
-      const alternatives: 1 | 2 | 3 =
-        rawAlts === 1 || rawAlts === 3 ? rawAlts : 2;
-      return {
-        enabled: cfg.get<boolean>("tabAutocomplete.enabled") === true,
-        modelId: String(cfg.get<string>("tabAutocomplete.modelId") || "").trim(),
-        aggressiveness,
-        alternatives,
-        excludeGlobs: normalizeExcludeGlobs(
-          cfg.get<string[]>("tabAutocomplete.excludeGlobs")
-        ),
-        nextEdit: cfg.get<boolean>("tabAutocomplete.nextEdit") === true,
-        showMode:
-          String(cfg.get<string>("tabAutocomplete.showMode") || "chip")
-            .trim()
-            .toLowerCase() === "inline"
-            ? "inline"
-            : "chip",
-        fim: cfg.get<boolean>("tabAutocomplete.fim") === true,
       };
     })(),
     selectionHints: {

@@ -55,6 +55,14 @@ const CUSTOM_CONNECT_TIMEOUT_MS = 15_000;
 const CUSTOM_LIST_TOOLS_TIMEOUT_MS = 15_000;
 const CUSTOM_RETRY_BASE_MS = 5_000;
 const CUSTOM_RETRY_MAX_MS = 60_000;
+/**
+ * After a failed lazy Figma connect, skip further attempts for this long so a
+ * blocked corporate network does not re-stall every figma-linked turn. Reset
+ * on successful connect, configuration change, and manual connect.
+ */
+const FIGMA_RECONNECT_COOLDOWN_MS = 5 * 60_000;
+/** Hard bound for a lazy Figma connect attempt inside an agent turn. */
+const FIGMA_ENSURE_TIMEOUT_MS = 10_000;
 
 interface ServerRuntime {
   client?: Client;
@@ -103,6 +111,8 @@ export class McpManager {
     enabled: false,
   };
   private figmaConnectPromise: Promise<void> | undefined;
+  /** Skips lazy Figma connects until this timestamp (see FIGMA_RECONNECT_COOLDOWN_MS). */
+  private figmaCooldownUntil = 0;
 
   private customConfigs: McpServerConfig[] = [];
   private customRuntimes = new Map<string, ServerRuntime>();
@@ -222,7 +232,13 @@ export class McpManager {
   }
 
   async listOpenAiTools(readonlyOnly = false): Promise<ChatTool[]> {
-    await this.tryQuietReconnectAll();
+    // Snapshot of *currently connected* servers only. Healing is kicked off
+    // in the background (custom servers have their own retry backoff); Figma
+    // never reconnects here — its remote attempt is unbounded on blocked
+    // corporate networks and must not stall the per-turn fingerprint. Figma
+    // connects lazily via ensureFigmaConnected on turns that reference a
+    // Figma URL, plus explicit activation / Settings paths.
+    void this.healCustomServers();
     const figmaCatalog = this.figmaTools.map((t) => t.function.name);
     const tools = [
       ...(this.figmaStatus.enabled !== false &&
@@ -544,8 +560,40 @@ export class McpManager {
     return this.figmaStatus.state === "connected";
   }
 
-  async tryQuietReconnectAll(): Promise<void> {
-    await this.tryQuietReconnect();
+  /**
+   * Lazy Figma connect for agent turns whose prompt references a Figma URL.
+   * Bounded by timeout and cooled down after failures; a blocked network must
+   * not stall the turn for the OS TCP timeout on every figma-linked message.
+   */
+  async ensureFigmaConnected(timeoutMs = FIGMA_ENSURE_TIMEOUT_MS): Promise<boolean> {
+    if (!this.figmaStatus.enabled) {
+      return false;
+    }
+    if (this.figmaStatus.state === "connected" && this.figmaClient) {
+      return true;
+    }
+    if (Date.now() < this.figmaCooldownUntil) {
+      return false;
+    }
+    try {
+      await withTimeout(
+        this.tryQuietReconnect(),
+        timeoutMs,
+        "Figma lazy connect"
+      );
+    } catch {
+      // timed out or failed — cooldown below
+    }
+    if (this.figmaStatus.state === "connected") {
+      this.figmaCooldownUntil = 0;
+      return true;
+    }
+    this.figmaCooldownUntil = Date.now() + FIGMA_RECONNECT_COOLDOWN_MS;
+    return false;
+  }
+
+  /** Kick reconnects for enabled-but-disconnected custom servers without waiting. */
+  private healCustomServers(): void {
     for (const cfg of this.customConfigs) {
       if (cfg.enabled === false) {
         continue;
@@ -554,11 +602,9 @@ export class McpManager {
       if (rt?.status.state === "connected") {
         continue;
       }
-      try {
-        await this.connectCustom(cfg.id);
-      } catch {
-        // ignore quiet failures
-      }
+      void this.connectCustom(cfg.id).catch(() => {
+        // quiet failures — status already reflects the retry backoff
+      });
     }
   }
 
@@ -569,6 +615,8 @@ export class McpManager {
     const nextFigmaEnabled = figmaEnabled === true;
     if (nextFigmaEnabled !== this.figmaStatus.enabled) {
       this.figmaStatus.enabled = nextFigmaEnabled;
+      // Fresh configuration invalidates the lazy-connect cooldown.
+      this.figmaCooldownUntil = 0;
       if (!nextFigmaEnabled) {
         await this.disconnectFigmaClientOnly();
         this.figmaStatus.state = "disconnected";
@@ -963,6 +1011,7 @@ export class McpManager {
   ): Promise<void> {
     this.figmaClient = client;
     this.figmaMode = mode;
+    this.figmaCooldownUntil = 0;
     await this.context.globalState.update(GLOBAL_MODE_KEY, mode);
     const listed = await client.listTools();
     this.figmaTools = (listed.tools || []).map((tool) => ({

@@ -29,6 +29,7 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { isBuiltinCommitMessagePrompt, isBuiltinSystemPrompt, resolveUiLanguage } from "./i18n";
+import { abbreviatedPathSuffix, escapeGlobPattern, trimTrailingPathPunctuation } from "./abbreviatedPath";
 import { previewText } from "./agentSteps";
 import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import { readModelTokenLimits } from "./modelTokenLimits";
@@ -72,7 +73,6 @@ import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
-import { normalizeExcludeGlobs } from "./tabAutocompleteExclude";
 import {
   buildSkillsListPayload,
   ensureHarborSkillRoots,
@@ -185,18 +185,6 @@ type SettingsPayload = {
   skillsExtraDirectories?: string[];
   skillsDisabledExtraDirectories?: string[];
   skillsDisabled?: string[];
-  tabAutocompleteEnabled?: boolean;
-  tabAutocompleteModelId?: string;
-  tabAutocompleteAggressiveness?: string;
-  tabAutocompleteAlternatives?: number;
-  /** One glob per line / array entry — Tab stays silent on matches. */
-  tabAutocompleteExcludeGlobs?: string[] | string;
-  /** After Accept, offer jump to likely next edit. */
-  tabAutocompleteNextEdit?: boolean;
-  /** chip | inline */
-  tabAutocompleteShowMode?: string;
-  /** FIM /completions */
-  tabAutocompleteFim?: boolean;
   selectionHintsEnabled?: boolean;
   modes: AgentModeDef[];
   commitMessagePrompt?: string;
@@ -359,6 +347,10 @@ const PROVIDER_PROBE_TTL_MS = 90_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 /** Интервал фоновой проверки, пока виден чат. */
 const PROVIDER_PROBE_POLL_MS = 15_000;
+
+/** Keep fuzzy file-link search out of vendored/build trees (cf. fileMentions SEARCH_EXCLUDE). */
+const FUZZY_FILE_EXCLUDE =
+  "{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/out/**,**/.next/**}";
 
 export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
@@ -3059,8 +3051,25 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!uri) {
       return;
     }
+    // Old panel builds glued sentence punctuation into the link path
+    // (`…foo.ts.`); retry the trimmed form before anything fancier.
+    const trimmed = trimTrailingPathPunctuation(relativePath);
+    let target: vscode.Uri | undefined = await this.resolveExistingFileUri(
+      relativePath
+    );
+    if (!target && trimmed !== relativePath) {
+      target = await this.resolveExistingFileUri(trimmed);
+    }
+    if (!target) {
+      // Missing on disk — a model-abbreviated path (`root/.../lib/x.ts`)?
+      // Try to resolve it by the suffix after the ellipsis.
+      target = await this.resolveAbbreviatedFileUri(trimmed);
+    }
+    if (!target) {
+      return;
+    }
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
+      const doc = await vscode.workspace.openTextDocument(target);
       await vscode.window.showTextDocument(doc, { preview: true });
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
@@ -3068,6 +3077,77 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         `Failed to open ${relativePath}: ${text}`
       );
     }
+  }
+
+  /** URI for a link path when that exact file exists on disk. */
+  private async resolveExistingFileUri(
+    relativePath: string
+  ): Promise<vscode.Uri | undefined> {
+    const uri = this.resolveWorkspaceUri(relativePath);
+    if (!uri) {
+      return undefined;
+    }
+    try {
+      await vscode.workspace.fs.stat(uri);
+      return uri;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Fuzzy open for model-abbreviated file links: search the workspace for the
+   * suffix after the `...`/`…` segment (`root/.../lib/foo.ts` → find
+   * `lib/foo.ts`). One match opens directly; several go through a QuickPick;
+   * none (or a plain missing path) warns. Returns undefined when nothing to
+   * open — including a cancelled QuickPick, which stays silent.
+   */
+  private async resolveAbbreviatedFileUri(
+    rawPath: string
+  ): Promise<vscode.Uri | undefined> {
+    const suffix = abbreviatedPathSuffix(rawPath);
+    if (!suffix) {
+      this.warnFileNotFound(rawPath);
+      return undefined;
+    }
+    const fileName = escapeGlobPattern(suffix.slice(suffix.lastIndexOf("/") + 1));
+    let matches: vscode.Uri[] = [];
+    try {
+      matches = await vscode.workspace.findFiles(
+        `**/${fileName}`,
+        FUZZY_FILE_EXCLUDE,
+        50
+      );
+    } catch {
+      this.warnFileNotFound(rawPath);
+      return undefined;
+    }
+    const candidates = matches
+      .filter((uri) => uri.path.endsWith(`/${suffix}`))
+      .sort((a, b) => a.path.length - b.path.length);
+    if (candidates.length === 0) {
+      this.warnFileNotFound(rawPath);
+      return undefined;
+    }
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+    const picked = await vscode.window.showQuickPick(
+      candidates.map((uri) => ({
+        label: path.basename(uri.path),
+        description: vscode.workspace.asRelativePath(uri),
+        uri,
+      })),
+      {
+        title: "Open file",
+        placeHolder: `Several files match …/${suffix}`,
+      }
+    );
+    return picked ? picked.uri : undefined;
+  }
+
+  private warnFileNotFound(rawPath: string): void {
+    void vscode.window.showWarningMessage(`File not found: ${rawPath}`);
   }
 
   /**
@@ -3496,6 +3576,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     let fallbackAttempted = false;
     let turnHadToolSideEffects = false;
     let turnHadAssistantOutput = false;
+    const runStartedAt = Date.now();
+    let runSucceeded = false;
     this.setStatusForChat(
       runChatId,
       modeThinkingLabel(mode),
@@ -3926,6 +4008,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.isChatRunCurrent(runChatId, runRef) &&
         !currentRun.signal.aborted
       ) {
+        runSucceeded = true;
         this.postRunFinished(runChatId, "success");
         this.scheduleChatTitle(runChatId);
       }
@@ -4031,6 +4114,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
     } finally {
       this.finishChatRun(runChatId, runRef);
+      // Stamp the wall-clock run duration onto the turn's last tool step so
+      // the collapsed timeline summary shows it («выполнено · N шагов ·
+      // 18,6 с»), both live and after history redraws. Must run BEFORE the
+      // `idle` post: idle flips the summary from «выполняю» to «выполнено».
+      if (runSucceeded && !this.isChatRunning(runChatId)) {
+        const runDurationMs = Date.now() - runStartedAt;
+        for (let i = runUiMessages.length - 1; i >= 0; i -= 1) {
+          const ui = runUiMessages[i];
+          if (ui?.role === "tool" && ui.step?.stepId) {
+            ui.step = { ...ui.step, runDurationMs };
+            if (this.isViewingChat(runChatId)) {
+              this.view?.webview.postMessage({
+                type: "step",
+                chatId: runChatId,
+                ...ui.step,
+              });
+            }
+            break;
+          }
+        }
+        // The step was persisted without the duration — save the stamped copy.
+        this.persistRunChatSnapshot(runChatId, {
+          history: runHistory,
+          uiMessages: runUiMessages,
+          selectedModel: chosen,
+          lastTurnModel: runLastTurnModel,
+          contextTokens: runContextTokens,
+          totalInputTokens: runTotalInputTokens,
+          totalOutputTokens: runTotalOutputTokens,
+          totalCacheReadTokens: runTotalCacheReadTokens,
+          totalCacheWriteTokens: runTotalCacheWriteTokens,
+        });
+      }
       // Belt-and-suspenders: success relies on assistantDone; transport errors
       // / missing finales must not leave the composer stuck on Stop.
       if (this.isActiveChat(runChatId) && !this.isChatRunning(runChatId)) {
@@ -4837,14 +4953,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         skillsExtraDirectories: config.skills.extraDirectories,
         skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
         skillsDisabled: config.skills.disabled,
-        tabAutocompleteEnabled: config.tabAutocomplete.enabled,
-        tabAutocompleteModelId: config.tabAutocomplete.modelId,
-        tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
-        tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
-        tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
-        tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
-        tabAutocompleteShowMode: config.tabAutocomplete.showMode,
-        tabAutocompleteFim: config.tabAutocomplete.fim,
         selectionHintsEnabled: config.selectionHints.enabled,
         modes: this.serializeModesForUi(),
         commitMessagePrompt: config.commitMessage.prompt,
@@ -5571,53 +5679,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           .filter((n, i, all) => all.indexOf(n) === i)
       : getConfig().skills.disabled;
     await cfg.update("skills.disabled", skillsDisabled, target);
-    await cfg.update(
-      "tabAutocomplete.enabled",
-      raw.tabAutocompleteEnabled === true,
-      target
-    );
-    await cfg.update(
-      "tabAutocomplete.modelId",
-      String(raw.tabAutocompleteModelId || "").trim(),
-      target
-    );
-    const aggRaw = String(raw.tabAutocompleteAggressiveness || "medium")
-      .trim()
-      .toLowerCase();
-    const aggressiveness =
-      aggRaw === "low" || aggRaw === "high" ? aggRaw : "medium";
-    await cfg.update("tabAutocomplete.aggressiveness", aggressiveness, target);
-    const altsRaw = Number(raw.tabAutocompleteAlternatives);
-    const alternatives = altsRaw === 1 || altsRaw === 3 ? altsRaw : 2;
-    await cfg.update("tabAutocomplete.alternatives", alternatives, target);
-    const excludeRaw = raw.tabAutocompleteExcludeGlobs;
-    const excludeGlobs = normalizeExcludeGlobs(
-      typeof excludeRaw === "string"
-        ? excludeRaw
-            .split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : excludeRaw
-    );
-    await cfg.update("tabAutocomplete.excludeGlobs", excludeGlobs, target);
-    await cfg.update(
-      "tabAutocomplete.nextEdit",
-      raw.tabAutocompleteNextEdit === true,
-      target
-    );
-    const showModeRaw = String(raw.tabAutocompleteShowMode || "chip")
-      .trim()
-      .toLowerCase();
-    await cfg.update(
-      "tabAutocomplete.showMode",
-      showModeRaw === "inline" ? "inline" : "chip",
-      target
-    );
-    await cfg.update(
-      "tabAutocomplete.fim",
-      raw.tabAutocompleteFim === true,
-      target
-    );
     await cfg.update(
       "selectionHints.enabled",
       raw.selectionHintsEnabled !== false,
@@ -6460,89 +6521,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <span class="mcp-switch-track"></span>
               </span>
             </label>
-          </div>
-          <div id="settingsTabAutocompleteBlock" class="settings-tab-autocomplete-block">
-          <h3 class="settings-section-title settings-group-title" id="settingsTabAutocompleteTitle">Tab autocomplete</h3>
-          <div class="settings-card">
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsTabAutocompleteLabel">Enable Tab autocomplete</span>
-                <span class="settings-toggle-hint" id="settingsTabAutocompleteNote">Quiet prefetch. ⌘⏎ to show, Tab to accept.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsTabAutocompleteEnabled" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
-            </label>
-          </div>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteModelLabel">Tab model</span>
-            <select id="settingsTabAutocompleteModel" class="settings-input"></select>
-            <span class="settings-field-hint" id="settingsTabAutocompleteModelHint">Coder models usually beat chat/flash for Tab.</span>
-          </label>
-          <div class="settings-limits-row">
-            <label class="settings-field">
-              <span class="settings-label" id="settingsTabAutocompleteAggLabel">Aggressiveness</span>
-              <select id="settingsTabAutocompleteAggressiveness" class="settings-input">
-                <option value="low">Low</option>
-                <option value="medium" selected>Medium</option>
-                <option value="high">High</option>
-              </select>
-            </label>
-            <label class="settings-field">
-              <span class="settings-label" id="settingsTabAutocompleteAltsLabel">Alternatives</span>
-              <select id="settingsTabAutocompleteAlternatives" class="settings-input">
-                <option value="1">1</option>
-                <option value="2" selected>2</option>
-                <option value="3">3</option>
-              </select>
-            </label>
-          </div>
-          <p class="settings-hint" id="settingsTabAutocompleteAltsHint">Distinct ghost texts in one request. Cycle Alt+[ / Alt+].</p>
-          <div class="settings-prompt-card" id="settingsTabExcludeCard">
-            <button type="button" class="settings-prompt-toggle" id="settingsTabExcludeToggle" aria-expanded="false" aria-controls="settingsTabExcludeBody">
-              <span class="settings-prompt-toggle-text">
-                <span class="settings-prompt-title" id="settingsTabAutocompleteExcludeLabel">Exclude globs</span>
-                <span class="settings-prompt-preview" id="settingsTabExcludePreview"></span>
-              </span>
-              <span class="material-symbols-outlined settings-prompt-chevron" aria-hidden="true">expand_more</span>
-            </button>
-            <div class="settings-prompt-body" id="settingsTabExcludeBody" hidden>
-              <textarea id="settingsTabAutocompleteExcludeGlobs" class="settings-input settings-textarea" rows="4" spellcheck="false"></textarea>
-              <p class="settings-hint" id="settingsTabAutocompleteExcludeHint">One glob per line. Tab stays silent on matches.</p>
-            </div>
-          </div>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsTabAutocompleteShowModeLabel">Show mode</span>
-            <select id="settingsTabAutocompleteShowMode" class="settings-input">
-              <option value="chip" selected>Chip</option>
-              <option value="inline">Inline</option>
-            </select>
-            <span class="settings-field-hint" id="settingsTabAutocompleteShowModeHint">Chip = shortcut. Inline = ghost appears by itself.</span>
-          </label>
-          <div class="settings-card">
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsTabAutocompleteNextEditLabel">Next Edit after Accept</span>
-                <span class="settings-toggle-hint" id="settingsTabAutocompleteNextEditHint">After Tab, a Next chip at the likely next edit.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsTabAutocompleteNextEdit" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
-            </label>
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsTabAutocompleteFimLabel">FIM (/completions)</span>
-                <span class="settings-toggle-hint" id="settingsTabAutocompleteFimHint">prompt+suffix if the provider supports it.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsTabAutocompleteFim" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
-            </label>
-          </div>
-          <p class="settings-hint" id="settingsTabAutocompleteKeysHint">Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down</p>
           </div>
         </section>
 

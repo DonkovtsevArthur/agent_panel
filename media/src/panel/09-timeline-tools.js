@@ -212,9 +212,18 @@
     switch (toolName) {
       case "read_files": {
         const paths = (m.files && m.files.length ? m.files : filesFromArgs());
-        const first = paths[0] || "";
-        const extra = paths.length > 1 ? ` +${paths.length - 1}` : "";
-        return t("toolHumanRead", fileBase(first)) + extra;
+        const names = paths
+          .map((p) => fileBase(String(p || "")))
+          .filter(Boolean);
+        if (!names.length) {
+          return t("toolHumanRead", "");
+        }
+        // Правило батчинга поощряет multi-file чтения — показываем каждый файл
+        // батча; после трёх имён остаток сворачиваем в +N, чтобы карточка
+        // оставалась компактной.
+        const shown = names.slice(0, 3).join(", ");
+        const extra = names.length > 3 ? ` +${names.length - 3}` : "";
+        return t("toolHumanRead", shown) + extra;
       }
       case "editor": {
         const filePath =
@@ -1281,6 +1290,28 @@
     return Boolean(body.querySelector(".msg.tool:not(.agent-step)"));
   }
 
+  /** Full-turn duration stamped on a step by the host (0 when unknown). */
+  function groupRunDurationMs(group) {
+    const el = group.querySelector("[data-run-duration-ms]");
+    if (!el) {
+      return 0;
+    }
+    const ms = Number(el.getAttribute("data-run-duration-ms")) || 0;
+    return ms > 0 ? ms : 0;
+  }
+
+  function formatRunDuration(ms) {
+    const seconds = ms / 1000;
+    if (UI_LANG === "ru") {
+      return seconds >= 90
+        ? `${Math.floor(seconds / 60)} мин ${Math.round(seconds % 60)} с`
+        : `${seconds.toFixed(1).replace(".", ",")} с`;
+    }
+    return seconds >= 90
+      ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`
+      : `${seconds.toFixed(1)} s`;
+  }
+
   function updateToolGroupSummary(group) {
     if (!group) {
       return;
@@ -1327,6 +1358,10 @@
         const reviewDel = Number(group.dataset.reviewRemoved) || 0;
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
+        }
+        const runDurationMs = groupRunDurationMs(group);
+        if (runDurationMs > 0) {
+          parts.push(formatRunDuration(runDurationMs));
         }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
@@ -1668,6 +1703,15 @@
       `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
     );
 
+    // If not found in the active group, search all groups (including sealed).
+    // This handles late stamps (e.g. runDurationMs) that arrive after
+    // assistantDone has sealed the original group.
+    if (!el) {
+      el = messagesEl.querySelector(
+        `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+      );
+    }
+
     if (!el && step.kind === "tool") {
       const key = toolStepMatchKey(step.name, step.argsPreview, "");
       const match = findMatchingToolStep(body, key);
@@ -1706,6 +1750,25 @@
         el.dataset.metrics = JSON.stringify(step.metrics);
       } catch {
         /* metrics are optional display hints — ignore unparsable payloads */
+      }
+    }
+    // Host stamps the full turn duration (ms) on the turn's last tool step
+    // when the run succeeds — the group summary renders it after «выполнено».
+    if (typeof step.runDurationMs === "number" && step.runDurationMs > 0) {
+      // Use setAttribute — dataset.runDurationMs produces "data-run-duration-m-s"
+      // (hyphen before each capital), but groupRunDurationMs queries
+      // "[data-run-duration-ms]".  setAttribute keeps the name literal.
+      el.setAttribute("data-run-duration-ms", String(Math.round(step.runDurationMs)));
+      const ownerGroup = el.closest(".tool-group");
+      if (ownerGroup) {
+        // Late duration stamps arrive after assistantDone has sealed the group.
+        // ensureActiveToolGroup may have reopened it (is-run-working → unseal)
+        // — re-seal so updateToolGroupSummary renders the "выполнено" branch
+        // which includes the duration.
+        if (!ownerGroup.dataset.sealed) {
+          ownerGroup.dataset.sealed = "1";
+        }
+        updateToolGroupSummary(ownerGroup);
       }
     }
     if (step.kind === "tool") {

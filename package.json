@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.7.67",
+  "version": "2.7.74",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -21,9 +21,6 @@
 	"engines": {
 		"vscode": "^1.101.0"
 	},
-	"enabledApiProposals": [
-		"inlineCompletionsAdditions"
-	],
 	"categories": [
 		"Machine Learning",
 		"Other"
@@ -111,36 +108,6 @@
 				"title": "%command.generateCommitMessage.title%",
 				"category": "%command.category%",
 				"icon": "$(sparkle)"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.showSuggestion",
-				"title": "%command.tabAutocomplete.showSuggestion.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.deleteOrphanLine",
-				"title": "%command.tabAutocomplete.deleteOrphanLine.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.jumpNextEdit",
-				"title": "%command.tabAutocomplete.jumpNextEdit.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.dismissNextEdit",
-				"title": "%command.tabAutocomplete.dismissNextEdit.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.acceptStatement",
-				"title": "%command.tabAutocomplete.acceptStatement.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.dismissSuggestion",
-				"title": "%command.tabAutocomplete.dismissSuggestion.title%",
-				"category": "%command.category%"
 			}
 		],
 		"menus": {
@@ -260,66 +227,6 @@
 				"key": "ctrl+alt+h",
 				"mac": "cmd+alt+h",
 				"when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
-			},
-			{
-				"command": "editor.action.inlineSuggest.acceptNextWord",
-				"key": "ctrl+right",
-				"mac": "alt+right",
-				"when": "inlineSuggestionVisible && !editorReadonly"
-			},
-			{
-				"command": "editor.action.inlineSuggest.acceptNextLine",
-				"key": "ctrl+down",
-				"mac": "alt+down",
-				"when": "inlineSuggestionVisible && !editorReadonly"
-			},
-			{
-				"command": "editor.action.inlineSuggest.showNext",
-				"key": "alt+]",
-				"mac": "alt+]",
-				"when": "inlineSuggestionVisible && !editorReadonly"
-			},
-			{
-				"command": "editor.action.inlineSuggest.showPrevious",
-				"key": "alt+[",
-				"mac": "alt+[",
-				"when": "inlineSuggestionVisible && !editorReadonly"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.showSuggestion",
-				"key": "ctrl+enter",
-				"mac": "cmd+enter",
-				"when": "editorTextFocus && !editorReadonly && config.agentPanel.tabAutocomplete.enabled"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.deleteOrphanLine",
-				"key": "tab",
-				"mac": "tab",
-				"when": "agentPanel.tabAutocomplete.orphanActive && editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inSnippetMode && !editorTabMovesFocus && config.agentPanel.tabAutocomplete.enabled"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.jumpNextEdit",
-				"key": "tab",
-				"mac": "tab",
-				"when": "agentPanel.tabAutocomplete.nextEditActive && !agentPanel.tabAutocomplete.orphanActive && !inlineSuggestionVisible && editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inSnippetMode && !editorTabMovesFocus && config.agentPanel.tabAutocomplete.enabled && config.agentPanel.tabAutocomplete.nextEdit"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.dismissNextEdit",
-				"key": "escape",
-				"mac": "escape",
-				"when": "agentPanel.tabAutocomplete.nextEditActive && editorTextFocus && !inlineSuggestionVisible && !suggestWidgetVisible && config.agentPanel.tabAutocomplete.enabled"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.acceptStatement",
-				"key": "ctrl+shift+enter",
-				"mac": "cmd+shift+enter",
-				"when": "inlineSuggestionVisible && !editorReadonly && config.agentPanel.tabAutocomplete.enabled"
-			},
-			{
-				"command": "agentPanel.tabAutocomplete.dismissSuggestion",
-				"key": "escape",
-				"mac": "escape",
-				"when": "inlineSuggestionVisible && editorTextFocus && !suggestWidgetVisible && config.agentPanel.tabAutocomplete.enabled"
 			}
 		],
 		"configuration": {
@@ -622,6 +529,12 @@
 					"default": true,
 					"description": "%config.autoCompact.enabled.description%"
 				},
+				"agentPanel.sessions.idleEvictMinutes": {
+					"type": "number",
+					"default": 60,
+					"minimum": 1,
+					"description": "%config.sessions.idleEvictMinutes.description%"
+				},
 				"agentPanel.promptCache.enabled": {
 					"type": "boolean",
 					"default": true,
@@ -727,84 +640,6 @@
 					},
 					"default": [],
 					"description": "%config.skills.disabled.description%"
-				},
-				"agentPanel.tabAutocomplete.enabled": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.tabAutocomplete.enabled.description%"
-				},
-				"agentPanel.tabAutocomplete.modelId": {
-					"type": "string",
-					"default": "",
-					"description": "%config.tabAutocomplete.modelId.description%"
-				},
-				"agentPanel.tabAutocomplete.aggressiveness": {
-					"type": "string",
-					"default": "medium",
-					"enum": [
-						"low",
-						"medium",
-						"high"
-					],
-					"enumDescriptions": [
-						"%config.tabAutocomplete.aggressiveness.enum.low%",
-						"%config.tabAutocomplete.aggressiveness.enum.medium%",
-						"%config.tabAutocomplete.aggressiveness.enum.high%"
-					],
-					"description": "%config.tabAutocomplete.aggressiveness.description%"
-				},
-				"agentPanel.tabAutocomplete.alternatives": {
-					"type": "number",
-					"default": 2,
-					"enum": [
-						1,
-						2,
-						3
-					],
-					"enumDescriptions": [
-						"%config.tabAutocomplete.alternatives.enum.1%",
-						"%config.tabAutocomplete.alternatives.enum.2%",
-						"%config.tabAutocomplete.alternatives.enum.3%"
-					],
-					"description": "%config.tabAutocomplete.alternatives.description%"
-				},
-				"agentPanel.tabAutocomplete.excludeGlobs": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [
-						"**/dist/**",
-						"**/out/**",
-						"**/build/**",
-						"**/node_modules/**",
-						"**/*.min.js",
-						"**/*generated*"
-					],
-					"description": "%config.tabAutocomplete.excludeGlobs.description%"
-				},
-				"agentPanel.tabAutocomplete.nextEdit": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.tabAutocomplete.nextEdit.description%"
-				},
-				"agentPanel.tabAutocomplete.showMode": {
-					"type": "string",
-					"default": "chip",
-					"enum": [
-						"chip",
-						"inline"
-					],
-					"enumDescriptions": [
-						"%config.tabAutocomplete.showMode.enum.chip%",
-						"%config.tabAutocomplete.showMode.enum.inline%"
-					],
-					"description": "%config.tabAutocomplete.showMode.description%"
-				},
-				"agentPanel.tabAutocomplete.fim": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.tabAutocomplete.fim.description%"
 				},
 				"agentPanel.selectionHints.enabled": {
 					"type": "boolean",

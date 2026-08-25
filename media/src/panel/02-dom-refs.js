@@ -221,30 +221,6 @@
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
   );
-  const settingsTabAutocompleteEnabled = document.getElementById(
-    "settingsTabAutocompleteEnabled"
-  );
-  const settingsTabAutocompleteModel = document.getElementById(
-    "settingsTabAutocompleteModel"
-  );
-  const settingsTabAutocompleteAggressiveness = document.getElementById(
-    "settingsTabAutocompleteAggressiveness"
-  );
-  const settingsTabAutocompleteAlternatives = document.getElementById(
-    "settingsTabAutocompleteAlternatives"
-  );
-  const settingsTabAutocompleteExcludeGlobs = document.getElementById(
-    "settingsTabAutocompleteExcludeGlobs"
-  );
-  const settingsTabAutocompleteNextEdit = document.getElementById(
-    "settingsTabAutocompleteNextEdit"
-  );
-  const settingsTabAutocompleteShowMode = document.getElementById(
-    "settingsTabAutocompleteShowMode"
-  );
-  const settingsTabAutocompleteFim = document.getElementById(
-    "settingsTabAutocompleteFim"
-  );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
   );
@@ -273,18 +249,6 @@
   const settingsSystemPromptPreview = document.getElementById(
     "settingsSystemPromptPreview"
   );
-  const settingsTabExcludeToggle = document.getElementById(
-    "settingsTabExcludeToggle"
-  );
-  const settingsTabExcludeCard = document.getElementById(
-    "settingsTabExcludeCard"
-  );
-  const settingsTabExcludeBody = document.getElementById(
-    "settingsTabExcludeBody"
-  );
-  const settingsTabExcludePreview = document.getElementById(
-    "settingsTabExcludePreview"
-  );
 
   function updateSystemPromptPreview() {
     if (!settingsSystemPromptPreview) {
@@ -296,18 +260,6 @@
     settingsSystemPromptPreview.textContent = raw || t("systemPromptEmpty");
   }
 
-  function updateTabExcludePreview() {
-    if (!settingsTabExcludePreview) {
-      return;
-    }
-    const lines = String(settingsTabAutocompleteExcludeGlobs?.value || "")
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    settingsTabExcludePreview.textContent = lines.length
-      ? lines.join(", ")
-      : t("tabAutocompleteExcludeEmpty");
-  }
   const settingsCommitScope = document.getElementById("settingsCommitScope");
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"

@@ -5,6 +5,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { runAgentTurn, type AgentPhase } from "./agentLoop";
+import type { AgentStepEvent } from "./agentSteps";
 import {
   discardClineChatSession,
   discardClineChatSessions,
@@ -640,14 +641,6 @@ export class HeadlessPanelHost {
       skillsExtraDirectories: config.skills.extraDirectories,
       skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
       skillsDisabled: config.skills.disabled,
-      tabAutocompleteEnabled: config.tabAutocomplete.enabled,
-      tabAutocompleteModelId: config.tabAutocomplete.modelId,
-      tabAutocompleteAggressiveness: config.tabAutocomplete.aggressiveness,
-      tabAutocompleteAlternatives: config.tabAutocomplete.alternatives,
-      tabAutocompleteExcludeGlobs: config.tabAutocomplete.excludeGlobs,
-      tabAutocompleteNextEdit: config.tabAutocomplete.nextEdit,
-      tabAutocompleteShowMode: config.tabAutocomplete.showMode,
-      tabAutocompleteFim: config.tabAutocomplete.fim,
       selectionHintsEnabled: config.selectionHints.enabled,
       modes: this.serializeModes(),
       commitMessagePrompt: config.commitMessage.prompt,
@@ -2280,6 +2273,13 @@ export class HeadlessPanelHost {
 
     const editedPaths: string[] = [];
     let assistantText = "";
+    const runStartedAt = Date.now();
+    /**
+     * Headless runs do not persist tool steps into uiMessages (JetBrains
+     * MVP) — keep the last in-group step so the success path can repost it
+     * with the run duration stamp for the «выполнено · … · 18,6 с» summary.
+     */
+    let lastGroupStep: AgentStepEvent | undefined;
     this.setRunStateForChat(runChatId, "running");
     const mode = getModeById(agentMode);
     let activeTurnModel = model;
@@ -2351,6 +2351,62 @@ export class HeadlessPanelHost {
           },
           onStep: (event) => {
             if (!runActive()) return;
+            // Only tool steps live inside the collapsed group body — checkpoint,
+            // thinking, and todo cards render elsewhere and cannot carry the
+            // run-duration stamp (the webview would not find them by stepId).
+            if (event.stepId && event.kind === "tool") {
+              lastGroupStep = event;
+            }
+            // Persist tool/todo/text steps into runUiMessages so that
+            // chat-switch redraws restore the timeline with correct statuses.
+            if (event.stepId && event.kind === "tool") {
+              const label = event.name
+                ? `⚙ ${event.name}(${event.argsPreview || ""})`
+                : "⚙ tool";
+              const existingIx = runUiMessages.findIndex(
+                (m) => m.role === "tool" && m.step?.stepId === event.stepId
+              );
+              const uiMsg = {
+                role: "tool" as const,
+                text: label,
+                step: {
+                  stepId: event.stepId,
+                  kind: "tool" as const,
+                  toolCallId: event.toolCallId,
+                  name: event.name,
+                  argsPreview: event.argsPreview,
+                  status: event.status,
+                  resultPreview: event.resultPreview,
+                  metrics: event.metrics,
+                },
+              };
+              if (existingIx >= 0) {
+                runUiMessages[existingIx] = uiMsg;
+              } else {
+                runUiMessages.push(uiMsg);
+              }
+            } else if (event.stepId && event.kind === "todo") {
+              const todoUiMsg = {
+                role: "tool" as const,
+                text: `⚙ plan ${event.argsPreview || ""}`.trim(),
+                step: {
+                  stepId: event.stepId,
+                  kind: "todo" as const,
+                  name: event.name,
+                  status: event.status,
+                  argsPreview: event.argsPreview,
+                  steps: event.steps,
+                },
+              };
+              const todoIx = runUiMessages.findIndex(
+                (m) => m.role === "tool" && m.step?.stepId === event.stepId
+              );
+              if (todoIx >= 0) {
+                runUiMessages[todoIx] = todoUiMsg;
+              } else {
+                runUiMessages.push(todoUiMsg);
+              }
+            }
             postToRun({
               type: "step",
               ...event,
@@ -2448,6 +2504,33 @@ export class HeadlessPanelHost {
           },
         },
       });
+
+      // Repost the last in-group step with the run duration BEFORE the
+      // runActive() guard: the finally block below deletes the run from
+      // chatRuns, so any postToRun after that guard silently drops the
+      // stamp. The webview's upsertAgentStep is idempotent on stepId —
+      // reposting the full event is safe.
+      const runDurationMs = lastGroupStep
+        ? Date.now() - runStartedAt
+        : 0;
+      if (lastGroupStep) {
+        postToRun({
+          type: "step",
+          ...lastGroupStep,
+          runDurationMs,
+        } as Record<string, unknown>);
+      }
+      // Stamp runDurationMs on the persisted uiMessages so that
+      // history redraws (chat switch / reload) keep the duration.
+      if (runDurationMs > 0) {
+        for (let i = runUiMessages.length - 1; i >= 0; i -= 1) {
+          const ui = runUiMessages[i];
+          if (ui?.role === "tool" && ui.step?.stepId) {
+            ui.step = { ...ui.step, runDurationMs };
+            break;
+          }
+        }
+      }
 
       // Race guard: if Stop+continue already started a newer run, the old
       // draining turn must not post assistantDone / runFinished / idle —

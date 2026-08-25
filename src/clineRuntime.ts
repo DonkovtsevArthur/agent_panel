@@ -25,8 +25,12 @@ import {
   appendTodoRuntimeNudge,
   appendVisionInspectRuntimeNudge,
   harborAskModeRulesForLanguage,
+  harborBatchReadsRulesForLanguage,
   harborDefaultRulesForLanguage,
+  harborFigmaUnavailableNoteForLanguage,
+  harborFullPathRulesForLanguage,
   harborModelIdentityRulesForLanguage,
+  harborOutputTokenRulesForLanguage,
   harborSubagentsRulesForLanguage,
   harborTodoRulesForLanguage,
   harborVisionInspectRulesForLanguage,
@@ -56,6 +60,7 @@ import type { AgentStepEvent, ToolStepMetrics } from "./agentSteps";
 import type { UiMessage } from "./sessionStore";
 import {
   appendFigmaRuntimeNudge,
+  ensureHarborFigmaConnected,
   harborMcpToolFingerprint,
   loadHarborMcpToolsForCline,
   messageHasFigmaUrl,
@@ -63,6 +68,7 @@ import {
   type ClineCreateMcpTools,
   type ClineCreateTool,
 } from "./clineMcpTools";
+import { TurnTiming } from "./turnTiming";
 import {
   activeFileAlreadyInlined,
   buildTurnContextBlock,
@@ -198,11 +204,18 @@ type LiveClineChat = {
 const liveClineByChatId = new Map<string, LiveClineChat>();
 
 /**
- * Unused interactive sessions are stopped after this idle so RSS can drop.
- * Follow-up in that chat starts a new Cline session from Harbor history.
- * Checkpoint restore needs a live session — it fails until the next turn.
+ * Fallback idle evict delay. The real value comes from the
+ * `agentPanel.sessions.idleEvictMinutes` setting (default 60) — see
+ * `clineSessionIdleEvictMs`.
  */
 export const CLINE_SESSION_IDLE_EVICT_MS = 10 * 60 * 1000;
+
+function clineSessionIdleEvictMs(): number {
+  const minutes = getConfig().sessions?.idleEvictMinutes;
+  return Number.isFinite(minutes) && minutes > 0
+    ? minutes * 60_000
+    : CLINE_SESSION_IDLE_EVICT_MS;
+}
 
 /**
  * Hard cap on simultaneously live chat sessions (LRU). Idle evict only runs
@@ -215,6 +228,22 @@ export const CLINE_SESSION_IDLE_EVICT_MS = 10 * 60 * 1000;
 export const CLINE_MAX_LIVE_SESSIONS = 12;
 
 const idleEvictTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+let timingChannel: vscode.OutputChannel | undefined;
+
+/** Flush one turn's phase breakdown to the "Harbor Agent Timing" channel. */
+function logTurnTiming(chatId: string, timing: TurnTiming): void {
+  try {
+    timingChannel ??= vscode.window.createOutputChannel("Harbor Agent Timing");
+    const id = chatId ? ` chat=${String(chatId).slice(0, 12)}` : "";
+    timingChannel.appendLine(`[turn]${id} ${timing.summary()}`);
+    for (const line of timing.toolLines()) {
+      timingChannel.appendLine(`[turn]   ${line}`);
+    }
+  } catch {
+    // headless hosts without window — timing is diagnostics, never fatal
+  }
+}
 
 function clearIdleEvictTimer(chatId: string): void {
   const timer = idleEvictTimers.get(chatId);
@@ -1597,7 +1626,7 @@ export function retainClineChatSession(chatId: string | undefined): void {
  */
 export function scheduleClineChatIdleEvict(
   chatId: string | undefined,
-  delayMs: number = CLINE_SESSION_IDLE_EVICT_MS
+  delayMs: number = clineSessionIdleEvictMs()
 ): void {
   const id = String(chatId || "").trim();
   if (!id || !liveClineByChatId.has(id)) {
@@ -1895,6 +1924,12 @@ export async function runClineAgentTurn(options: {
     // Truthful self-identification: the UI-selected model id, ahead of any
     // model names quoted by workspace AGENTS.md / rules docs.
     harborModelIdentityRulesForLanguage(options.model, uiLang),
+    // File paths in replies stay clickable: full paths, no `...` abbreviations.
+    harborFullPathRulesForLanguage(uiLang),
+    // Read batching: fewer model round trips on multi-file exploration.
+    harborBatchReadsRulesForLanguage(uiLang),
+    // Output token safety: route long artefacts through tool calls, not inline text.
+    harborOutputTokenRulesForLanguage(uiLang),
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
@@ -1957,7 +1992,20 @@ export async function runClineAgentTurn(options: {
         options.reasoningEffort || resolveModelReasoningEffort(options.model) || ""
       )
     : "";
+  const timing = new TurnTiming();
+  // Lazy Figma: only reach for the network when this turn actually references
+  // a Figma URL — the per-turn fingerprint must never wait on a reconnect
+  // attempt (a blocked network stalls it for the OS TCP timeout otherwise).
+  timing.start("figma");
+  const figmaWanted = messageHasFigmaUrl(String(options.userText || ""));
+  let figmaUnavailable = false;
+  if (figmaWanted) {
+    figmaUnavailable = !(await ensureHarborFigmaConnected());
+  }
+  timing.end("figma");
+  timing.start("fingerprint");
   const mcpFingerprint = await harborMcpToolFingerprint(clineMode === "plan");
+  timing.end("fingerprint");
   // systemPrompt is fixed at core.start and core.send cannot update it, so
   // any prompt-affecting change (Harbor rules, custom system prompt, Cline
   // bundle update) must recreate the session via the fingerprint.
@@ -2101,6 +2149,8 @@ export async function runClineAgentTurn(options: {
   const handleAgentEvent = (event: ClineAgentEvent) => {
     switch (event.type) {
       case "content_start": {
+        // First streamed content of the turn = time-to-first-token.
+        timing.end("ttft");
         if (event.contentType === "text") {
           const chunk = String(event.text || "");
           if (chunk) {
@@ -2131,6 +2181,7 @@ export async function runClineAgentTurn(options: {
           stepSeq += 1;
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
+          timing.toolStart(toolCallId, name);
           // A tool call starting here proves earlier text blocks were
           // intermediate (not the finale) — flush them as `text` cards.
           // Before submit_and_exit keep plan-tagged blocks pending (finale).
@@ -2188,6 +2239,7 @@ export async function runClineAgentTurn(options: {
         if (event.contentType === "tool") {
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
+          timing.toolEnd(toolCallId);
           const input = toolInputs.get(toolCallId) ?? event.input;
           if (isSubmitAndExitToolName(name)) {
             const summary = summaryFromSubmitInput(input);
@@ -2406,30 +2458,36 @@ export async function runClineAgentTurn(options: {
     }
   }
 
+  timing.start("images");
   const imageBundle = await collectTurnImageDataUrls(
     options.attachments,
     options.history,
     options.storageUri
   );
+  timing.end("images");
   const currentImageUrls = imageBundle.urls.slice(0, imageBundle.fromCurrent);
   const currentHasImage = currentImageUrls.length > 0;
   let userImages = imageBundle.urls;
   const chatSeesImages = resolveModelSupportsVision(options.model);
 
   let userPrompt = String(options.userText || "").trim();
+  timing.start("inline");
   const inlined = await buildInlinedAttachmentsPrompt(
     options.userText,
     options.attachments
   );
+  timing.end("inline");
   if (inlined.text) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
   // Special @problems / @terminal / @url mentions inject live snapshots.
+  timing.start("mentions");
   const specialMentions = await buildSpecialMentionsPrompt(
     String(options.userText || "")
   );
+  timing.end("mentions");
   if (specialMentions) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${specialMentions}`
@@ -2442,6 +2500,7 @@ export async function runClineAgentTurn(options: {
   const followUpContextMode = reusedSession
     ? config.turnContext.followUps
     : "full";
+  timing.start("context");
   const turnContext =
     currentHasImage || followUpContextMode === "none"
       ? ""
@@ -2450,6 +2509,7 @@ export async function runClineAgentTurn(options: {
           lastAgentEditedPaths: options.lastAgentEditedPaths,
           slim: followUpContextMode === "slim",
         });
+  timing.end("context");
   if (turnContext) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${turnContext}`
@@ -2477,6 +2537,7 @@ export async function runClineAgentTurn(options: {
       : describeHistoryFollowUp
         ? imageBundle.urls
         : [];
+    timing.start("vision");
     if (describeUrls.length) {
       emitStep(callbacks, {
         stepId: "vision-helper",
@@ -2516,8 +2577,15 @@ export async function runClineAgentTurn(options: {
     }
     // Text model cannot use pixels; sending them only makes it deny the image.
     userImages = [];
+    timing.end("vision");
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
+  if (figmaUnavailable) {
+    // The connect attempt for this turn's Figma URL failed — tell the model
+    // how to get access instead of letting it claim Figma is impossible.
+    const note = harborFigmaUnavailableNoteForLanguage(uiLang);
+    userPrompt = userPrompt ? `${userPrompt}\n\n${note}` : note;
+  }
   // Model identity rides on every turn: reused sessions keep the system
   // prompt from core.start, so only a turn-local nudge reaches old chats.
   userPrompt = appendModelIdentityRuntimeNudge(
@@ -2545,11 +2613,13 @@ export async function runClineAgentTurn(options: {
     userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
+  timing.start("history");
   const initialMessages = await harborHistoryToClineMessages(
     options.history,
     options.storageUri,
     options.priorUiMessages
   );
+  timing.end("history");
 
   const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
     ? toClineReasoningOptions(
@@ -2713,6 +2783,8 @@ export async function runClineAgentTurn(options: {
       result = startResult.result;
     }
     };
+    timing.start("send");
+    timing.start("ttft");
     await withInspectableImages(imageBundle.urls, () =>
       // update_todo executes inside the Cline session; bridge its step events
       // to this turn's Harbor callbacks (ALS, same as inspect_images).
@@ -2721,6 +2793,7 @@ export async function runClineAgentTurn(options: {
         () => withTurnImages(userImages, runTurn)
       )
     );
+    timing.end("send");
 
     if (persistSession) {
       const prev = liveClineByChatId.get(chatId);
@@ -2817,6 +2890,7 @@ export async function runClineAgentTurn(options: {
     setClineStatus(message || "failed");
     throw error;
   } finally {
+    logTurnTiming(chatId, timing);
     if (persistSession) {
       liveClineBusyChatIds.delete(chatId);
     } else {

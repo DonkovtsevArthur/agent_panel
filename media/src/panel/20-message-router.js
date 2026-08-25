@@ -385,6 +385,25 @@
       }
       case "step":
         upsertAgentStep(msg);
+        // Late host stamp of the full run duration — keep the cached copy in
+        // sync so cache-driven redraws don't lose it before the store catches up.
+        if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            const cached = uiMessagesCache[i];
+            if (
+              cached &&
+              cached.role === "tool" &&
+              cached.step &&
+              cached.step.stepId === msg.stepId
+            ) {
+              cached.step = {
+                ...cached.step,
+                runDurationMs: msg.runDurationMs,
+              };
+              break;
+            }
+          }
+        }
         break;
       case "status":
         if (!msg.chatId || msg.chatId === activeChatId) {

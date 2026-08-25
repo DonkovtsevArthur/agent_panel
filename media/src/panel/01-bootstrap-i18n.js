@@ -270,42 +270,6 @@
       todoPlanStepInProgress: "in progress",
       todoPlanStepPending: "pending",
       cancelledByUser: "Cancelled by user",
-      tabAutocomplete: "Tab autocomplete",
-      tabAutocompleteEnable: "Enable Tab autocomplete",
-      tabAutocompleteNote:
-        "Quiet prefetch. ⌘⏎ to show, Tab to accept.",
-      tabAutocompleteModel: "Tab model",
-      tabAutocompleteModelEmpty: "Select a model",
-      tabAutocompleteModelHint:
-        "Coder models usually beat chat/flash for Tab.",
-      tabAutocompleteAgg: "Aggressiveness",
-      tabAutocompleteAggLow: "Low — fewer requests",
-      tabAutocompleteAggMedium: "Medium — balanced",
-      tabAutocompleteAggHigh: "High — faster, more calls",
-      tabAutocompleteAlts: "Alternatives",
-      tabAutocompleteAlts1: "1 — single suggestion",
-      tabAutocompleteAlts2: "2 — two alternatives",
-      tabAutocompleteAlts3: "3 — three alternatives",
-      tabAutocompleteAltsHint:
-        "Distinct ghost texts in one request. Cycle Alt+[ / Alt+].",
-      tabAutocompleteExclude: "Exclude globs",
-      tabAutocompleteExcludeEmpty: "Empty",
-      tabAutocompleteExcludeHint:
-        "One glob per line. Tab stays silent on matches.",
-      tabAutocompleteNextEdit: "Next Edit after Accept",
-      tabAutocompleteNextEditHint:
-        "After Tab, a Next chip at the likely next edit.",
-      tabAutocompleteShowMode: "Show mode",
-      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter to show",
-      tabAutocompleteShowModeInline: "Inline — ghost text automatically",
-      tabAutocompleteShowModeHint:
-        "Chip = shortcut. Inline = ghost appears by itself.",
-      tabAutocompleteFim: "FIM (/completions)",
-      tabAutocompleteFimHint:
-        "prompt+suffix if the provider supports it.",
-      tabAutocompleteKeysHint:
-        "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ / Ctrl+Shift+Enter · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
-      tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
       selectionHintsNote: "Action chip over selected code.",
       model: "Model",
@@ -781,42 +745,6 @@
       todoPlanStepInProgress: "выполняется",
       todoPlanStepPending: "в очереди",
       cancelledByUser: "Отменено пользователем",
-      tabAutocomplete: "Tab autocomplete",
-      tabAutocompleteEnable: "Включить Tab autocomplete",
-      tabAutocompleteNote:
-        "Тихий prefetch. ⌘⏎ показать, Tab принять.",
-      tabAutocompleteModel: "Модель для Tab",
-      tabAutocompleteModelEmpty: "Выберите модель",
-      tabAutocompleteModelHint:
-        "Coder-модели обычно лучше chat/flash для Tab.",
-      tabAutocompleteAgg: "Агрессивность",
-      tabAutocompleteAggLow: "Низкая — меньше запросов",
-      tabAutocompleteAggMedium: "Средняя — баланс",
-      tabAutocompleteAggHigh: "Высокая — быстрее, больше вызовов",
-      tabAutocompleteAlts: "Варианты",
-      tabAutocompleteAlts1: "1 — один вариант",
-      tabAutocompleteAlts2: "2 — два варианта",
-      tabAutocompleteAlts3: "3 — три варианта",
-      tabAutocompleteAltsHint:
-        "Разные ghost text за один запрос. Цикл Alt+[ / Alt+].",
-      tabAutocompleteExclude: "Исключить (globs)",
-      tabAutocompleteExcludeEmpty: "Пусто",
-      tabAutocompleteExcludeHint:
-        "По одному glob на строку. Tab молчит на совпадениях.",
-      tabAutocompleteNextEdit: "Next Edit после Accept",
-      tabAutocompleteNextEditHint:
-        "После Tab — чип Next в следующей правке.",
-      tabAutocompleteShowMode: "Режим показа",
-      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter",
-      tabAutocompleteShowModeInline: "Inline — ghost сразу",
-      tabAutocompleteShowModeHint:
-        "Chip = шорткат. Inline = ghost появляется сам.",
-      tabAutocompleteFim: "FIM (/completions)",
-      tabAutocompleteFimHint:
-        "prompt+suffix, если провайдер умеет.",
-      tabAutocompleteKeysHint:
-        "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Стейтмент: ⌘⇧⏎ / Ctrl+Shift+Enter · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
-      tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
       selectionHintsNote: "Чип действий над выделенным кодом.",
       model: "Модель",

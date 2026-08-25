@@ -29,6 +29,8 @@ export interface UiMessageStep {
   checkpointRunCount?: number;
   /** `update_todo` plan items rendered as a progress card. */
   steps?: TodoStepItem[];
+  /** Full turn duration (ms), stamped by the host on the last tool step. */
+  runDurationMs?: number;
 }
 
 export interface UiMessage {

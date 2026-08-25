@@ -4814,43 +4814,6 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   outline-offset: -1px;
 }
 
-/* Tab autocomplete is VS Code–only (inline ghost / chip). Hide in JetBrains. */
-html[data-harbor-host="jetbrains"] .settings-tab-autocomplete-block {
-  display: none !important;
-}
-
-.settings-tab-autocomplete-block .settings-input {
-  border: none;
-  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
-}
-
-.settings-tab-autocomplete-block .settings-input:focus {
-  outline: 1px solid var(--vscode-focusBorder, #007fd4);
-  outline-offset: -1px;
-}
-
-.settings-tab-autocomplete-block .settings-prompt-body .settings-textarea {
-  min-height: 88px;
-  font-family: var(--harbor-font-mono);
-}
-
-.settings-tab-autocomplete-block .settings-prompt-body .settings-hint {
-  margin: 8px 0 0;
-}
-
-.settings-tab-autocomplete-block .settings-card,
-.settings-tab-autocomplete-block .settings-prompt-card {
-  margin-bottom: 10px;
-}
-
-.settings-tab-autocomplete-block .settings-limits-row {
-  margin-bottom: 0;
-}
-
-.settings-tab-autocomplete-block > .settings-hint {
-  margin-top: 8px;
-}
-
 .settings-textarea {
   resize: vertical;
   min-height: 96px;

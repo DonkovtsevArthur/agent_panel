@@ -257,7 +257,8 @@ export function createReadFilesTool(
 			"When you already know multiple files you need, read them together in one call, and call this tool in the same response as other independent tool calls. " +
 			`Each read returns at most ${MAX_READ_LINES} lines / ~${Math.round(MAX_READ_OUTPUT_CHARS / 1024)}k characters; longer files report their total line count, page through them with start_line/end_line on that file's entry. ` +
 			"Binary files that are not image and large files are not supported. " +
-			"Returns file contents or error messages for each path. ",
+			"Returns file contents or error messages for each path. " +
+			"IMPORTANT: Always batch multiple file reads into a single tool call or issue multiple read_files calls in one response — never read files one at a time across separate turns. ",
 		inputSchema: zodToJsonSchema(ReadFilesInputSchema),
 		timeoutMs: timeoutMs * 2, // Account for multiple files
 		retryable: true,

@@ -22,7 +22,7 @@
       if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
         return true;
       }
-      if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
+      if (/^(?:\.\/|\.\.\/)?(?:[\w.\u2026-]+\/)+[\w.\u2026-]+$/.test(s)) {
         return true;
       }
       return false;
@@ -41,6 +41,18 @@
     let href = String(url);
     let trailing = "";
     while (href.length > 8 && /[*_~.,);:!?]$/.test(href)) {
+      trailing = href.slice(-1) + trailing;
+      href = href.slice(0, -1);
+    }
+    return { href, trailing };
+  }
+
+  // Chat models glue sentence punctuation onto file paths ("…see foo.ts.");
+  // a trailing dot/comma must stay outside the clickable link.
+  function splitFilePathPunctuation(path) {
+    let href = String(path);
+    let trailing = "";
+    while (href.length > 4 && /[.,;:!?)\]]$/.test(href)) {
       trailing = href.slice(-1) + trailing;
       href = href.slice(0, -1);
     }
@@ -73,16 +85,17 @@
 
     text = text.replace(
       new RegExp(
-        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+(?:\\.(?:${FILE_EXT}))?|[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
+        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.\\u2026-]+/)+[\\w.\\u2026-]+(?:\\.(?:${FILE_EXT}))?|[\\w.\\u2026-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
         "gi"
       ),
       (full, path) => {
-        if (!isFilePath(path)) {
+        const { href, trailing } = splitFilePathPunctuation(path);
+        if (!isFilePath(href)) {
           return full;
         }
         const id = tokens.length;
-        tokens.push(fileLinkHtml(path));
-        return `\u0001T${id}\u0001`;
+        tokens.push(fileLinkHtml(href));
+        return `\u0001T${id}\u0001${trailing}`;
       }
     );
 

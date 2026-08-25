@@ -503,11 +503,6 @@
 
   function renderSettingsModels() {
     renderSettingsCatalog();
-    fillTabAutocompleteModelSelect(
-      settingsTabAutocompleteModel
-        ? settingsTabAutocompleteModel.value
-        : ""
-    );
     fillCommitMessageModelCheckboxes(
       settingsCommitModelList
         ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
@@ -515,52 +510,6 @@
           )
         : []
     );
-  }
-
-  function isCoderLikeModelId(id, label) {
-    const s = `${id || ""} ${label || ""}`.toLowerCase();
-    return /coder|code-|codestral|deepseek|grok-code|starcoder|codellama|qwen2\.5-coder|qwen3-coder/.test(
-      s
-    );
-  }
-
-  function fillTabAutocompleteModelSelect(selectedId) {
-    if (!settingsTabAutocompleteModel) {
-      return;
-    }
-    const previous = String(
-      selectedId != null && selectedId !== ""
-        ? selectedId
-        : settingsTabAutocompleteModel.value || ""
-    ).trim();
-    const enabled = settingsModels
-      .filter((m) => m && m.id && m.enabled !== false)
-      .slice()
-      .sort((a, b) => {
-        const ac = isCoderLikeModelId(a.id, a.label) ? 0 : 1;
-        const bc = isCoderLikeModelId(b.id, b.label) ? 0 : 1;
-        if (ac !== bc) return ac - bc;
-        return String(a.label || a.id).localeCompare(String(b.label || b.id));
-      });
-    settingsTabAutocompleteModel.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = t("tabAutocompleteModelEmpty");
-    settingsTabAutocompleteModel.appendChild(empty);
-    for (const model of enabled) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      const base = model.label || model.id;
-      opt.textContent = isCoderLikeModelId(model.id, model.label)
-        ? `${base} (${t("tabAutocompleteCoderTag")})`
-        : base;
-      settingsTabAutocompleteModel.appendChild(opt);
-    }
-    if (previous && enabled.some((m) => m.id === previous)) {
-      settingsTabAutocompleteModel.value = previous;
-    } else {
-      settingsTabAutocompleteModel.value = "";
-    }
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {

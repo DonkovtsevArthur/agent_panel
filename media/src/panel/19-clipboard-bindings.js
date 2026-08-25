@@ -192,22 +192,6 @@
       }
     });
   }
-  if (settingsTabExcludeToggle && settingsTabExcludeCard) {
-    settingsTabExcludeToggle.addEventListener("click", () => {
-      const open = !settingsTabExcludeCard.classList.contains("is-open");
-      settingsTabExcludeCard.classList.toggle("is-open", open);
-      settingsTabExcludeToggle.setAttribute(
-        "aria-expanded",
-        open ? "true" : "false"
-      );
-      if (settingsTabExcludeBody) {
-        settingsTabExcludeBody.hidden = !open;
-      }
-      if (open && settingsTabAutocompleteExcludeGlobs) {
-        settingsTabAutocompleteExcludeGlobs.focus();
-      }
-    });
-  }
   if (settingsCommitPromptToggle && settingsCommitPromptCard) {
     settingsCommitPromptToggle.addEventListener("click", () => {
       const open = !settingsCommitPromptCard.classList.contains("is-open");
@@ -233,7 +217,7 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath, #settingsTabAutocompleteExcludeGlobs"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath"
         )
       ) {
         if (target.closest("#settingsSystemPrompt")) {
@@ -241,9 +225,6 @@
         }
         if (target.closest("#settingsCommitPrompt")) {
           updateCommitPromptPreview();
-        }
-        if (target.closest("#settingsTabAutocompleteExcludeGlobs")) {
-          updateTabExcludePreview();
         }
         if (target.closest("#settingsFontSize")) {
           applyUiFontSize(settingsFontSize.value);
@@ -258,7 +239,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsTabAutocompleteNextEdit, #settingsTabAutocompleteShowMode, #settingsTabAutocompleteFim, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();

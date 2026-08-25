@@ -6,6 +6,8 @@ import com.google.gson.JsonParser
 import com.intellij.ide.BrowserUtil
 import com.intellij.ide.actions.RevealFileAction
 import com.intellij.ide.projectView.ProjectView
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -13,11 +15,17 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.psi.PsiManager
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
@@ -388,18 +396,12 @@ class HarborHostBridge(
       }
       "openFile", "openFileDiff" -> {
         val raw = obj.get("path")?.asString ?: return
-        val base = project.basePath
-        val io = File(raw)
-        val resolved =
-          if (io.isAbsolute) io
-          else if (!base.isNullOrBlank()) File(base, raw)
-          else io
-        val lfs = LocalFileSystem.getInstance()
-        val vf =
-          lfs.refreshAndFindFileByIoFile(resolved)
-            ?: lfs.findFileByIoFile(resolved)
-            ?: return
-        FileEditorManager.getInstance(project).openFile(vf, true)
+        val vf = resolvePanelFile(raw)
+        if (vf != null) {
+          FileEditorManager.getInstance(project).openFile(vf, true)
+        } else {
+          openAbbreviatedFile(raw)
+        }
       }
       "skillsOpenPath" -> {
         val raw = obj.get("path")?.asString ?: return
@@ -597,6 +599,120 @@ class HarborHostBridge(
         sidecar.request("webview.handle", obj) { _ -> }
       }
     }
+  }
+
+  /**
+   * VFS file for a panel link path: absolute, or relative to the project root.
+   * Retries once with sentence punctuation trimmed — old panel builds glued a
+   * trailing dot/comma into the link ("…see foo.ts.").
+   */
+  private fun resolvePanelFile(raw: String): VirtualFile? {
+    val lfs = LocalFileSystem.getInstance()
+    val base = project.basePath
+
+    fun find(path: String): VirtualFile? {
+      val io = File(path)
+      val resolved =
+        if (io.isAbsolute) io
+        else if (!base.isNullOrBlank()) File(base, path)
+        else io
+      return lfs.refreshAndFindFileByIoFile(resolved) ?: lfs.findFileByIoFile(resolved)
+    }
+
+    find(raw)?.let { return it }
+    val trimmed = raw.trimEnd('.', ',', ';', ':', '!', '?', ')', ']')
+    if (trimmed != raw && trimmed.isNotEmpty()) {
+      return find(trimmed)
+    }
+    return null
+  }
+
+  /**
+   * Fuzzy open for model-abbreviated file links: the chat model sometimes
+   * shortens a path with a literal `...`/`…` segment (`root/.../lib/foo.ts`),
+   * which is not a real directory. Resolve by filename index over the suffix
+   * after the ellipsis: one match opens directly, several ask via popup, none
+   * warns. Non-abbreviated paths stay silent (previous behavior).
+   */
+  private fun openAbbreviatedFile(raw: String) {
+    val suffix = abbreviatedSuffix(raw) ?: return
+    ApplicationManager.getApplication().invokeLater {
+      DumbService.getInstance(project).runWhenSmart {
+        val scope = GlobalSearchScope.projectScope(project)
+        val matches =
+          FilenameIndex.getVirtualFilesByName(
+              project,
+              suffix.substringAfterLast('/'),
+              scope
+            )
+            .filter { it.path.endsWith(suffix) }
+            .sortedBy { it.path.length }
+            .toList()
+        when {
+          matches.isEmpty() ->
+            harborNotify("File not found: $raw", NotificationType.WARNING)
+          matches.size == 1 ->
+            FileEditorManager.getInstance(project).openFile(matches.first(), true)
+          else -> {
+            val base = project.basePath
+            JBPopupFactory.getInstance()
+              .createPopupChooserBuilder(matches)
+              .setTitle("Open file")
+              .setRenderer(
+                SimpleListCellRenderer.create { _, value, _ ->
+                  val rel = base?.let { value.path.removePrefix("$it/") } ?: value.path
+                  "${value.name} — $rel"
+                }
+              )
+              .setItemChosenCallback { vf ->
+                FileEditorManager.getInstance(project).openFile(vf, true)
+              }
+              .createPopup()
+              .showInFocusCenter()
+          }
+        }
+      }
+    }
+  }
+
+  /** Suffix after the last `...`/`…` segment of an abbreviated path, or null when the path is not abbreviated. */
+  private fun abbreviatedSuffix(rawPath: String): String? {
+    val parts = rawPath.replace('\\', '/').split('/')
+    var index = -1
+    for (i in parts.indices.reversed()) {
+      if (isEllipsisSegment(parts[i])) {
+        index = i
+        break
+      }
+    }
+    if (index < 0 || index == parts.lastIndex) {
+      return null
+    }
+    return parts.subList(index + 1, parts.size)
+      .joinToString("/")
+      .trimEnd('.', ',', ';', ':', '!', '?', ')', ']')
+      .ifBlank { null }
+  }
+
+  /** A path segment made only of dots (3+) or typographic ellipses; `..` (parent dir) is a real segment. */
+  private fun isEllipsisSegment(segment: String): Boolean {
+    var dots = 0
+    var ellipses = 0
+    for (ch in segment) {
+      when (ch) {
+        '.' -> dots++
+        '…' -> ellipses++
+        else -> return false
+      }
+    }
+    return dots >= 3 || ellipses >= 1
+  }
+
+  private fun harborNotify(text: String, type: NotificationType) {
+    NotificationGroupManager.getInstance()
+      .getNotificationGroup("Harbor Agents")
+      .createNotification(text, type)
+      .notify(project)
   }
 
   /**

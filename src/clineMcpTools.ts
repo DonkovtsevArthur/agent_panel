@@ -269,6 +269,24 @@ export function shouldNotifyFigmaNeedsConnect(userText: string): boolean {
   return status.state !== "connected";
 }
 
+/**
+ * Lazy Figma connect for a turn that references a Figma URL: bounded by a
+ * hard timeout, cooled down after failures. Never touches custom servers.
+ */
+export async function ensureHarborFigmaConnected(
+  timeoutMs?: number
+): Promise<boolean> {
+  const mcp = getMcpManager();
+  if (!mcp) {
+    return false;
+  }
+  try {
+    return await mcp.ensureFigmaConnected(timeoutMs);
+  } catch {
+    return false;
+  }
+}
+
 /** Stable fingerprint of connected MCP tools — session restart when this changes. */
 export async function harborMcpToolFingerprint(
   readonlyOnly: boolean

@@ -8,7 +8,6 @@ import { initMcpManager } from "./mcpBundle";
 import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
-import { startTabAutocomplete } from "./tabAutocomplete";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
@@ -19,7 +18,6 @@ export function activate(context: vscode.ExtensionContext): void {
   startTerminalOutputTracking(context.subscriptions);
   registerGitDiffProvider(context.subscriptions);
   registerSelectionCodeLens(context.subscriptions);
-  startTabAutocomplete(context);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(

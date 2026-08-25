@@ -35,6 +35,12 @@ export interface AgentStepEvent {
   checkpointRunCount?: number;
   /** Пункты плана `update_todo`, отображаемые как карточка прогресса. */
   steps?: TodoStepItem[];
+  /**
+   * Полное время хода (мс): хост проставляет его на последний шаг с
+   * инструментом при успешном завершении, сводка ленты показывает
+   * «выполнено · N шагов · 18,6 с».
+   */
+  runDurationMs?: number;
 }
 
 export interface TodoStepItem {

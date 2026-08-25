@@ -270,42 +270,6 @@
       todoPlanStepInProgress: "in progress",
       todoPlanStepPending: "pending",
       cancelledByUser: "Cancelled by user",
-      tabAutocomplete: "Tab autocomplete",
-      tabAutocompleteEnable: "Enable Tab autocomplete",
-      tabAutocompleteNote:
-        "Quiet prefetch. ⌘⏎ to show, Tab to accept.",
-      tabAutocompleteModel: "Tab model",
-      tabAutocompleteModelEmpty: "Select a model",
-      tabAutocompleteModelHint:
-        "Coder models usually beat chat/flash for Tab.",
-      tabAutocompleteAgg: "Aggressiveness",
-      tabAutocompleteAggLow: "Low — fewer requests",
-      tabAutocompleteAggMedium: "Medium — balanced",
-      tabAutocompleteAggHigh: "High — faster, more calls",
-      tabAutocompleteAlts: "Alternatives",
-      tabAutocompleteAlts1: "1 — single suggestion",
-      tabAutocompleteAlts2: "2 — two alternatives",
-      tabAutocompleteAlts3: "3 — three alternatives",
-      tabAutocompleteAltsHint:
-        "Distinct ghost texts in one request. Cycle Alt+[ / Alt+].",
-      tabAutocompleteExclude: "Exclude globs",
-      tabAutocompleteExcludeEmpty: "Empty",
-      tabAutocompleteExcludeHint:
-        "One glob per line. Tab stays silent on matches.",
-      tabAutocompleteNextEdit: "Next Edit after Accept",
-      tabAutocompleteNextEditHint:
-        "After Tab, a Next chip at the likely next edit.",
-      tabAutocompleteShowMode: "Show mode",
-      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter to show",
-      tabAutocompleteShowModeInline: "Inline — ghost text automatically",
-      tabAutocompleteShowModeHint:
-        "Chip = shortcut. Inline = ghost appears by itself.",
-      tabAutocompleteFim: "FIM (/completions)",
-      tabAutocompleteFimHint:
-        "prompt+suffix if the provider supports it.",
-      tabAutocompleteKeysHint:
-        "Show: Ctrl+Enter / ⌘⏎ · Accept: Tab · Statement: ⌘⇧⏎ / Ctrl+Shift+Enter · Cycle: Alt+[ / Alt+] · Word: Ctrl/Alt+Right · Line: Ctrl/Alt+Down",
-      tabAutocompleteCoderTag: "coder",
       selectionHints: "Selection hints",
       selectionHintsNote: "Action chip over selected code.",
       model: "Model",
@@ -781,42 +745,6 @@
       todoPlanStepInProgress: "выполняется",
       todoPlanStepPending: "в очереди",
       cancelledByUser: "Отменено пользователем",
-      tabAutocomplete: "Tab autocomplete",
-      tabAutocompleteEnable: "Включить Tab autocomplete",
-      tabAutocompleteNote:
-        "Тихий prefetch. ⌘⏎ показать, Tab принять.",
-      tabAutocompleteModel: "Модель для Tab",
-      tabAutocompleteModelEmpty: "Выберите модель",
-      tabAutocompleteModelHint:
-        "Coder-модели обычно лучше chat/flash для Tab.",
-      tabAutocompleteAgg: "Агрессивность",
-      tabAutocompleteAggLow: "Низкая — меньше запросов",
-      tabAutocompleteAggMedium: "Средняя — баланс",
-      tabAutocompleteAggHigh: "Высокая — быстрее, больше вызовов",
-      tabAutocompleteAlts: "Варианты",
-      tabAutocompleteAlts1: "1 — один вариант",
-      tabAutocompleteAlts2: "2 — два варианта",
-      tabAutocompleteAlts3: "3 — три варианта",
-      tabAutocompleteAltsHint:
-        "Разные ghost text за один запрос. Цикл Alt+[ / Alt+].",
-      tabAutocompleteExclude: "Исключить (globs)",
-      tabAutocompleteExcludeEmpty: "Пусто",
-      tabAutocompleteExcludeHint:
-        "По одному glob на строку. Tab молчит на совпадениях.",
-      tabAutocompleteNextEdit: "Next Edit после Accept",
-      tabAutocompleteNextEditHint:
-        "После Tab — чип Next в следующей правке.",
-      tabAutocompleteShowMode: "Режим показа",
-      tabAutocompleteShowModeChip: "Chip — ⌘⏎ / Ctrl+Enter",
-      tabAutocompleteShowModeInline: "Inline — ghost сразу",
-      tabAutocompleteShowModeHint:
-        "Chip = шорткат. Inline = ghost появляется сам.",
-      tabAutocompleteFim: "FIM (/completions)",
-      tabAutocompleteFimHint:
-        "prompt+suffix, если провайдер умеет.",
-      tabAutocompleteKeysHint:
-        "Показать: Ctrl+Enter / ⌘⏎ · Принять: Tab · Стейтмент: ⌘⇧⏎ / Ctrl+Shift+Enter · Цикл: Alt+[ / Alt+] · Слово: Ctrl/Alt+Right · Строка: Ctrl/Alt+Down",
-      tabAutocompleteCoderTag: "coder",
       selectionHints: "Подсказки при выделении кода",
       selectionHintsNote: "Чип действий над выделенным кодом.",
       model: "Модель",
@@ -1368,30 +1296,6 @@
   const settingsCheckpointsEnabled = document.getElementById(
     "settingsCheckpointsEnabled"
   );
-  const settingsTabAutocompleteEnabled = document.getElementById(
-    "settingsTabAutocompleteEnabled"
-  );
-  const settingsTabAutocompleteModel = document.getElementById(
-    "settingsTabAutocompleteModel"
-  );
-  const settingsTabAutocompleteAggressiveness = document.getElementById(
-    "settingsTabAutocompleteAggressiveness"
-  );
-  const settingsTabAutocompleteAlternatives = document.getElementById(
-    "settingsTabAutocompleteAlternatives"
-  );
-  const settingsTabAutocompleteExcludeGlobs = document.getElementById(
-    "settingsTabAutocompleteExcludeGlobs"
-  );
-  const settingsTabAutocompleteNextEdit = document.getElementById(
-    "settingsTabAutocompleteNextEdit"
-  );
-  const settingsTabAutocompleteShowMode = document.getElementById(
-    "settingsTabAutocompleteShowMode"
-  );
-  const settingsTabAutocompleteFim = document.getElementById(
-    "settingsTabAutocompleteFim"
-  );
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
   );
@@ -1420,18 +1324,6 @@
   const settingsSystemPromptPreview = document.getElementById(
     "settingsSystemPromptPreview"
   );
-  const settingsTabExcludeToggle = document.getElementById(
-    "settingsTabExcludeToggle"
-  );
-  const settingsTabExcludeCard = document.getElementById(
-    "settingsTabExcludeCard"
-  );
-  const settingsTabExcludeBody = document.getElementById(
-    "settingsTabExcludeBody"
-  );
-  const settingsTabExcludePreview = document.getElementById(
-    "settingsTabExcludePreview"
-  );
 
   function updateSystemPromptPreview() {
     if (!settingsSystemPromptPreview) {
@@ -1443,18 +1335,6 @@
     settingsSystemPromptPreview.textContent = raw || t("systemPromptEmpty");
   }
 
-  function updateTabExcludePreview() {
-    if (!settingsTabExcludePreview) {
-      return;
-    }
-    const lines = String(settingsTabAutocompleteExcludeGlobs?.value || "")
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    settingsTabExcludePreview.textContent = lines.length
-      ? lines.join(", ")
-      : t("tabAutocompleteExcludeEmpty");
-  }
   const settingsCommitScope = document.getElementById("settingsCommitScope");
   const settingsCommitLanguage = document.getElementById(
     "settingsCommitLanguage"
@@ -2218,160 +2098,6 @@
     if (settingsCheckpointsNote) {
       settingsCheckpointsNote.textContent = t("checkpointsNote");
     }
-    const settingsTabAutocompleteTitle = document.getElementById(
-      "settingsTabAutocompleteTitle"
-    );
-    if (settingsTabAutocompleteTitle) {
-      settingsTabAutocompleteTitle.textContent = t("tabAutocomplete");
-    }
-    const settingsTabAutocompleteLabel = document.getElementById(
-      "settingsTabAutocompleteLabel"
-    );
-    if (settingsTabAutocompleteLabel) {
-      settingsTabAutocompleteLabel.textContent = t("tabAutocompleteEnable");
-    }
-    const settingsTabAutocompleteNote = document.getElementById(
-      "settingsTabAutocompleteNote"
-    );
-    if (settingsTabAutocompleteNote) {
-      settingsTabAutocompleteNote.textContent = t("tabAutocompleteNote");
-    }
-    const settingsTabAutocompleteModelLabel = document.getElementById(
-      "settingsTabAutocompleteModelLabel"
-    );
-    if (settingsTabAutocompleteModelLabel) {
-      settingsTabAutocompleteModelLabel.textContent = t("tabAutocompleteModel");
-    }
-    const settingsTabAutocompleteModelHint = document.getElementById(
-      "settingsTabAutocompleteModelHint"
-    );
-    if (settingsTabAutocompleteModelHint) {
-      settingsTabAutocompleteModelHint.textContent = t(
-        "tabAutocompleteModelHint"
-      );
-    }
-    const settingsTabAutocompleteAggLabel = document.getElementById(
-      "settingsTabAutocompleteAggLabel"
-    );
-    if (settingsTabAutocompleteAggLabel) {
-      settingsTabAutocompleteAggLabel.textContent = t("tabAutocompleteAgg");
-    }
-    if (settingsTabAutocompleteAggressiveness) {
-      const optLow = settingsTabAutocompleteAggressiveness.querySelector(
-        'option[value="low"]'
-      );
-      const optMed = settingsTabAutocompleteAggressiveness.querySelector(
-        'option[value="medium"]'
-      );
-      const optHigh = settingsTabAutocompleteAggressiveness.querySelector(
-        'option[value="high"]'
-      );
-      if (optLow) optLow.textContent = t("tabAutocompleteAggLow");
-      if (optMed) optMed.textContent = t("tabAutocompleteAggMedium");
-      if (optHigh) optHigh.textContent = t("tabAutocompleteAggHigh");
-    }
-    const settingsTabAutocompleteAltsLabel = document.getElementById(
-      "settingsTabAutocompleteAltsLabel"
-    );
-    if (settingsTabAutocompleteAltsLabel) {
-      settingsTabAutocompleteAltsLabel.textContent = t("tabAutocompleteAlts");
-    }
-    if (settingsTabAutocompleteAlternatives) {
-      const a1 = settingsTabAutocompleteAlternatives.querySelector(
-        'option[value="1"]'
-      );
-      const a2 = settingsTabAutocompleteAlternatives.querySelector(
-        'option[value="2"]'
-      );
-      const a3 = settingsTabAutocompleteAlternatives.querySelector(
-        'option[value="3"]'
-      );
-      if (a1) a1.textContent = t("tabAutocompleteAlts1");
-      if (a2) a2.textContent = t("tabAutocompleteAlts2");
-      if (a3) a3.textContent = t("tabAutocompleteAlts3");
-    }
-    const settingsTabAutocompleteAltsHint = document.getElementById(
-      "settingsTabAutocompleteAltsHint"
-    );
-    if (settingsTabAutocompleteAltsHint) {
-      settingsTabAutocompleteAltsHint.textContent = t("tabAutocompleteAltsHint");
-    }
-    const settingsTabAutocompleteExcludeLabel = document.getElementById(
-      "settingsTabAutocompleteExcludeLabel"
-    );
-    if (settingsTabAutocompleteExcludeLabel) {
-      settingsTabAutocompleteExcludeLabel.textContent = t(
-        "tabAutocompleteExclude"
-      );
-    }
-    const settingsTabAutocompleteExcludeHint = document.getElementById(
-      "settingsTabAutocompleteExcludeHint"
-    );
-    if (settingsTabAutocompleteExcludeHint) {
-      settingsTabAutocompleteExcludeHint.textContent = t(
-        "tabAutocompleteExcludeHint"
-      );
-    }
-    const settingsTabAutocompleteNextEditLabel = document.getElementById(
-      "settingsTabAutocompleteNextEditLabel"
-    );
-    if (settingsTabAutocompleteNextEditLabel) {
-      settingsTabAutocompleteNextEditLabel.textContent = t(
-        "tabAutocompleteNextEdit"
-      );
-    }
-    const settingsTabAutocompleteNextEditHint = document.getElementById(
-      "settingsTabAutocompleteNextEditHint"
-    );
-    if (settingsTabAutocompleteNextEditHint) {
-      settingsTabAutocompleteNextEditHint.textContent = t(
-        "tabAutocompleteNextEditHint"
-      );
-    }
-    const settingsTabAutocompleteShowModeLabel = document.getElementById(
-      "settingsTabAutocompleteShowModeLabel"
-    );
-    if (settingsTabAutocompleteShowModeLabel) {
-      settingsTabAutocompleteShowModeLabel.textContent = t(
-        "tabAutocompleteShowMode"
-      );
-    }
-    if (settingsTabAutocompleteShowMode) {
-      const chip = settingsTabAutocompleteShowMode.querySelector(
-        'option[value="chip"]'
-      );
-      const inline = settingsTabAutocompleteShowMode.querySelector(
-        'option[value="inline"]'
-      );
-      if (chip) chip.textContent = t("tabAutocompleteShowModeChip");
-      if (inline) inline.textContent = t("tabAutocompleteShowModeInline");
-    }
-    const settingsTabAutocompleteShowModeHint = document.getElementById(
-      "settingsTabAutocompleteShowModeHint"
-    );
-    if (settingsTabAutocompleteShowModeHint) {
-      settingsTabAutocompleteShowModeHint.textContent = t(
-        "tabAutocompleteShowModeHint"
-      );
-    }
-    const settingsTabAutocompleteFimLabel = document.getElementById(
-      "settingsTabAutocompleteFimLabel"
-    );
-    if (settingsTabAutocompleteFimLabel) {
-      settingsTabAutocompleteFimLabel.textContent = t("tabAutocompleteFim");
-    }
-    const settingsTabAutocompleteFimHint = document.getElementById(
-      "settingsTabAutocompleteFimHint"
-    );
-    if (settingsTabAutocompleteFimHint) {
-      settingsTabAutocompleteFimHint.textContent = t("tabAutocompleteFimHint");
-    }
-    const settingsTabAutocompleteKeysHint = document.getElementById(
-      "settingsTabAutocompleteKeysHint"
-    );
-    if (settingsTabAutocompleteKeysHint) {
-      settingsTabAutocompleteKeysHint.textContent = t("tabAutocompleteKeysHint");
-    }
     const settingsSelectionHintsLabel = document.getElementById(
       "settingsSelectionHintsLabel"
     );
@@ -2380,7 +2106,6 @@
     }
     setText("settingsSelectionHintsNote", "selectionHintsNote");
     updateSystemPromptPreview();
-    updateTabExcludePreview();
     if (settingsMcpNote) settingsMcpNote.textContent = t("mcpServersNote");
     const settingsSkillsNote = document.getElementById("settingsSkillsNote");
     if (settingsSkillsNote) settingsSkillsNote.textContent = t("skillsNote");
@@ -3415,16 +3140,12 @@
     );
   }
 
-  /** JetBrains: hide VS Code–only settings (Tab autocomplete). */
+  /** JetBrains: set data-harbor-host attribute for CSS targeting. */
   function applyJetBrainsSettingsVisibility() {
     if (!harborHostAvailable()) {
       return;
     }
     document.documentElement.setAttribute("data-harbor-host", "jetbrains");
-    const tabBlock = document.getElementById("settingsTabAutocompleteBlock");
-    if (tabBlock) {
-      tabBlock.hidden = true;
-    }
   }
 
   applyJetBrainsSettingsVisibility();
@@ -6958,9 +6679,18 @@
     switch (toolName) {
       case "read_files": {
         const paths = (m.files && m.files.length ? m.files : filesFromArgs());
-        const first = paths[0] || "";
-        const extra = paths.length > 1 ? ` +${paths.length - 1}` : "";
-        return t("toolHumanRead", fileBase(first)) + extra;
+        const names = paths
+          .map((p) => fileBase(String(p || "")))
+          .filter(Boolean);
+        if (!names.length) {
+          return t("toolHumanRead", "");
+        }
+        // Правило батчинга поощряет multi-file чтения — показываем каждый файл
+        // батча; после трёх имён остаток сворачиваем в +N, чтобы карточка
+        // оставалась компактной.
+        const shown = names.slice(0, 3).join(", ");
+        const extra = names.length > 3 ? ` +${names.length - 3}` : "";
+        return t("toolHumanRead", shown) + extra;
       }
       case "editor": {
         const filePath =
@@ -8027,6 +7757,28 @@
     return Boolean(body.querySelector(".msg.tool:not(.agent-step)"));
   }
 
+  /** Full-turn duration stamped on a step by the host (0 when unknown). */
+  function groupRunDurationMs(group) {
+    const el = group.querySelector("[data-run-duration-ms]");
+    if (!el) {
+      return 0;
+    }
+    const ms = Number(el.getAttribute("data-run-duration-ms")) || 0;
+    return ms > 0 ? ms : 0;
+  }
+
+  function formatRunDuration(ms) {
+    const seconds = ms / 1000;
+    if (UI_LANG === "ru") {
+      return seconds >= 90
+        ? `${Math.floor(seconds / 60)} мин ${Math.round(seconds % 60)} с`
+        : `${seconds.toFixed(1).replace(".", ",")} с`;
+    }
+    return seconds >= 90
+      ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`
+      : `${seconds.toFixed(1)} s`;
+  }
+
   function updateToolGroupSummary(group) {
     if (!group) {
       return;
@@ -8073,6 +7825,10 @@
         const reviewDel = Number(group.dataset.reviewRemoved) || 0;
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
+        }
+        const runDurationMs = groupRunDurationMs(group);
+        if (runDurationMs > 0) {
+          parts.push(formatRunDuration(runDurationMs));
         }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
@@ -8414,6 +8170,15 @@
       `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
     );
 
+    // If not found in the active group, search all groups (including sealed).
+    // This handles late stamps (e.g. runDurationMs) that arrive after
+    // assistantDone has sealed the original group.
+    if (!el) {
+      el = messagesEl.querySelector(
+        `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+      );
+    }
+
     if (!el && step.kind === "tool") {
       const key = toolStepMatchKey(step.name, step.argsPreview, "");
       const match = findMatchingToolStep(body, key);
@@ -8452,6 +8217,25 @@
         el.dataset.metrics = JSON.stringify(step.metrics);
       } catch {
         /* metrics are optional display hints — ignore unparsable payloads */
+      }
+    }
+    // Host stamps the full turn duration (ms) on the turn's last tool step
+    // when the run succeeds — the group summary renders it after «выполнено».
+    if (typeof step.runDurationMs === "number" && step.runDurationMs > 0) {
+      // Use setAttribute — dataset.runDurationMs produces "data-run-duration-m-s"
+      // (hyphen before each capital), but groupRunDurationMs queries
+      // "[data-run-duration-ms]".  setAttribute keeps the name literal.
+      el.setAttribute("data-run-duration-ms", String(Math.round(step.runDurationMs)));
+      const ownerGroup = el.closest(".tool-group");
+      if (ownerGroup) {
+        // Late duration stamps arrive after assistantDone has sealed the group.
+        // ensureActiveToolGroup may have reopened it (is-run-working → unseal)
+        // — re-seal so updateToolGroupSummary renders the "выполнено" branch
+        // which includes the duration.
+        if (!ownerGroup.dataset.sealed) {
+          ownerGroup.dataset.sealed = "1";
+        }
+        updateToolGroupSummary(ownerGroup);
       }
     }
     if (step.kind === "tool") {
@@ -10014,11 +9798,6 @@
 
   function renderSettingsModels() {
     renderSettingsCatalog();
-    fillTabAutocompleteModelSelect(
-      settingsTabAutocompleteModel
-        ? settingsTabAutocompleteModel.value
-        : ""
-    );
     fillCommitMessageModelCheckboxes(
       settingsCommitModelList
         ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
@@ -10026,52 +9805,6 @@
           )
         : []
     );
-  }
-
-  function isCoderLikeModelId(id, label) {
-    const s = `${id || ""} ${label || ""}`.toLowerCase();
-    return /coder|code-|codestral|deepseek|grok-code|starcoder|codellama|qwen2\.5-coder|qwen3-coder/.test(
-      s
-    );
-  }
-
-  function fillTabAutocompleteModelSelect(selectedId) {
-    if (!settingsTabAutocompleteModel) {
-      return;
-    }
-    const previous = String(
-      selectedId != null && selectedId !== ""
-        ? selectedId
-        : settingsTabAutocompleteModel.value || ""
-    ).trim();
-    const enabled = settingsModels
-      .filter((m) => m && m.id && m.enabled !== false)
-      .slice()
-      .sort((a, b) => {
-        const ac = isCoderLikeModelId(a.id, a.label) ? 0 : 1;
-        const bc = isCoderLikeModelId(b.id, b.label) ? 0 : 1;
-        if (ac !== bc) return ac - bc;
-        return String(a.label || a.id).localeCompare(String(b.label || b.id));
-      });
-    settingsTabAutocompleteModel.innerHTML = "";
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = t("tabAutocompleteModelEmpty");
-    settingsTabAutocompleteModel.appendChild(empty);
-    for (const model of enabled) {
-      const opt = document.createElement("option");
-      opt.value = model.id;
-      const base = model.label || model.id;
-      opt.textContent = isCoderLikeModelId(model.id, model.label)
-        ? `${base} (${t("tabAutocompleteCoderTag")})`
-        : base;
-      settingsTabAutocompleteModel.appendChild(opt);
-    }
-    if (previous && enabled.some((m) => m.id === previous)) {
-      settingsTabAutocompleteModel.value = previous;
-    } else {
-      settingsTabAutocompleteModel.value = "";
-    }
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {
@@ -12112,45 +11845,6 @@
         enabled: settings.skillsEnabled !== false,
       };
     }
-    fillTabAutocompleteModelSelect(settings.tabAutocompleteModelId || "");
-    if (settingsTabAutocompleteEnabled) {
-      settingsTabAutocompleteEnabled.checked =
-        settings.tabAutocompleteEnabled === true;
-    }
-    if (settingsTabAutocompleteAggressiveness) {
-      const agg = String(settings.tabAutocompleteAggressiveness || "medium")
-        .trim()
-        .toLowerCase();
-      settingsTabAutocompleteAggressiveness.value =
-        agg === "low" || agg === "high" ? agg : "medium";
-    }
-    if (settingsTabAutocompleteAlternatives) {
-      const alts = Number(settings.tabAutocompleteAlternatives);
-      settingsTabAutocompleteAlternatives.value = String(
-        alts === 1 || alts === 3 ? alts : 2
-      );
-    }
-    if (settingsTabAutocompleteExcludeGlobs) {
-      const globs = Array.isArray(settings.tabAutocompleteExcludeGlobs)
-        ? settings.tabAutocompleteExcludeGlobs
-        : [];
-      settingsTabAutocompleteExcludeGlobs.value = globs.join("\n");
-      updateTabExcludePreview();
-    }
-    if (settingsTabAutocompleteNextEdit) {
-      settingsTabAutocompleteNextEdit.checked =
-        settings.tabAutocompleteNextEdit === true;
-    }
-    if (settingsTabAutocompleteShowMode) {
-      settingsTabAutocompleteShowMode.value =
-        String(settings.tabAutocompleteShowMode || "chip").toLowerCase() ===
-        "inline"
-          ? "inline"
-          : "chip";
-    }
-    if (settingsTabAutocompleteFim) {
-      settingsTabAutocompleteFim.checked = settings.tabAutocompleteFim === true;
-    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -12314,36 +12008,6 @@
             .map((s) => s.name)
             .filter(Boolean)
         : [],
-      tabAutocompleteEnabled:
-        harborHostAvailable()
-          ? false
-          : settingsTabAutocompleteEnabled
-            ? settingsTabAutocompleteEnabled.checked
-            : false,
-      tabAutocompleteModelId: settingsTabAutocompleteModel
-        ? settingsTabAutocompleteModel.value.trim()
-        : "",
-      tabAutocompleteAggressiveness: settingsTabAutocompleteAggressiveness
-        ? settingsTabAutocompleteAggressiveness.value
-        : "medium",
-      tabAutocompleteAlternatives: settingsTabAutocompleteAlternatives
-        ? Number(settingsTabAutocompleteAlternatives.value) || 2
-        : 2,
-      tabAutocompleteExcludeGlobs: settingsTabAutocompleteExcludeGlobs
-        ? settingsTabAutocompleteExcludeGlobs.value
-            .split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [],
-      tabAutocompleteNextEdit: settingsTabAutocompleteNextEdit
-        ? settingsTabAutocompleteNextEdit.checked
-        : false,
-      tabAutocompleteShowMode: settingsTabAutocompleteShowMode
-        ? settingsTabAutocompleteShowMode.value
-        : "chip",
-      tabAutocompleteFim: settingsTabAutocompleteFim
-        ? settingsTabAutocompleteFim.checked
-        : false,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
@@ -13805,7 +13469,7 @@
       if (new RegExp(`\\.(?:${FILE_EXT})$`, "i").test(s)) {
         return true;
       }
-      if (/^(?:\.\/|\.\.\/)?(?:[\w.-]+\/)+[\w.-]+$/.test(s)) {
+      if (/^(?:\.\/|\.\.\/)?(?:[\w.\u2026-]+\/)+[\w.\u2026-]+$/.test(s)) {
         return true;
       }
       return false;
@@ -13824,6 +13488,18 @@
     let href = String(url);
     let trailing = "";
     while (href.length > 8 && /[*_~.,);:!?]$/.test(href)) {
+      trailing = href.slice(-1) + trailing;
+      href = href.slice(0, -1);
+    }
+    return { href, trailing };
+  }
+
+  // Chat models glue sentence punctuation onto file paths ("…see foo.ts.");
+  // a trailing dot/comma must stay outside the clickable link.
+  function splitFilePathPunctuation(path) {
+    let href = String(path);
+    let trailing = "";
+    while (href.length > 4 && /[.,;:!?)\]]$/.test(href)) {
       trailing = href.slice(-1) + trailing;
       href = href.slice(0, -1);
     }
@@ -13856,16 +13532,17 @@
 
     text = text.replace(
       new RegExp(
-        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.-]+/)+[\\w.-]+(?:\\.(?:${FILE_EXT}))?|[\\w.-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
+        `(?<![\\w./-])((?:\\.?\\.?/)?(?:[\\w.\\u2026-]+/)+[\\w.\\u2026-]+(?:\\.(?:${FILE_EXT}))?|[\\w.\\u2026-]+\\.(?:${FILE_EXT}))(?![\\w./-])`,
         "gi"
       ),
       (full, path) => {
-        if (!isFilePath(path)) {
+        const { href, trailing } = splitFilePathPunctuation(path);
+        if (!isFilePath(href)) {
           return full;
         }
         const id = tokens.length;
-        tokens.push(fileLinkHtml(path));
-        return `\u0001T${id}\u0001`;
+        tokens.push(fileLinkHtml(href));
+        return `\u0001T${id}\u0001${trailing}`;
       }
     );
 
@@ -16676,22 +16353,6 @@
       }
     });
   }
-  if (settingsTabExcludeToggle && settingsTabExcludeCard) {
-    settingsTabExcludeToggle.addEventListener("click", () => {
-      const open = !settingsTabExcludeCard.classList.contains("is-open");
-      settingsTabExcludeCard.classList.toggle("is-open", open);
-      settingsTabExcludeToggle.setAttribute(
-        "aria-expanded",
-        open ? "true" : "false"
-      );
-      if (settingsTabExcludeBody) {
-        settingsTabExcludeBody.hidden = !open;
-      }
-      if (open && settingsTabAutocompleteExcludeGlobs) {
-        settingsTabAutocompleteExcludeGlobs.focus();
-      }
-    });
-  }
   if (settingsCommitPromptToggle && settingsCommitPromptCard) {
     settingsCommitPromptToggle.addEventListener("click", () => {
       const open = !settingsCommitPromptCard.classList.contains("is-open");
@@ -16717,7 +16378,7 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath, #settingsTabAutocompleteExcludeGlobs"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath"
         )
       ) {
         if (target.closest("#settingsSystemPrompt")) {
@@ -16725,9 +16386,6 @@
         }
         if (target.closest("#settingsCommitPrompt")) {
           updateCommitPromptPreview();
-        }
-        if (target.closest("#settingsTabAutocompleteExcludeGlobs")) {
-          updateTabExcludePreview();
         }
         if (target.closest("#settingsFontSize")) {
           applyUiFontSize(settingsFontSize.value);
@@ -16742,7 +16400,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsTabAutocompleteEnabled, #settingsTabAutocompleteModel, #settingsTabAutocompleteAggressiveness, #settingsTabAutocompleteAlternatives, #settingsTabAutocompleteNextEdit, #settingsTabAutocompleteShowMode, #settingsTabAutocompleteFim, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
@@ -18629,6 +18287,25 @@
       }
       case "step":
         upsertAgentStep(msg);
+        // Late host stamp of the full run duration — keep the cached copy in
+        // sync so cache-driven redraws don't lose it before the store catches up.
+        if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            const cached = uiMessagesCache[i];
+            if (
+              cached &&
+              cached.role === "tool" &&
+              cached.step &&
+              cached.step.stepId === msg.stepId
+            ) {
+              cached.step = {
+                ...cached.step,
+                runDurationMs: msg.runDurationMs,
+              };
+              break;
+            }
+          }
+        }
         break;
       case "status":
         if (!msg.chatId || msg.chatId === activeChatId) {

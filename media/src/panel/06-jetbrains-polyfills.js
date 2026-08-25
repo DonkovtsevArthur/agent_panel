@@ -3,16 +3,12 @@
     );
   }
 
-  /** JetBrains: hide VS Code–only settings (Tab autocomplete). */
+  /** JetBrains: set data-harbor-host attribute for CSS targeting. */
   function applyJetBrainsSettingsVisibility() {
     if (!harborHostAvailable()) {
       return;
     }
     document.documentElement.setAttribute("data-harbor-host", "jetbrains");
-    const tabBlock = document.getElementById("settingsTabAutocompleteBlock");
-    if (tabBlock) {
-      tabBlock.hidden = true;
-    }
   }
 
   applyJetBrainsSettingsVisibility();

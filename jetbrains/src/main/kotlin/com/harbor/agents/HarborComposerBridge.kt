@@ -33,7 +33,12 @@ object HarborComposerBridge {
           val panel =
             HarborProjectService.getInstance(project).toolWindowPanel()
               ?: return@invokeLater
-          panel.openChatSurface()
+          // Do NOT call panel.openChatSurface() here — it triggers
+          // requestReady → init → clearPendingAttachments(), which wipes
+          // attachments that were already added to the composer.
+          // The webview mergePendingAttachments() already calls
+          // showScreen("chat") + focusPrompt() when it receives the
+          // attachmentsAdded message.
           if (newChat) {
             val sidecar =
               HarborProjectService.getInstance(project).getOrCreateSidecar()

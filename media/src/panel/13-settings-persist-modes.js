@@ -200,45 +200,6 @@
         enabled: settings.skillsEnabled !== false,
       };
     }
-    fillTabAutocompleteModelSelect(settings.tabAutocompleteModelId || "");
-    if (settingsTabAutocompleteEnabled) {
-      settingsTabAutocompleteEnabled.checked =
-        settings.tabAutocompleteEnabled === true;
-    }
-    if (settingsTabAutocompleteAggressiveness) {
-      const agg = String(settings.tabAutocompleteAggressiveness || "medium")
-        .trim()
-        .toLowerCase();
-      settingsTabAutocompleteAggressiveness.value =
-        agg === "low" || agg === "high" ? agg : "medium";
-    }
-    if (settingsTabAutocompleteAlternatives) {
-      const alts = Number(settings.tabAutocompleteAlternatives);
-      settingsTabAutocompleteAlternatives.value = String(
-        alts === 1 || alts === 3 ? alts : 2
-      );
-    }
-    if (settingsTabAutocompleteExcludeGlobs) {
-      const globs = Array.isArray(settings.tabAutocompleteExcludeGlobs)
-        ? settings.tabAutocompleteExcludeGlobs
-        : [];
-      settingsTabAutocompleteExcludeGlobs.value = globs.join("\n");
-      updateTabExcludePreview();
-    }
-    if (settingsTabAutocompleteNextEdit) {
-      settingsTabAutocompleteNextEdit.checked =
-        settings.tabAutocompleteNextEdit === true;
-    }
-    if (settingsTabAutocompleteShowMode) {
-      settingsTabAutocompleteShowMode.value =
-        String(settings.tabAutocompleteShowMode || "chip").toLowerCase() ===
-        "inline"
-          ? "inline"
-          : "chip";
-    }
-    if (settingsTabAutocompleteFim) {
-      settingsTabAutocompleteFim.checked = settings.tabAutocompleteFim === true;
-    }
     if (settingsSelectionHintsEnabled) {
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
@@ -402,36 +363,6 @@
             .map((s) => s.name)
             .filter(Boolean)
         : [],
-      tabAutocompleteEnabled:
-        harborHostAvailable()
-          ? false
-          : settingsTabAutocompleteEnabled
-            ? settingsTabAutocompleteEnabled.checked
-            : false,
-      tabAutocompleteModelId: settingsTabAutocompleteModel
-        ? settingsTabAutocompleteModel.value.trim()
-        : "",
-      tabAutocompleteAggressiveness: settingsTabAutocompleteAggressiveness
-        ? settingsTabAutocompleteAggressiveness.value
-        : "medium",
-      tabAutocompleteAlternatives: settingsTabAutocompleteAlternatives
-        ? Number(settingsTabAutocompleteAlternatives.value) || 2
-        : 2,
-      tabAutocompleteExcludeGlobs: settingsTabAutocompleteExcludeGlobs
-        ? settingsTabAutocompleteExcludeGlobs.value
-            .split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [],
-      tabAutocompleteNextEdit: settingsTabAutocompleteNextEdit
-        ? settingsTabAutocompleteNextEdit.checked
-        : false,
-      tabAutocompleteShowMode: settingsTabAutocompleteShowMode
-        ? settingsTabAutocompleteShowMode.value
-        : "chip",
-      tabAutocompleteFim: settingsTabAutocompleteFim
-        ? settingsTabAutocompleteFim.checked
-        : false,
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,

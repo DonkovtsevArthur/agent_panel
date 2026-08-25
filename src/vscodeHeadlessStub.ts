@@ -180,14 +180,6 @@ class HeadlessConfiguration {
     "skills.disabledExtraDirectories": ["skillsDisabledExtraDirectories"],
     "skills.disabled": ["skillsDisabled"],
     "selectionHints.enabled": ["selectionHintsEnabled"],
-    "tabAutocomplete.enabled": ["tabAutocompleteEnabled"],
-    "tabAutocomplete.modelId": ["tabAutocompleteModelId"],
-    "tabAutocomplete.aggressiveness": ["tabAutocompleteAggressiveness"],
-    "tabAutocomplete.alternatives": ["tabAutocompleteAlternatives"],
-    "tabAutocomplete.excludeGlobs": ["tabAutocompleteExcludeGlobs"],
-    "tabAutocomplete.nextEdit": ["tabAutocompleteNextEdit"],
-    "tabAutocomplete.showMode": ["tabAutocompleteShowMode"],
-    "tabAutocomplete.fim": ["tabAutocompleteFim"],
   };
 
   /** autoglm.browser → autoglmBrowser */
