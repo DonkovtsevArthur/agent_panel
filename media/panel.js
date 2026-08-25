@@ -248,9 +248,9 @@
       approvalMcpNote: "Figma and custom MCP servers",
       approvalSubagents: "Subagents",
       approvalSubagentsNote: "spawn_agent",
-      approvalInherit: "Like master",
-      approvalAuto: "Auto",
-      approvalAsk: "Ask",
+      approvalInherit: "Follow main",
+      approvalAuto: "Always allow",
+      approvalAsk: "Always ask",
       focusChain: "Focus chain",
       focusChainNote:
         "Agent keeps a task checklist; re-injected each turn.",
@@ -723,9 +723,9 @@
       approvalMcpNote: "Figma и кастомные MCP-серверы",
       approvalSubagents: "Субагенты",
       approvalSubagentsNote: "spawn_agent",
-      approvalInherit: "Как общий",
-      approvalAuto: "Авто",
-      approvalAsk: "Спрашивать",
+      approvalInherit: "Как общая",
+      approvalAuto: "Всегда разрешать",
+      approvalAsk: "Всегда спрашивать",
       focusChain: "Focus chain",
       focusChainNote:
         "Агент ведёт чеклист задач; подставляется в каждый ход.",
@@ -16400,7 +16400,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();

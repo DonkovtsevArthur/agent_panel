@@ -239,7 +239,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         persistSettingsNow();
