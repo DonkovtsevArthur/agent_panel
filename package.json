@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.7.75",
+	"version": "2.7.77",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -535,6 +535,12 @@
 					"minimum": 1,
 					"description": "%config.sessions.idleEvictMinutes.description%"
 				},
+				"agentPanel.sessions.inactivityTimeoutMinutes": {
+					"type": "number",
+					"default": 5,
+					"minimum": 1,
+					"description": "%config.sessions.inactivityTimeoutMinutes.description%"
+				},
 				"agentPanel.promptCache.enabled": {
 					"type": "boolean",
 					"default": true,
@@ -574,6 +580,10 @@
 						"subagents": {
 							"type": "boolean",
 							"description": "%config.tools.approvals.subagents.description%"
+						},
+						"plan": {
+							"type": "boolean",
+							"description": "%config.tools.approvals.plan.description%"
 						}
 					}
 				},
@@ -589,7 +599,7 @@
 						"slim",
 						"none"
 					],
-					"default": "full",
+					"default": "slim",
 					"enumDescriptions": [
 						"%config.turnContext.followUps.full.description%",
 						"%config.turnContext.followUps.slim.description%",
