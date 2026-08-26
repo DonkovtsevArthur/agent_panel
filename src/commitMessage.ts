@@ -147,6 +147,20 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   return String(stdout || "");
 }
 
+/** Resolve repo root when cwd is a subdirectory (Rider solution folder, etc.). */
+export async function resolveGitRoot(cwd: string): Promise<string> {
+  const base = String(cwd || "").trim();
+  if (!base) {
+    return base;
+  }
+  try {
+    const top = (await runGit(base, ["rev-parse", "--show-toplevel"])).trim();
+    return top || base;
+  } catch {
+    return base;
+  }
+}
+
 function truncateDiff(text: string): { text: string; truncated: boolean } {
   if (text.length <= MAX_DIFF_CHARS) {
     return { text, truncated: false };
@@ -173,42 +187,55 @@ function normalizeRelPaths(paths: string[] = []): string[] {
   ];
 }
 
+async function collectCommitDiffAt(
+  cwd: string,
+  scoped: string[]
+): Promise<{ diff: string; source: "staged" | "unstaged" } | undefined> {
+  const pathArgs = scoped.length ? (["--", ...scoped] as string[]) : [];
+  const staged = (await runGit(cwd, ["diff", "--cached", ...pathArgs])).trim();
+  if (staged) {
+    const { text } = truncateDiff(staged);
+    return { diff: text, source: "staged" };
+  }
+
+  const unstaged = (await runGit(cwd, ["diff", ...pathArgs])).trim();
+  const status = (
+    await runGit(cwd, [
+      "status",
+      "--porcelain",
+      "--untracked-files=normal",
+      ...pathArgs,
+    ])
+  ).trim();
+  if (!unstaged && !status) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+  if (status) {
+    parts.push(`# git status --porcelain\n${status}`);
+  }
+  if (unstaged) {
+    parts.push(`# git diff\n${unstaged}`);
+  }
+  const { text } = truncateDiff(parts.join("\n\n"));
+  return { diff: text, source: "unstaged" };
+}
+
 /** Собрать staged diff, иначе unstaged + status. Опционально — только по путям. */
 export async function collectCommitDiff(
   cwd: string,
   paths: string[] = []
 ): Promise<{ diff: string; source: "staged" | "unstaged" } | undefined> {
   const scoped = normalizeRelPaths(paths);
-  const pathArgs = scoped.length ? (["--", ...scoped] as string[]) : [];
   try {
-    const staged = (await runGit(cwd, ["diff", "--cached", ...pathArgs])).trim();
-    if (staged) {
-      const { text } = truncateDiff(staged);
-      return { diff: text, source: "staged" };
+    const root = await resolveGitRoot(cwd);
+    const hit = await collectCommitDiffAt(root, scoped);
+    // IDE may pass paths that do not match git (wrong root / casing). Retry full tree.
+    if (!hit && scoped.length) {
+      return collectCommitDiffAt(root, []);
     }
-
-    const unstaged = (await runGit(cwd, ["diff", ...pathArgs])).trim();
-    const status = (
-      await runGit(cwd, [
-        "status",
-        "--porcelain",
-        "--untracked-files=normal",
-        ...pathArgs,
-      ])
-    ).trim();
-    if (!unstaged && !status) {
-      return undefined;
-    }
-
-    const parts: string[] = [];
-    if (status) {
-      parts.push(`# git status --porcelain\n${status}`);
-    }
-    if (unstaged) {
-      parts.push(`# git diff\n${unstaged}`);
-    }
-    const { text } = truncateDiff(parts.join("\n\n"));
-    return { diff: text, source: "unstaged" };
+    return hit;
   } catch {
     return undefined;
   }

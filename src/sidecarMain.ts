@@ -87,6 +87,8 @@ async function handleCommitMessage(
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 55_000);
   try {
+    // composeCommitMessageText → collectCommitDiff resolves git root and
+    // falls back to a full-tree diff when scoped paths miss (Rider 2025).
     const message = await composeCommitMessageText(
       cwd,
       undefined,
