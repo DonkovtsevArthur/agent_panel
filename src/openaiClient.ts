@@ -6,38 +6,53 @@ import * as path from "path";
 import { URL } from "url";
 import {
   KIMI_MIN_MAX_TOKENS,
-  modelNeedsGatewayWorkarounds,
-  modelUsesMainLikeApi,
   resolveModelCapabilities,
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
+import type {
+  ChatCompletionDelta,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  ChatCompletionResult,
+  ChatCompletionsCallOptions,
+  ChatCompletionUsage,
+  ChatMessage,
+  ChatTool,
+  ClientTlsOptions,
+  ContentPart,
+  ToolCall,
+  TransportRetryOptions,
+} from "./openaiTypes";
 
 export { KIMI_MIN_MAX_TOKENS } from "./modelCapabilities";
+export type {
+  ChatCompletionDelta,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  ChatCompletionResult,
+  ChatCompletionsCallOptions,
+  ChatCompletionUsage,
+  ChatMessage,
+  ChatRole,
+  ChatTool,
+  ClientTlsOptions,
+  ContentPart,
+  ToolCall,
+  TransportRetryOptions,
+} from "./openaiTypes";
 
-export type ChatRole = "system" | "user" | "assistant" | "tool";
-
-export type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
-
-export interface ChatMessage {
-  role: ChatRole;
-  content: string | ContentPart[] | null;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-  name?: string;
-  /**
-   * Thinking-модели (Kimi и др.) возвращают ход рассуждения отдельно от ответа.
-   * При tool-call loop его нужно эхоить обратно в messages.
-   */
-  reasoning_content?: string;
-  /**
-   * Локальные вложения user-хода (пути/метаданные).
-   * В JSON для API не отправляется — см. toApiMessages.
-   */
-  attachments?: import("./attachments").MessageAttachment[];
-}
+/**
+ * Socket-level timeouts for HTTP requests to LLM providers.
+ * These prevent indefinite hangs when a server accepts a connection but
+ * never responds or stops sending data mid-stream.
+ *
+ * `SOCKET_TIMEOUT_MS` is an idle timeout on the TCP socket (Node resets it on
+ * activity) — not a hard cap on total request wall-clock time.
+ * `SSE_READ_TIMEOUT_MS` is a separate silence watchdog between SSE chunks.
+ */
+const SOCKET_TIMEOUT_MS = 120_000; // 2 min idle with no socket activity
+const SSE_READ_TIMEOUT_MS = 90_000; // 90s — max silence between SSE chunks
 
 /** Kimi / Moonshot family — thinking on by default, special message rules. */
 export function isKimiFamilyModel(model: string): boolean {
@@ -141,58 +156,6 @@ export function toApiMessages(
   });
 }
 
-export interface ToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-export interface ChatTool {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-}
-
-export interface ChatCompletionUsage {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-}
-
-export interface ChatCompletionResponse {
-  choices: Array<{
-    message: ChatMessage;
-    finish_reason?: string;
-  }>;
-  usage?: ChatCompletionUsage;
-}
-
-export interface ChatCompletionResult {
-  message: ChatMessage;
-  usage?: ChatCompletionUsage;
-  finishReason?: string;
-}
-
-export interface ClientTlsOptions {
-  rejectUnauthorized: boolean;
-  caBundlePath?: string;
-}
-
-export interface TransportRetryOptions {
-  /** Total attempts, including the first request. */
-  maxAttempts?: number;
-  baseDelayMs?: number;
-  maxDelayMs?: number;
-  /** Jitter ratio in the range 0..1. */
-  jitterRatio?: number;
-}
-
 const DEFAULT_RETRY_OPTIONS: Required<TransportRetryOptions> = {
   maxAttempts: 3,
   baseDelayMs: 250,
@@ -273,22 +236,6 @@ export function formatApiErrorDetail(error: unknown, max = 280): string {
     return message.replace(/\s+/g, " ").trim().slice(0, max);
   }
   return "";
-}
-
-function shouldFallbackToNonStream(
-  modelId: string | undefined,
-  error: unknown
-): boolean {
-  if (!modelNeedsGatewayWorkarounds(String(modelId || ""))) {
-    return false;
-  }
-  if (
-    error instanceof Error &&
-    /SSE stream interrupted after partial/i.test(error.message)
-  ) {
-    return false;
-  }
-  return isRetryableTransportError(error);
 }
 
 function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
@@ -440,42 +387,6 @@ export function resolveRequestMaxTokens(
   return resolveModelRequestMaxTokens(model, requested, kimiMinTokens);
 }
 
-export interface ChatCompletionDelta {
-  content?: string;
-  reasoning_content?: string;
-  /** Partial tool call as it streams (name/id may appear before args finish). */
-  tool_call?: {
-    index: number;
-    id?: string;
-    name?: string;
-    argumentsDelta?: string;
-  };
-}
-
-export interface ChatCompletionsCallOptions {
-  onDelta?: (delta: ChatCompletionDelta) => void;
-  /** Fired before each transport retry (attempt is 1-based after the first failure). */
-  onRetry?: (info: {
-    attempt: number;
-    maxAttempts: number;
-    error: unknown;
-    delayMs: number;
-  }) => void;
-}
-
-export interface ChatCompletionRequest {
-  model: string;
-  messages: ChatMessage[];
-  tools?: ChatTool[];
-  tool_choice?: "auto" | "none";
-  temperature?: number;
-  max_tokens?: number;
-  /** Internal client option; not sent to the API. */
-  minimum_output_tokens?: number;
-  /** OpenAI-style reasoning effort (Claude 3.5+/4 via gateway). */
-  reasoning_effort?: string;
-}
-
 function requestJson(
   url: string,
   init: {
@@ -512,6 +423,11 @@ function requestJson(
         });
       }
     );
+
+    // Socket timeout — prevents hanging when server accepts connection but never responds
+    req.setTimeout(SOCKET_TIMEOUT_MS, () => {
+      req.destroy(new Error(`socket timeout: no response for ${SOCKET_TIMEOUT_MS / 1000}s`));
+    });
 
     const cleanup = () => init.signal?.removeEventListener("abort", onAbort);
     const onAbort = () => req.destroy(abortError());
@@ -578,7 +494,19 @@ function requestSse(
 
         let buffer = "";
         res.setEncoding("utf8");
+
+        // Read timeout — resets on every SSE chunk; fires if stream goes silent
+        let readTimer: ReturnType<typeof setTimeout> | undefined;
+        const resetReadTimer = () => {
+          if (readTimer) clearTimeout(readTimer);
+          readTimer = setTimeout(() => {
+            req.destroy(new Error(`stream read timeout: no SSE data for ${SSE_READ_TIMEOUT_MS / 1000}s`));
+          }, SSE_READ_TIMEOUT_MS);
+        };
+        resetReadTimer();
+
         res.on("data", (chunk: string) => {
+          resetReadTimer();
           buffer += chunk;
           let sep: number;
           while ((sep = buffer.indexOf("\n")) >= 0) {
@@ -603,10 +531,21 @@ function requestSse(
             }
           }
         });
-        res.on("end", () => resolve({ status }));
-        res.on("error", reject);
+        res.on("end", () => {
+          if (readTimer) clearTimeout(readTimer);
+          resolve({ status });
+        });
+        res.on("error", (err) => {
+          if (readTimer) clearTimeout(readTimer);
+          reject(err);
+        });
       }
     );
+
+    // Socket timeout — prevents hanging when server accepts connection but never responds
+    req.setTimeout(SOCKET_TIMEOUT_MS, () => {
+      req.destroy(new Error(`socket timeout: no response for ${SOCKET_TIMEOUT_MS / 1000}s`));
+    });
 
     const cleanup = () => init.signal?.removeEventListener("abort", onAbort);
     const onAbort = () => req.destroy(abortError());

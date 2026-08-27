@@ -26,6 +26,7 @@ import {
   appendVisionInspectRuntimeNudge,
   harborAskModeRulesForLanguage,
   harborBatchReadsRulesForLanguage,
+  harborCustomReadonlyModeRulesForLanguage,
   harborDefaultRulesForLanguage,
   harborFigmaUnavailableNoteForLanguage,
   harborFullPathRulesForLanguage,
@@ -34,13 +35,18 @@ import {
   harborSubagentsRulesForLanguage,
   harborTodoRulesForLanguage,
   harborVisionInspectRulesForLanguage,
-  harborFocusChainRulesForLanguage,
   isBuiltinSystemPrompt,
   resolveUiLanguage,
 } from "./i18n";
+import {
+  formatAbortedAssistantText,
+  harborAbortInfoFromCode,
+  reasonFromAbortSignal,
+  type HarborAbortInfo,
+} from "./abortReason";
 import { toClineReasoningOptions } from "./reasoningEffort";
 import { FileEditStat } from "./diffStats";
-import { ChatMessage } from "./openaiClient";
+import { ChatMessage } from "./openaiTypes";
 import type { MessageAttachment } from "./attachments";
 import {
   attachmentPreviewDataUrl,
@@ -82,7 +88,6 @@ import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { withTurnImages } from "./turnImageInject";
 import { buildSpecialMentionsPrompt } from "./mentions";
-import { buildFocusChainBlock } from "./focusChain";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
 import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
@@ -93,6 +98,10 @@ import {
   harborToolApprovalsFingerprint,
   requestHarborToolApproval,
 } from "./toolApproval";
+import {
+  setHarborGitGuardUserText,
+  withHarborGitCommandGuardExtension,
+} from "./gitCommandGuardExtension";
 
 type ClineMode = "act" | "plan";
 
@@ -502,6 +511,10 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
                 ...(inspectImages ? [inspectImages] : []),
                 ...mcp.tools,
               ],
+              // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
+              extensions: withHarborGitCommandGuardExtension(
+                input.config.extensions
+              ),
             },
           };
         },
@@ -524,6 +537,11 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
 function mapHarborModeToCline(agentMode?: string): ClineMode {
   const id = String(agentMode || "agent").toLowerCase();
   if (id === "plan" || id === "ask") {
+    return "plan";
+  }
+  // Custom modes: honor Settings tools policy (readonly → same engine as Plan).
+  const mode = getModeById(agentMode);
+  if (mode.tools === "readonly") {
     return "plan";
   }
   return "act";
@@ -754,6 +772,7 @@ function pickFinalAssistantText(options: {
   submitSummary: string;
   messagesText: string;
   aborted: boolean;
+  abortPlaceholder: string;
 }): string {
   const stream =
     options.resultText.trim() ||
@@ -768,7 +787,7 @@ function pickFinalAssistantText(options: {
     }
     return submit;
   }
-  return stream || (options.aborted ? "(остановлено)" : "");
+  return stream || (options.aborted ? options.abortPlaceholder : "");
 }
 
 function reasoningFromMessageContent(
@@ -1864,7 +1883,6 @@ export async function runClineAgentTurn(options: {
   storageUri?: vscode.Uri;
   signal?: AbortSignal;
   agentMode?: string;
-  planMode?: boolean;
   /** Harbor UI intelligence level (low|medium|high|xhigh). */
   reasoningEffort?: string;
   callbacks: AgentRunCallbacks;
@@ -1896,9 +1914,10 @@ export async function runClineAgentTurn(options: {
     endpoint.protocol === "anthropic" ? "anthropic" : "openai-compatible";
 
   const cwd = workspaceCwd();
-  const clineMode = mapHarborModeToCline(
-    options.planMode ? "plan" : options.agentMode
-  );
+  const clineMode = mapHarborModeToCline(options.agentMode);
+
+  // So Act git blockers see explicit "push" / "all changes" exceptions for this turn.
+  setHarborGitGuardUserText(options.userText || "");
 
   if (shouldNotifyFigmaNeedsConnect(options.userText)) {
     callbacks.onFigmaNeedsConnect?.();
@@ -1942,16 +1961,21 @@ export async function runClineAgentTurn(options: {
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
       : "",
-    // Focus chain: checklist rules for Agent/Plan when enabled (Ask is Q&A).
-    config.focusChain.enabled !== false &&
-    String(options.agentMode || "").toLowerCase() !== "ask"
-      ? harborFocusChainRulesForLanguage(uiLang)
-      : "",
     // Ask shares Cline's "plan" mode under the hood (see mapHarborModeToCline),
     // so Cline's base prompt always says "Plan mode" / "toggle to Act mode".
     // Override that framing so the model calls itself "Ask" to the user.
     String(options.agentMode || "").toLowerCase() === "ask"
       ? harborAskModeRulesForLanguage(uiLang)
+      : "",
+    // Custom Settings modes with tools: readonly also share Cline plan —
+    // same Act-toggle framing fix, using the mode's display label.
+    harborModeId !== "ask" &&
+    harborModeId !== "plan" &&
+    modeDef.tools === "readonly"
+      ? harborCustomReadonlyModeRulesForLanguage(
+          modeDef.label || modeDef.id,
+          uiLang
+        )
       : "",
     modePrompt
       ? `# Mode: ${modeDef.label || modeDef.id}\n${modePrompt}`
@@ -2146,11 +2170,82 @@ export async function runClineAgentTurn(options: {
     );
   };
 
+  // --- Inactivity watchdog: auto-abort if no events arrive for N minutes ---
+  // Paused while tools are in flight so long shell/install/MCP calls do not
+  // trip the hang detector; the timer only guards silent provider stalls.
+  const inactivityMinutes = (() => {
+    const minutes = getConfig().sessions?.inactivityTimeoutMinutes;
+    return Number.isFinite(minutes) && minutes > 0 ? Math.floor(minutes) : 5;
+  })();
+  const inactivityMs = inactivityMinutes * 60_000;
+  let harborAbort: HarborAbortInfo | undefined;
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+  let inactivityPausedForTools = false;
+  let activeToolCount = 0;
+  let lastEventType = "turn_start";
+  let lastEventTime = Date.now();
+  const clearInactivityTimer = (): void => {
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = undefined;
+    }
+  };
+  const resetInactivityTimer = (): void => {
+    clearInactivityTimer();
+    if (inactivityPausedForTools) {
+      return;
+    }
+    inactivityTimer = setTimeout(() => {
+      const silentSec = Math.round((Date.now() - lastEventTime) / 1000);
+      const diagMsg = `[inactivity-watchdog] lastEvent=${lastEventType} ${silentSec}s ago, timeout=${inactivityMinutes}min`;
+      console.warn(diagMsg);
+      harborAbort = {
+        code: "inactivity-timeout",
+        detail: lastEventType,
+        inactivityMinutes,
+      };
+      const msg = uiLang === "ru"
+        ? `Нет активности ${inactivityMinutes} мин — ход прерван автоматически. Увеличьте «agentPanel.sessions.inactivityTimeoutMinutes» в Settings, если провайдер медленный.`
+        : `No activity for ${inactivityMinutes} min — turn auto-aborted. Increase «agentPanel.sessions.inactivityTimeoutMinutes» in Settings if your provider is slow.`;
+      setClineStatus(msg);
+      void core
+        .abort(sessionId, `inactivity-timeout:${inactivityMinutes}`)
+        .catch(() => {
+          /* ignore */
+        });
+    }, inactivityMs);
+  };
+  const pauseInactivityForTool = (): void => {
+    activeToolCount += 1;
+    inactivityPausedForTools = true;
+    clearInactivityTimer();
+  };
+  const resumeInactivityAfterTool = (): void => {
+    activeToolCount = Math.max(0, activeToolCount - 1);
+    if (activeToolCount === 0) {
+      inactivityPausedForTools = false;
+      lastEventTime = Date.now();
+      resetInactivityTimer();
+    }
+  };
+  resetInactivityTimer();
+  let ttftReported = false;
+
   const handleAgentEvent = (event: ClineAgentEvent) => {
+    lastEventType = event.type;
+    lastEventTime = Date.now();
+    resetInactivityTimer();
     switch (event.type) {
       case "content_start": {
         // First streamed content of the turn = time-to-first-token.
         timing.end("ttft");
+        if (!ttftReported) {
+          const ttftMs = timing.phaseMs("ttft");
+          if (typeof ttftMs === "number" && ttftMs >= 0) {
+            ttftReported = true;
+            callbacks.onTiming?.({ ttftMs });
+          }
+        }
         if (event.contentType === "text") {
           const chunk = String(event.text || "");
           if (chunk) {
@@ -2182,6 +2277,9 @@ export async function runClineAgentTurn(options: {
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
           timing.toolStart(toolCallId, name);
+          // Long-running tools (shell, MCP, spawn) emit no agent events until
+          // they finish — pause the hang watchdog for the duration.
+          pauseInactivityForTool();
           // A tool call starting here proves earlier text blocks were
           // intermediate (not the finale) — flush them as `text` cards.
           // Before submit_and_exit keep plan-tagged blocks pending (finale).
@@ -2237,9 +2335,10 @@ export async function runClineAgentTurn(options: {
           break;
         }
         if (event.contentType === "tool") {
+          resumeInactivityAfterTool();
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
-          timing.toolEnd(toolCallId);
+          const durationMs = timing.toolEnd(toolCallId);
           const input = toolInputs.get(toolCallId) ?? event.input;
           if (isSubmitAndExitToolName(name)) {
             const summary = summaryFromSubmitInput(input);
@@ -2280,6 +2379,9 @@ export async function runClineAgentTurn(options: {
             status: failed ? "error" : "done",
             resultPreview: spawnAgentResultPreview(name, event.output, errMsg),
             ...(metrics ? { metrics } : {}),
+            ...(typeof durationMs === "number" && durationMs >= 0
+              ? { durationMs }
+              : {}),
           });
           // Only seed review when the edit tool actually succeeded.
           if (!failed && looksLikeEditTool(name)) {
@@ -2407,10 +2509,22 @@ export async function runClineAgentTurn(options: {
         break;
       }
       case "done": {
+        // Belt-and-suspenders: if a tool never emitted content_end, unstick
+        // the hang watchdog so a later silent stall can still be caught.
+        if (activeToolCount > 0) {
+          activeToolCount = 0;
+          inactivityPausedForTools = false;
+          resetInactivityTimer();
+        }
         setClineStatus(String(event.reason || "completed"));
         break;
       }
       case "error": {
+        if (activeToolCount > 0) {
+          activeToolCount = 0;
+          inactivityPausedForTools = false;
+          resetInactivityTimer();
+        }
         const err = event.error;
         const message =
           typeof err === "string"
@@ -2446,7 +2560,11 @@ export async function runClineAgentTurn(options: {
   const onAbort = () => {
     // spawn_agent children share the parent tool AbortSignal; aborting the
     // root session cancels in-flight spawn work as well.
-    void core.abort(sessionId, "user-abort").catch(() => {
+    const signalCode = reasonFromAbortSignal(options.signal) || "user-stop";
+    if (!harborAbort) {
+      harborAbort = harborAbortInfoFromCode(signalCode);
+    }
+    void core.abort(sessionId, signalCode).catch(() => {
       /* ignore */
     });
   };
@@ -2514,15 +2632,6 @@ export async function runClineAgentTurn(options: {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${turnContext}`
       : turnContext;
-  }
-  // Focus chain: re-inject the latest assistant checklist on follow-up turns.
-  if (config.focusChain.enabled !== false && options.history?.length) {
-    const focusChain = buildFocusChainBlock(options.history);
-    if (focusChain) {
-      userPrompt = userPrompt
-        ? `${userPrompt}\n\n${focusChain}`
-        : focusChain;
-    }
   }
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
@@ -2744,7 +2853,7 @@ export async function runClineAgentTurn(options: {
           enableAgentTeams: true,
           disableMcpSettingsTools: true,
           maxParallelToolCalls,
-          // Harbor plan card (Cline focus_chain analog) — Agent/Plan only.
+          // Harbor plan card (update_todo) — Agent/Plan only.
           ...(enableTodoTool
             ? { extraTools: [createTodoTool(bundle.createTool)] }
             : {}),
@@ -2762,8 +2871,9 @@ export async function runClineAgentTurn(options: {
           ...(enableCheckpoints ? { checkpoint: { enabled: true } } : {}),
           toolPolicies: harborClineToolPolicies(),
           // Iteration budget: leave unset so Cline treats it as unlimited
-          // (Harbor maxToolRounds no longer caps the turn).
+          // Cline treats unset maxIterations as unlimited.
           systemPrompt: baseSystemPrompt,
+          extensions: withHarborGitCommandGuardExtension(undefined),
           ...(skillsMasterEnabled && skillAllowlist.length
             ? { skills: skillAllowlist }
             : skillsMasterEnabled
@@ -2808,13 +2918,22 @@ export async function runClineAgentTurn(options: {
     }
 
     unsubscribe();
+    clearInactivityTimer();
     options.signal?.removeEventListener("abort", onAbort);
 
     const finishReason = String(result?.finishReason || "");
     const aborted =
       options.signal?.aborted ||
       finishReason === "aborted" ||
-      finishReason === "cancelled";
+      finishReason === "cancelled" ||
+      Boolean(harborAbort);
+    if (aborted && !harborAbort) {
+      const signalCode = reasonFromAbortSignal(options.signal);
+      harborAbort = harborAbortInfoFromCode(
+        signalCode || finishReason || "unknown"
+      );
+    }
+    const abortPlaceholder = formatAbortedAssistantText(uiLang, harborAbort);
 
     const resultText = String(result?.text || "");
     const messagesText = lastAssistantTextFromMessages(result?.messages);
@@ -2829,6 +2948,7 @@ export async function runClineAgentTurn(options: {
         submitSummaryFromMessages(result?.messages),
       messagesText: isFlushedTextBlock(messagesText) ? "" : messagesText,
       aborted,
+      abortPlaceholder,
     });
 
     // Do not clear the stream bubble first: if finalText were empty we would
@@ -2871,13 +2991,20 @@ export async function runClineAgentTurn(options: {
     );
   } catch (error) {
     unsubscribe();
+    clearInactivityTimer();
     options.signal?.removeEventListener("abort", onAbort);
-    if (options.signal?.aborted) {
+    if (options.signal?.aborted || harborAbort) {
       setClineStatus("aborted");
+      if (!harborAbort) {
+        harborAbort = harborAbortInfoFromCode(
+          reasonFromAbortSignal(options.signal) || "user-stop"
+        );
+      }
       // Flushed blocks are already on screen as `text` cards — the partial
       // bubble keeps only the un-flushed tail so nothing is shown twice.
       // The model-side history still gets the full turn text.
-      const partial = pendingTextTail().trim() || "(остановлено)";
+      const abortPlaceholder = formatAbortedAssistantText(uiLang, harborAbort);
+      const partial = pendingTextTail().trim() || abortPlaceholder;
       callbacks.onAssistant(partial);
       await callbacks.onReview(edits);
       return [
@@ -2887,6 +3014,8 @@ export async function runClineAgentTurn(options: {
       ];
     }
     const message = error instanceof Error ? error.message : String(error);
+    const silentSec = Math.round((Date.now() - lastEventTime) / 1000);
+    console.error(`[clineRuntime] turn failed: ${message} | lastEvent=${lastEventType} ${silentSec}s ago`);
     setClineStatus(message || "failed");
     throw error;
   } finally {

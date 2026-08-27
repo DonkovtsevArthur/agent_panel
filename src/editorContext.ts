@@ -407,12 +407,3 @@ export function buildActiveFilePrefetchMessage(): string {
     "```",
   ].join("\n");
 }
-
-/** @deprecated используйте getEditorSelectionPayload + чипы */
-export function getEditorSelectionSnippet(): string | undefined {
-  const payload = getEditorSelectionPayload();
-  if (!payload) {
-    return undefined;
-  }
-  return `\`\`\`${payload.startLine}:${payload.endLine}:${payload.path}\n${payload.text}\n\`\`\``;
-}

@@ -74,7 +74,7 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
 
     val commitControl = e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) as? CommitMessageI
     val gitRoot = resolveGitRoot(project)
-    val paths = resolveRelativePaths(e, project, gitRoot)
+    val ctx = collectCommitContext(e, project, gitRoot)
     val lang = HarborUiLanguage.resolve(project)
     val title =
       if (lang == "ru") "Harbor: генерация сообщения коммита…"
@@ -97,8 +97,11 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
             JsonObject().apply {
               addProperty("cwd", gitRoot.ifBlank { project.basePath ?: "" })
               val arr = JsonArray()
-              paths.forEach { arr.add(it) }
+              ctx.paths.forEach { arr.add(it) }
               add("paths", arr)
+              if (ctx.ideDiff.isNotBlank()) {
+                addProperty("diff", ctx.ideDiff)
+              }
             }
           val future = CompletableFuture<JsonElement?>()
           sidecar.request("commit.message", params) { el ->
@@ -229,6 +232,9 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
 
   companion object {
     private const val REQUEST_TIMEOUT_SEC = 60L
+    private const val MAX_IDE_DIFF_CHARS = 90_000
+
+    data class CommitContext(val paths: List<String>, val ideDiff: String)
 
     /** Prefer VCS mapping / .git walk-up over Project.basePath (Rider solution folder). */
     fun resolveGitRoot(project: Project): String {
@@ -263,23 +269,19 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
       return base.replace('\\', '/')
     }
 
-    fun resolveRelativePaths(
+    fun collectCommitContext(
       e: AnActionEvent,
       project: Project,
       gitRoot: String,
-    ): List<String> {
+    ): CommitContext {
       val root =
-        gitRoot.ifBlank { project.basePath?.replace('\\', '/') ?: return emptyList() }
+        gitRoot.ifBlank { project.basePath?.replace('\\', '/') ?: return CommitContext(emptyList(), "") }
           .replace('\\', '/')
       val changes = linkedSetOf<Change>()
       val unversioned = linkedSetOf<VirtualFile>()
 
-      // 1) Checked files in non-modal / modal Commit UI (Rider 2025+)
-      // AbstractCommitWorkflowHandler lives in vcs-impl (not on plugin compile
-      // classpath) — call getUi()/getIncluded* via reflection.
       collectFromCommitWorkflow(e, changes, unversioned)
 
-      // 2) Explicit selection in the changes tree
       if (changes.isEmpty()) {
         val selected =
           e.getData(VcsDataKeys.SELECTED_CHANGES)
@@ -289,26 +291,99 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
         }
       }
 
-      // 3) Default changelist (all local changes)
       if (changes.isEmpty() && unversioned.isEmpty()) {
         changes.addAll(ChangeListManager.getInstance(project).defaultChangeList.changes)
       }
 
-      // 4) Still empty — every changelist (Rider sometimes parks files off default)
       if (changes.isEmpty() && unversioned.isEmpty()) {
         for (list in ChangeListManager.getInstance(project).changeLists) {
           changes.addAll(list.changes)
         }
       }
 
-      val out = linkedSetOf<String>()
+      val paths = linkedSetOf<String>()
       for (change in changes) {
-        relPathForChange(change, root)?.let { out.add(it) }
+        relPathForChange(change, root)?.let { paths.add(it) }
       }
       for (vf in unversioned) {
-        relPathForVirtualFile(vf, root)?.let { out.add(it) }
+        relPathForVirtualFile(vf, root)?.let { paths.add(it) }
       }
-      return out.toList()
+
+      val ideDiff =
+        ApplicationManager.getApplication().runReadAction<String> {
+          buildIdeDiff(changes, unversioned, root)
+        }
+      return CommitContext(paths.toList(), ideDiff)
+    }
+
+    /**
+     * Build a text snapshot from IDE Change content so generation works even when
+     * `git diff` on disk is empty (unsaved timing, wrong cwd, Rider-only buffer state).
+     */
+    private fun buildIdeDiff(
+      changes: Collection<Change>,
+      unversioned: Collection<VirtualFile>,
+      gitRoot: String,
+    ): String {
+      val sb = StringBuilder()
+      for (change in changes) {
+        if (sb.length >= MAX_IDE_DIFF_CHARS) {
+          break
+        }
+        val path = relPathForChange(change, gitRoot) ?: "unknown"
+        val before = revisionText(change.beforeRevision)
+        val after = revisionText(change.afterRevision)
+        if (before.isEmpty() && after.isEmpty()) {
+          continue
+        }
+        sb.append("# file: ").append(path).append('\n')
+        sb.append("## before\n").append(capBlock(before)).append('\n')
+        sb.append("## after\n").append(capBlock(after)).append("\n\n")
+      }
+      for (vf in unversioned) {
+        if (sb.length >= MAX_IDE_DIFF_CHARS) {
+          break
+        }
+        if (vf.isDirectory) {
+          continue
+        }
+        val path = relPathForVirtualFile(vf, gitRoot) ?: vf.name
+        val text =
+          try {
+            String(vf.contentsToByteArray(), Charsets.UTF_8)
+          } catch (_: Throwable) {
+            continue
+          }
+        if (text.isEmpty()) {
+          continue
+        }
+        sb.append("# file: ").append(path).append(" (untracked)\n")
+        sb.append("## before\n\n## after\n").append(capBlock(text)).append("\n\n")
+      }
+      val out = sb.toString().trim()
+      return if (out.length <= MAX_IDE_DIFF_CHARS) {
+        out
+      } else {
+        out.take(MAX_IDE_DIFF_CHARS) + "\n\n[diff truncated]"
+      }
+    }
+
+    private fun revisionText(revision: com.intellij.openapi.vcs.changes.ContentRevision?): String {
+      if (revision == null) {
+        return ""
+      }
+      return try {
+        revision.content ?: ""
+      } catch (_: Throwable) {
+        ""
+      }
+    }
+
+    private fun capBlock(text: String, max: Int = 24_000): String {
+      if (text.length <= max) {
+        return text
+      }
+      return text.take(max) + "\n…[truncated]"
     }
 
     /**

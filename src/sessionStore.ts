@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type { MessageAttachment } from "./attachments";
-import type { ChatMessage } from "./openaiClient";
+import type { ChatMessage } from "./openaiTypes";
 import type { ToolStepMetrics, TodoStepItem } from "./agentSteps";
 
 export type UiMessageRole =
@@ -31,6 +31,10 @@ export interface UiMessageStep {
   steps?: TodoStepItem[];
   /** Full turn duration (ms), stamped by the host on the last tool step. */
   runDurationMs?: number;
+  /** Per-tool wall-clock duration (ms), from runtime TurnTiming. */
+  durationMs?: number;
+  /** Time-to-first-token (ms) for the turn, stamped with runDurationMs. */
+  ttftMs?: number;
 }
 
 export interface UiMessage {
@@ -48,6 +52,17 @@ export interface UiMessage {
    * Short `text` is shown by default; webview reveals this via the ? control.
    */
   detail?: string;
+  /**
+   * Full turn wall-clock duration (ms) for this assistant message.
+   * Stamped by the host when the turn succeeds; shown as a small label
+   * after the assistant bubble and persisted across chat switches.
+   */
+  runDurationMs?: number;
+  /**
+   * Time-to-first-token (ms) for this turn — send → first streamed token.
+   * Stamped with runDurationMs; used in the status line / group summary.
+   */
+  ttftMs?: number;
 }
 
 /** Cap persisted Thinking text so long Kimi/Claude traces do not bloat workspaceState. */
@@ -106,9 +121,19 @@ export function collapseOldToolUiMessages(
       name === "screenshot_plan_explore"
     );
   };
-  // Drop oldest tools first, but never pin-drop screenshot Plan preflight cards.
+  // Never drop tool steps that carry a runDurationMs stamp — there is at most
+  // one per turn and losing it removes the wall-clock duration from the
+  // collapsed group summary after history redraws.
+  const hasDurationStamp = (msg: UiMessage): boolean => {
+    const ms = msg.step?.runDurationMs;
+    return typeof ms === "number" && ms > 0;
+  };
+  // Drop oldest tools first, but never pin-drop screenshot Plan preflight cards
+  // or tool steps that carry a runDurationMs duration stamp.
   const droppable = toolIndexes.filter(
-    (index) => !isPinnedScreenshotPreflight(messages[index])
+    (index) =>
+      !isPinnedScreenshotPreflight(messages[index]) &&
+      !hasDurationStamp(messages[index])
   );
   const pinnedCount = toolIndexes.length - droppable.length;
   const keepDroppable = Math.max(0, keepRecent - pinnedCount);

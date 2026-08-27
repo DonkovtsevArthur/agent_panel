@@ -183,6 +183,14 @@ export type HostToWebview =
   | { type: "review"; [key: string]: unknown }
   | { type: "runFailed"; [key: string]: unknown }
   | { type: "runFinished"; [key: string]: unknown }
+  | {
+      type: "runDuration";
+      runDurationMs: number;
+      /** Time-to-first-token (ms), when known. */
+      ttftMs?: number;
+      chatId?: string;
+    }
+  | { type: "step"; [key: string]: unknown }
   | { type: "contextUsage"; [key: string]: unknown }
   | { type: "modelsUpdated"; [key: string]: unknown }
   | { type: "modesUpdated"; [key: string]: unknown }

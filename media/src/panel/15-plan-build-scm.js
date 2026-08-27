@@ -153,7 +153,7 @@
   /**
    * Inner body of the latest <proposed_plan>…</proposed_plan>.
    * Also recovers truncated plans (open tag, no close) — same as the plan card
-   * — so composer «Собрать» still appears when maxResponseChars cut the close tag.
+   * — so composer «Собрать» still appears when the stream cut the close tag.
    */
   function extractLatestProposedPlan(raw) {
     const text = String(raw || "");

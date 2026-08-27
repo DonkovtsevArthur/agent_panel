@@ -32,16 +32,24 @@ export class TurnTiming {
 		}
 	}
 
-	toolEnd(toolCallId: string): void {
+	/** End a tool call; returns wall-clock ms, or undefined if unknown. */
+	toolEnd(toolCallId: string): number | undefined {
 		const entry = this.toolStarts.get(toolCallId);
 		if (!entry) {
-			return;
+			return undefined;
 		}
 		this.toolStarts.delete(toolCallId);
+		const ms = Math.round(performance.now() - entry.t0);
 		this.tools.push({
 			name: entry.name,
-			ms: Math.round(performance.now() - entry.t0),
+			ms,
 		});
+		return ms;
+	}
+
+	/** Settled phase duration (ms), or undefined if not ended yet. */
+	phaseMs(label: string): number | undefined {
+		return this.phases.get(label);
 	}
 
 	summary(): string {

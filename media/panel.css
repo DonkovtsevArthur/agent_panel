@@ -1036,6 +1036,17 @@ body.vscode-dark .md-pre .syntax-property {
   transition: transform 0.12s ease;
 }
 
+.tool-group-duration {
+  order: 3;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.tool-group-duration[hidden] {
+  display: none !important;
+}
+
 .tool-group-chevron[hidden],
 .tool-group:not(.has-steps) .tool-group-chevron {
   display: none !important;
@@ -1343,6 +1354,13 @@ body.vscode-dark .md-pre .syntax-property {
 .agent-step-label {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.agent-step-duration {
+  margin-left: 0.45em;
+  color: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.9));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .agent-step-error {
@@ -5736,7 +5754,8 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 
 .agent-row-wrap {
   border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  background: var(--vscode-editor-background);
 }
 
 .agent-row-wrap:hover {

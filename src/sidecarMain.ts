@@ -65,7 +65,7 @@ function rejectUnauthorizedFromSettings(settings: Record<string, unknown>): bool
 async function handleCommitMessage(
   workspaceRoot: string,
   settingsPath: string,
-  params: { paths?: unknown; cwd?: unknown }
+  params: { paths?: unknown; cwd?: unknown; diff?: unknown }
 ): Promise<{ ok: boolean; message?: string; error?: string }> {
   const fresh = readSettingsFile(settingsPath);
   HarborHeadless.install({
@@ -83,15 +83,23 @@ async function handleCommitMessage(
   const paths = Array.isArray(params.paths)
     ? params.paths.map((p) => String(p || "").trim()).filter(Boolean)
     : [];
+  const ideDiffRaw =
+    typeof params.diff === "string" ? String(params.diff).trim() : "";
+  const ideDiff =
+    ideDiffRaw.length > 90_000
+      ? `${ideDiffRaw.slice(0, 90_000)}\n\n[diff truncated]`
+      : ideDiffRaw;
+  const collected = ideDiff
+    ? ({ diff: ideDiff, source: "unstaged" } as const)
+    : undefined;
 
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 55_000);
   try {
-    // composeCommitMessageText → collectCommitDiff resolves git root and
-    // falls back to a full-tree diff when scoped paths miss (Rider 2025).
+    // Prefer IDE-provided diff (Rider Change content); else git collectCommitDiff.
     const message = await composeCommitMessageText(
       cwd,
-      undefined,
+      collected,
       abort.signal,
       paths
     );

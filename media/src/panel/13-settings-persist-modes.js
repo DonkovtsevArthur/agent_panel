@@ -137,17 +137,6 @@
       host.postMessage({ type: "figmaRefreshStatus" });
     }
     applyModes(settings.modes);
-    if (settingsMaxToolRounds) {
-      settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
-    }
-    if (settingsMaxTokens) {
-      settingsMaxTokens.value = String(settings.maxTokens || 4096);
-    }
-    if (settingsMaxResponseChars) {
-      settingsMaxResponseChars.value = String(
-        settings.maxResponseChars || 64000
-      );
-    }
     if (settingsSoundNotificationsEnabled) {
       settingsSoundNotificationsEnabled.checked =
         settings.soundNotificationsEnabled !== false;
@@ -178,9 +167,6 @@
       const value = approvalOverrides[group];
       select.value =
         value === true ? "auto" : value === false ? "ask" : "inherit";
-    }
-    if (settingsFocusChainEnabled) {
-      settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
     }
     if (settingsTurnContextFollowUps) {
       const mode = String(settings.turnContextFollowUps || "full");
@@ -304,20 +290,13 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
-      commitMessageModelIds: settingsCommitModelList
-        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
-            (el) => el.dataset.modelId
-          )
-        : [],
+      commitMessageModelIds: readCommitMessageModelIdsFromDom(),
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
           : "global"
         : "global",
       figmaEnabled: figmaStatus.enabled === true,
-      maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
-      maxTokens: Number(settingsMaxTokens?.value || 4096),
-      maxResponseChars: Number(settingsMaxResponseChars?.value || 64000),
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
         : true,
@@ -338,9 +317,6 @@
           .filter(([, select]) => select && select.value !== "inherit")
           .map(([group, select]) => [group, select.value === "auto"])
       ),
-      focusChainEnabled: settingsFocusChainEnabled
-        ? settingsFocusChainEnabled.checked
-        : true,
       turnContextFollowUps:
         settingsTurnContextFollowUps &&
         (settingsTurnContextFollowUps.value === "slim" ||

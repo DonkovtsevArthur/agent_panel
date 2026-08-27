@@ -399,6 +399,28 @@
               cached.step = {
                 ...cached.step,
                 runDurationMs: msg.runDurationMs,
+                ...(typeof msg.ttftMs === "number" && msg.ttftMs > 0
+                  ? { ttftMs: msg.ttftMs }
+                  : {}),
+                ...(typeof msg.durationMs === "number" && msg.durationMs >= 0
+                  ? { durationMs: msg.durationMs }
+                  : {}),
+              };
+              break;
+            }
+          }
+        } else if (typeof msg.durationMs === "number" && msg.durationMs >= 0) {
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            const cached = uiMessagesCache[i];
+            if (
+              cached &&
+              cached.role === "tool" &&
+              cached.step &&
+              cached.step.stepId === msg.stepId
+            ) {
+              cached.step = {
+                ...cached.step,
+                durationMs: msg.durationMs,
               };
               break;
             }
@@ -558,6 +580,32 @@
         }
         break;
       }
+      case "runDuration": {
+        // Late host stamp of the full run duration — store for the status line.
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
+          lastRunDurationMs = msg.runDurationMs;
+          if (typeof msg.ttftMs === "number" && msg.ttftMs > 0) {
+            lastTtftMs = msg.ttftMs;
+          }
+          // Update the cached assistant message.
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            if (uiMessagesCache[i]?.role === "assistant") {
+              uiMessagesCache[i] = {
+                ...uiMessagesCache[i],
+                runDurationMs: msg.runDurationMs,
+                ...(typeof msg.ttftMs === "number" && msg.ttftMs > 0
+                  ? { ttftMs: msg.ttftMs }
+                  : {}),
+              };
+              break;
+            }
+          }
+        }
+        break;
+      }
       case "reasoning":
         // Live Thinking comes from step events. Late/duplicate reasoning
         // messages must not open a second card after seal.
@@ -611,8 +659,10 @@
           }
         }
         completeRunningTodoPlans();
-        setAgentStatus("", true);
         setIdleAndDrain();
+        // Do not show turn timing (TTFT → total) under the answer — duration
+        // stays only in the sealed tool-group summary («выполнено · …»).
+        setAgentStatus("", true);
         break;
       case "stopped":
         if (msg.chatId && !activeChatId) {

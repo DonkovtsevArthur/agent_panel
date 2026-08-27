@@ -90,7 +90,8 @@
     attachments,
     shouldScroll = true,
     reasoning,
-    step
+    step,
+    detail
   ) {
     if (role === "review") {
       sealToolGroups();

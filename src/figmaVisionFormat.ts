@@ -2,7 +2,7 @@
  * Pure formatting helpers for the under-the-hood Figma vision pass.
  * Kept vscode-free so unit tests can import without the VS Code module.
  */
-import type { ChatMessage, ContentPart } from "./openaiClient";
+import type { ChatMessage, ContentPart } from "./openaiTypes";
 
 const VISION_DESCRIBE_SYSTEM = `You are a vision helper for a coding agent.
 Extract concrete UI text from the screenshot. List exact visible strings:

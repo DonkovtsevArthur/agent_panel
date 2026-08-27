@@ -123,7 +123,7 @@ export function isGitMutationCommand(command: string): boolean {
 
 /**
  * Shell that undoes workspace edits (git discard or recursive rm).
- * Used so honestFinale does not demand write_file after a successful discard.
+ * Used so discard success messaging does not demand a follow-up write_file.
  */
 export function isWorkspaceDiscardCommand(command: string): boolean {
   const value = String(command || "").trim();

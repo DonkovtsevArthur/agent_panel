@@ -213,9 +213,6 @@
     subagents: document.getElementById("settingsApprovalSubagents"),
     plan: document.getElementById("settingsApprovalPlan"),
   };
-  const settingsFocusChainEnabled = document.getElementById(
-    "settingsFocusChainEnabled"
-  );
   const settingsTurnContextFollowUps = document.getElementById(
     "settingsTurnContextFollowUps"
   );
@@ -409,11 +406,6 @@
   let figmaStatus = { state: "disconnected", enabled: true };
   let mcpSearchQuery = "";
   let mcpScreenOpen = false;
-  const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
-  const settingsMaxTokens = document.getElementById("settingsMaxTokens");
-  const settingsMaxResponseChars = document.getElementById(
-    "settingsMaxResponseChars"
-  );
   const settingsModesList = document.getElementById("settingsModesList");
   const addModeBtn = document.getElementById("addModeBtn");
   const modeEditModal = document.getElementById("modeEditModal");
@@ -457,6 +449,8 @@
   let fetchModelsError = "";
   let fetchModelsTarget = "modal"; // "modal" | "editApi"
   let settingsHydrating = false;
+  /** Last known commit-message model selection (survives list rebuild / empty DOM). */
+  let settingsCommitMessageModelIds = [];
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
   let settingsModelTipEl = null;

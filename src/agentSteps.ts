@@ -1,6 +1,5 @@
 /**
- * Структурированные шаги хода агента (последовательность в стиле Zed)
- * и подсказки о намерении ToolResults.
+ * Структурированные шаги хода агента (последовательность в стиле Zed).
  */
 
 export type AgentStepKind =
@@ -41,6 +40,16 @@ export interface AgentStepEvent {
    * «выполнено · N шагов · 18,6 с».
    */
   runDurationMs?: number;
+  /**
+   * Wall-clock duration of this tool call (ms), from content_start to
+   * content_end. Shown on the tool card after the human label.
+   */
+  durationMs?: number;
+  /**
+   * Time-to-first-token (ms) for the turn: send → first streamed content.
+   * Host stamps this on the last tool step / runDuration message.
+   */
+  ttftMs?: number;
 }
 
 export interface TodoStepItem {
@@ -69,37 +78,6 @@ export interface ToolStepMetrics {
   created?: boolean;
 }
 
-export type CompletionIntent = "user_prompt" | "tool_results";
-
-/** «Липкий» маркер, чтобы не накапливать дублирующиеся подсказки ToolResults. */
-export const TOOL_RESULTS_INTENT_MARKER = "[[harbor:tool_results_intent]]";
-
-export const TOOL_RESULTS_INTENT_HINT = `${TOOL_RESULTS_INTENT_MARKER}
-Continue from the tool results above. Do not restart the task from scratch.
-Prefer the next concrete action (write_file / answer) over re-exploring files you already read.`;
-
-/**
- * Универсальная (не привязанная к задаче): правила/контекст — это ориентир,
- * но факты о репозитории проверяй инструментами.
- */
-export const VERIFY_REPO_FACTS_HINT = `Workspace guidance (AGENTS.md / rules / editor context) is helpful context, not a substitute for the repository.
-When the user asks for factual claims about this project that can be checked in the workspace (versions, file contents, structure, configs, scripts, dependencies), verify with list_files / read_file / search_text before answering.
-Do not invent paths or versions. Prefer a short tool-verified answer over restating rules alone.
-If tools are unavailable or the question is purely conceptual, answer from knowledge and say when you did not read the repo.
-When you already know several paths to inspect, call multiple read_file / list_files / search_text in the same assistant turn — they run in parallel. Do not serialize one read per round when the other paths are already clear.`;
-
-/** Короткий маркер, используемый в тестах/документации для правила параллельного чтения. */
-export const PARALLEL_READS_HINT_MARKER =
-  "multiple read_file / list_files / search_text in the same assistant turn";
-
-/**
- * Рекомендация по точечному редактированию в стиле Zed: для изменения
- * существующего файла предпочитай search_replace (хирургический патч)
- * вместо write_file (полная перезапись) — это защищает остальную часть файла
- * (зависимости, импорты, соседний код) от перезаписи.
- */
-export const FOCUSED_EDIT_HINT = `When editing an EXISTING file, prefer search_replace (old_string → new_string) — it changes only the target fragment and leaves the rest of the file untouched (dependencies, imports, neighboring code are not rewritten or deleted). Add enough surrounding context to old_string so the match is unique. Use write_file ONLY to create a new file or to rewrite it entirely. For a version bump in package.json, call search_replace with the exact "version": "x.y.z" line.`;
-
 let stepSeq = 0;
 
 export function nextStepId(prefix = "step"): string {
@@ -119,70 +97,4 @@ export function previewText(value: unknown, maxChars = 160): string {
 
 export function toolStepId(toolCallId: string): string {
   return `tool:${toolCallId || "unknown"}`;
-}
-
-export function hasToolResultsIntentHint(
-  messages: ReadonlyArray<{ role?: string; content?: unknown }>
-): boolean {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const msg = messages[i];
-    if (msg?.role !== "system" && msg?.role !== "user") {
-      continue;
-    }
-    const content =
-      typeof msg.content === "string"
-        ? msg.content
-        : Array.isArray(msg.content)
-          ? msg.content
-              .map((part) =>
-                part && typeof part === "object" && "text" in part
-                  ? String((part as { text?: string }).text || "")
-                  : ""
-              )
-              .join("\n")
-          : "";
-    if (content.includes(TOOL_RESULTS_INTENT_MARKER)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Гарантирует наличие единственной «липкой» подсказки ToolResults при
- * продолжении работы после вызовов инструментов.
- * Возвращает, была ли подсказка вставлена.
- */
-export function ensureToolResultsIntentHint(
-  messages: Array<{ role: string; content?: unknown }>
-): boolean {
-  if (hasToolResultsIntentHint(messages)) {
-    return false;
-  }
-  messages.push({
-    role: "system",
-    content: TOOL_RESULTS_INTENT_HINT,
-  });
-  return true;
-}
-
-export function looksLikeToolErrorResult(result: string): boolean {
-  const trimmed = String(result || "").trim();
-  if (!trimmed) {
-    return false;
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as { error?: unknown; ok?: unknown };
-    if (parsed && typeof parsed === "object") {
-      if (parsed.ok === false) {
-        return true;
-      }
-      if (parsed.error != null && String(parsed.error).length > 0) {
-        return true;
-      }
-    }
-  } catch {
-    // обычный текст (не JSON)
-  }
-  return /^\s*error\b/i.test(trimmed);
 }

@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.7.77",
+	"version": "2.7.84",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -473,21 +473,6 @@
 						}
 					}
 				},
-				"agentPanel.maxToolRounds": {
-					"type": "number",
-					"default": 20,
-					"minimum": 1,
-					"maximum": 60,
-					"description": "%config.maxToolRounds.description%",
-					"deprecationMessage": "%config.maxToolRounds.deprecation%"
-				},
-				"agentPanel.maxTokens": {
-					"type": "number",
-					"default": 4096,
-					"minimum": 64,
-					"maximum": 128000,
-					"description": "%config.maxTokens.description%"
-				},
 				"agentPanel.visionRouting.preferredModelIds": {
 					"type": "array",
 					"default": [],
@@ -501,13 +486,6 @@
 					"default": "",
 					"description": "%config.visionRouting.preferredModelId.description%",
 					"deprecationMessage": "Use agentPanel.visionRouting.preferredModelIds"
-				},
-				"agentPanel.maxResponseChars": {
-					"type": "number",
-					"default": 64000,
-					"minimum": 1000,
-					"maximum": 200000,
-					"description": "%config.maxResponseChars.description%"
 				},
 				"agentPanel.soundNotifications.enabled": {
 					"type": "boolean",
@@ -586,11 +564,6 @@
 							"description": "%config.tools.approvals.plan.description%"
 						}
 					}
-				},
-				"agentPanel.focusChain.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.focusChain.enabled.description%"
 				},
 				"agentPanel.turnContext.followUps": {
 					"type": "string",

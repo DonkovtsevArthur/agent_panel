@@ -221,9 +221,6 @@ export interface AgentPanelConfig {
   defaultModel: string;
   defaultContextWindow: number;
   systemPrompt: string;
-  maxToolRounds: number;
-  maxTokens: number;
-  maxResponseChars: number;
   /**
    * Preferred vision models for under-the-hood image describe when the
    * selected chat model cannot view images (e.g. GLM-5.2). Also used for
@@ -274,13 +271,6 @@ export interface AgentPanelConfig {
   tools: {
     autoApprove: boolean;
     approvals: ToolApprovalsConfig;
-  };
-  /**
-   * Focus chain: the agent keeps a markdown task checklist and Harbor
-   * re-injects the latest one into follow-up turns.
-   */
-  focusChain: {
-    enabled: boolean;
   };
   /**
    * `[Harbor turn context]` IDE block on follow-up turns of a live Cline
@@ -637,9 +627,6 @@ export function getConfig(): AgentPanelConfig {
       }
       return stored;
     })(),
-    maxToolRounds: cfg.get<number>("maxToolRounds") ?? 20,
-    maxTokens: cfg.get<number>("maxTokens") ?? 4096,
-    maxResponseChars: cfg.get<number>("maxResponseChars") ?? 64_000,
     visionRouting: (() => {
       const rawIds = cfg.get<unknown>("visionRouting.preferredModelIds");
       const fromArray = Array.isArray(rawIds)
@@ -687,9 +674,6 @@ export function getConfig(): AgentPanelConfig {
         approvals,
       };
     })(),
-    focusChain: {
-      enabled: cfg.get<boolean>("focusChain.enabled") !== false,
-    },
     turnContext: {
       followUps:
         cfg.get("turnContext.followUps") === "none"
@@ -926,20 +910,6 @@ export function getEnabledModels(): AgentModel[] {
   enabledModelsCache = models;
   enabledModelsCacheKey = key;
   return models;
-}
-
-/**
- * @deprecated Chat turns no longer swap models for images (Cline handles vision).
- * Kept for callers / tests that still exercise vision preference pools.
- */
-export function getVisionRoutingModels(): AgentModel[] {
-  return getConfig()
-    .models.slice()
-    .map((m) => ({
-      ...m,
-      enabled: true,
-      supportsVision: resolveModelSupportsVision(m),
-    }));
 }
 
 /** Endpoint для модели через её провайдера (или primary). */

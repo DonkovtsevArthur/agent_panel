@@ -182,6 +182,15 @@
         if (urlMatch) {
           args.url = urlMatch[1].replace(/\\"/g, '"');
         }
+        // Truncated read_files JSON often still has start_line/end_line as bare numbers.
+        const startLineMatch = rawArgs.match(/"start_line"\s*:\s*(\d+)/);
+        if (startLineMatch && args.start_line == null) {
+          args.start_line = Number(startLineMatch[1]);
+        }
+        const endLineMatch = rawArgs.match(/"end_line"\s*:\s*(\d+)/);
+        if (endLineMatch && args.end_line == null) {
+          args.end_line = Number(endLineMatch[1]);
+        }
       }
     }
 
@@ -208,6 +217,16 @@
       return out;
     };
     const m = metrics || {};
+    const asPositiveLine = (v) => {
+      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const formatLineRange = (startLine, endLine) => {
+      const sl = asPositiveLine(startLine);
+      if (!sl) return "";
+      const el = asPositiveLine(endLine);
+      return el ? ` (${sl}–${el})` : ` (${sl}+)`;
+    };
 
     switch (toolName) {
       case "read_files": {
@@ -223,7 +242,17 @@
         // оставалась компактной.
         const shown = names.slice(0, 3).join(", ");
         const extra = names.length > 3 ? ` +${names.length - 3}` : "";
-        return t("toolHumanRead", shown) + extra;
+        // Range only when a single file is shown — otherwise `(12–40)` after a
+        // multi-name list looks like it applies to every file.
+        let lineRange = "";
+        if (names.length === 1) {
+          const firstFile = Array.isArray(args.files) && args.files[0];
+          lineRange = formatLineRange(
+            firstFile?.start_line ?? args.start_line,
+            firstFile?.end_line ?? args.end_line
+          );
+        }
+        return t("toolHumanRead", shown) + extra + lineRange;
       }
       case "editor": {
         const filePath =
@@ -1300,6 +1329,18 @@
     return ms > 0 ? ms : 0;
   }
 
+  /** TTFT stamped with run duration (0 when unknown). */
+  function groupTtftMs(group) {
+    const el =
+      group.querySelector("[data-ttft-ms]") ||
+      group.querySelector("[data-run-duration-ms]");
+    if (!el) {
+      return 0;
+    }
+    const ms = Number(el.getAttribute("data-ttft-ms")) || 0;
+    return ms > 0 ? ms : 0;
+  }
+
   function formatRunDuration(ms) {
     const seconds = ms / 1000;
     if (UI_LANG === "ru") {
@@ -1310,6 +1351,28 @@
     return seconds >= 90
       ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`
       : `${seconds.toFixed(1)} s`;
+  }
+
+  /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
+  function formatTurnTiming(ttftMs, totalMs) {
+    if (!(totalMs > 0)) {
+      return "";
+    }
+    const total = formatRunDuration(totalMs);
+    if (ttftMs > 0 && ttftMs < totalMs) {
+      // Drop the unit from the TTFT side so the arrow reads "1,2 → 18,6 с".
+      const ttftRaw = formatRunDuration(ttftMs).replace(/\s*(с|s|мин|min).*$/, "");
+      return t("runTiming", ttftRaw, total);
+    }
+    return total;
+  }
+
+  /** Hover detail only when both TTFT and total are known. */
+  function formatTurnTimingDetail(ttftMs, totalMs) {
+    if (!(totalMs > 0) || !(ttftMs > 0) || ttftMs >= totalMs) {
+      return "";
+    }
+    return formatTurnTiming(ttftMs, totalMs);
   }
 
   function updateToolGroupSummary(group) {
@@ -1334,16 +1397,24 @@
       chevron.hidden = !hasSteps;
     }
     const summary = group.querySelector(".tool-group-summary");
+    let durationEl = group.querySelector(".tool-group-duration");
+    if (!durationEl && toggle) {
+      durationEl = document.createElement("span");
+      durationEl.className = "tool-group-duration";
+      durationEl.hidden = true;
+      toggle.appendChild(durationEl);
+    }
+    const runDurationMs = groupRunDurationMs(group);
+    const ttftMs = groupTtftMs(group);
+    const timingDetail = formatTurnTimingDetail(ttftMs, runDurationMs);
     if (summary) {
       const types = toolTypesSummary(group);
       if (group.dataset.failed === "1") {
         summary.textContent = t("runFailedSummary");
+        summary.removeAttribute("title");
       } else if (group.dataset.sealed === "1") {
-        // Тихая лента: законченный ход сворачивается в счётчики
-        // («выполнено · 4 шага · 2 файла · +12 −3»), полный список
-        // того, что делалось, — в тултипе переключателя. Шагами считаем
-        // только вызовы инструментов — карточки «Мысли» не входят.
-        // Лента, запечатанная посреди хода, остаётся «выполняю».
+        // Тихая лента: «выполнено · 4 шага · 2 файла» + шеврон +
+        // итоговое время справа от «>»; TTFT→всего — в title при hover.
         const base = group.classList.contains("is-run-working")
           ? t("runWorking")
           : t("runDone");
@@ -1359,16 +1430,33 @@
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
         }
-        const runDurationMs = groupRunDurationMs(group);
-        if (runDurationMs > 0) {
-          parts.push(formatRunDuration(runDurationMs));
-        }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
         }`;
+        summary.removeAttribute("title");
       } else {
         const base = t("runWorking");
         summary.textContent = types ? `${base} · ${types}` : base;
+        summary.removeAttribute("title");
+      }
+    }
+    if (durationEl) {
+      if (
+        group.dataset.sealed === "1" &&
+        group.dataset.failed !== "1" &&
+        runDurationMs > 0
+      ) {
+        durationEl.hidden = false;
+        durationEl.textContent = formatRunDuration(runDurationMs);
+        if (timingDetail) {
+          durationEl.title = timingDetail;
+        } else {
+          durationEl.removeAttribute("title");
+        }
+      } else {
+        durationEl.hidden = true;
+        durationEl.textContent = "";
+        durationEl.removeAttribute("title");
       }
     }
     if (toggle) {
@@ -1376,13 +1464,24 @@
         group.dataset.sealed === "1" && group.dataset.failed !== "1"
           ? toolTypesSummary(group)
           : "";
-      toggle.title = !hasSteps
-        ? ""
-        : group.classList.contains("is-collapsed")
-          ? sealedTypes
-            ? `${t("showSteps")} · ${sealedTypes}`
-            : t("showSteps")
-          : t("hideSteps");
+      const tipParts = [];
+      if (!hasSteps) {
+        toggle.title = "";
+      } else if (group.classList.contains("is-collapsed")) {
+        tipParts.push(
+          sealedTypes ? `${t("showSteps")} · ${sealedTypes}` : t("showSteps")
+        );
+        if (timingDetail) {
+          tipParts.push(timingDetail);
+        }
+        toggle.title = tipParts.join(" · ");
+      } else {
+        tipParts.push(t("hideSteps"));
+        if (timingDetail) {
+          tipParts.push(timingDetail);
+        }
+        toggle.title = tipParts.join(" · ");
+      }
     }
   }
 
@@ -1393,6 +1492,7 @@
       `<button type="button" class="tool-group-toggle" aria-expanded="false" disabled>` +
       `<span class="tool-group-summary">${escapeHtml(t("runWorking"))}</span>` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true" hidden>expand_more</span>` +
+      `<span class="tool-group-duration" hidden></span>` +
       `</button>` +
       `<div class="tool-group-live-note"></div>` +
       `<div class="tool-group-body agent-timeline-body"></div>`;
@@ -1608,7 +1708,7 @@
         const body = group.querySelector(".tool-group-body");
         group.insertBefore(note, body || null);
       }
-      note.textContent = raw;
+      note.innerHTML = renderInlineMarkdown(raw);
     }
     keepStatusAtEnd();
     scrollToBottom();
@@ -1759,6 +1859,9 @@
       // (hyphen before each capital), but groupRunDurationMs queries
       // "[data-run-duration-ms]".  setAttribute keeps the name literal.
       el.setAttribute("data-run-duration-ms", String(Math.round(step.runDurationMs)));
+      if (typeof step.ttftMs === "number" && step.ttftMs > 0) {
+        el.setAttribute("data-ttft-ms", String(Math.round(step.ttftMs)));
+      }
       const ownerGroup = el.closest(".tool-group");
       if (ownerGroup) {
         // Late duration stamps arrive after assistantDone has sealed the group.
@@ -1770,6 +1873,9 @@
         }
         updateToolGroupSummary(ownerGroup);
       }
+    }
+    if (typeof step.durationMs === "number" && step.durationMs >= 0) {
+      el.setAttribute("data-duration-ms", String(Math.round(step.durationMs)));
     }
     if (step.kind === "tool") {
       el.dataset.toolMatchKey = toolStepMatchKey(
@@ -1854,6 +1960,20 @@
             step.status,
             step.resultPreview || el.dataset.resultPreview || ""
           );
+        }
+        // Per-tool wall-clock duration (from runtime TurnTiming).
+        const toolMs =
+          typeof step.durationMs === "number" && step.durationMs >= 0
+            ? step.durationMs
+            : Number(el.getAttribute("data-duration-ms")) || 0;
+        if (
+          toolMs > 0 &&
+          (step.status === "done" || step.status === "error")
+        ) {
+          const dur = document.createElement("span");
+          dur.className = "agent-step-duration";
+          dur.textContent = formatRunDuration(toolMs);
+          labelEl.appendChild(dur);
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся

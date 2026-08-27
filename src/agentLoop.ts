@@ -4,12 +4,17 @@ import {
 import { FileEditStat } from "./diffStats";
 import {
   ChatMessage,
-} from "./openaiClient";
+} from "./openaiTypes";
 import { runClineAgentTurn } from "./clineRuntime";
 import type * as vscode from "vscode";
 import type { AgentStepEvent } from "./agentSteps";
 import type { UiMessage } from "./sessionStore";
 
+/**
+ * Busy-line phase for Harbor hosts.
+ * Cline runtime mostly emits `"cline"` (notice text); legacy phases remain for
+ * host busy-line mapping (`modePhaseStatusLabel`) and older UI branches.
+ */
 export type AgentPhase =
   | "thinking"
   | "reading"
@@ -18,14 +23,13 @@ export type AgentPhase =
   | "editing"
   | "verifying"
   | "done"
-  /** Cline-уведомления вне жизненного цикла (общие running/completed опущены). */
+  /** Cline notices outside the tool lifecycle (generic running/completed omitted). */
   | "cline";
 
 export type {
   AgentStepEvent,
   AgentStepKind,
   AgentToolStepStatus,
-  CompletionIntent,
 } from "./agentSteps";
 
 export interface ContextUsageInfo {
@@ -70,6 +74,12 @@ export interface AgentRunCallbacks {
   onFigmaNeedsConnect?: () => void;
   /** Активная модель дополнения изменилась (напр. helper 5xx → выбранная). */
   onActiveModel?: (modelId: string) => void;
+  /**
+   * Turn timing milestones from the Cline runtime (e.g. time-to-first-token).
+   * Fired once when the first streamed content arrives; host may stamp it
+   * onto the runDuration message / persisted assistant message.
+   */
+  onTiming?: (info: { ttftMs: number }) => void;
 }
 
 /**
@@ -84,8 +94,6 @@ export async function runAgentTurn(options: {
   storageUri?: vscode.Uri;
   signal?: AbortSignal;
   agentMode?: string;
-  /** @deprecated используй agentMode */
-  planMode?: boolean;
   /** Уровень интеллекта Harbor UI → Cline reasoningEffort. */
   reasoningEffort?: string;
   callbacks: AgentRunCallbacks;

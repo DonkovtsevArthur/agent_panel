@@ -367,19 +367,6 @@
               <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
             </div>
           </div>
-          <h4 class="settings-section-title settings-group-title" id="settingsLimitsTitle">Limits</h4>
-          <div class="settings-limits-row">
-            <label class="settings-field">
-              <span class="settings-label" id="settingsMaxTokensLabel">Response limit</span>
-              <span class="settings-field-hint" id="settingsMaxTokensHint">tokens</span>
-              <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
-            </label>
-            <label class="settings-field">
-              <span class="settings-label" id="settingsMaxResponseCharsLabel">Max length</span>
-              <span class="settings-field-hint" id="settingsMaxResponseCharsHint">characters</span>
-              <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
-            </label>
-          </div>
           <h4 class="settings-section-title settings-group-title" id="settingsExecutionTitle">Execution</h4>
           <div class="settings-card">
             <label class="settings-toggle-row">
@@ -501,15 +488,16 @@
                 </select>
               </label>
             </div>
-            <label class="settings-toggle-row">
+            <label class="settings-toggle-row settings-approval-row">
               <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
-                <span class="settings-toggle-hint" id="settingsFocusChainNote">Agent keeps a task checklist; re-injected each turn.</span>
+                <span class="settings-toggle-title" id="settingsTurnContextLabel">Turn context on follow-ups</span>
+                <span class="settings-toggle-hint" id="settingsTurnContextNote">IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.</span>
               </span>
-              <span class="mcp-switch">
-                <input id="settingsFocusChainEnabled" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
+              <select id="settingsTurnContextFollowUps" class="settings-input settings-approval-select">
+                <option value="full" id="settingsTurnContextFull"></option>
+                <option value="slim" id="settingsTurnContextSlim"></option>
+                <option value="none" id="settingsTurnContextNone"></option>
+              </select>
             </label>
             <label class="settings-toggle-row">
               <span class="settings-toggle-text">

@@ -32,7 +32,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
 | Webview UI (generated) | `media/panel.js` — built from `media/src/panel/NN-*.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
 | Webview UI sources | `media/src/panel/NN-*.js` — edit these, not `media/panel.js` directly. Rebuild with `node scripts/build-panel.js` (plain concatenation in fixed module order, no minification/esbuild — tests and the JetBrains plugin depend on exact function names/text in the built `media/panel.js`). Not wired into `npm run compile`; run it explicitly after editing a module. |
-| Host protocol (shared) | `packages/harbor-host-protocol/` (+ `src/hostProtocol.ts` for VS Code) |
+| Host protocol (shared) | `packages/harbor-host-protocol/` |
 | Harbor core / sidecar | `packages/harbor-core/` → `out/harborSidecar.js` (`npm run build:sidecar`) |
 | JetBrains / WebStorm plugin | `jetbrains/` — JCEF Tool Window + Kotlin host; see `docs/jetbrains-port.md` |
 | VS Code in-process core | `src/harborCoreInProcess.ts` (no sidecar process) |
@@ -59,7 +59,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - **SDK version: 0.0.75** (`@cline/sdk` / `node_modules/@cline/*` / `vendor/cline`). See `vendor/README.md` for the patch table and re-fork flow. `scripts/bundle-cline.js` rebuilds `out/clineBundle.js` from the rebuilt dists; no minified-output post-processing.
 
 - Host: `ClineCore.create({ backendMode: "local" })`; one Harbor **chat** = one interactive Cline session (`interactive: true`, `core.send` on follow-ups). New session on regenerate/edit, mode/model/MCP fingerprint change, or workspace switch. Turns without `chatId` stay one-shot (`interactive: false`).
-- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard. Custom mode `prompt` is injected into the Cline rules slot.
+- Mode map: Harbor **Agent** → Cline `act`; Harbor **Plan** / **Ask** → Cline `plan`. Custom modes with Settings `tools: "readonly"` also map to Cline `plan` (command-guard + no editor). Mode is set on `start` so `DefaultRuntimeBuilder` rebuilds tools + plan command-guard. Custom mode `prompt` is injected into the Cline rules slot.
 - Tools: Cline builtins via runtime-builder; Harbor MCP as `extraTools` (`disableMcpSettingsTools`). See `docs/cline-full-runtime-migration.md`.
 - Turn context: each user prompt gets editor state (active file/cursor/selection/tabs + optional prefetch), enclosing symbol, last terminal/Run output, git snapshot (branch/HEAD/ahead-behind), IDE diagnostics, recently viewed + recently edited paths, glob-matched workspace rules, and inlined `@` / file attachments (`src/turnContext.ts`, `buildInlinedAttachmentsPrompt`).
 - Sub-agents: setting `agentPanel.subagents.enabled` (default on) → Cline `enableSpawnAgent: true` (`spawn_agent`) in **Agent, Plan, and Ask**, plus Harbor rules that tell the model to delegate independent parts via `spawn_agent`. When off: no tool and no rules. Children inherit the parent mode preset (Plan/Ask = read-focused + command-guard; Agent = act) and parent thinking/reasoning_effort (openai-compatible path); Harbor strips catalog `reasoning` capability so Anthropic-shaped thinking is not emitted. Harbor MCP `extraTools` are concatenated onto child tools (`vendor/cline/.../spawn-tool.ts`). `enableAgentTeams: true` (multi-agent teams for complex tasks).
@@ -68,13 +68,12 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - Prompt cache: setting `agentPanel.promptCache.enabled` (default **on**) → model capability `prompt-cache` + gateway provider metadata `routing.promptCache` (model-id route) in the session providerConfig, so the Cline gateway emits Anthropic-style `cache_control` markers on the last user message (`src/clineRuntime.ts` `buildClineModelInfo` / `buildHarborProviderConfig`). Opt-in because only some OpenAI-compatible upstreams accept the marker (LiteLLM/OpenRouter → Claude/Qwen, Anthropic-compatible endpoints); strict OpenAI rejects it with 400. The session `providerConfig.metadata` reaches the gateway only via the vendor patch in `vendor/cline/sdk/packages/core/src/services/llms/handler-factory.ts` (forwarding `metadata` into `createGateway` providerConfigs) — keep it on re-fork. Part of the session fingerprint.
 - Auto-approve tools: master setting `agentPanel.tools.autoApprove` (default on) → Cline tool policies. Off → confirm each tool (VS Code modal / WebStorm dialog). Per-group overrides live in `agentPanel.tools.approvals` (`reads` / `web` / `edits` / `commands` / `mcp` / `subagents`); each group can force `true`/`false` or stay `unset` (follow the master flag). Resolution in `src/toolApproval.ts` (`isToolAutoApproved`, `harborToolApprovalsFingerprint`).
 - Checkpoints: setting `agentPanel.checkpoints.enabled` (default on) → Cline git checkpoint per run; checkpoint card in chat restores workspace files and offers **Compare** (`core.compareCheckpoint` → `vscode.diff` per changed file; single file opens directly, several go through a QuickPick).
-- Focus chain (Harbor-side equivalent of upstream Cline v3.25): setting `agentPanel.focusChain.enabled` (default on) injects a checklist rule into the system prompt (Agent/Plan only) and re-injects the latest assistant markdown checklist into follow-up turns (`src/focusChain.ts`), so long tasks stay on track across tool rounds and compaction. Ask mode is excluded.
 - Special `@`-mentions: `@problems` / `@terminal` / `@url <https://…>` inject live IDE snapshots / fetched page content into the Cline user turn (`src/mentions.ts`). Resolved in the composer mention menu and `clineRuntime` turn prompt builder.
 - User slash commands: `<workspace>/.harbor/commands/*.md` and `~/.harbor/commands/*.md` expand `/name args` into a prompt template host-side (`src/harborCommands.ts`). Builtins (`/agent` `/plan` `/ask` `/init` `/compact`, webview-handled) take precedence.
 - Model info: Harbor resolves each model's `contextWindow` (Settings → capability registry → default) and `maxOutputTokens` (incl. Claude `minimumOutputTokens`), and passes them to Cline as `knownModels[modelId]` + `maxTokensPerTurn` so auto-compact / output caps match the real model. Catalog capabilities stay `tools` (+ `images` when vision); do **not** advertise `reasoning` — that makes Cline emit Anthropic-shaped `thinking` on openai-compatible, which corporate LiteLLM/OpenRouter rejects (`streaming_error`). Reasoning still goes as OpenAI-style `reasoning_effort` via `thinking` + `reasoningEffort` on start.
 - Providers: Harbor Settings `providers[].baseUrl/apiKey` → Cline `openai-compatible`.
 - UI events: `CoreSessionEvent.agent_event` → Harbor `onStep` / `onAssistantDelta` / `onReview` (webview unchanged).
-- Iteration budget: Harbor does **not** pass `maxIterations`; Cline treats unset as unlimited. Setting `agentPanel.maxToolRounds` is deprecated/unused for chat.
+- Iteration budget: Harbor does **not** pass `maxIterations`; Cline treats unset as unlimited.
 - Telemetry: Harbor passes a NoOp `telemetry` + fixed `distinctId` (`clineNoopTelemetry.ts`); Langfuse/OTLP sinks are stubbed in `scripts/bundle-cline.js`. Do **not** delete telemetry trees inside `vendor/cline` on re-fork — see `vendor/README.md`.
 - The old Harbor main-like brain (`agentLoopMainLike`, plan-quality, honestFinale, screenshot-first, explore budgets, …) has been **removed**.
 
@@ -106,9 +105,9 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 
 ### Git / SCM
 
-- Do **not** run `git commit` or `git push` via shell tools unless the user explicitly asks (panel **Commit and push** tag is the product path: `commitAndPush.ts`).
-- Do **not** use `git add --all` / `git add -A` / `git add .` / `git commit -a` unless the user explicitly asks to include every local change.
-- Broad discard only when the user clearly asks to discard **all** local changes.
+- Do **not** run `git commit` or `git push` via shell tools unless the user explicitly asks (panel **Commit and push** tag is the product path: `commitAndPush.ts`). Act mode enforces this in code via Harbor's `beforeTool` git guard (`gitCommandGuardExtension.ts`); Plan/Ask also get Cline's plan command-guard.
+- Do **not** use `git add --all` / `git add -A` / `git add .` / `git commit -a` unless the user explicitly asks to include every local change (same Harbor git guard).
+- Broad discard only when the user clearly asks to discard **all** local changes (same guard).
 
 ### Product / branding
 

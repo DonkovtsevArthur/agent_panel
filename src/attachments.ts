@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import * as vscode from "vscode";
-import type { ContentPart } from "./openaiClient";
+import type { ContentPart } from "./openaiTypes";
 import { IMAGE_ONLY_ANALYSIS_PROMPT } from "./imagePromptPolicy";
 
 export type AttachmentKind = "image" | "file";

@@ -22,6 +22,7 @@ import {
   resolveModelEndpoint,
   resolveProviderProbeUrl,
 } from "./config";
+import { buildHarborSettingsPayloadCore } from "./settingsPayload";
 import {
   buildSkillsListPayload,
   ensureHarborSkillRoots,
@@ -70,6 +71,12 @@ import {
 } from "./attachments";
 import { resolveToolApproval } from "./toolApproval";
 import { resolveUiLanguage } from "./i18n";
+import {
+  formatAbortedAssistantText,
+  harborAbortInfoFromCode,
+  isAbortNoticeText,
+  reasonFromAbortSignal,
+} from "./abortReason";
 import { modePhaseStatusLabel, modeThinkingLabel } from "./modes";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import type { FileEditStat } from "./diffStats";
@@ -374,7 +381,7 @@ export class HeadlessPanelHost {
         // Per-chat: stop only the run of the chat the user is looking at.
         // Background runs in other chats keep going.
         const stopChatId = this.store.activeChatId || "";
-        this.abortChatRun(stopChatId);
+        this.abortChatRun(stopChatId, "user-stop");
         if (stopChatId) {
           this.setStatusForChat(stopChatId, "", true);
         }
@@ -591,69 +598,10 @@ export class HeadlessPanelHost {
   private buildSettingsPayload(): Record<string, unknown> {
     const config = getConfig();
     return {
-      providers: config.providers.map((p) => ({
-        id: p.id,
-        name: p.name || "",
-        baseUrl: p.baseUrl,
-        apiKey: p.apiKey || "",
-        statusUrl: p.statusUrl || "",
-        ...(p.protocol ? { protocol: p.protocol } : {}),
-        ...(typeof p.promptCache === "boolean"
-          ? { promptCache: p.promptCache }
-          : {}),
-      })),
-      models: config.models.map((m) => ({
-        id: m.id,
-        label: m.label || "",
-        providerId: m.providerId || "",
-        contextWindow: m.contextWindow || undefined,
-        maxOutputTokens: m.maxOutputTokens || undefined,
-        enabled: m.enabled !== false,
-        favorite: m.favorite === true,
-        supportsVision: m.supportsVision,
-        ...(m.reasoningEffort ? { reasoningEffort: m.reasoningEffort } : {}),
-      })),
-      defaultModel: config.defaultModel,
-      language: config.language,
-      fontSize: config.fontSize,
-      resolvedLanguage: resolveUiLanguage(config.language),
-      defaultContextWindow: config.defaultContextWindow,
-      baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
-      rejectUnauthorized: config.rejectUnauthorized,
-      caBundlePath: config.caBundlePath,
-      systemPrompt: config.systemPrompt,
-      maxToolRounds: config.maxToolRounds,
-      maxTokens: config.maxTokens,
-      maxResponseChars: config.maxResponseChars,
-      soundNotificationsEnabled: config.soundNotifications.enabled,
-      subagentsEnabled: config.subagents.enabled,
-      parallelToolCallsEnabled: config.parallelToolCalls.enabled,
-      autoCompactEnabled: config.autoCompact.enabled,
-      toolsAutoApprove: config.tools.autoApprove,
-      toolsApprovals: config.tools.approvals,
-      focusChainEnabled: config.focusChain.enabled,
-      turnContextFollowUps: config.turnContext.followUps,
-      checkpointsEnabled: config.checkpoints.enabled,
-      skillsEnabled: config.skills.enabled,
-      skillsWorkspaceEnabled: config.skills.workspaceEnabled,
-      skillsGlobalEnabled: config.skills.globalEnabled,
-      skillsExtraDirectories: config.skills.extraDirectories,
-      skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
-      skillsDisabled: config.skills.disabled,
-      selectionHintsEnabled: config.selectionHints.enabled,
+      ...buildHarborSettingsPayloadCore(config),
       modes: this.serializeModes(),
-      commitMessagePrompt: config.commitMessage.prompt,
-      commitMessageLanguage: config.commitMessage.language,
-      commitMessageModelIds: config.commitMessage.modelIds,
-      commitMessageScope: config.commitMessage.scope,
       workspaceName: path.basename(this.opts.workspaceRoot),
-      figmaEnabled: config.figma.enabled,
       figma: this.getFigmaStatusPayload(),
-      autoglmEnabled: config.autoglm.enabled,
-      autoglmBinaryPath: config.autoglm.binaryPath,
-      autoglmBrowser: config.autoglm.browser,
-      autoglmAutoApprove: config.autoglm.autoApprove,
       providerConnStatuses: this.getProviderConnStatusesPayload(),
     };
   }
@@ -1225,7 +1173,7 @@ export class HeadlessPanelHost {
     const chatIds = getAgentChatIds(agent);
     for (const id of chatIds) {
       if (this.chatRunState.get(id) === "running") {
-        this.abortChatRun(id);
+        this.abortChatRun(id, "delete-agent");
       }
     }
     await discardClineChatSessions(chatIds);
@@ -1258,7 +1206,7 @@ export class HeadlessPanelHost {
     if (agent) {
       for (const id of getAgentChatIds(agent)) {
         if (this.chatRunState.get(id) === "running") {
-          this.abortChatRun(id);
+          this.abortChatRun(id, "delete-agent");
         }
       }
       await discardClineChatSessions(getAgentChatIds(agent));
@@ -1307,7 +1255,7 @@ export class HeadlessPanelHost {
     }
     // Match VS Code: stop a run on the branch being deleted, then flush.
     if (this.chatRunState.get(chatId) === "running") {
-      this.abortChatRun(chatId);
+      this.abortChatRun(chatId, "delete-agent");
       this.post({ type: "stopped", chatId });
       this.post({ type: "idle", chatId });
     }
@@ -1680,14 +1628,17 @@ export class HeadlessPanelHost {
    * Abort and deregister the live turn of one chat (VS Code parity).
    * Leaves runs of other chats untouched.
    */
-  private abortChatRun(chatId: string | undefined): void {
+  private abortChatRun(
+    chatId: string | undefined,
+    reason = "user-stop"
+  ): void {
     if (!chatId) {
       return;
     }
     const controller = this.chatRuns.get(chatId);
     if (controller) {
       this.chatRuns.delete(chatId);
-      controller.abort();
+      controller.abort(reason);
     }
     // Clear the rail loader immediately — do not wait for the async turn catch.
     if (this.chatRunState.get(chatId) === "running") {
@@ -1888,7 +1839,8 @@ export class HeadlessPanelHost {
       selectedMode: string;
       contextTokens: number;
       lastAgentEditedPaths?: string[];
-    }
+    },
+    abortSignal?: AbortSignal
   ): void {
     // A newer run already owns this chat (Stop → immediate resend, edit+rerun):
     // its snapshot, run state and webview busy belong to it — ours must not
@@ -1911,9 +1863,38 @@ export class HeadlessPanelHost {
     // Drop all transient (in-progress) tool rows produced by this turn.
     uiMessages.splice(transientStart);
 
+    // onAssistant is gated on !aborted — surface the stop reason here.
+    const lang = resolveUiLanguage(getConfig().language);
+    const signalCode = reasonFromAbortSignal(abortSignal) || "user-stop";
+    const fromHistory = [...snapshot.history]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const historyText = String(fromHistory?.content || "").trim();
+    const abortNotice = isAbortNoticeText(historyText)
+      ? historyText
+      : formatAbortedAssistantText(
+          lang,
+          harborAbortInfoFromCode(signalCode)
+        );
+    const lastUi = uiMessages[uiMessages.length - 1];
+    if (
+      !(
+        lastUi?.role === "assistant" &&
+        String(lastUi.text || "").trim() === abortNotice
+      )
+    ) {
+      uiMessages.push({ role: "assistant", text: abortNotice });
+      if (this.store.activeChatId === chatId) {
+        this.post({
+          type: "assistantDone",
+          chatId,
+          text: abortNotice,
+        });
+      }
+    }
+
     // Re-append the todo card with cancelled status.
     if (todoBefore?.step) {
-      const lang = resolveUiLanguage(getConfig().language);
       const cancelledPreview =
         lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
       uiMessages.push({
@@ -2017,7 +1998,7 @@ export class HeadlessPanelHost {
       }
     }
 
-    this.abortChatRun(this.store.activeChatId);
+    this.abortChatRun(this.store.activeChatId, "edit-message");
 
     const agentMode = String(msg.agentMode || this.selectedMode || "agent");
     const model =
@@ -2077,7 +2058,7 @@ export class HeadlessPanelHost {
       this.post({ type: "idle", chatId: this.store.activeChatId });
       return { ok: false, error: "cannot regenerate" };
     }
-    this.abortChatRun(this.store.activeChatId);
+    this.abortChatRun(this.store.activeChatId, "regenerate");
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
@@ -2247,7 +2228,7 @@ export class HeadlessPanelHost {
     /** False after Stop (signal.aborted) or after a newer run replaced us. */
     const runActive = (): boolean =>
       !ac.signal.aborted && this.chatRuns.get(runChatId) === ac;
-    this.abortChatRun(runChatId);
+    this.abortChatRun(runChatId, "new-run");
     this.chatRuns.set(runChatId, ac);
     retainClineChatSession(runChatId);
 
@@ -2280,6 +2261,7 @@ export class HeadlessPanelHost {
      * with the run duration stamp for the «выполнено · … · 18,6 с» summary.
      */
     let lastGroupStep: AgentStepEvent | undefined;
+    let runTtftMs = 0;
     this.setRunStateForChat(runChatId, "running");
     const mode = getModeById(agentMode);
     let activeTurnModel = model;
@@ -2378,6 +2360,10 @@ export class HeadlessPanelHost {
                   status: event.status,
                   resultPreview: event.resultPreview,
                   metrics: event.metrics,
+                  ...(typeof event.durationMs === "number" &&
+                  event.durationMs >= 0
+                    ? { durationMs: event.durationMs }
+                    : {}),
                 },
               };
               if (existingIx >= 0) {
@@ -2502,6 +2488,12 @@ export class HeadlessPanelHost {
             if (!runActive()) return;
             this.post({ type: "figmaNeedsConnect" });
           },
+          onTiming: (info) => {
+            if (!runActive()) return;
+            if (typeof info.ttftMs === "number" && info.ttftMs >= 0) {
+              runTtftMs = Math.round(info.ttftMs);
+            }
+          },
         },
       });
 
@@ -2518,18 +2510,45 @@ export class HeadlessPanelHost {
           type: "step",
           ...lastGroupStep,
           runDurationMs,
+          ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
         } as Record<string, unknown>);
       }
       // Stamp runDurationMs on the persisted uiMessages so that
       // history redraws (chat switch / reload) keep the duration.
+      // Only stamp the last tool step of THIS turn (from runTransientStart),
+      // not the entire chat — otherwise each new turn overwrites the previous
+      // turn's duration with its own value.
       if (runDurationMs > 0) {
-        for (let i = runUiMessages.length - 1; i >= 0; i -= 1) {
+        for (let i = runUiMessages.length - 1; i >= runTransientStart; i -= 1) {
           const ui = runUiMessages[i];
           if (ui?.role === "tool" && ui.step?.stepId) {
-            ui.step = { ...ui.step, runDurationMs };
+            ui.step = {
+              ...ui.step,
+              runDurationMs,
+              ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+            };
             break;
           }
         }
+        // Also stamp runDurationMs on the last assistant message of this turn.
+        for (let i = runUiMessages.length - 1; i >= runTransientStart; i -= 1) {
+          if (runUiMessages[i]?.role === "assistant") {
+            runUiMessages[i] = {
+              ...runUiMessages[i],
+              runDurationMs,
+              ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+            };
+            break;
+          }
+        }
+        // Live label under the assistant bubble (VS Code posts the same
+        // message from agentPanelProvider). Must run before the runActive()
+        // guard below — postToRun is a no-op when another chat is viewed.
+        postToRun({
+          type: "runDuration",
+          runDurationMs,
+          ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+        });
       }
 
       // Race guard: if Stop+continue already started a newer run, the old
@@ -2537,15 +2556,21 @@ export class HeadlessPanelHost {
       // that would kill the new run's preloader and reset visible steps.
       // Clean up transient rows and persist so the aborted turn survives reload.
       if (!runActive()) {
-        this.finalizeAbortedTurn(runChatId, runUiMessages, runTransientStart, {
-          history: runHistory,
-          selectedModel: model,
-          selectedMode: agentMode,
-          lastAgentEditedPaths: editedPaths.length
-            ? [...new Set(editedPaths)]
-            : this.store.chats[runChatId]?.lastAgentEditedPaths,
-          contextTokens: runContextTokens,
-        });
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: model,
+            selectedMode: agentMode,
+            lastAgentEditedPaths: editedPaths.length
+              ? [...new Set(editedPaths)]
+              : this.store.chats[runChatId]?.lastAgentEditedPaths,
+            contextTokens: runContextTokens,
+          },
+          ac.signal
+        );
         return { ok: true };
       }
       touchChat(this.store, runChatId, {
@@ -2579,12 +2604,18 @@ export class HeadlessPanelHost {
       // runFailed / set error state — the new run owns the chat now.
       // Clean up transient rows and persist so the aborted turn survives reload.
       if (aborted && !runActive()) {
-        this.finalizeAbortedTurn(runChatId, runUiMessages, runTransientStart, {
-          history: runHistory,
-          selectedModel: model,
-          selectedMode: agentMode,
-          contextTokens: runContextTokens,
-        });
+        this.finalizeAbortedTurn(
+          runChatId,
+          runUiMessages,
+          runTransientStart,
+          {
+            history: runHistory,
+            selectedModel: model,
+            selectedMode: agentMode,
+            contextTokens: runContextTokens,
+          },
+          ac.signal
+        );
         return { ok: true };
       }
       runUiMessages = [...runUiMessages, { role: "error", text: message }];

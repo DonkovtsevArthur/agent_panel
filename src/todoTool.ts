@@ -1,7 +1,7 @@
 /**
  * Harbor extraTool: `update_todo` — the model maintains a visible task plan
- * (Cline's focus_chain analog; that feature lives only in Cline's VS Code app
- * and is not exposed via @cline/sdk, so Harbor ships its own tool).
+ * card (upstream Cline focus_chain lives only in their VS Code app, not in
+ * @cline/sdk, so Harbor ships this tool instead).
  */
 import type { AgentStepEvent, TodoStepItem } from "./agentSteps";
 import { emitTodoStep } from "./todoStepContext";
@@ -52,6 +52,7 @@ export function createTodoTool(createTool: CreateTool): unknown {
       "In Agent and Plan modes call it ALWAYS, on every user request, without exception — as your VERY FIRST tool, with the full step list (all 'pending', first 'in_progress'). Even a single-step task gets one step.",
       "Call it again whenever a step completes or the plan changes — always pass the FULL updated list (it replaces the card, it is not an append).",
       "When everything is done, make a final call with every step 'done'.",
+      "After calling this tool, IMMEDIATELY proceed to execute the next step — do NOT ask the user for confirmation or permission. Just do it.",
       "Main agent only: do not call from spawned sub-agents.",
     ].join(" "),
     inputSchema: {

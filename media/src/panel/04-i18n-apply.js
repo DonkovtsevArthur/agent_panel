@@ -158,7 +158,6 @@
     setText("settingsBrowserTitle", "browserAgentTitle");
     setText("settingsAutoglmConnectionTitle", "autoglmConnection");
     setText("settingsAgentTitle", "agentBehavior");
-    setText("settingsLimitsTitle", "agentLimits");
     setText("settingsExecutionTitle", "agentExecution");
     setText("settingsInterfaceTitle", "agentInterface");
     setText("settingsAdvancedTitle", "advancedSettings");
@@ -310,26 +309,6 @@
     if (settingsSystemPromptLabel) {
       settingsSystemPromptLabel.textContent = t("systemPrompt");
     }
-    const settingsMaxToolRoundsLabel = document.getElementById(
-      "settingsMaxToolRoundsLabel"
-    );
-    if (settingsMaxToolRoundsLabel) {
-      settingsMaxToolRoundsLabel.textContent = t("maxToolRounds");
-    }
-    const settingsMaxTokensLabel = document.getElementById(
-      "settingsMaxTokensLabel"
-    );
-    if (settingsMaxTokensLabel) {
-      settingsMaxTokensLabel.textContent = t("maxTokens");
-    }
-    setText("settingsMaxTokensHint", "maxTokensHint");
-    const settingsMaxResponseCharsLabel = document.getElementById(
-      "settingsMaxResponseCharsLabel"
-    );
-    if (settingsMaxResponseCharsLabel) {
-      settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
-    }
-    setText("settingsMaxResponseCharsHint", "maxResponseCharsHint");
     const settingsSoundNotificationsLabel = document.getElementById(
       "settingsSoundNotificationsLabel"
     );
@@ -428,18 +407,6 @@
           }
         }
       }
-    }
-    const settingsFocusChainLabel = document.getElementById(
-      "settingsFocusChainLabel"
-    );
-    if (settingsFocusChainLabel) {
-      settingsFocusChainLabel.textContent = t("focusChain");
-    }
-    const settingsFocusChainNote = document.getElementById(
-      "settingsFocusChainNote"
-    );
-    if (settingsFocusChainNote) {
-      settingsFocusChainNote.textContent = t("focusChainNote");
     }
     const settingsTurnContextLabel = document.getElementById(
       "settingsTurnContextLabel"
@@ -757,6 +724,8 @@
   let chatModes = [];
   let streamingEl = null;
   let streamingRenderScheduled = false;
+  let lastRunDurationMs = 0;
+  let lastTtftMs = 0;
   let composerDragDepth = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;

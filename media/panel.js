@@ -217,14 +217,8 @@
       backToSettings: "Back to settings",
       systemPrompt: "System prompt",
       systemPromptEmpty: "Empty",
-      agentLimits: "Limits",
       agentExecution: "Execution",
       agentInterface: "Interface",
-      maxToolRounds: "Max tool rounds",
-      maxTokens: "Response limit",
-      maxTokensHint: "tokens",
-      maxResponseLength: "Max length",
-      maxResponseCharsHint: "characters",
       soundNotifications: "Sound notifications",
       soundNotificationsNote: "Signal when the agent finishes a turn.",
       parallelAgents: "Parallel agents",
@@ -248,12 +242,11 @@
       approvalMcpNote: "Figma and custom MCP servers",
       approvalSubagents: "Subagents",
       approvalSubagentsNote: "spawn_agent",
+      approvalPlan: "Plan tools",
+      approvalPlanNote: "update_todo, inspect_images",
       approvalInherit: "Follow main",
       approvalAuto: "Always allow",
       approvalAsk: "Always ask",
-      focusChain: "Focus chain",
-      focusChainNote:
-        "Agent keeps a task checklist; re-injected each turn.",
       turnContext: "Turn context on follow-ups",
       turnContextNote:
         "IDE block re-sent with every follow-up turn. Slim keeps git + diagnostics + editor state.",
@@ -468,6 +461,8 @@
       toolWorking: "Working…",
       runWorking: "Running",
       runDone: "Done",
+      /** Tooltip: TTFT → total (e.g. "1.2 → 18.6 s"). Summary shows total only. */
+      runTiming: (ttft, total) => `${ttft} → ${total}`,
       toolReading: "Reading…",
       toolListing: "Listing…",
       toolSearching: "Searching…",
@@ -692,14 +687,8 @@
       backToSettings: "К настройкам",
       systemPrompt: "Системный промпт",
       systemPromptEmpty: "Пусто",
-      agentLimits: "Лимиты",
       agentExecution: "Выполнение",
       agentInterface: "Интерфейс",
-      maxToolRounds: "Макс. раундов tools",
-      maxTokens: "Лимит ответа",
-      maxTokensHint: "токены",
-      maxResponseLength: "Макс. длина",
-      maxResponseCharsHint: "символы",
       soundNotifications: "Звуковые уведомления",
       soundNotificationsNote: "Сигнал, когда агент закончил ход.",
       parallelAgents: "Параллельные агенты",
@@ -723,12 +712,11 @@
       approvalMcpNote: "Figma и кастомные MCP-серверы",
       approvalSubagents: "Субагенты",
       approvalSubagentsNote: "spawn_agent",
+      approvalPlan: "Plan-инструменты",
+      approvalPlanNote: "update_todo, inspect_images",
       approvalInherit: "Как общая",
       approvalAuto: "Всегда разрешать",
       approvalAsk: "Всегда спрашивать",
-      focusChain: "Focus chain",
-      focusChainNote:
-        "Агент ведёт чеклист задач; подставляется в каждый ход.",
       turnContext: "IDE-контекст в повторных ходах",
       turnContextNote:
         "Блок IDE-контекста отправляется с каждым повторным ходом. «Тощий» оставляет git + диагностику + состояние редактора.",
@@ -954,6 +942,8 @@
       toolWorking: "Работаю…",
       runWorking: "выполняю",
       runDone: "выполнено",
+      /** Тултип: TTFT → всего (напр. «1,2 → 18,6 с»). В сводке — только итог. */
+      runTiming: (ttft, total) => `${ttft} → ${total}`,
       toolReading: "Читаю…",
       toolListing: "Смотрю…",
       toolSearching: "Ищу…",
@@ -1286,10 +1276,8 @@
     commands: document.getElementById("settingsApprovalCommands"),
     mcp: document.getElementById("settingsApprovalMcp"),
     subagents: document.getElementById("settingsApprovalSubagents"),
+    plan: document.getElementById("settingsApprovalPlan"),
   };
-  const settingsFocusChainEnabled = document.getElementById(
-    "settingsFocusChainEnabled"
-  );
   const settingsTurnContextFollowUps = document.getElementById(
     "settingsTurnContextFollowUps"
   );
@@ -1483,11 +1471,6 @@
   let figmaStatus = { state: "disconnected", enabled: true };
   let mcpSearchQuery = "";
   let mcpScreenOpen = false;
-  const settingsMaxToolRounds = document.getElementById("settingsMaxToolRounds");
-  const settingsMaxTokens = document.getElementById("settingsMaxTokens");
-  const settingsMaxResponseChars = document.getElementById(
-    "settingsMaxResponseChars"
-  );
   const settingsModesList = document.getElementById("settingsModesList");
   const addModeBtn = document.getElementById("addModeBtn");
   const modeEditModal = document.getElementById("modeEditModal");
@@ -1531,6 +1514,8 @@
   let fetchModelsError = "";
   let fetchModelsTarget = "modal"; // "modal" | "editApi"
   let settingsHydrating = false;
+  /** Last known commit-message model selection (survives list rebuild / empty DOM). */
+  let settingsCommitMessageModelIds = [];
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
   let settingsModelTipEl = null;
@@ -1777,7 +1762,6 @@
     setText("settingsBrowserTitle", "browserAgentTitle");
     setText("settingsAutoglmConnectionTitle", "autoglmConnection");
     setText("settingsAgentTitle", "agentBehavior");
-    setText("settingsLimitsTitle", "agentLimits");
     setText("settingsExecutionTitle", "agentExecution");
     setText("settingsInterfaceTitle", "agentInterface");
     setText("settingsAdvancedTitle", "advancedSettings");
@@ -1929,26 +1913,6 @@
     if (settingsSystemPromptLabel) {
       settingsSystemPromptLabel.textContent = t("systemPrompt");
     }
-    const settingsMaxToolRoundsLabel = document.getElementById(
-      "settingsMaxToolRoundsLabel"
-    );
-    if (settingsMaxToolRoundsLabel) {
-      settingsMaxToolRoundsLabel.textContent = t("maxToolRounds");
-    }
-    const settingsMaxTokensLabel = document.getElementById(
-      "settingsMaxTokensLabel"
-    );
-    if (settingsMaxTokensLabel) {
-      settingsMaxTokensLabel.textContent = t("maxTokens");
-    }
-    setText("settingsMaxTokensHint", "maxTokensHint");
-    const settingsMaxResponseCharsLabel = document.getElementById(
-      "settingsMaxResponseCharsLabel"
-    );
-    if (settingsMaxResponseCharsLabel) {
-      settingsMaxResponseCharsLabel.textContent = t("maxResponseLength");
-    }
-    setText("settingsMaxResponseCharsHint", "maxResponseCharsHint");
     const settingsSoundNotificationsLabel = document.getElementById(
       "settingsSoundNotificationsLabel"
     );
@@ -2011,6 +1975,7 @@
       "Commands",
       "Mcp",
       "Subagents",
+      "Plan",
     ];
     const approvalKeyByGroup = {
       Reads: "approvalReads",
@@ -2019,6 +1984,7 @@
       Commands: "approvalCommands",
       Mcp: "approvalMcp",
       Subagents: "approvalSubagents",
+      Plan: "approvalPlan",
     };
     const approvalOptionLabels = {
       inherit: t("approvalInherit"),
@@ -2045,18 +2011,6 @@
           }
         }
       }
-    }
-    const settingsFocusChainLabel = document.getElementById(
-      "settingsFocusChainLabel"
-    );
-    if (settingsFocusChainLabel) {
-      settingsFocusChainLabel.textContent = t("focusChain");
-    }
-    const settingsFocusChainNote = document.getElementById(
-      "settingsFocusChainNote"
-    );
-    if (settingsFocusChainNote) {
-      settingsFocusChainNote.textContent = t("focusChainNote");
     }
     const settingsTurnContextLabel = document.getElementById(
       "settingsTurnContextLabel"
@@ -2374,6 +2328,8 @@
   let chatModes = [];
   let streamingEl = null;
   let streamingRenderScheduled = false;
+  let lastRunDurationMs = 0;
+  let lastTtftMs = 0;
   let composerDragDepth = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
@@ -6649,6 +6605,15 @@
         if (urlMatch) {
           args.url = urlMatch[1].replace(/\\"/g, '"');
         }
+        // Truncated read_files JSON often still has start_line/end_line as bare numbers.
+        const startLineMatch = rawArgs.match(/"start_line"\s*:\s*(\d+)/);
+        if (startLineMatch && args.start_line == null) {
+          args.start_line = Number(startLineMatch[1]);
+        }
+        const endLineMatch = rawArgs.match(/"end_line"\s*:\s*(\d+)/);
+        if (endLineMatch && args.end_line == null) {
+          args.end_line = Number(endLineMatch[1]);
+        }
       }
     }
 
@@ -6675,6 +6640,16 @@
       return out;
     };
     const m = metrics || {};
+    const asPositiveLine = (v) => {
+      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const formatLineRange = (startLine, endLine) => {
+      const sl = asPositiveLine(startLine);
+      if (!sl) return "";
+      const el = asPositiveLine(endLine);
+      return el ? ` (${sl}–${el})` : ` (${sl}+)`;
+    };
 
     switch (toolName) {
       case "read_files": {
@@ -6690,7 +6665,17 @@
         // оставалась компактной.
         const shown = names.slice(0, 3).join(", ");
         const extra = names.length > 3 ? ` +${names.length - 3}` : "";
-        return t("toolHumanRead", shown) + extra;
+        // Range only when a single file is shown — otherwise `(12–40)` after a
+        // multi-name list looks like it applies to every file.
+        let lineRange = "";
+        if (names.length === 1) {
+          const firstFile = Array.isArray(args.files) && args.files[0];
+          lineRange = formatLineRange(
+            firstFile?.start_line ?? args.start_line,
+            firstFile?.end_line ?? args.end_line
+          );
+        }
+        return t("toolHumanRead", shown) + extra + lineRange;
       }
       case "editor": {
         const filePath =
@@ -7767,6 +7752,18 @@
     return ms > 0 ? ms : 0;
   }
 
+  /** TTFT stamped with run duration (0 when unknown). */
+  function groupTtftMs(group) {
+    const el =
+      group.querySelector("[data-ttft-ms]") ||
+      group.querySelector("[data-run-duration-ms]");
+    if (!el) {
+      return 0;
+    }
+    const ms = Number(el.getAttribute("data-ttft-ms")) || 0;
+    return ms > 0 ? ms : 0;
+  }
+
   function formatRunDuration(ms) {
     const seconds = ms / 1000;
     if (UI_LANG === "ru") {
@@ -7777,6 +7774,28 @@
     return seconds >= 90
       ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`
       : `${seconds.toFixed(1)} s`;
+  }
+
+  /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
+  function formatTurnTiming(ttftMs, totalMs) {
+    if (!(totalMs > 0)) {
+      return "";
+    }
+    const total = formatRunDuration(totalMs);
+    if (ttftMs > 0 && ttftMs < totalMs) {
+      // Drop the unit from the TTFT side so the arrow reads "1,2 → 18,6 с".
+      const ttftRaw = formatRunDuration(ttftMs).replace(/\s*(с|s|мин|min).*$/, "");
+      return t("runTiming", ttftRaw, total);
+    }
+    return total;
+  }
+
+  /** Hover detail only when both TTFT and total are known. */
+  function formatTurnTimingDetail(ttftMs, totalMs) {
+    if (!(totalMs > 0) || !(ttftMs > 0) || ttftMs >= totalMs) {
+      return "";
+    }
+    return formatTurnTiming(ttftMs, totalMs);
   }
 
   function updateToolGroupSummary(group) {
@@ -7801,16 +7820,24 @@
       chevron.hidden = !hasSteps;
     }
     const summary = group.querySelector(".tool-group-summary");
+    let durationEl = group.querySelector(".tool-group-duration");
+    if (!durationEl && toggle) {
+      durationEl = document.createElement("span");
+      durationEl.className = "tool-group-duration";
+      durationEl.hidden = true;
+      toggle.appendChild(durationEl);
+    }
+    const runDurationMs = groupRunDurationMs(group);
+    const ttftMs = groupTtftMs(group);
+    const timingDetail = formatTurnTimingDetail(ttftMs, runDurationMs);
     if (summary) {
       const types = toolTypesSummary(group);
       if (group.dataset.failed === "1") {
         summary.textContent = t("runFailedSummary");
+        summary.removeAttribute("title");
       } else if (group.dataset.sealed === "1") {
-        // Тихая лента: законченный ход сворачивается в счётчики
-        // («выполнено · 4 шага · 2 файла · +12 −3»), полный список
-        // того, что делалось, — в тултипе переключателя. Шагами считаем
-        // только вызовы инструментов — карточки «Мысли» не входят.
-        // Лента, запечатанная посреди хода, остаётся «выполняю».
+        // Тихая лента: «выполнено · 4 шага · 2 файла» + шеврон +
+        // итоговое время справа от «>»; TTFT→всего — в title при hover.
         const base = group.classList.contains("is-run-working")
           ? t("runWorking")
           : t("runDone");
@@ -7826,16 +7853,33 @@
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
         }
-        const runDurationMs = groupRunDurationMs(group);
-        if (runDurationMs > 0) {
-          parts.push(formatRunDuration(runDurationMs));
-        }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
         }`;
+        summary.removeAttribute("title");
       } else {
         const base = t("runWorking");
         summary.textContent = types ? `${base} · ${types}` : base;
+        summary.removeAttribute("title");
+      }
+    }
+    if (durationEl) {
+      if (
+        group.dataset.sealed === "1" &&
+        group.dataset.failed !== "1" &&
+        runDurationMs > 0
+      ) {
+        durationEl.hidden = false;
+        durationEl.textContent = formatRunDuration(runDurationMs);
+        if (timingDetail) {
+          durationEl.title = timingDetail;
+        } else {
+          durationEl.removeAttribute("title");
+        }
+      } else {
+        durationEl.hidden = true;
+        durationEl.textContent = "";
+        durationEl.removeAttribute("title");
       }
     }
     if (toggle) {
@@ -7843,13 +7887,24 @@
         group.dataset.sealed === "1" && group.dataset.failed !== "1"
           ? toolTypesSummary(group)
           : "";
-      toggle.title = !hasSteps
-        ? ""
-        : group.classList.contains("is-collapsed")
-          ? sealedTypes
-            ? `${t("showSteps")} · ${sealedTypes}`
-            : t("showSteps")
-          : t("hideSteps");
+      const tipParts = [];
+      if (!hasSteps) {
+        toggle.title = "";
+      } else if (group.classList.contains("is-collapsed")) {
+        tipParts.push(
+          sealedTypes ? `${t("showSteps")} · ${sealedTypes}` : t("showSteps")
+        );
+        if (timingDetail) {
+          tipParts.push(timingDetail);
+        }
+        toggle.title = tipParts.join(" · ");
+      } else {
+        tipParts.push(t("hideSteps"));
+        if (timingDetail) {
+          tipParts.push(timingDetail);
+        }
+        toggle.title = tipParts.join(" · ");
+      }
     }
   }
 
@@ -7860,6 +7915,7 @@
       `<button type="button" class="tool-group-toggle" aria-expanded="false" disabled>` +
       `<span class="tool-group-summary">${escapeHtml(t("runWorking"))}</span>` +
       `<span class="material-symbols-outlined tool-group-chevron" aria-hidden="true" hidden>expand_more</span>` +
+      `<span class="tool-group-duration" hidden></span>` +
       `</button>` +
       `<div class="tool-group-live-note"></div>` +
       `<div class="tool-group-body agent-timeline-body"></div>`;
@@ -8075,7 +8131,7 @@
         const body = group.querySelector(".tool-group-body");
         group.insertBefore(note, body || null);
       }
-      note.textContent = raw;
+      note.innerHTML = renderInlineMarkdown(raw);
     }
     keepStatusAtEnd();
     scrollToBottom();
@@ -8226,6 +8282,9 @@
       // (hyphen before each capital), but groupRunDurationMs queries
       // "[data-run-duration-ms]".  setAttribute keeps the name literal.
       el.setAttribute("data-run-duration-ms", String(Math.round(step.runDurationMs)));
+      if (typeof step.ttftMs === "number" && step.ttftMs > 0) {
+        el.setAttribute("data-ttft-ms", String(Math.round(step.ttftMs)));
+      }
       const ownerGroup = el.closest(".tool-group");
       if (ownerGroup) {
         // Late duration stamps arrive after assistantDone has sealed the group.
@@ -8237,6 +8296,9 @@
         }
         updateToolGroupSummary(ownerGroup);
       }
+    }
+    if (typeof step.durationMs === "number" && step.durationMs >= 0) {
+      el.setAttribute("data-duration-ms", String(Math.round(step.durationMs)));
     }
     if (step.kind === "tool") {
       el.dataset.toolMatchKey = toolStepMatchKey(
@@ -8321,6 +8383,20 @@
             step.status,
             step.resultPreview || el.dataset.resultPreview || ""
           );
+        }
+        // Per-tool wall-clock duration (from runtime TurnTiming).
+        const toolMs =
+          typeof step.durationMs === "number" && step.durationMs >= 0
+            ? step.durationMs
+            : Number(el.getAttribute("data-duration-ms")) || 0;
+        if (
+          toolMs > 0 &&
+          (step.status === "done" || step.status === "error")
+        ) {
+          const dur = document.createElement("span");
+          dur.className = "agent-step-duration";
+          dur.textContent = formatRunDuration(toolMs);
+          labelEl.appendChild(dur);
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся
@@ -9798,13 +9874,7 @@
 
   function renderSettingsModels() {
     renderSettingsCatalog();
-    fillCommitMessageModelCheckboxes(
-      settingsCommitModelList
-        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
-            (el) => el.dataset.modelId
-          )
-        : []
-    );
+    fillCommitMessageModelCheckboxes(readCommitMessageModelIdsFromDom());
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {
@@ -9816,6 +9886,7 @@
         .map((v) => String(v || "").trim())
         .filter(Boolean)
     );
+    settingsCommitMessageModelIds = [...selected];
     const enabled = settingsModels
       .filter((m) => m && m.id && m.enabled !== false)
       .slice()
@@ -9839,6 +9910,27 @@
       label.appendChild(span);
       settingsCommitModelList.appendChild(label);
     }
+  }
+
+  function readCommitMessageModelIdsFromDom() {
+    if (!settingsCommitModelList) {
+      return settingsCommitMessageModelIds.slice();
+    }
+    const fromDom = [
+      ...settingsCommitModelList.querySelectorAll("input:checked"),
+    ]
+      .map((el) => String(el.dataset.modelId || "").trim())
+      .filter(Boolean);
+    // Empty list while models still loading — keep last known selection.
+    if (
+      fromDom.length === 0 &&
+      settingsCommitModelList.querySelectorAll("input").length === 0 &&
+      settingsCommitMessageModelIds.length > 0
+    ) {
+      return settingsCommitMessageModelIds.slice();
+    }
+    settingsCommitMessageModelIds = fromDom;
+    return fromDom;
   }
 
   function setJsonHint(text, isError) {
@@ -11782,17 +11874,6 @@
       host.postMessage({ type: "figmaRefreshStatus" });
     }
     applyModes(settings.modes);
-    if (settingsMaxToolRounds) {
-      settingsMaxToolRounds.value = String(settings.maxToolRounds || 20);
-    }
-    if (settingsMaxTokens) {
-      settingsMaxTokens.value = String(settings.maxTokens || 4096);
-    }
-    if (settingsMaxResponseChars) {
-      settingsMaxResponseChars.value = String(
-        settings.maxResponseChars || 64000
-      );
-    }
     if (settingsSoundNotificationsEnabled) {
       settingsSoundNotificationsEnabled.checked =
         settings.soundNotificationsEnabled !== false;
@@ -11823,9 +11904,6 @@
       const value = approvalOverrides[group];
       select.value =
         value === true ? "auto" : value === false ? "ask" : "inherit";
-    }
-    if (settingsFocusChainEnabled) {
-      settingsFocusChainEnabled.checked = settings.focusChainEnabled !== false;
     }
     if (settingsTurnContextFollowUps) {
       const mode = String(settings.turnContextFollowUps || "full");
@@ -11949,20 +12027,13 @@
       commitMessageLanguage: settingsCommitLanguage
         ? settingsCommitLanguage.value
         : "auto",
-      commitMessageModelIds: settingsCommitModelList
-        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
-            (el) => el.dataset.modelId
-          )
-        : [],
+      commitMessageModelIds: readCommitMessageModelIdsFromDom(),
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
           : "global"
         : "global",
       figmaEnabled: figmaStatus.enabled === true,
-      maxToolRounds: Number(settingsMaxToolRounds?.value || 20),
-      maxTokens: Number(settingsMaxTokens?.value || 4096),
-      maxResponseChars: Number(settingsMaxResponseChars?.value || 64000),
       soundNotificationsEnabled: settingsSoundNotificationsEnabled
         ? settingsSoundNotificationsEnabled.checked
         : true,
@@ -11983,9 +12054,6 @@
           .filter(([, select]) => select && select.value !== "inherit")
           .map(([group, select]) => [group, select.value === "auto"])
       ),
-      focusChainEnabled: settingsFocusChainEnabled
-        ? settingsFocusChainEnabled.checked
-        : true,
       turnContextFollowUps:
         settingsTurnContextFollowUps &&
         (settingsTurnContextFollowUps.value === "slim" ||
@@ -13002,7 +13070,7 @@
   /**
    * Inner body of the latest <proposed_plan>…</proposed_plan>.
    * Also recovers truncated plans (open tag, no close) — same as the plan card
-   * — so composer «Собрать» still appears when maxResponseChars cut the close tag.
+   * — so composer «Собрать» still appears when the stream cut the close tag.
    */
   function extractLatestProposedPlan(raw) {
     const text = String(raw || "");
@@ -14490,7 +14558,8 @@
     attachments,
     shouldScroll = true,
     reasoning,
-    step
+    step,
+    detail
   ) {
     if (role === "review") {
       sealToolGroups();
@@ -15395,6 +15464,8 @@
       }
     }
     if (busy) {
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
@@ -16378,7 +16449,7 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsMaxToolRounds, #settingsMaxTokens, #settingsMaxResponseChars, #settingsFontSize, #settingsAutoglmBinaryPath"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsFontSize, #settingsAutoglmBinaryPath"
         )
       ) {
         if (target.closest("#settingsSystemPrompt")) {
@@ -16400,9 +16471,12 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
+        if (target.closest("#settingsCommitModelList")) {
+          readCommitMessageModelIdsFromDom();
+        }
         persistSettingsNow();
       }
     });
@@ -18301,6 +18375,28 @@
               cached.step = {
                 ...cached.step,
                 runDurationMs: msg.runDurationMs,
+                ...(typeof msg.ttftMs === "number" && msg.ttftMs > 0
+                  ? { ttftMs: msg.ttftMs }
+                  : {}),
+                ...(typeof msg.durationMs === "number" && msg.durationMs >= 0
+                  ? { durationMs: msg.durationMs }
+                  : {}),
+              };
+              break;
+            }
+          }
+        } else if (typeof msg.durationMs === "number" && msg.durationMs >= 0) {
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            const cached = uiMessagesCache[i];
+            if (
+              cached &&
+              cached.role === "tool" &&
+              cached.step &&
+              cached.step.stepId === msg.stepId
+            ) {
+              cached.step = {
+                ...cached.step,
+                durationMs: msg.durationMs,
               };
               break;
             }
@@ -18460,6 +18556,32 @@
         }
         break;
       }
+      case "runDuration": {
+        // Late host stamp of the full run duration — store for the status line.
+        if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
+          lastRunDurationMs = msg.runDurationMs;
+          if (typeof msg.ttftMs === "number" && msg.ttftMs > 0) {
+            lastTtftMs = msg.ttftMs;
+          }
+          // Update the cached assistant message.
+          for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+            if (uiMessagesCache[i]?.role === "assistant") {
+              uiMessagesCache[i] = {
+                ...uiMessagesCache[i],
+                runDurationMs: msg.runDurationMs,
+                ...(typeof msg.ttftMs === "number" && msg.ttftMs > 0
+                  ? { ttftMs: msg.ttftMs }
+                  : {}),
+              };
+              break;
+            }
+          }
+        }
+        break;
+      }
       case "reasoning":
         // Live Thinking comes from step events. Late/duplicate reasoning
         // messages must not open a second card after seal.
@@ -18513,8 +18635,10 @@
           }
         }
         completeRunningTodoPlans();
-        setAgentStatus("", true);
         setIdleAndDrain();
+        // Do not show turn timing (TTFT → total) under the answer — duration
+        // stays only in the sealed tool-group summary («выполнено · …»).
+        setAgentStatus("", true);
         break;
       case "stopped":
         if (msg.chatId && !activeChatId) {

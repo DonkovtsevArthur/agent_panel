@@ -503,13 +503,7 @@
 
   function renderSettingsModels() {
     renderSettingsCatalog();
-    fillCommitMessageModelCheckboxes(
-      settingsCommitModelList
-        ? [...settingsCommitModelList.querySelectorAll("input:checked")].map(
-            (el) => el.dataset.modelId
-          )
-        : []
-    );
+    fillCommitMessageModelCheckboxes(readCommitMessageModelIdsFromDom());
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {
@@ -521,6 +515,7 @@
         .map((v) => String(v || "").trim())
         .filter(Boolean)
     );
+    settingsCommitMessageModelIds = [...selected];
     const enabled = settingsModels
       .filter((m) => m && m.id && m.enabled !== false)
       .slice()
@@ -544,6 +539,27 @@
       label.appendChild(span);
       settingsCommitModelList.appendChild(label);
     }
+  }
+
+  function readCommitMessageModelIdsFromDom() {
+    if (!settingsCommitModelList) {
+      return settingsCommitMessageModelIds.slice();
+    }
+    const fromDom = [
+      ...settingsCommitModelList.querySelectorAll("input:checked"),
+    ]
+      .map((el) => String(el.dataset.modelId || "").trim())
+      .filter(Boolean);
+    // Empty list while models still loading — keep last known selection.
+    if (
+      fromDom.length === 0 &&
+      settingsCommitModelList.querySelectorAll("input").length === 0 &&
+      settingsCommitMessageModelIds.length > 0
+    ) {
+      return settingsCommitMessageModelIds.slice();
+    }
+    settingsCommitMessageModelIds = fromDom;
+    return fromDom;
   }
 
   function setJsonHint(text, isError) {

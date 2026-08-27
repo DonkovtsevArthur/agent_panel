@@ -620,6 +620,8 @@
       }
     }
     if (busy) {
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();

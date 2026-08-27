@@ -36,6 +36,7 @@ import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
 import { resolveToolApproval } from "./toolApproval";
+import { buildHarborSettingsPayloadCore } from "./settingsPayload";
 import {
   discardAllClineChatSessions,
   discardClineChatSession,
@@ -46,6 +47,12 @@ import {
   restoreClineChatCheckpoint,
   compareClineChatCheckpoint,
 } from "./clineRuntime";
+import {
+  formatAbortedAssistantText,
+  harborAbortInfoFromCode,
+  isAbortNoticeText,
+  reasonFromAbortSignal,
+} from "./abortReason";
 import { reloadEditorsAfterCheckpointRestore } from "./checkpointEditors";
 import {
   expandUserSlashCommand,
@@ -165,9 +172,6 @@ type SettingsPayload = {
   rejectUnauthorized: boolean;
   caBundlePath: string;
   systemPrompt: string;
-  maxToolRounds: number;
-  maxTokens: number;
-  maxResponseChars: number;
   soundNotificationsEnabled?: boolean;
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
@@ -175,7 +179,6 @@ type SettingsPayload = {
   toolsAutoApprove?: boolean;
   /** Per-group overrides; only explicit true/false are sent. */
   toolsApprovals?: Record<string, boolean>;
-  focusChainEnabled?: boolean;
   /** Follow-up turn IDE context mode: "full" | "slim" | "none". */
   turnContextFollowUps?: string;
   checkpointsEnabled?: boolean;
@@ -686,7 +689,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   dispose(): void {
-    this.abortAllRuns();
+    this.abortAllRuns("discard");
     this.stopProviderConnPolling();
     if (this.scmRefreshTimer) {
       clearTimeout(this.scmRefreshTimer);
@@ -1355,7 +1358,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return Boolean(chatId && this.chatRuns.has(chatId));
   }
 
-  private abortChatRun(chatId: string | undefined): void {
+  private abortChatRun(
+    chatId: string | undefined,
+    reason = "user-stop"
+  ): void {
     if (!chatId) {
       return;
     }
@@ -1363,7 +1369,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (controller) {
       this.chatRuns.delete(chatId);
       this.chatRunTokens.delete(chatId);
-      controller.abort();
+      controller.abort(reason);
     }
     // Clear list loader immediately — do not wait for the async turn catch.
     // Stop already posts "stopped" (chat busy), but agentsList runState was
@@ -1373,7 +1379,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private abortAllRuns(): void {
+  private abortAllRuns(reason = "workspace-reload"): void {
     const runningIds = [...this.chatRuns.keys()];
     for (const chatId of runningIds) {
       const controller = this.chatRuns.get(chatId);
@@ -1382,7 +1388,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
       this.chatRuns.delete(chatId);
       this.chatRunTokens.delete(chatId);
-      controller.abort();
+      controller.abort(reason);
     }
     let cleared = false;
     for (const chatId of runningIds) {
@@ -1411,7 +1417,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     token: number;
     workspaceGeneration: number;
   } {
-    this.abortChatRun(chatId);
+    this.abortChatRun(chatId, "new-run");
     retainClineChatSession(chatId);
     const controller = new AbortController();
     const token = this.nextRunToken++;
@@ -1577,7 +1583,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       totalOutputTokens?: number;
       totalCacheReadTokens?: number;
       totalCacheWriteTokens?: number;
-    }
+    },
+    abortSignal?: AbortSignal
   ): void {
     const todoIx = runUiMessages.findIndex(
       (m) =>
@@ -1591,8 +1598,39 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       runUiMessages.splice(todoIx, 1);
     }
     runUiMessages.splice(runTransientStart);
+
+    // onAssistant is gated on !aborted, so Stop never delivered the finale
+    // bubble — surface the reason here from the AbortSignal / history.
+    const lang = resolveUiLanguage(getConfig().language);
+    const signalCode = reasonFromAbortSignal(abortSignal) || "user-stop";
+    const fromHistory = [...snapshot.history]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const historyText = String(fromHistory?.content || "").trim();
+    const abortNotice = isAbortNoticeText(historyText)
+      ? historyText
+      : formatAbortedAssistantText(
+          lang,
+          harborAbortInfoFromCode(signalCode)
+        );
+    const lastUi = runUiMessages[runUiMessages.length - 1];
+    if (
+      !(
+        lastUi?.role === "assistant" &&
+        String(lastUi.text || "").trim() === abortNotice
+      )
+    ) {
+      runUiMessages.push({ role: "assistant", text: abortNotice });
+      if (this.isActiveChat(chatId)) {
+        this.view?.webview.postMessage({
+          type: "assistantDone",
+          chatId,
+          text: abortNotice,
+        });
+      }
+    }
+
     if (todoBefore?.step) {
-      const lang = resolveUiLanguage(getConfig().language);
       const cancelledPreview =
         lang === "ru" ? "Отменено пользователем" : "Cancelled by user";
       runUiMessages.push({
@@ -2412,7 +2450,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.confirmDeleteAllArchived();
         break;
       case "stop":
-        this.abortChatRun(this.store.activeChatId);
+        this.abortChatRun(this.store.activeChatId, "user-stop");
         this.setStatusForChat(this.store.activeChatId, "", true);
         this.postRegenerateState();
         this.view?.webview.postMessage({
@@ -2837,7 +2875,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.abortChatRun(chatId);
+    this.abortChatRun(chatId, "delete-agent");
     await discardClineChatSession(chatId);
     this.persistActiveChat();
     if (!deleteAgentBranch(this.store, agent.id, chatId)) {
@@ -2883,7 +2921,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
     const chatIds = getAgentChatIds(agent);
     for (const chatId of chatIds) {
-      this.abortChatRun(chatId);
+      this.abortChatRun(chatId, "delete-agent");
     }
     await discardClineChatSessions(chatIds);
     this.persistActiveChat();
@@ -2945,7 +2983,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
 
     for (const chatId of getAgentChatIds(agent)) {
-      this.abortChatRun(chatId);
+      this.abortChatRun(chatId, "delete-agent");
     }
     await discardClineChatSessions(getAgentChatIds(agent));
     this.persistActiveChat();
@@ -2996,7 +3034,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         continue;
       }
       for (const chatId of getAgentChatIds(agent)) {
-        this.abortChatRun(chatId);
+        this.abortChatRun(chatId, "delete-agent");
         ids.push(chatId);
       }
     }
@@ -3578,6 +3616,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     let turnHadAssistantOutput = false;
     const runStartedAt = Date.now();
     let runSucceeded = false;
+    let runTtftMs = 0;
     this.setStatusForChat(
       runChatId,
       modeThinkingLabel(mode),
@@ -3686,6 +3725,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   status: event.status,
                   resultPreview: event.resultPreview,
                   metrics: event.metrics,
+                  ...(typeof event.durationMs === "number" &&
+                  event.durationMs >= 0
+                    ? { durationMs: event.durationMs }
+                    : {}),
                 },
               };
               if (existingIx >= 0) {
@@ -3901,6 +3944,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             });
             this.openSettingsEditor({ mcp: true });
           },
+          onTiming: (info) => {
+            if (!this.isChatRunCurrent(runChatId, runRef)) {
+              return;
+            }
+            if (typeof info.ttftMs === "number" && info.ttftMs >= 0) {
+              runTtftMs = Math.round(info.ttftMs);
+            }
+          },
             },
           });
           break;
@@ -3994,7 +4045,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             totalOutputTokens: runTotalOutputTokens,
             totalCacheReadTokens: runTotalCacheReadTokens,
             totalCacheWriteTokens: runTotalCacheWriteTokens,
-          }
+          },
+          currentRun.signal
         );
         return;
       }
@@ -4050,7 +4102,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             totalOutputTokens: runTotalOutputTokens,
             totalCacheReadTokens: runTotalCacheReadTokens,
             totalCacheWriteTokens: runTotalCacheWriteTokens,
-          }
+          },
+          currentRun.signal
         );
         return;
       }
@@ -4126,7 +4179,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         for (let i = runUiMessages.length - 1; i >= runTransientStart; i -= 1) {
           const ui = runUiMessages[i];
           if (ui?.role === "tool" && ui.step?.stepId) {
-            ui.step = { ...ui.step, runDurationMs };
+            ui.step = {
+              ...ui.step,
+              runDurationMs,
+              ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+            };
             if (this.isViewingChat(runChatId)) {
               this.view?.webview.postMessage({
                 type: "step",
@@ -4136,6 +4193,27 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+        }
+        // Also stamp runDurationMs on the last assistant message of this turn
+        // so the webview can show a time label after the assistant bubble.
+        for (let i = runUiMessages.length - 1; i >= runTransientStart; i -= 1) {
+          if (runUiMessages[i]?.role === "assistant") {
+            runUiMessages[i] = {
+              ...runUiMessages[i],
+              runDurationMs,
+              ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+            };
+            break;
+          }
+        }
+        // Tell the webview to show the duration label on the last assistant bubble.
+        if (this.isViewingChat(runChatId)) {
+          this.view?.webview.postMessage({
+            type: "runDuration",
+            chatId: runChatId,
+            runDurationMs,
+            ...(runTtftMs > 0 ? { ttftMs: runTtftMs } : {}),
+          });
         }
         // The step was persisted without the duration — save the stamped copy.
         this.persistRunChatSnapshot(runChatId, {
@@ -4215,7 +4293,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.abortChatRun(runChatId);
+    this.abortChatRun(runChatId, "regenerate");
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
@@ -4317,7 +4395,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    this.abortChatRun(runChatId);
+    this.abortChatRun(runChatId, "edit-message");
     const nextHistory = baseHistory.slice(0, Math.max(0, userOrdinal * 2));
     const uiMsg: UiMessage = {
       role: "user",
@@ -4904,74 +4982,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const payload = {
       type: "settings" as const,
       settings: {
-        providers: config.providers.map((p) => ({
-          id: p.id,
-          name: p.name || "",
-          baseUrl: p.baseUrl,
-          apiKey: p.apiKey || "",
-          statusUrl: p.statusUrl || "",
-          ...(p.protocol ? { protocol: p.protocol } : {}),
-          ...(typeof p.promptCache === "boolean"
-            ? { promptCache: p.promptCache }
-            : {}),
-        })),
-        models: config.models.map((m) => ({
-          id: m.id,
-          label: m.label || "",
-          providerId: m.providerId || "",
-          contextWindow: m.contextWindow || undefined,
-          maxOutputTokens: m.maxOutputTokens || undefined,
-          enabled: m.enabled !== false,
-          favorite: m.favorite === true,
-          supportsVision: resolveModelSupportsVision(m),
-          ...(m.reasoningEffort
-            ? { reasoningEffort: m.reasoningEffort }
-            : {}),
-        })),
-        defaultModel: config.defaultModel,
-        language: config.language,
-        fontSize: config.fontSize,
-        resolvedLanguage: resolveUiLanguage(config.language),
-        defaultContextWindow: config.defaultContextWindow,
-        baseUrl: config.baseUrl,
-        apiKey: config.apiKey,
-        rejectUnauthorized: config.rejectUnauthorized,
-        caBundlePath: config.caBundlePath,
-        systemPrompt: config.systemPrompt,
-        maxToolRounds: config.maxToolRounds,
-        maxTokens: config.maxTokens,
-        maxResponseChars: config.maxResponseChars,
-        soundNotificationsEnabled: config.soundNotifications.enabled,
-        subagentsEnabled: config.subagents.enabled,
-        parallelToolCallsEnabled: config.parallelToolCalls.enabled,
-        autoCompactEnabled: config.autoCompact.enabled,
-        toolsAutoApprove: config.tools.autoApprove,
-        toolsApprovals: config.tools.approvals,
-        focusChainEnabled: config.focusChain.enabled,
-        turnContextFollowUps: config.turnContext.followUps,
-        checkpointsEnabled: config.checkpoints.enabled,
-        skillsEnabled: config.skills.enabled,
-        skillsWorkspaceEnabled: config.skills.workspaceEnabled,
-        skillsGlobalEnabled: config.skills.globalEnabled,
-        skillsExtraDirectories: config.skills.extraDirectories,
-        skillsDisabledExtraDirectories: config.skills.disabledExtraDirectories,
-        skillsDisabled: config.skills.disabled,
-        selectionHintsEnabled: config.selectionHints.enabled,
+        ...buildHarborSettingsPayloadCore(config, { resolveVision: true }),
         modes: this.serializeModesForUi(),
-        commitMessagePrompt: config.commitMessage.prompt,
-        commitMessageLanguage: config.commitMessage.language,
-        commitMessageModelIds: config.commitMessage.modelIds,
-        commitMessageScope: config.commitMessage.scope,
         workspaceName:
           vscode.workspace.workspaceFolders?.[0]?.name ||
           vscode.workspace.name ||
           "",
-        figmaEnabled: config.figma.enabled,
         figma: this.getFigmaStatusPayload(),
-        autoglmEnabled: config.autoglm.enabled,
-        autoglmBinaryPath: config.autoglm.binaryPath,
-        autoglmBrowser: config.autoglm.browser,
-        autoglmAutoApprove: config.autoglm.autoApprove,
         providerConnStatuses: this.getProviderConnStatusesPayload(),
       },
     };
@@ -5574,17 +5591,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       target
     );
     await cfg.update(
-      "maxToolRounds",
-      clamp(raw.maxToolRounds, 1, 60, 20),
-      target
-    );
-    await cfg.update("maxTokens", clamp(raw.maxTokens, 64, 128_000, 4096), target);
-    await cfg.update(
-      "maxResponseChars",
-      clamp(raw.maxResponseChars, 1000, 200_000, 64_000),
-      target
-    );
-    await cfg.update(
       "soundNotifications.enabled",
       raw.soundNotificationsEnabled !== false,
       target
@@ -5630,11 +5636,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
     }
     await cfg.update("tools.approvals", approvals, target);
-    await cfg.update(
-      "focusChain.enabled",
-      raw.focusChainEnabled !== false,
-      target
-    );
     await cfg.update(
       "turnContext.followUps",
       raw.turnContextFollowUps === "slim" || raw.turnContextFollowUps === "none"
@@ -6348,19 +6349,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               <textarea id="settingsSystemPrompt" class="settings-input settings-textarea" rows="6"></textarea>
             </div>
           </div>
-          <h4 class="settings-section-title settings-group-title" id="settingsLimitsTitle">Limits</h4>
-          <div class="settings-limits-row">
-            <label class="settings-field">
-              <span class="settings-label" id="settingsMaxTokensLabel">Response limit</span>
-              <span class="settings-field-hint" id="settingsMaxTokensHint">tokens</span>
-              <input id="settingsMaxTokens" class="settings-input" type="number" min="64" max="128000" />
-            </label>
-            <label class="settings-field">
-              <span class="settings-label" id="settingsMaxResponseCharsLabel">Max length</span>
-              <span class="settings-field-hint" id="settingsMaxResponseCharsHint">characters</span>
-              <input id="settingsMaxResponseChars" class="settings-input" type="number" min="1000" max="200000" />
-            </label>
-          </div>
           <h4 class="settings-section-title settings-group-title" id="settingsExecutionTitle">Execution</h4>
           <div class="settings-card">
             <label class="settings-toggle-row">
@@ -6492,16 +6480,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <option value="slim" id="settingsTurnContextSlim"></option>
                 <option value="none" id="settingsTurnContextNone"></option>
               </select>
-            </label>
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsFocusChainLabel">Focus chain</span>
-                <span class="settings-toggle-hint" id="settingsFocusChainNote">Agent keeps a task checklist; re-injected each turn.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsFocusChainEnabled" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
             </label>
             <label class="settings-toggle-row">
               <span class="settings-toggle-text">

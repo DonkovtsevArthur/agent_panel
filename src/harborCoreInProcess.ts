@@ -7,7 +7,7 @@
 import * as vscode from "vscode";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentRunCallbacks } from "./agentLoop";
-import type { ChatMessage } from "./openaiClient";
+import type { ChatMessage } from "./openaiTypes";
 import type { MessageAttachment } from "./attachments";
 
 export const HARBOR_CORE_IN_PROCESS = true as const;

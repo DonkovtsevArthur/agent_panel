@@ -7,7 +7,7 @@ export interface AgentModeDef {
   id: string;
   label: string;
   description?: string;
-  /** agent — все tools; readonly — только list_files / read_file (UI/custom modes; Cline uses id→act|plan) */
+  /** agent — full tools; readonly — Cline plan (no editor / mutating shell) */
   tools: ModeToolsPolicy;
   /**
    * Optional per-mode instructions stored in Settings for custom modes.

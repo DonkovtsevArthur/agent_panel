@@ -13,9 +13,9 @@ export function resolveUiLanguage(setting: UiLanguageSetting): UiLanguage {
 
 export function defaultSystemPromptForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
-    return "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: list_files, read_file, write_file, run_command, fetch_url, open_external. Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную. Чтобы открыть http(s) ссылку в браузере пользователя, вызывай open_external; чтобы самому прочитать страницу — fetch_url. Для Figma — MCP tools, если подключены. Никогда не говори, что не можешь открывать внешние URL.";
+    return "Ты — coding-агент в VS Code. Отвечай кратко на русском. В каждом запросе тебе передаются дата/время и состояние редактора (активный файл, курсор, выделение, открытые вкладки) — опирайся на них. У тебя есть инструменты: read_files, search_codebase, run_commands, fetch_web_content (и editor / apply_patch в Agent). Для git status/log/diff и любых shell-команд используй run_commands — не проси пользователя запускать их вручную. Чтобы прочитать страницу — fetch_web_content. Для Figma — MCP tools, если подключены. Никогда не говори, что не можешь открывать внешние URL.";
   }
-  return "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: list_files, read_file, write_file, run_command, fetch_url, open_external. For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually. To open an http(s) link in the user's browser, call open_external; to read a page yourself, call fetch_url. For Figma use MCP tools when connected. Never claim you cannot open external URLs.";
+  return "You are a coding agent in VS Code. Reply concisely in English. Each request includes the current date/time and editor state (active file, cursor, selection, open tabs) — use it. You have these tools: read_files, search_codebase, run_commands, fetch_web_content (and editor / apply_patch in Agent). For git status/log/diff and any shell command, use run_commands instead of asking the user to run it manually. To read a page, call fetch_web_content. For Figma use MCP tools when connected. Never claim you cannot open external URLs.";
 }
 
 /**
@@ -29,16 +29,18 @@ export function harborDefaultRulesForLanguage(lang: UiLanguage): string {
     return [
       "# Harbor Agents",
       "Отвечай кратко на русском.",
-      "Для git status/log/diff и любых shell-команд используй run_command — не проси пользователя запускать их вручную.",
-      "Чтобы открыть http(s) ссылку в браузере пользователя, вызывай open_external; чтобы самому прочитать страницу — fetch_url. Никогда не говори, что не можешь открывать внешние URL, и не выдумывай требования авторизации.",
+      "Для git status/log/diff и любых shell-команд используй run_commands — не проси пользователя запускать их вручную.",
+      "git commit / git push / git add . через shell блокируются Harbor — коммит и push только через тег панели «Commit and push» (или явная просьба только запушить).",
+      "Чтобы прочитать http(s) страницу, вызывай fetch_web_content. Никогда не говори, что не можешь открывать или загружать внешние URL, и не выдумывай требования авторизации.",
       "Для Figma используй MCP-инструменты, если подключены (Settings → MCP Servers).",
     ].join("\n");
   }
   return [
     "# Harbor Agents",
     "Reply concisely in English.",
-    "For git status/log/diff and any shell command, use run_command instead of asking the user to run it manually.",
-    "To open an http(s) link in the user's browser, call open_external; to read a page yourself, call fetch_url. Never claim you cannot open external URLs, and do not invent authorization requirements.",
+    "For git status/log/diff and any shell command, use run_commands instead of asking the user to run it manually.",
+    "git commit / git push / git add . via shell are blocked by Harbor — commit and push only via the panel «Commit and push» tag (or an explicit push-only request).",
+    "To read an http(s) page, call fetch_web_content. Never claim you cannot open or load external URLs, and do not invent authorization requirements.",
     "For Figma use MCP tools when connected (Settings → MCP Servers).",
   ].join("\n");
 }
@@ -263,29 +265,6 @@ export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
 }
 
 /**
- * Focus chain (Settings → Focus chain, default on): ask the model to keep a
- * markdown checklist for multi-step tasks. Harbor re-injects the latest
- * checklist into follow-up turns (src/focusChain.ts), mirroring upstream
- * Cline's Focus Chain behavior.
- */
-export function harborFocusChainRulesForLanguage(lang: UiLanguage): string {
-  if (lang === "ru") {
-    return [
-      "# Focus chain — чеклист задачи",
-      "Для задачи из 3+ шагов начни ответ с компактного markdown-чеклиста (`- [ ]` / `- [x]`, одна строка = один шаг).",
-      "Отмечай выполненные шаги `[x]` в следующих ответах и обновляй список, когда план меняется.",
-      "Harbor будет подставлять твой последний чеклист в следующие ходы — сверяйся с ним и не повторяй сделанное.",
-    ].join("\n");
-  }
-  return [
-    "# Focus chain — task checklist",
-    "For any task with 3+ steps, start your reply with a compact markdown checklist (`- [ ]` / `- [x]`, one line per step).",
-    "Mark finished steps `[x]` in later replies and update the list when the plan changes.",
-    "Harbor re-injects your latest checklist into follow-up turns — follow it and do not redo finished items.",
-  ].join("\n");
-}
-
-/**
  * Injected into Cline rules only for Harbor's Ask mode. Ask and Plan share the
  * same underlying Cline `plan` mode (read-only tools), so Cline's base prompt
  * always says "You are in Plan mode" / "toggle to Act mode" — this overrides
@@ -306,6 +285,26 @@ export function harborAskModeRulesForLanguage(lang: UiLanguage): string {
     "You are currently in Harbor Agents' Ask mode (not Plan). Under the hood it shares the same read-only engine as Plan (so the base system prompt says \"Plan mode\"), but in the UI and to the user this mode is called \"Ask\".",
     "If the user asks what mode you're in, answer \"Ask\", not \"Plan\".",
     "Do not tell the user to \"switch to Act mode\" or mention the Act toggle — that doesn't apply in Ask; just answer questions and don't propose an implementation plan.",
+  ].join("\n");
+}
+
+/** Framing for custom Settings modes with tools: readonly (not builtin Ask/Plan). */
+export function harborCustomReadonlyModeRulesForLanguage(
+  modeLabel: string,
+  lang: UiLanguage
+): string {
+  const label = String(modeLabel || "").trim() || (lang === "ru" ? "только чтение" : "read-only");
+  if (lang === "ru") {
+    return [
+      `# Режим: ${label}`,
+      `Ты в пользовательском read-only режиме «${label}» Harbor Agents. Под капотом тот же read-only движок, что у Plan (базовый промпт может говорить «Plan mode»), но для пользователя это режим «${label}».`,
+      `Не предлагай «переключиться в Act mode» — правок файлов и mutating shell нет; исследуй и отвечай.`,
+    ].join("\n");
+  }
+  return [
+    `# Mode: ${label}`,
+    `You are in Harbor Agents' custom read-only mode "${label}". Under the hood it shares Plan's read-only engine (the base prompt may say "Plan mode"), but to the user this mode is "${label}".`,
+    `Do not tell the user to "switch to Act mode" — no file edits or mutating shell; explore and answer.`,
   ].join("\n");
 }
 
@@ -342,6 +341,7 @@ export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
       "Сделай это САМЫМ ПЕРВЫМ инструментом: построй полный план задачи как список шагов (первый — 'in_progress', остальные 'pending').",
       "Даже для одношаговой задачи передай один шаг. Затем обновляй статусы по мере выполнения (каждый вызов заменяет карточку целиком).",
       "В конце — финальный вызов со всеми шагами 'done'.",
+      "После update_todo СРАЗУ переходи к выполнению — НЕ спрашивай пользователя, не предлагай план, просто делай.",
     ].join(" ");
   }
   return [
@@ -349,6 +349,7 @@ export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
     "Do it as your VERY FIRST tool: build the full task plan as a step list (first step 'in_progress', the rest 'pending').",
     "Even a single-step task gets one step. Then update statuses as you go (each call replaces the whole card).",
     "At the end, make a final call with every step 'done'.",
+    "After update_todo, IMMEDIATELY proceed to execute — do NOT ask the user, do NOT present the plan for approval, just do it.",
   ].join(" ");
 }
 

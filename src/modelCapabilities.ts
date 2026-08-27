@@ -103,8 +103,8 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     // Extended thinking требует default temperature (1) — опускаем поле,
     // иначе гейтвей возвращает 500 на re-entry после tool results.
     // max_tokens должен превышать thinking-бюджет: при reasoning_effort "high"
-    // дефолт config.maxTokens (4096) слишком мал → Anthropic 400 → гейтвей 500.
-    // Ставим минимум 16000, поверх которого берётся max из конфига/модели.
+    // слишком малый лимит (напр. 4096) → Anthropic 400 → гейтвей 500.
+    // Ставим минимум 16000, поверх которого берётся maxOutputTokens модели.
     pattern: /claude.*(?:3[-.][5-9]|[4-9])/i,
     capabilities: {
       supportsReasoningEffort: true,
@@ -254,18 +254,4 @@ export function resolveModelRequestMaxTokens(
     return minimum;
   }
   return minimum ? Math.max(requested, minimum) : requested;
-}
-
-/**
- * Все модели: запрос как на ветке main — простой non-stream JSON без SSE.
- */
-export function modelUsesMainLikeApi(_modelId?: string): boolean {
-  return true;
-}
-
-/**
- * @deprecated Больше не используется: все модели идут через {@link modelUsesMainLikeApi}.
- */
-export function modelNeedsGatewayWorkarounds(_modelId?: string): boolean {
-  return false;
 }
