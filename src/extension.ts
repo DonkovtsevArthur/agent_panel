@@ -35,6 +35,12 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.openSettings", () => {
       provider.openSettingsEditor();
     }),
+    vscode.commands.registerCommand(
+      "agentPanel.openCommitMessageSettings",
+      () => {
+        provider.openSettingsEditor({ section: "commit" });
+      }
+    ),
     vscode.commands.registerCommand("agentPanel.newChat", () => {
       provider.newChat();
     }),

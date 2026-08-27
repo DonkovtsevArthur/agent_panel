@@ -9,11 +9,15 @@ alwaysApply: true
 
 Пользователь смотрит расширение в **VS Code**, не в Cursor.
 
-После изменений UI/логики панели:
+«Собери след версии» / сборка после UI/логики — **всегда оба направления** (VS Code VSIX + JetBrains zip), не только одно.
 
-1. `npm run compile`
-2. `npx @vscode/vsce package --allow-missing-repository --skip-license`
-3. Установка **только** через бинарь VS Code:
+### VS Code
+
+1. Поднять `version` в `package.json`.
+2. **Удалить старые** `vscode-agent-panel-*.vsix` в корне (оставить только новую после пакета).
+3. `npm run compile`
+4. `npx @vscode/vsce package --allow-missing-repository --skip-license`
+5. Установка **только** через бинарь VS Code — сначала снять старую установку, потом поставить новую:
 
 ```bash
 "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" \
@@ -27,7 +31,15 @@ rm -rf ~/.vscode/extensions/local.vscode-agent-panel-*
 
 После установки напомнить: **Developer: Reload Window** в VS Code.
 
-Перед пакетом поднимать `version` в `package.json`.
+### WebStorm / JetBrains
+
+1. Поднять `version` в `jetbrains/build.gradle.kts`.
+2. **Удалить старые** `jetbrains/build/distributions/harbor-agents-*.zip`.
+3. `npm run build:sidecar` (если sidecar ещё не свежий после `compile`).
+4. `cd jetbrains && ./gradlew buildPlugin` (JDK 21; см. `jetbrains/README.md`).
+5. Zip: `jetbrains/build/distributions/harbor-agents-<version>.zip` — установка вручную: Settings → Plugins → Install Plugin from Disk… → Restart.
+
+**Правило версий:** при каждой новой сборке старые VSIX **и** zip удалять — не копить рядом несколько версий.
 
 ## Хранение агентов
 

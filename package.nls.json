@@ -77,7 +77,7 @@
   "config.selectionHints.enabled.description": "Show floating Add to Chat actions above the selected code in the editor.",
   "config.rejectUnauthorized.description": "Validate TLS certificates. On (default) = strict verify using the system trust store. Off accepts self-signed / MITM proxy certificates (insecure; opt-in for corporate gateways without a CA bundle).",
   "config.commitMessage.prompt.description": "Custom rule/prompt for SCM commit message generation. Empty = use project rules, then the built-in default.",
-  "config.commitMessage.modelIds.description": "Model ids from agentPanel.models for commit message generation. First available model is used; if one doesn't respond in 10s, the next is tried. Empty = automatic light/utility model.",
+  "config.commitMessage.modelIds.description": "Model ids from agentPanel.models for commit message generation. Models are tried in list order; if one doesn't respond in 10s, the next is tried. Empty = generation asks you to pick a model in settings.",
   "config.commitMessage.language.description": "Language for generated commit messages",
   "config.commitMessage.language.enum.auto": "Follow plugin UI language",
   "config.commitMessage.language.enum.en": "English",

@@ -13,11 +13,6 @@ import {
   isBuiltinCommitMessagePrompt,
   resolveUiLanguage,
 } from "./i18n";
-import {
-  looksLikeUtilityModel,
-  selectUtilityModel,
-  UTILITY_MODEL_PREFERENCE,
-} from "./modelRouting";
 import { getOpenAICompatibleClient } from "./openaiClient";
 import {
   capWorkspaceRuleText,
@@ -28,6 +23,27 @@ import {
 const execFileAsync = promisify(execFile);
 
 const MAX_DIFF_CHARS = 90_000;
+
+/** Thrown when Settings → Commit messages has no usable model selected. */
+export class CommitMessageModelNotConfiguredError extends Error {
+  readonly code = "COMMIT_MESSAGE_MODEL_NOT_CONFIGURED" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CommitMessageModelNotConfiguredError";
+  }
+}
+
+export function isCommitMessageModelNotConfiguredError(
+  error: unknown
+): error is CommitMessageModelNotConfiguredError {
+  return (
+    error instanceof CommitMessageModelNotConfiguredError ||
+    (error instanceof Error &&
+      (error as { code?: unknown }).code ===
+        "COMMIT_MESSAGE_MODEL_NOT_CONFIGURED")
+  );
+}
 
 const COMMIT_RULE_CANDIDATES = [
   ".cursor/rules/commit.mdc",
@@ -262,37 +278,6 @@ function cleanCommitMessage(raw: string): string {
   return (firstLine || text).trim();
 }
 
-/**
- * Отсортировать кандидатов для commit message: сначала модели из
- * UTILITY_MODEL_PREFERENCE (самые лёгкие/быстрые), потом остальные
- * по looksLikeUtilityModel, потом всё остальное.
- */
-function sortCommitModelCandidates(
-  ids: string[],
-  enabled: readonly { id: string; label?: string }[]
-): string[] {
-  const byId = new Map(enabled.map((m) => [m.id, m]));
-  return [...ids].sort((a, b) => {
-    const ra = rankCommitModel(a, byId.get(a));
-    const rb = rankCommitModel(b, byId.get(b));
-    return ra - rb;
-  });
-}
-
-function rankCommitModel(
-  id: string,
-  model: { id: string; label?: string } | undefined
-): number {
-  const prefIdx = UTILITY_MODEL_PREFERENCE.indexOf(id);
-  if (prefIdx >= 0) {
-    return prefIdx;
-  }
-  if (model && looksLikeUtilityModel(model)) {
-    return 100 + (model.label || model.id).length;
-  }
-  return 200;
-}
-
 async function findCommitRuleInCursorRules(
   root: string
 ): Promise<string | undefined> {
@@ -465,30 +450,27 @@ export async function composeCommitMessageText(
     const endpoint = resolveModelEndpoint(m.id);
     return Boolean(endpoint.baseUrl && endpoint.apiKey);
   });
-  const mainModelId =
-    (config.defaultModel &&
-    enabled.some((m) => m.id === config.defaultModel)
-      ? config.defaultModel
-      : "") ||
-    enabled[0]?.id ||
-    "";
 
-  // Кандидаты: явный список из Settings (отсортированный по простоте) →
-  // иначе utility-цепочка.
-  const configuredIds = config.commitMessage.modelIds.filter((id) =>
+  // Только модели, явно выбранные в Settings → Commit messages (порядок как в настройках).
+  const configuredIds = config.commitMessage.modelIds
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  if (!configuredIds.length) {
+    throw new CommitMessageModelNotConfiguredError(
+      uiLang === "ru"
+        ? "Выберите модель для генерации сообщений коммита в настройках."
+        : "Select a model for commit message generation in settings."
+    );
+  }
+  const candidates = configuredIds.filter((id) =>
     enabled.some((m) => m.id === id)
   );
-  const candidates =
-    configuredIds.length > 0
-      ? sortCommitModelCandidates(configuredIds, enabled)
-      : (() => {
-          const sel = selectUtilityModel(enabled, {
-            fallbackModelId: mainModelId,
-          });
-          return sel ? [sel.modelId] : mainModelId ? [mainModelId] : [];
-        })();
   if (!candidates.length) {
-    return fallbackCommitMessage(paths, lang);
+    throw new CommitMessageModelNotConfiguredError(
+      uiLang === "ru"
+        ? "Выбранные модели для сообщений коммита недоступны. Выберите другую в настройках."
+        : "Selected commit message models are unavailable. Choose another in settings."
+    );
   }
 
   const storedPrompt = String(
@@ -611,6 +593,18 @@ export async function generateCommitMessage(
   const lang = resolveUiLanguage(getConfig().language);
 
   try {
+    // Быстрый preflight без спиннера: нет модели → сразу предупреждение + «Выбрать».
+    const configured = getConfig()
+      .commitMessage.modelIds.map((id) => String(id || "").trim())
+      .filter(Boolean);
+    if (!configured.length) {
+      throw new CommitMessageModelNotConfiguredError(
+        lang === "ru"
+          ? "Выберите модель для генерации сообщений коммита в настройках."
+          : "Select a model for commit message generation in settings."
+      );
+    }
+
     const message = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -642,6 +636,19 @@ export async function generateCommitMessage(
       error instanceof Error &&
       (error.name === "AbortError" || /aborted/i.test(error.message))
     ) {
+      return;
+    }
+    if (isCommitMessageModelNotConfiguredError(error)) {
+      const selectLabel = lang === "ru" ? "Выбрать" : "Select";
+      const picked = await vscode.window.showWarningMessage(
+        error.message,
+        selectLabel
+      );
+      if (picked === selectLabel) {
+        await vscode.commands.executeCommand(
+          "agentPanel.openCommitMessageSettings"
+        );
+      }
       return;
     }
     const text = error instanceof Error ? error.message : String(error);

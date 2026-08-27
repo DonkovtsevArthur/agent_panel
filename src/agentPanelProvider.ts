@@ -363,6 +363,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private settingsPanel?: vscode.WebviewPanel;
   private pendingSettingsOpenMcp = false;
+  private pendingSettingsSection: string | undefined;
   private store!: AgentsStoreV2;
   private history: ChatMessage[] = [];
   private uiMessages: UiMessage[] = [];
@@ -709,11 +710,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /** Открыть настройки во вкладке редактора (не в сайдбаре). */
-  openSettingsEditor(options?: { mcp?: boolean }): void {
+  openSettingsEditor(options?: {
+    mcp?: boolean;
+    /** Settings nav category, e.g. "commit" / "mcp" / "models". */
+    section?: string;
+  }): void {
     const lang = resolveUiLanguage(getConfig().language);
     const title =
       lang === "ru" ? "Настройки — Harbor Agents" : "Settings — Harbor Agents";
     this.pendingSettingsOpenMcp = Boolean(options?.mcp);
+    this.pendingSettingsSection = options?.mcp
+      ? "mcp"
+      : String(options?.section || "").trim() || undefined;
 
     if (this.settingsPanel) {
       this.settingsPanel.title = title;
@@ -723,8 +731,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.settingsPanel.webview.postMessage({
         type: "showSettings",
         openMcp: this.pendingSettingsOpenMcp,
+        settingsCategory: this.pendingSettingsSection,
       });
       this.pendingSettingsOpenMcp = false;
+      this.pendingSettingsSection = undefined;
       return;
     }
 
@@ -2230,8 +2240,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           this.settingsPanel?.webview.postMessage({
             type: "showSettings",
             openMcp: this.pendingSettingsOpenMcp,
+            settingsCategory: this.pendingSettingsSection,
           });
           this.pendingSettingsOpenMcp = false;
+          this.pendingSettingsSection = undefined;
         } else {
           void this.postInit();
           void this.postSlashCommandsList();
@@ -4547,6 +4559,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.scheduleScmRefresh();
       if (this.isChatRunCurrent(runChatId, runRef)) {
         this.postRunFinished(runChatId, result.ok ? "success" : "error");
+      }
+      if (result.openCommitMessageSettings) {
+        const selectLabel = lang === "ru" ? "Выбрать" : "Select";
+        const picked = await vscode.window.showWarningMessage(
+          result.answer,
+          selectLabel
+        );
+        if (picked === selectLabel) {
+          this.openSettingsEditor({ section: "commit" });
+        }
       }
     } catch (error) {
       if (!this.isChatRunCurrent(runChatId, runRef)) {

@@ -22,7 +22,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Plan → Agent (Build) UI | `src/planImplement.ts` — Plan card only for implementation plans (`<proposed_plan>` / Goal+Steps); Q&A and status stay plain chat. Marker `[[harbor:implement_plan]]`, Plan.md helpers |
 | Session store (workspaceState) | `src/sessionStore.ts` |
 | Config / providers / models | `src/config.ts` |
-| OpenAI-compatible client | `src/openaiClient.ts` (utility paths e.g. commit message; chat turns use Cline gateway) |
+| OpenAI-compatible client | `src/openaiClient.ts` (utility paths e.g. chat titles; chat turns use Cline gateway; commit messages use the model(s) selected in Settings → Commit messages) |
 | Model capabilities / routing | `src/modelCapabilities.ts`, `src/modelRouting.ts` |
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
@@ -50,7 +50,7 @@ npm run lint             # tsc --noEmit
 
 JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Shared logic belongs in `packages/harbor-core` / protocol; IDE shells stay thin. **VS Code regression gate** is required before merging shared changes (checklist in `docs/jetbrains-port.md`).
 
-After panel UI/logic changes: bump `version` in `package.json`, package with vsce, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
+After panel UI/logic changes: bump `version` in `package.json`, **delete old** `vscode-agent-panel-*.vsix` (and JetBrains `harbor-agents-*.zip` when packaging that), package with vsce, uninstall/remove installed `local.vscode-agent-panel-*`, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
 
 ## Runtime (what every chat model gets)
 
@@ -92,6 +92,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - Target runtime is **VS Code**. Do not brand or compare the product to Cursor in user-facing copy (README, nls, toasts, Marketplace). See `.cursor/rules/no-cursor-branding.mdc`.
 - Panel icons: **Material Symbols Outlined** only. See `.cursor/rules/material-icons.mdc`.
 - Agent list / chats live in **`workspaceState`** (`agentPanel.session.v2`), one store per workspace — not `globalState` (except one-shot migration).
+- **VS Code + WebStorm parity:** when changing plugin logic (chat, modes, settings, MCP, tools, sessions, panel UI), apply it for both IDE shells in the same change — prefer shared `media/` / `packages/`; mirror host-only fixes in `src/` and `jetbrains/`. See `.cursor/rules/vscode-webstorm-parity.mdc` and `docs/jetbrains-port.md`.
 
 ## What agents MAY change in this repo
 
@@ -125,11 +126,13 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - If the user's request is **ambiguous, vague, or could reasonably be interpreted in multiple ways** — ask a clarifying question before starting work. Do not assume scope, file list, or intent.
 - Specifically: when the user asks to translate/edit/refactor "comments" or "code" without naming a concrete set of files — **ask which files** (or whether they mean all files) before editing anything.
 - When a task has multiple valid approaches — briefly describe the options and let the user pick, rather than choosing silently.
+- If unsure whether existing code, comments, branches, flags, or files are unused / safe to remove — **ask**; do not delete on a guess.
 - This rule applies even in Agent mode. Acting on assumptions wastes user time; one clarifying question upfront is always better than a wrong fix.
 
 ## Coding norms for this repo
 
 - Prefer focused diffs; match existing TypeScript / webview style.
+- Do **not** delete or “clean up” unrelated code during refactors or feature work unless the user explicitly asked for that cleanup. No drive-by removals of neighbors, comments, seeming-dead helpers, nls keys, or docs.
 - Pure logic that tests can import should avoid top-level `vscode` requires (lazy-require or keep helpers free of the API).
 - Commit messages for this repo: Russian, when the user asks to commit.
 

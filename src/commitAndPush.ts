@@ -5,6 +5,7 @@ import {
   collectCommitDiff,
   composeCommitMessageText,
   fallbackCommitMessage,
+  isCommitMessageModelNotConfiguredError,
 } from "./commitMessage";
 import { getConfig } from "./config";
 import { formatGitRemoteOutput } from "./gitCommandPolicy";
@@ -25,6 +26,8 @@ export type CommitAndPushResult = {
   answer: string;
   commitMessage?: string;
   steps: CommitAndPushStep[];
+  /** Offer UI action to open Settings → Commit messages. */
+  openCommitMessageSettings?: boolean;
 };
 
 async function runGit(
@@ -89,11 +92,19 @@ export async function commitAndPushPaths(
   const steps: CommitAndPushStep[] = [];
   const folder = vscode.workspace.workspaceFolders?.[0];
 
-  const finish = (ok: boolean, answer: string, commitMessage?: string) => ({
+  const finish = (
+    ok: boolean,
+    answer: string,
+    commitMessage?: string,
+    extras?: { openCommitMessageSettings?: boolean }
+  ): CommitAndPushResult => ({
     ok,
     answer,
     commitMessage,
     steps,
+    ...(extras?.openCommitMessageSettings
+      ? { openCommitMessageSettings: true }
+      : {}),
   });
 
   if (!folder) {
@@ -196,6 +207,11 @@ export async function commitAndPushPaths(
         false,
         lang === "ru" ? "Операция отменена." : "Operation cancelled."
       );
+    }
+    if (isCommitMessageModelNotConfiguredError(error)) {
+      return finish(false, error.message, undefined, {
+        openCommitMessageSettings: true,
+      });
     }
     commitMessage = fallbackCommitMessage(scoped, lang);
   }

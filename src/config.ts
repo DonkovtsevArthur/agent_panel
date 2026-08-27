@@ -326,7 +326,7 @@ export interface AgentPanelConfig {
   caBundlePath: string;
   commitMessage: {
     prompt: string;
-    /** Ordered model ids for commit generation. Empty = auto light/utility model. */
+    /** Ordered model ids for commit generation. Empty = prompt user to select. */
     modelIds: string[];
     language: "auto" | "en" | "ru";
     /** Откуда сейчас действуют настройки commit message. */

@@ -114,7 +114,7 @@
         "Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Advanced",
       commitMessages: "Commit messages",
-      commitMessagesNote: "Generate SCM commit messages from the diff.",
+      commitMessagesNote: "Generate SCM commit messages from the diff. Pick at least one model below.",
       commitGeneration: "Generation",
       commitStorage: "Save location",
       commitScope: "Apply to",
@@ -18086,7 +18086,13 @@
         break;
       case "showSettings":
         showScreen("settings");
-        showSettingsCategory(msg.openMcp ? "mcp" : "models");
+        showSettingsCategory(
+          msg.openMcp
+            ? "mcp"
+            : typeof msg.settingsCategory === "string" && msg.settingsCategory
+              ? msg.settingsCategory
+              : "models"
+        );
         setBusy(Boolean(msg.busy));
         break;
       case "openChatSearch":

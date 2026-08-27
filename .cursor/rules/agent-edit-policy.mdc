@@ -53,6 +53,17 @@ Harbor Ask/Plan → Cline `plan`. Editor выключен; `run_commands` ост
 - Ставить VSIX через `/usr/local/bin/code` (часто Cursor)
 - Врать про сделанные правки без реальных tool-записей
 
+## VS Code + WebStorm
+
+При смене логики плагина сразу учитывать оба клиента (shared `media/` / `packages/`, зеркала в `src/` и `jetbrains/`). См. `.cursor/rules/vscode-webstorm-parity.mdc`.
+
+## Рефакторинг и правки кода — не выкидывать лишнее
+
+- Менять **только** то, что нужно для задачи. Не удалять и не «зачищать» соседний код, комментарии, ветки, флаги, dead-looking helpers, тесты, docs, nls-ключи — если это не запрошено явно.
+- Не переписывать файл целиком ради локального фикса; не делать drive-by cleanup «заодно».
+- Если не уверен, что символ/файл/ветка не нужны (или куда класть правку, VS Code vs WebStorm, scope рефакторинга) — **спросить**, а не удалять и не угадывать.
+- Сомнение = стоп и вопрос пользователю, даже в Agent mode.
+
 ## Сборка после UI/логики
 
-См. `.cursor/rules/vscode-build-and-workspace.mdc`: compile → bump version → vsce → install в бинарь VS Code → Reload Window.
+См. `.cursor/rules/vscode-build-and-workspace.mdc`: bump version → удалить старые VSIX/zip → compile → vsce → uninstall/rm старой установки → install в бинарь VS Code → Reload Window.

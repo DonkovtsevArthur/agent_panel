@@ -110,7 +110,13 @@
         break;
       case "showSettings":
         showScreen("settings");
-        showSettingsCategory(msg.openMcp ? "mcp" : "models");
+        showSettingsCategory(
+          msg.openMcp
+            ? "mcp"
+            : typeof msg.settingsCategory === "string" && msg.settingsCategory
+              ? msg.settingsCategory
+              : "models"
+        );
         setBusy(Boolean(msg.busy));
         break;
       case "openChatSearch":

@@ -1,0 +1,28 @@
+---
+description: Правки логики плагина сразу для VS Code и WebStorm
+alwaysApply: true
+---
+
+# VS Code + WebStorm: одна логика
+
+Harbor Agents — **два IDE-шелла** над общей панелью и ядром. При изменении логики работы плагина (поведение чата, режимы, settings, MCP, tools, сессии, UI панели) смотрим **оба** клиента и сразу вносим правки так, чтобы поведение совпадало в VS Code и в WebStorm.
+
+## Куда класть изменения
+
+| Слой | Путь | Когда править |
+|------|------|----------------|
+| Общая UI панели | `media/src/panel/`, `media/panel.js`, `media/panel.css` | Логика/UI webview — один раз; оба IDE едят один bundle |
+| Общий протокол / core | `packages/harbor-host-protocol/`, `packages/harbor-core/` | Порты, facade, sidecar — предпочтительно сюда, а не в IDE-шелл |
+| VS Code host | `src/` (`extension.ts`, `agentPanelProvider.ts`, `harborCoreInProcess.ts`, …) | Только то, что специфично для VS Code API |
+| WebStorm host | `jetbrains/` (+ sidecar entry) | Только то, что специфично для JCEF / Kotlin / IntelliJ API |
+
+**Предпочитай shared** (`media/`, `packages/`) IDE-специфичным дублям. Если правка нужна только в `src/` или только в `jetbrains/` — проверь зеркальный слой и допиши аналог (или вынеси общее в `packages/` / webview).
+
+## Обязательный чеклист при смене логики
+
+1. Затронута ли общая поверхность (`media/`, `packages/`, shared `src/` пути из sidecar/headless)? Если да — оба IDE получат изменение после сборки; не оставляй расхождение в хосте.
+2. Если правка в VS Code host (`src/` без shared) — есть ли такой же сценарий в WebStorm? Нужен ли порт в `jetbrains/` / sidecar / protocol.
+3. Если правка в `jetbrains/` — не сломан ли VS Code path; shared не должен требовать sidecar в VS Code.
+4. Кратко отметь в ответе, что проверены оба клиента (или что правка чисто IDE-specific и почему).
+
+Подробности архитектуры и regression gate: `docs/jetbrains-port.md`, `AGENTS.md`.
