@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en" data-surface="figma">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Harbor Agents</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block"
+    />
+    <!-- FIGMA_CSS -->
+  </head>
+  <body>
+    <div id="workspaceShell" class="workspace-shell is-narrow">
+      <div id="agentsRailBackdrop" class="agents-rail-backdrop" hidden></div>
+
+      <section id="agentsScreen" class="screen agents-rail" hidden>
+        <div class="agents-top">
+          <div class="agents-title" data-i18n="agents">Agents</div>
+          <button type="button" class="icon-btn" id="newAgentBtn" title="New chat" aria-label="New chat">
+            <span class="material-symbols-outlined" aria-hidden="true">add</span>
+          </button>
+        </div>
+        <div id="agentsList" class="agents-list"></div>
+      </section>
+
+      <section id="chatScreen" class="screen chat-screen">
+        <div class="chat-top">
+          <button
+            type="button"
+            class="icon-btn"
+            id="toggleAgentsRailBtn"
+            title="Agents"
+            aria-label="Agents"
+            aria-pressed="false"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">menu</span>
+          </button>
+          <div class="chat-top-text">
+            <div id="chatAgentName" class="chat-agent-name">Chat</div>
+          </div>
+          <button
+            type="button"
+            class="icon-btn"
+            id="copyBriefBtn"
+            title="Copy brief"
+            aria-label="Copy brief"
+            hidden
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
+          </button>
+          <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
+            <span class="material-symbols-outlined" aria-hidden="true">settings</span>
+          </button>
+        </div>
+        <div id="messages"></div>
+        <div class="composer-wrap" id="composerWrap">
+          <div class="composer" id="composer" data-mode="agent">
+            <div id="selectionPreview" class="selection-preview" hidden>
+              <img id="selectionThumb" alt="" hidden />
+              <div id="selectionMeta" class="selection-preview-meta"></div>
+            </div>
+            <div class="composer-input-row">
+              <textarea id="prompt" rows="3" placeholder="Task for the design agent…"></textarea>
+            </div>
+            <div class="composer-footer">
+              <div class="composer-footer-left">
+                <div class="model-picker mode-picker" id="modePicker" data-mode="agent">
+                  <button
+                    type="button"
+                    class="model-trigger"
+                    id="modeTrigger"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    title="Mode"
+                  >
+                    <span class="model-label" id="modeLabel">Agent</span>
+                    <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+                  </button>
+                  <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
+                </div>
+              </div>
+              <div class="composer-footer-right">
+                <div class="model-picker" id="modelPicker">
+                  <button
+                    type="button"
+                    class="model-trigger"
+                    id="modelTrigger"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    title="Model"
+                  >
+                    <span class="material-symbols-outlined model-icon-compact" aria-hidden="true">smart_toy</span>
+                    <span class="model-label" id="modelLabel">Model</span>
+                    <span class="material-symbols-outlined model-chevron" aria-hidden="true">expand_more</span>
+                  </button>
+                  <div class="model-menu" id="modelMenu" role="listbox" hidden></div>
+                </div>
+                <button class="primary" id="sendBtn" title="Send" aria-label="Send" data-mode="send" type="button">
+                  <span class="material-symbols-outlined icon-send" aria-hidden="true">arrow_upward</span>
+                  <span class="material-symbols-outlined icon-stop" aria-hidden="true">stop</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="statusLine" class="status-line"></div>
+        </div>
+      </section>
+    </div>
+
+    <section id="settingsScreen" class="screen" hidden>
+      <div id="settingsSaveStatus" class="settings-save-status" hidden>Saved</div>
+      <div class="settings-top">
+        <button type="button" class="icon-btn" id="closeSettingsBtn" title="Back" aria-label="Back">
+          <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+        </button>
+        <div class="settings-title" data-i18n="settings">Settings</div>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav" id="settingsNav" aria-label="Settings">
+          <button type="button" class="settings-nav-item is-active" data-settings-cat="models">
+            <span class="material-symbols-outlined" aria-hidden="true">dns</span>
+            <span class="settings-nav-label" data-i18n="modelsProviders">Models &amp; providers</span>
+          </button>
+          <button type="button" class="settings-nav-item" data-settings-cat="language">
+            <span class="material-symbols-outlined" aria-hidden="true">language</span>
+            <span class="settings-nav-label" data-i18n="language">Language</span>
+          </button>
+          <button type="button" class="settings-nav-item" data-settings-cat="appearance">
+            <span class="material-symbols-outlined" aria-hidden="true">format_size</span>
+            <span class="settings-nav-label" data-i18n="appearance">Appearance</span>
+          </button>
+        </nav>
+        <div class="settings-body" id="settingsBody">
+          <section class="settings-panel" data-settings-panel="models">
+            <h3 class="settings-section-title" data-i18n="modelsProviders">Models &amp; providers</h3>
+            <p class="settings-section-note" data-i18n="providersNote">
+              Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.
+            </p>
+            <div id="settingsProvidersModelsList" class="settings-models"></div>
+            <div class="settings-add-actions">
+              <button type="button" class="text-btn settings-add-model" id="addModelBtn" data-i18n="addModel">
+                + Model
+              </button>
+              <button type="button" class="text-btn settings-add-model" id="addProviderBtn" data-i18n="addProvider">
+                + Provider
+              </button>
+            </div>
+          </section>
+          <section class="settings-panel" data-settings-panel="language" hidden>
+            <h3 class="settings-section-title" data-i18n="language">Language</h3>
+            <label class="settings-field">
+              <span class="settings-label" data-i18n="pluginUiLanguage">Plugin UI language</span>
+              <select id="langSelect" class="settings-input">
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+            </label>
+          </section>
+          <section class="settings-panel" data-settings-panel="appearance" hidden>
+            <h3 class="settings-section-title" data-i18n="appearance">Appearance</h3>
+            <p class="settings-section-note" data-i18n="appearanceNote">Chat text and composer size in the panel.</p>
+            <label class="settings-field">
+              <span class="settings-label" data-i18n="fontSize">Font size</span>
+              <div class="settings-font-size-row">
+                <input id="fontSizeRange" class="settings-range" type="range" min="11" max="20" step="1" value="13" />
+                <span class="settings-font-size-value" id="fontSizeValue">13 px</span>
+              </div>
+              <span class="settings-field-hint" data-i18n="fontSizeHint">Applies to messages and the input field.</span>
+            </label>
+            <p class="settings-font-preview" id="fontPreview" data-i18n="fontPreview">
+              The agent will reply at this size.
+            </p>
+          </section>
+        </div>
+      </div>
+
+      <div id="providerEditModal" class="settings-modal" hidden>
+        <div class="settings-modal-backdrop" data-provider-dismiss="1"></div>
+        <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="providerEditTitle">
+          <div class="settings-modal-head">
+            <h3 id="providerEditTitle" class="settings-modal-title">Provider</h3>
+            <button type="button" class="icon-btn" id="providerEditCloseBtn" title="Close" aria-label="Close">
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+          </div>
+          <div class="settings-modal-body">
+            <label class="settings-field">
+              <span class="settings-label">Name</span>
+              <input id="providerEditName" class="settings-input" type="text" placeholder="OpenAI" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">Base URL</span>
+              <input
+                id="providerEditBaseUrl"
+                class="settings-input"
+                type="text"
+                placeholder="https://api.openai.com/v1"
+              />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">API Key</span>
+              <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
+            </label>
+          </div>
+          <div class="settings-modal-foot">
+            <button type="button" class="text-btn" id="providerEditCancelBtn" data-i18n="cancel">Cancel</button>
+            <button type="button" class="text-btn settings-modal-done" id="providerEditDoneBtn" data-i18n="done">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="modelEditModal" class="settings-modal" hidden>
+        <div class="settings-modal-backdrop" data-modal-dismiss="1"></div>
+        <div class="settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="modelEditTitle">
+          <div class="settings-modal-head">
+            <h3 id="modelEditTitle" class="settings-modal-title">Model</h3>
+            <button type="button" class="icon-btn" id="modelEditCloseBtn" title="Close" aria-label="Close">
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
+            </button>
+          </div>
+          <div class="settings-modal-body">
+            <label class="settings-field">
+              <span class="settings-label">Provider</span>
+              <select id="modelEditProvider" class="settings-input"></select>
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">ID</span>
+              <input id="modelEditId" class="settings-input" type="text" placeholder="gpt-4o-mini" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">Name</span>
+              <input id="modelEditLabel" class="settings-input" type="text" placeholder="shown in the list" />
+            </label>
+            <label class="settings-field settings-check">
+              <span class="settings-label" data-i18n="supportsVision">Supports images (vision)</span>
+              <span class="settings-switch">
+                <input id="modelEditVision" type="checkbox" />
+                <span class="settings-switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+          <div class="settings-modal-foot">
+            <button type="button" class="text-btn" id="modelEditCancelBtn" data-i18n="cancel">Cancel</button>
+            <button type="button" class="text-btn settings-modal-done" id="modelEditDoneBtn" data-i18n="done">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      (function () {
+        var memoryState = {};
+        globalThis.__harborHost = {
+          postMessage: function (message) {
+            parent.postMessage({ pluginMessage: message }, "*");
+          },
+          getState: function () {
+            return memoryState;
+          },
+          setState: function (s) {
+            memoryState = s || {};
+          },
+        };
+      })();
+    </script>
+    <!-- FIGMA_JS -->
+  </body>
+</html>

@@ -29,4 +29,5 @@ docs/**
 vendor/**
 packages/**
 jetbrains/**
+figma/**
 .tmp-harbor-qa/**

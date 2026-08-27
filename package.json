@@ -752,6 +752,8 @@
 		"compile": "tsc -p ./ && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js",
 		"build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
 		"build:sidecar": "npm run compile",
+		"build:figma": "node scripts/build-figma.js",
+		"build:panel:figma": "node scripts/build-panel-figma.js",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit",
 		"package": "vsce package",

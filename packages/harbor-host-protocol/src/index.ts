@@ -1,13 +1,13 @@
 /**
- * Harbor Agents — webview ↔ IDE host message contract.
- * Shared by VS Code webview and JetBrains JCEF (via __harborHost).
+ * Harbor Agents — webview ↔ host message contract.
+ * Shared by VS Code webview, JetBrains JCEF (via __harborHost), and the Figma plugin UI.
  *
  * Protocol version bumps when a breaking rename is required.
  * Additive new `type` values do not require a version bump.
  */
 export const HARBOR_HOST_PROTOCOL_VERSION = 1 as const;
 
-/** Injected by JetBrains JCEF; absent in VS Code (falls back to acquireVsCodeApi). */
+/** Injected by JetBrains JCEF / Figma UI bridge; absent in VS Code (falls back to acquireVsCodeApi). */
 export interface HarborHostApi {
   postMessage(message: unknown): void;
   getState(): unknown;
@@ -17,6 +17,54 @@ export interface HarborHostApi {
 export type HarborHostGlobal = typeof globalThis & {
   __harborHost?: HarborHostApi;
 };
+
+/** Solid paint summary from the Figma plugin main thread. */
+export interface FigmaSimplePaint {
+  type: "SOLID";
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+/** Compact selection snapshot from the Figma plugin main thread. */
+export interface FigmaSelectionNode {
+  id: string;
+  name: string;
+  type: string;
+  width?: number;
+  height?: number;
+  /** TEXT: truncated characters */
+  characters?: string;
+  fontSize?: number;
+  fontName?: { family: string; style: string };
+  fills?: FigmaSimplePaint[];
+  strokes?: FigmaSimplePaint[];
+  layoutMode?: string;
+  paddingTop?: number;
+  paddingRight?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  itemSpacing?: number;
+  primaryAxisAlignItems?: string;
+  counterAxisAlignItems?: string;
+  componentId?: string;
+  mainComponentName?: string;
+  children?: FigmaSelectionNode[];
+}
+
+export interface FigmaSelectionPayload {
+  fileKey?: string;
+  fileName?: string;
+  pageName?: string;
+  nodes: FigmaSelectionNode[];
+  /** data URL PNG of the primary selected node, when export succeeds */
+  previewPngDataUrl?: string;
+  /** Deep link to the primary node when file key is known */
+  nodeUrl?: string;
+  /** False in Dev Mode (inspect-only) — canvas writes unavailable */
+  canWrite?: boolean;
+}
 
 export type ChatSearchScope = "all" | "current";
 export type ChatSearchRole = "any" | "user" | "assistant";
@@ -31,9 +79,29 @@ export interface IncomingAttachment {
   size?: number;
 }
 
-/** Webview → IDE host (and JetBrains bridge → sidecar). */
+/** Webview → host (IDE bridge / sidecar / Figma main). */
 export type WebviewToHost =
-  | { type: "ready"; surface?: "panel" | "settings" }
+  | { type: "ready"; surface?: "panel" | "settings" | "figma" }
+  | { type: "figmaGetSelection"; requestId?: string }
+  | { type: "figmaFocusNode"; nodeId: string }
+  | {
+      type: "figmaInvokeTool";
+      requestId: string;
+      name: string;
+      args?: Record<string, unknown>;
+    }
+  | {
+      type: "figmaClientStorageGet";
+      key: string;
+      requestId: string;
+    }
+  | {
+      type: "figmaClientStorageSet";
+      key: string;
+      value: unknown;
+      requestId?: string;
+    }
+  | { type: "copyBrief"; text: string }
   | {
       type: "send";
       text: string;
@@ -212,7 +280,26 @@ export type HostToWebview =
   | { type: "livePlanForBuild"; [key: string]: unknown }
   | { type: "insertComposerText"; text: string }
   | { type: "insertComposerSelection"; [key: string]: unknown }
-  | { type: "insertComposerMentions"; [key: string]: unknown };
+  | { type: "insertComposerMentions"; [key: string]: unknown }
+  | {
+      type: "figmaSelectionChanged";
+      selection: FigmaSelectionPayload;
+      requestId?: string;
+    }
+  | {
+      type: "figmaToolResult";
+      requestId: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }
+  | {
+      type: "figmaClientStorageValue";
+      key: string;
+      value: unknown;
+      requestId: string;
+    }
+  | { type: "figmaClientStorageSaved"; key: string; requestId?: string };
 
 /** JSON-RPC methods: JetBrains Kotlin ↔ Node sidecar. */
 export type SidecarMethod =

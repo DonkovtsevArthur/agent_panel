@@ -35,6 +35,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Host protocol (shared) | `packages/harbor-host-protocol/` |
 | Harbor core / sidecar | `packages/harbor-core/` → `out/harborSidecar.js` (`npm run build:sidecar`) |
 | JetBrains / WebStorm plugin | `jetbrains/` — JCEF Tool Window + Kotlin host; see `docs/jetbrains-port.md` |
+| Figma plugin (designer host) | `figma/` — Agent/Ask/Plan + selection + limited canvas write tools; IDE modules cut at `npm run build:figma`; see `docs/figma-plugin.md` |
 | VS Code in-process core | `src/harborCoreInProcess.ts` (no sidecar process) |
 | Unit tests | `tests/*.test.js` (Node test runner against `out/`) |
 
@@ -43,12 +44,13 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 ```bash
 npm run compile          # tsc + MCP + Cline + (optional) sidecar bundles → out/
 npm run build:sidecar    # Node sidecar for JetBrains only
+npm run build:figma      # Figma plugin → figma/dist (does not touch media/panel.js / VSIX)
 npm run build:core       # packages/harbor-host-protocol + harbor-core
 npm test                 # compile + node --test tests/*.test.js
 npm run lint             # tsc --noEmit
 ```
 
-JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Shared logic belongs in `packages/harbor-core` / protocol; IDE shells stay thin. **VS Code regression gate** is required before merging shared changes (checklist in `docs/jetbrains-port.md`).
+JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Figma: see `docs/figma-plugin.md` and `figma/README.md`. Shared logic belongs in `packages/harbor-core` / protocol; IDE shells stay thin. **Figma UI is a separate cut bundle** (`media/src/panel-figma/` via `scripts/build-panel-figma.js`) — never ship IDE panel modules into `figma/dist`. **VS Code regression gate** is required before merging shared changes (checklist in `docs/jetbrains-port.md`).
 
 After panel UI/logic changes: bump `version` in `package.json`, **delete old** `vscode-agent-panel-*.vsix` (and JetBrains `harbor-agents-*.zip` when packaging that), package with vsce, uninstall/remove installed `local.vscode-agent-panel-*`, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
 

@@ -1,0 +1,6 @@
+Harbor Figma UI cut list (not in ui.js):
+- media/src/panel/* IDE modules
+- JetBrains polyfills, MCP/Skills, SCM/commit UI
+- Cline / sidecar
+
+Runtime: ui.html + chunked __HTML_UI__ fallback in code.js (Dev Mode).

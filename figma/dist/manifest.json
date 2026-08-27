@@ -1,0 +1,13 @@
+{
+  "name": "Harbor Agents",
+  "id": "harbor-agents-figma",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma", "figjam", "dev"],
+  "capabilities": ["inspect"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "OpenAI-compatible provider base URLs configured by the user in Harbor Settings."
+  }
+}
