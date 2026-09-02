@@ -78,6 +78,27 @@ Figma Desktop → **Plugins → Development → Import plugin from manifest…**
 
 After UI changes under `media/src/panel-figma/` or `figma/ui.*`, re-run `build:figma` and **Plugins → Development → Reload**.
 
+## Quick dev cycle
+
+```bash
+npm run figma:dev    # build:figma + figma:host:ensure in one command
+```
+
+## Packaging for distribution
+
+```bash
+npm run figma:package              # reads version from figma/manifest.json
+npm run figma:package -- 3.0.0     # explicit version
+```
+
+Output: `figma/share/harbor-agents-figma-<version>.zip`
+
+Recipient workflow:
+1. Unzip
+2. `./install-host.sh` (macOS LaunchAgent — host auto-starts at login)
+3. Figma Desktop → Plugins → Development → Import from manifest → `figma/manifest.json`
+4. Settings → add provider / API key
+
 ## Features
 
 - Ask / Plan / Agent chat with **marked** markdown (same `media/marked.js` as VS Code webview; no IDE file links / plan cards)

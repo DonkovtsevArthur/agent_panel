@@ -57,6 +57,15 @@ Harbor Ask/Plan → Cline `plan`. Editor выключен; `run_commands` ост
 
 При смене логики плагина сразу учитывать оба клиента (shared `media/` / `packages/`, зеркала в `src/` и `jetbrains/`). См. `.cursor/rules/vscode-webstorm-parity.mdc`.
 
+## Figma-плагин — изолированная зона
+
+Когда задача касается **Figma-плагина** (`figma/`, `media/src/panel-figma/`, `src/figma*.ts`, `scripts/*figma*`, `.harbor/skills/figma-*`):
+
+- **Не трогать** файлы VS Code (`src/agentPanelProvider.ts`, `src/extension.ts`, `media/src/panel/*`) и WebStorm (`jetbrains/`), если правка не затрагивает shared-слой (`packages/`, `media/marked.js`, протокол).
+- **Не менять** `package.json` version / `jetbrains/build.gradle.kts` version ради Figma-сборки — у Figma своя версия.
+- **Не запускать** `npm run compile` / `npx vsce package` / `npm run build:sidecar` — для Figma нужен только `npm run build:figma`.
+- Shared-изменения (`packages/harbor-host-protocol/`, `packages/harbor-core/`) допустимы, но требуют проверки VS Code regression gate (см. `docs/jetbrains-port.md`).
+
 ## Рефакторинг и правки кода — не выкидывать лишнее
 
 - Менять **только** то, что нужно для задачи. Не удалять и не «зачищать» соседний код, комментарии, ветки, флаги, dead-looking helpers, тесты, docs, nls-ключи — если это не запрошено явно.

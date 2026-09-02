@@ -194,7 +194,7 @@
       hostOnline: "Cline host online",
       hostOffline: "Cline host offline",
       hostOfflineHint:
-        "Run once: npm run figma:host:install (macOS) or npm run figma:host:ensure",
+        "Open Harbor Agents in VS Code (auto-starts host) or run: npm run figma:host:install",
       emptyTurnError:
         "Empty response from the model (no text, no tools). Try again or switch model in Settings.",
       providerParamError:
@@ -267,7 +267,7 @@
       hostOnline: "Cline host online",
       hostOffline: "Cline host offline",
       hostOfflineHint:
-        "Один раз: npm run figma:host:install (macOS) или npm run figma:host:ensure",
+        "Откройте Harbor Agents в VS Code (хост запустится автоматически) или: npm run figma:host:install",
       emptyTurnError:
         "Пустой ответ модели (нет текста и tools). Повторите или смените модель в Настройках.",
       providerParamError:
@@ -1654,7 +1654,12 @@
       return;
     }
 
-    const hostOk = await refreshSidecarHealth();
+    var hostOk = await refreshSidecarHealth();
+    if (!hostOk) {
+      setStatus(t("hostOffline") + " — retrying in 3s…");
+      await new Promise(function (r) { setTimeout(r, 3000); });
+      hostOk = await refreshSidecarHealth();
+    }
     if (!hostOk) {
       setStatus(t("hostOffline"));
       return;

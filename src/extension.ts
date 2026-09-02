@@ -8,10 +8,12 @@ import { initMcpManager } from "./mcpBundle";
 import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
+import { ensureFigmaHostInBackground } from "./figmaHostEnsure";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
   applyHarborTlsPolicy();
+  ensureFigmaHostInBackground(context.extensionPath);
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);
   startEditorContextTracking(context.subscriptions);

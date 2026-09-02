@@ -108,21 +108,53 @@ function bootstrap() {
   });
 }
 
-function main() {
-  if (process.platform !== "darwin") {
-    console.error(
-      "figma:host:install currently supports macOS LaunchAgent only.\n" +
-        "On other OS run: npm run figma:host (or leave a process manager running)."
-    );
+function installWindowsStartup() {
+  const { execSync } = require("child_process");
+  const node = nodePath().replace(/\\/g, "\\\\");
+  const script = sidecarPath().replace(/\\/g, "\\\\");
+  const regKey = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+  const regName = "HarborFigmaHost";
+  const cmd = `reg add "${regKey}" /v "${regName}" /t REG_SZ /d "\\"${node}\\" \\"${script}\\"" /f`;
+  try {
+    execSync(cmd, { stdio: "ignore" });
+  } catch (e) {
+    console.error("Failed to set Windows startup registry:", e.message);
     process.exit(1);
   }
-  ensureBundled();
-  writePlist();
-  bootout();
-  bootstrap();
-  console.log(`Harbor Figma Cline host installed (${LABEL}).`);
-  console.log(`Listening on http://127.0.0.1:${PORT} — KeepAlive, starts at login.`);
-  console.log("Uninstall: npm run figma:host:uninstall");
+}
+
+function startHostNow() {
+  const child = spawn(nodePath(), [sidecarPath()], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, HARBOR_FIGMA_PORT: String(PORT) },
+  });
+  child.unref();
+}
+
+function main() {
+  if (process.platform === "darwin") {
+    ensureBundled();
+    writePlist();
+    bootout();
+    bootstrap();
+    console.log(`Harbor Figma Cline host installed (${LABEL}).`);
+    console.log(`Listening on http://127.0.0.1:${PORT} — KeepAlive, starts at login.`);
+    console.log("Uninstall: npm run figma:host:uninstall");
+  } else if (process.platform === "win32") {
+    ensureBundled();
+    installWindowsStartup();
+    startHostNow();
+    console.log("Harbor Figma Cline host installed (Windows startup registry).");
+    console.log(`Listening on http://127.0.0.1:${PORT} — starts at login.`);
+    console.log("Uninstall: npm run figma:host:uninstall");
+  } else {
+    ensureBundled();
+    startHostNow();
+    console.log("Harbor Figma Cline host started.");
+    console.log(`Listening on http://127.0.0.1:${PORT}`);
+    console.log("Auto-start not supported on this OS — run `npm run figma:host:ensure` after reboot.");
+  }
 }
 
 main();

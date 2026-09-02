@@ -11,32 +11,26 @@
 ## Установка (один раз)
 
 1. Распакуйте этот архив куда удобно (путь лучше без кириллицы/пробелов).
-2. Установите host:
-   ```bash
-   cd harbor-agents-figma-2.7.87
-   ./install-host.sh
-   ```
+2. Запустите установщик:
+   - **macOS**: двойной клик по **install-host.command**
+   - **Windows**: двойной клик по **install-host.bat**
+   Откроется терминал, host установится автоматически.
    Проверка: в браузере открыть http://127.0.0.1:17891/v1/health — должно быть `{"ok":true,…}`.
 3. В Figma Desktop:
    - **Plugins → Development → Import plugin from manifest…**
    - выберите файл: `harbor-agents-figma-2.7.87/figma/manifest.json`
 4. Запуск: **Plugins → Development → Harbor Agents**
-5. В Settings плагина добавьте своих провайдеров / API-ключи (чужие настройки не переносятся).
+5. В Settings плагина добавьте провайдеров / API-ключи.
 
 ## Обновление
 
-Замените папку новой версией архива, снова `./install-host.sh` (перепишет LaunchAgent), в Figma: Remove старый Development-плагин → Import заново (или Reload).
+Замените папку новой версией архива, снова запустите install-host (перепишет автозапуск), в Figma: Remove старый Development-плагин → Import заново (или Reload).
 
 ## Удаление host
 
-```bash
-./uninstall-host.sh
-```
+- **macOS**: двойной клик по **uninstall-host.command**
+- **Windows**: двойной клик по **uninstall-host.bat**
 
-## Без LaunchAgent
+## Без автозапуска
 
-```bash
-./start-host.sh
-```
-
-Затем откройте плагин в Figma.
+Запустите **start-host** (.command на macOS / .bat на Windows) — host будет работать пока открыт терминал.

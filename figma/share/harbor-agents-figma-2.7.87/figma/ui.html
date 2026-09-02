@@ -4605,16 +4605,6 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
           <div class="chat-top-text">
             <div id="chatAgentName" class="chat-agent-name">Chat</div>
           </div>
-          <button
-            type="button"
-            class="icon-btn"
-            id="copyBriefBtn"
-            title="Copy brief"
-            aria-label="Copy brief"
-            hidden
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
-          </button>
           <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
             <span class="material-symbols-outlined" aria-hidden="true">settings</span>
           </button>
@@ -8974,7 +8964,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
     selectionPreview: document.getElementById("selectionPreview"),
     selectionThumb: document.getElementById("selectionThumb"),
     selectionMeta: document.getElementById("selectionMeta"),
-    copyBriefBtn: document.getElementById("copyBriefBtn"),
     openSettingsBtn: document.getElementById("openSettingsBtn"),
     closeSettingsBtn: document.getElementById("closeSettingsBtn"),
     toggleAgentsRailBtn: document.getElementById("toggleAgentsRailBtn"),
@@ -9075,7 +9064,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       plan: "Plan",
       send: "Send",
       stop: "Stop",
-      copyBrief: "Copy brief",
       focusSelection: "Focus on canvas",
       toolRunning: "Running…",
       runWorking: "Running",
@@ -9117,7 +9105,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       placeholderAsk: "Ask about the selection…",
       emptyChat: "Select a frame, then ask a design question.",
       saved: "Saved",
-      briefCopied: "Brief copied",
       needSettings: "Add a provider and model in Settings.",
       openSettingsCta: "Open Settings",
       setupHint: "Add an OpenAI-compatible provider and a model to start.",
@@ -9133,7 +9120,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       hostOnline: "Cline host online",
       hostOffline: "Cline host offline",
       hostOfflineHint:
-        "Run once: npm run figma:host:install (macOS) or npm run figma:host:ensure",
+        "Open Harbor Agents in VS Code (auto-starts host) or run: npm run figma:host:install",
       emptyTurnError:
         "Empty response from the model (no text, no tools). Try again or switch model in Settings.",
       providerParamError:
@@ -9150,7 +9137,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       plan: "План",
       send: "Отправить",
       stop: "Стоп",
-      copyBrief: "Копировать бриф",
       focusSelection: "Показать на макете",
       toolRunning: "Выполняется…",
       runWorking: "выполняю",
@@ -9192,7 +9178,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       placeholderAsk: "Вопрос по выделению…",
       emptyChat: "Выберите фрейм и задайте вопрос по дизайну.",
       saved: "Сохранено",
-      briefCopied: "Бриф скопирован",
       needSettings: "Добавьте провайдера и модель в Настройках.",
       openSettingsCta: "Открыть настройки",
       setupHint: "Добавьте OpenAI-compatible провайдера и модель, чтобы начать.",
@@ -9208,7 +9193,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       hostOnline: "Cline host online",
       hostOffline: "Cline host offline",
       hostOfflineHint:
-        "Один раз: npm run figma:host:install (macOS) или npm run figma:host:ensure",
+        "Откройте Harbor Agents в VS Code (хост запустится автоматически) или: npm run figma:host:install",
       emptyTurnError:
         "Пустой ответ модели (нет текста и tools). Повторите или смените модель в Настройках.",
       providerParamError:
@@ -9365,10 +9350,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
     }
     if (els.fontPreview) {
       els.fontPreview.style.fontSize = (settings.fontSize || 13) + "px";
-    }
-    if (els.copyBriefBtn) {
-      els.copyBriefBtn.title = t("copyBrief");
-      els.copyBriefBtn.setAttribute("aria-label", t("copyBrief"));
     }
     syncAgentsRailChrome();
     updateSendButton();
@@ -10204,9 +10185,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       }
     }
     els.messages.scrollTop = els.messages.scrollHeight;
-    if (els.copyBriefBtn) {
-      els.copyBriefBtn.hidden = mode !== "plan" || !lastAssistantText;
-    }
   }
 
   function renderSelection() {
@@ -10602,7 +10580,12 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       return;
     }
 
-    const hostOk = await refreshSidecarHealth();
+    var hostOk = await refreshSidecarHealth();
+    if (!hostOk) {
+      setStatus(t("hostOffline") + " — retrying in 3s…");
+      await new Promise(function (r) { setTimeout(r, 3000); });
+      hostOk = await refreshSidecarHealth();
+    }
     if (!hostOk) {
       setStatus(t("hostOffline"));
       return;
@@ -10873,9 +10856,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       }
       return;
     }
-    if (msg.type === "copied") {
-      setStatus(t("briefCopied"));
-    }
   }
 
   window.onmessage = function (event) {
@@ -11134,21 +11114,6 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       });
     }
   }
-  if (els.copyBriefBtn) {
-    els.copyBriefBtn.addEventListener("click", function () {
-      const brief = Turn.buildHandoffBrief(lastAssistantText, selection);
-      void navigator.clipboard.writeText(brief).then(
-        function () {
-          host.postMessage({ type: "copyBrief", text: brief });
-          setStatus(t("briefCopied"));
-        },
-        function () {
-          host.postMessage({ type: "copyBrief", text: brief });
-        }
-      );
-    });
-  }
-
   async function boot() {
     const storedSettings = await F.storageGet(F.STORAGE_SETTINGS);
     if (storedSettings && typeof storedSettings === "object") {

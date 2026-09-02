@@ -759,6 +759,8 @@
 		"figma:host:install": "node scripts/figma-host-install.js",
 		"figma:host:uninstall": "node scripts/figma-host-uninstall.js",
 		"figma:host:ensure": "node scripts/figma-host-ensure.js",
+		"figma:dev": "npm run build:figma && npm run figma:host:ensure",
+		"figma:package": "node scripts/package-figma.js",
 		"watch": "tsc -watch -p ./",
 		"lint": "tsc --noEmit",
 		"package": "vsce package",
