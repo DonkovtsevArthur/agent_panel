@@ -17,9 +17,44 @@ import {
   formatEnclosingSymbolMessage,
 } from "./editorSymbols";
 import { loadWorkspaceRules } from "./workspaceRules";
+import { buildLearnedErrorsMessage } from "./learnedErrors";
 
 const DIAGNOSTIC_MAX_ITEMS = 20;
 const DIAGNOSTIC_MESSAGE_CHARS = 180;
+
+/**
+ * Token budget for the [Harbor turn context] block injected into every user
+ * turn. Without a cap, IDE state (diagnostics + git + rules + prefetch +
+ * terminal) can silently eat 10-15k tokens — half of a 32k model's window.
+ *
+ * Priority order (highest = always kept):
+ *   1. editor state        — tiny, always relevant
+ *   2. diagnostics         — errors the model must fix
+ *   3. git snapshot         — branch/HEAD context
+ *   4. enclosing symbol     — where in code
+ *   5. recently edited      — what the agent touched
+ *   6. active file prefetch — saves one read_file round-trip
+ *   7. workspace rules      — glob-matched rules
+ *   8. terminal snapshot    — last command output
+ *   9. recently viewed      — least important
+ *
+ * When the total exceeds the budget, lowest-priority blocks are dropped
+ * until it fits. The header "[Harbor turn context]" is always kept.
+ */
+const TURN_CONTEXT_TOKEN_BUDGET = 4_000;
+/** Approximate chars per token (conservative for mixed ru/en/code). */
+const CHARS_PER_TOKEN = 4;
+const TURN_CONTEXT_CHAR_BUDGET = TURN_CONTEXT_TOKEN_BUDGET * CHARS_PER_TOKEN;
+
+interface PrioritizedBlock {
+  text: string;
+  /** Lower number = higher priority (kept first). */
+  priority: number;
+}
+
+function estimateTokens(text: string): number {
+  return Math.ceil(String(text || "").length / CHARS_PER_TOKEN);
+}
 
 function diagnosticSeverityLabel(severity: number): string {
   if (severity === 0) {
@@ -265,6 +300,8 @@ function openFileTargetPaths(): string[] {
 export async function buildTurnContextBlock(options: {
   skipActiveFilePrefetch?: boolean;
   lastAgentEditedPaths?: string[];
+  /** Chat id for learned-errors context (recent tool failures). */
+  chatId?: string;
   /**
    * Follow-up turn of a live session: keep the cheap live-state parts
    * (editor state, git, diagnostics, enclosing symbol, agent-edited paths)
@@ -274,21 +311,24 @@ export async function buildTurnContextBlock(options: {
    */
   slim?: boolean;
 }): Promise<string> {
-  const parts: string[] = [];
+  const blocks: PrioritizedBlock[] = [];
+
+  // --- Priority 1: editor state (tiny, always relevant) ---
   try {
     const editor = buildEditorContextMessage();
     if (editor.trim()) {
-      parts.push(editor.trim());
+      blocks.push({ text: editor.trim(), priority: 1 });
     }
   } catch {
     /* headless / stub */
   }
 
+  // --- Priority 6: active file prefetch (saves one read_file) ---
   if (!options.slim && !options.skipActiveFilePrefetch) {
     try {
       const prefetch = buildActiveFilePrefetchMessage();
       if (prefetch.trim()) {
-        parts.push(prefetch.trim());
+        blocks.push({ text: prefetch.trim(), priority: 6 });
       }
     } catch {
       /* headless / stub */
@@ -316,18 +356,29 @@ export async function buildTurnContextBlock(options: {
     }
   }
 
+  // --- Priority 3: git snapshot ---
   const git = await gitPromise;
   if (git.trim()) {
-    parts.push(git.trim());
+    blocks.push({ text: git.trim(), priority: 3 });
   }
 
+  // --- Priority 2: diagnostics (errors the model must fix) ---
   const diagnostics = buildDiagnosticsMessage(options.lastAgentEditedPaths);
   if (diagnostics.trim()) {
-    parts.push(diagnostics.trim());
+    blocks.push({ text: diagnostics.trim(), priority: 2 });
+  }
+
+  // --- Priority 2: learned errors (recent tool failures to avoid) ---
+  if (options.chatId) {
+    const learnedErrors = buildLearnedErrorsMessage(options.chatId);
+    if (learnedErrors.trim()) {
+      blocks.push({ text: learnedErrors.trim(), priority: 2 });
+    }
   }
 
   const extras = harborIdeExtras();
 
+  // --- Priority 4: enclosing symbol ---
   try {
     const symbol =
       (await symbolPromise) ||
@@ -342,12 +393,13 @@ export async function buildTurnContextBlock(options: {
           : undefined
       );
     if (symbol.trim()) {
-      parts.push(symbol.trim());
+      blocks.push({ text: symbol.trim(), priority: 4 });
     }
   } catch {
     /* headless / no LSP */
   }
 
+  // --- Priority 8: terminal snapshot ---
   if (!options.slim) {
     try {
       const terminal = buildTerminalSnapshotMessage(
@@ -362,39 +414,65 @@ export async function buildTurnContextBlock(options: {
           : undefined
       );
       if (terminal.trim()) {
-        parts.push(terminal.trim());
+        blocks.push({ text: terminal.trim(), priority: 8 });
       }
     } catch {
       /* no terminal API */
     }
   }
 
+  // --- Priority 9: recently viewed (lowest) ---
   const recentViewed = options.slim
     ? ""
     : buildRecentlyViewedMessage(extras.recentFiles || []);
   if (recentViewed) {
-    parts.push(recentViewed);
+    blocks.push({ text: recentViewed, priority: 9 });
   }
 
+  // --- Priority 5: recently edited ---
   const recent = buildRecentlyEditedMessage(options.lastAgentEditedPaths);
   if (recent) {
-    parts.push(recent);
+    blocks.push({ text: recent, priority: 5 });
   }
 
+  // --- Priority 7: workspace rules ---
   const rules = await rulesPromise;
   if (rules?.trim()) {
-    parts.push(
-      [
+    blocks.push({
+      text: [
         "Matching workspace rules for the current file(s) (glob / alwaysApply; AGENTS.md is already in session rules):",
         rules.trim(),
-      ].join("\n")
-    );
+      ].join("\n"),
+      priority: 7,
+    });
   }
 
-  if (!parts.length) {
+  if (!blocks.length) {
     return "";
   }
-  return ["[Harbor turn context]", ...parts].join("\n\n");
+
+  // --- Enforce token budget: drop lowest-priority blocks first ---
+  const sorted = blocks.sort((a, b) => a.priority - b.priority);
+  const kept: string[] = [];
+  let totalChars = 0;
+  const header = "[Harbor turn context]";
+  const separatorLen = 2; // "\n\n"
+
+  for (const block of sorted) {
+    const blockChars = block.text.length;
+    const addedChars =
+      kept.length === 0
+        ? header.length + separatorLen + blockChars
+        : separatorLen + blockChars;
+    if (totalChars + addedChars > TURN_CONTEXT_CHAR_BUDGET && kept.length > 0) {
+      // Over budget — skip this and all remaining lower-priority blocks.
+      break;
+    }
+    kept.push(block.text);
+    totalChars += addedChars;
+  }
+
+  return [header, ...kept].join("\n\n");
 }
 
 export function activeFileAlreadyInlined(inlinedPaths: string[]): boolean {

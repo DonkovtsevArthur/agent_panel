@@ -29,6 +29,9 @@ export type FigmaSelectionNode = {
   counterAxisAlignItems?: string;
   componentId?: string;
   mainComponentName?: string;
+  visible?: boolean;
+  locked?: boolean;
+  hiddenChildCount?: number;
   children?: FigmaSelectionNode[];
 };
 
@@ -36,15 +39,23 @@ export type FigmaSelectionPayload = {
   fileKey?: string;
   fileName?: string;
   pageName?: string;
+  selectedCount?: number;
   nodes: FigmaSelectionNode[];
   previewPngDataUrl?: string;
+  /** Primary node id — UI can request preview lazily via figmaGetPreview. */
+  primaryNodeId?: string;
   nodeUrl?: string;
   canWrite?: boolean;
 };
 
-const MAX_DEPTH = 4;
-const MAX_CHILDREN = 24;
+const MAX_DEPTH = 3;
+const MAX_CHILDREN = 16;
 const TEXT_CHARS_MAX = 500;
+/** Light id/name list — keep high so multi-select reaches the model. */
+const MAX_SELECTION_ROOTS_LIGHT = 100;
+const MAX_SELECTION_ROOTS_TREE = 4;
+const PREVIEW_WIDTH = 360;
+const PREVIEW_MAX_CHARS = 350000;
 
 function paintToSimple(paint: {
   type: string;
@@ -163,6 +174,34 @@ function enrichNodeDetails(
   }
 }
 
+function isHiddenLayer(node: FigmaSceneNode): boolean {
+  try {
+    return (node as FigmaSceneNode & { visible?: boolean }).visible === false;
+  } catch {
+    return false;
+  }
+}
+
+function attachVisibilityFlags(
+  node: FigmaSceneNode,
+  out: FigmaSelectionNode
+): void {
+  try {
+    if ((node as FigmaSceneNode & { visible?: boolean }).visible === false) {
+      out.visible = false;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if ((node as FigmaSceneNode & { locked?: boolean }).locked === true) {
+      out.locked = true;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function serializeNode(
   node: FigmaSceneNode,
   depth: number
@@ -177,18 +216,33 @@ function serializeNode(
     out.width = Math.round(box.width);
     out.height = Math.round(box.height);
   }
+  attachVisibilityFlags(node, out);
   enrichNodeDetails(node as FigmaSceneNode & Record<string, unknown>, out, depth);
   if (depth < MAX_DEPTH && "children" in node) {
     const kids = (node as FigmaSceneNode & { children?: ReadonlyArray<FigmaSceneNode> })
       .children;
     if (kids && kids.length > 0) {
-      out.children = kids
-        .slice(0, MAX_CHILDREN)
-        .map((c) => serializeNode(c, depth + 1));
-      if (kids.length > MAX_CHILDREN) {
+      out.children = [];
+      let hiddenSkipped = 0;
+      let truncatedMore = 0;
+      for (let i = 0; i < kids.length; i++) {
+        if (isHiddenLayer(kids[i])) {
+          hiddenSkipped++;
+          continue;
+        }
+        if (out.children.length < MAX_CHILDREN) {
+          out.children.push(serializeNode(kids[i], depth + 1));
+        } else {
+          truncatedMore++;
+        }
+      }
+      if (hiddenSkipped > 0) {
+        out.hiddenChildCount = hiddenSkipped;
+      }
+      if (truncatedMore > 0) {
         out.children.push({
           id: `${node.id}__more`,
-          name: `… +${kids.length - MAX_CHILDREN} more`,
+          name: `… +${truncatedMore} more`,
           type: "TRUNCATED",
         });
       }
@@ -223,26 +277,64 @@ function nodeDeepLink(fileKey: string | null, nodeId: string): string | undefine
 export async function captureSelection(): Promise<FigmaSelectionPayload> {
   const selection = figma.currentPage.selection as ReadonlyArray<FigmaSceneNode>;
   const fileKey = figma.fileKey;
-  const nodes = selection.map((n) => serializeNode(n, 0));
-  const primary = selection[0];
-  let previewPngDataUrl: string | undefined;
-  if (primary) {
-    try {
-      const bytes = await primary.exportAsync({
-        format: "PNG",
-        constraint: { type: "SCALE", value: 1 },
+  const nodes: FigmaSelectionNode[] = [];
+  const rootLimit = Math.min(selection.length, MAX_SELECTION_ROOTS_LIGHT);
+  for (let i = 0; i < rootLimit; i++) {
+    if (i < MAX_SELECTION_ROOTS_TREE) {
+      nodes.push(serializeNode(selection[i], 0));
+    } else {
+      const box = selection[i].absoluteBoundingBox;
+      nodes.push({
+        id: selection[i].id,
+        name: selection[i].name,
+        type: selection[i].type,
+        ...(box
+          ? {
+              width: Math.round(box.width),
+              height: Math.round(box.height),
+            }
+          : {}),
       });
-      previewPngDataUrl = `data:image/png;base64,${bytesToBase64(bytes)}`;
-    } catch {
-      previewPngDataUrl = undefined;
     }
   }
+  if (selection.length > MAX_SELECTION_ROOTS_LIGHT) {
+    nodes.push({
+      id: "__more_roots",
+      name: `… +${selection.length - MAX_SELECTION_ROOTS_LIGHT} more selected`,
+      type: "TRUNCATED",
+    });
+  }
+  const primary = selection[0];
   return {
     fileKey: fileKey || undefined,
     fileName: figma.root.name,
     pageName: figma.currentPage.name,
+    selectedCount: selection.length,
     nodes,
-    previewPngDataUrl,
+    primaryNodeId: primary?.id,
     nodeUrl: primary ? nodeDeepLink(fileKey, primary.id) : undefined,
   };
+}
+
+/** Generate preview PNG on demand (called by UI before sending a message). */
+export async function capturePreviewForNode(
+  nodeId: string
+): Promise<string | undefined> {
+  try {
+    const node = await figma.getNodeByIdAsync(nodeId);
+    if (!node) return undefined;
+    const sceneNode = node as FigmaSceneNode;
+    if (!("exportAsync" in sceneNode)) return undefined;
+    const bytes = await sceneNode.exportAsync({
+      format: "PNG",
+      constraint: { type: "WIDTH", value: PREVIEW_WIDTH },
+    });
+    if (bytes && bytes.length <= 280000) {
+      const url = `data:image/png;base64,${bytesToBase64(bytes)}`;
+      if (url.length <= PREVIEW_MAX_CHARS) return url;
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined;
 }

@@ -94,26 +94,63 @@
         name: name,
         args: args || {},
       });
+      var timeoutMs =
+        name === "figma_set_prototype_flow" ||
+        name === "figma_apply_edits" ||
+        name === "figma_batch_tools" ||
+        name === "figma_apply_recipe"
+          ? 120000
+          : 60000;
       setTimeout(function () {
         if (pendingTools.has(requestId)) {
           pendingTools.delete(requestId);
           reject(new Error("Tool timed out: " + name));
         }
-      }, 30000);
+      }, timeoutMs);
     });
   }
 
-  function refreshSelection() {
+  function refreshSelection(forTurn, withPreview) {
     return new Promise(function (resolve) {
       const requestId = "sel" + ++selReq;
       pendingSelection.set(requestId, resolve);
       host.postMessage({
         type: "figmaGetSelection",
         requestId: requestId,
+        forTurn: forTurn === true,
+        options: forTurn
+          ? { withPreview: withPreview === true }
+          : undefined,
       });
       setTimeout(function () {
         if (pendingSelection.has(requestId)) {
           pendingSelection.delete(requestId);
+          resolve(null);
+        }
+      }, forTurn ? 8000 : 5000);
+    });
+  }
+
+  function refreshSelectionForTurn(withPreview) {
+    return refreshSelection(true, withPreview);
+  }
+
+  /** Request preview PNG for a specific node (lazy, on demand). */
+  var pendingPreview = new Map();
+  var previewReq = 0;
+  function requestPreview(nodeId) {
+    return new Promise(function (resolve) {
+      if (!nodeId) { resolve(null); return; }
+      var requestId = "pv" + ++previewReq;
+      pendingPreview.set(requestId, resolve);
+      host.postMessage({
+        type: "figmaGetPreview",
+        nodeId: nodeId,
+        requestId: requestId,
+      });
+      setTimeout(function () {
+        if (pendingPreview.has(requestId)) {
+          pendingPreview.delete(requestId);
           resolve(null);
         }
       }, 5000);
@@ -137,6 +174,12 @@
     pendingSelection: pendingSelection,
     invokeTool: invokeTool,
     refreshSelection: refreshSelection,
+    refreshSelectionForTurn: refreshSelectionForTurn,
+    requestPreview: requestPreview,
+    pendingPreview: pendingPreview,
     focusNode: focusNode,
+    resizePanel: function (width, height) {
+      host.postMessage({ type: "resize", width: width, height: height });
+    },
   };
 })();

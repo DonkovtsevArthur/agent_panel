@@ -38,7 +38,6 @@
     selectionPreview: document.getElementById("selectionPreview"),
     selectionThumb: document.getElementById("selectionThumb"),
     selectionMeta: document.getElementById("selectionMeta"),
-    copyBriefBtn: document.getElementById("copyBriefBtn"),
     openSettingsBtn: document.getElementById("openSettingsBtn"),
     closeSettingsBtn: document.getElementById("closeSettingsBtn"),
     toggleAgentsRailBtn: document.getElementById("toggleAgentsRailBtn"),
@@ -54,12 +53,19 @@
     fontSizeRange: document.getElementById("fontSizeRange"),
     fontSizeValue: document.getElementById("fontSizeValue"),
     fontPreview: document.getElementById("fontPreview"),
+    settingsRejectUnauthorized: document.getElementById(
+      "settingsRejectUnauthorized"
+    ),
     statusLine: document.getElementById("statusLine"),
+    hostStatusRow: document.getElementById("hostStatusRow"),
+    hostStatusDot: document.getElementById("hostStatusDot"),
+    hostStatusLabel: document.getElementById("hostStatusLabel"),
     providerEditModal: document.getElementById("providerEditModal"),
     providerEditTitle: document.getElementById("providerEditTitle"),
     providerEditName: document.getElementById("providerEditName"),
     providerEditBaseUrl: document.getElementById("providerEditBaseUrl"),
     providerEditApiKey: document.getElementById("providerEditApiKey"),
+    providerEditPromptCache: document.getElementById("providerEditPromptCache"),
     providerEditCloseBtn: document.getElementById("providerEditCloseBtn"),
     providerEditCancelBtn: document.getElementById("providerEditCancelBtn"),
     providerEditDoneBtn: document.getElementById("providerEditDoneBtn"),
@@ -72,14 +78,28 @@
     modelEditCloseBtn: document.getElementById("modelEditCloseBtn"),
     modelEditCancelBtn: document.getElementById("modelEditCancelBtn"),
     modelEditDoneBtn: document.getElementById("modelEditDoneBtn"),
+    panelResizeHandle: document.getElementById("panelResizeHandle"),
   };
 
-  /** @type {{ providers: any[], models: any[], language: string, fontSize: number }} */
+  const PANEL_MIN_W = 320;
+  const PANEL_MIN_H = 400;
+  const PANEL_MAX_W = 1200;
+  const PANEL_MAX_H = 1000;
+  const PANEL_DEFAULT_W = 520;
+  const PANEL_DEFAULT_H = 820;
+
+  /** @type {{ width: number, height: number }} */
+  let panelSize = { width: PANEL_DEFAULT_W, height: PANEL_DEFAULT_H };
+  /** @type {{ x: number, y: number, width: number, height: number } | null} */
+  let panelResizeDrag = null;
+
+  /** @type {{ providers: any[], models: any[], language: string, fontSize: number, rejectUnauthorized: boolean }} */
   let settings = {
     providers: [],
     models: [],
     language: "en",
     fontSize: 13,
+    rejectUnauthorized: true,
   };
 
   /** @type {{ agents: any[], activeAgentId: string|null }} */
@@ -89,19 +109,24 @@
   let selection = null;
   let mode = "agent";
   let selectedModelId = "";
-  let busy = false;
-  /** Agent id currently running a turn (cube on agents list). */
-  let busyAgentId = null;
-  /** @type {AbortController|null} */
-  let abortCtrl = null;
+  /** agentId → AbortController for in-flight turns (chats run independently). */
+  const runningByAgentId = new Map();
   let lastAssistantText = "";
   /** @type {number|null} */
   let providerEditIndex = null;
   /** @type {number|null} */
   let modelEditIndex = null;
   let saveStatusTimer = 0;
+  /** Cache preview PNG by primaryNodeId to avoid re-generation. */
+  const previewCache = new Map();
   let agentsRailOpen = false;
   let currentScreen = "chat";
+  /**
+   * Pending canvas selection — captured while the active chat is running.
+   * Applied to the chat when the run finishes, so the user's latest click
+   * is not lost but also does not interrupt the running turn.
+   */
+  let pendingCanvasSelection = null;
 
   const i18n = {
     en: {
@@ -113,10 +138,19 @@
       plan: "Plan",
       send: "Send",
       stop: "Stop",
-      copyBrief: "Copy brief",
       focusSelection: "Focus on canvas",
       toolRunning: "Running…",
       runWorking: "Running",
+      runDone: "Done",
+      toolStepsCount: "{n} steps",
+      runTiming: "{ttft} → {total}",
+      promptCache: "Prompt cache (LiteLLM / OpenRouter / Claude)",
+      promptCacheHint:
+        "Speeds up follow-ups. Leave off for strict OpenAI (api.openai.com).",
+      advanced: "Advanced",
+      validateTls: "Validate TLS certificate",
+      validateTlsHint:
+        "Turn off for corporate LiteLLM / proxy gateways with a self-signed MITM certificate.",
       toolOk: "Done",
       toolError: "Failed",
       canvasReadOnly: "Dev Mode — canvas writes unavailable",
@@ -127,7 +161,8 @@
         "Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.",
       language: "Language",
       appearance: "Appearance",
-      appearanceNote: "Chat text and composer size in the panel.",
+      appearanceNote:
+        "Chat text and composer size. Drag the grip in the bottom-right corner to resize the plugin window.",
       pluginUiLanguage: "Plugin UI language",
       fontSize: "Font size",
       fontSizeHint: "Applies to messages and the input field.",
@@ -137,13 +172,13 @@
       addProvider: "+ Provider",
       addModel: "+ Model",
       noSelection: "Select a frame or node",
+      selectionCount: "{n} selected",
       placeholder: "Task for the design agent…",
       placeholderAgent: "Task for the design agent…",
       placeholderPlan: "Describe the task — draft a plan without canvas edits…",
       placeholderAsk: "Ask about the selection…",
       emptyChat: "Select a frame, then ask a design question.",
       saved: "Saved",
-      briefCopied: "Brief copied",
       needSettings: "Add a provider and model in Settings.",
       openSettingsCta: "Open Settings",
       setupHint: "Add an OpenAI-compatible provider and a model to start.",
@@ -156,6 +191,16 @@
       delete: "Delete",
       noAgentsYet: "No chats yet.",
       supportsVision: "Supports images (vision)",
+      hostOnline: "Cline host online",
+      hostOffline: "Cline host offline",
+      hostOfflineHint:
+        "Run once: npm run figma:host:install (macOS) or npm run figma:host:ensure",
+      emptyTurnError:
+        "Empty response from the model (no text, no tools). Try again or switch model in Settings.",
+      providerParamError:
+        "Provider error «Param Incorrect» — usually wrong model id or base URL for MiMo/Xiaomi. " +
+        "In Settings check that model slug matches the provider docs (e.g. mimo-v2.5-pro on the token-plan URL). " +
+        "Follow-up turns now restart without tool history; retry the message.",
     },
     ru: {
       agents: "Агенты",
@@ -166,10 +211,19 @@
       plan: "План",
       send: "Отправить",
       stop: "Стоп",
-      copyBrief: "Копировать бриф",
       focusSelection: "Показать на макете",
       toolRunning: "Выполняется…",
       runWorking: "выполняю",
+      runDone: "выполнено",
+      toolStepsCount: "{n} шагов",
+      runTiming: "{ttft} → {total}",
+      promptCache: "Prompt cache (LiteLLM / OpenRouter / Claude)",
+      promptCacheHint:
+        "Ускоряет follow-up. Выключите для чистого OpenAI (api.openai.com).",
+      advanced: "Дополнительно",
+      validateTls: "Проверять TLS-сертификат",
+      validateTlsHint:
+        "Выключите для корпоративного LiteLLM / прокси с self-signed MITM-сертификатом.",
       toolOk: "Готово",
       toolError: "Ошибка",
       canvasReadOnly: "Dev Mode — правки canvas недоступны",
@@ -180,7 +234,8 @@
         "Base URL и API-ключ для каждого OpenAI-compatible API. Модели сгруппированы под провайдером.",
       language: "Язык",
       appearance: "Оформление",
-      appearanceNote: "Размер текста чата и поля ввода в панели.",
+      appearanceNote:
+        "Размер текста чата и поля ввода. Потяните за угол внизу справа, чтобы изменить размер окна плагина.",
       pluginUiLanguage: "Язык интерфейса плагина",
       fontSize: "Размер шрифта",
       fontSizeHint: "Действует на сообщения и поле ввода.",
@@ -190,13 +245,13 @@
       addProvider: "+ Провайдер",
       addModel: "+ Модель",
       noSelection: "Выберите фрейм или ноду",
+      selectionCount: "Выделено: {n}",
       placeholder: "Задача для дизайн-агента…",
       placeholderAgent: "Задача для дизайн-агента…",
       placeholderPlan: "Опишите задачу — составим план без правок canvas…",
       placeholderAsk: "Вопрос по выделению…",
       emptyChat: "Выберите фрейм и задайте вопрос по дизайну.",
       saved: "Сохранено",
-      briefCopied: "Бриф скопирован",
       needSettings: "Добавьте провайдера и модель в Настройках.",
       openSettingsCta: "Открыть настройки",
       setupHint: "Добавьте OpenAI-compatible провайдера и модель, чтобы начать.",
@@ -209,8 +264,68 @@
       delete: "Удалить",
       noAgentsYet: "Пока нет чатов.",
       supportsVision: "Поддержка изображений (vision)",
+      hostOnline: "Cline host online",
+      hostOffline: "Cline host offline",
+      hostOfflineHint:
+        "Один раз: npm run figma:host:install (macOS) или npm run figma:host:ensure",
+      emptyTurnError:
+        "Пустой ответ модели (нет текста и tools). Повторите или смените модель в Настройках.",
+      providerParamError:
+        "Ошибка провайдера «Param Incorrect» — обычно неверный model id или base URL для MiMo/Xiaomi. " +
+        "В Настройках проверьте slug модели по документации провайдера (например mimo-v2.5-pro на token-plan URL). " +
+        "Повторная попытка теперь без истории инструментов; отправьте сообщение ещё раз.",
     },
   };
+
+  function clampPanelSize(width, height) {
+    return {
+      width: Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width | 0)),
+      height: Math.max(PANEL_MIN_H, Math.min(PANEL_MAX_H, height | 0)),
+    };
+  }
+
+  function applyPanelSize(width, height, persist) {
+    panelSize = clampPanelSize(width, height);
+    F.resizePanel(panelSize.width, panelSize.height);
+    if (persist) {
+      void F.storageSet(F.STORAGE_UI, panelSize);
+    }
+  }
+
+  function bindPanelResizeHandle() {
+    const handle = els.panelResizeHandle;
+    if (!handle) return;
+
+    handle.addEventListener("mousedown", function (event) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      panelResizeDrag = {
+        x: event.clientX,
+        y: event.clientY,
+        width: panelSize.width,
+        height: panelSize.height,
+      };
+      handle.classList.add("is-dragging");
+      document.body.style.cursor = "nwse-resize";
+    });
+
+    window.addEventListener("mousemove", function (event) {
+      if (!panelResizeDrag) return;
+      applyPanelSize(
+        panelResizeDrag.width + (event.clientX - panelResizeDrag.x),
+        panelResizeDrag.height + (event.clientY - panelResizeDrag.y),
+        false
+      );
+    });
+
+    window.addEventListener("mouseup", function () {
+      if (!panelResizeDrag) return;
+      panelResizeDrag = null;
+      handle.classList.remove("is-dragging");
+      document.body.style.cursor = "";
+      void F.storageSet(F.STORAGE_UI, panelSize);
+    });
+  }
 
   function t(key) {
     const lang = settings.language === "ru" ? "ru" : "en";
@@ -236,6 +351,46 @@
 
   function setStatus(text) {
     if (els.statusLine) els.statusLine.textContent = text || "";
+  }
+
+  /** @type {"unknown"|"online"|"offline"} */
+  let sidecarHealthState = "unknown";
+
+  function renderHostStatus() {
+    if (!els.hostStatusRow || !els.hostStatusLabel) return;
+    els.hostStatusRow.classList.remove("is-online", "is-offline");
+    if (sidecarHealthState === "online") {
+      els.hostStatusRow.classList.add("is-online");
+      els.hostStatusLabel.textContent = t("hostOnline");
+    } else if (sidecarHealthState === "offline") {
+      els.hostStatusRow.classList.add("is-offline");
+      els.hostStatusLabel.textContent =
+        t("hostOffline") + " — " + t("hostOfflineHint");
+    } else {
+      els.hostStatusLabel.textContent = "";
+    }
+  }
+
+  async function refreshSidecarHealth() {
+    try {
+      var Sidecar =
+        typeof window !== "undefined" && window.__harborFigmaSidecar
+          ? window.__harborFigmaSidecar
+          : null;
+      if (!Sidecar || typeof Sidecar.checkSidecarHealth !== "function") {
+        sidecarHealthState = "unknown";
+        renderHostStatus();
+        return false;
+      }
+      var health = await Sidecar.checkSidecarHealth(settings);
+      sidecarHealthState = health.ok ? "online" : "offline";
+      renderHostStatus();
+      return health.ok;
+    } catch (_e) {
+      sidecarHealthState = "offline";
+      renderHostStatus();
+      return false;
+    }
   }
 
   function flashSaved() {
@@ -269,10 +424,6 @@
     }
     if (els.fontPreview) {
       els.fontPreview.style.fontSize = (settings.fontSize || 13) + "px";
-    }
-    if (els.copyBriefBtn) {
-      els.copyBriefBtn.title = t("copyBrief");
-      els.copyBriefBtn.setAttribute("aria-label", t("copyBrief"));
     }
     syncAgentsRailChrome();
     updateSendButton();
@@ -501,10 +652,18 @@
     syncAgentsRailChrome();
   }
 
+  function isAgentRunning(agentId) {
+    return !!(agentId && runningByAgentId.has(agentId));
+  }
+
+  function isActiveChatBusy() {
+    return isAgentRunning(session.activeAgentId);
+  }
+
   function updateSendButton() {
     if (!els.sendBtn) return;
     els.sendBtn.classList.remove("is-stop", "is-queue");
-    if (!busy) {
+    if (!isActiveChatBusy()) {
       els.sendBtn.dataset.mode = "send";
       els.sendBtn.title = t("send");
       els.sendBtn.setAttribute("aria-label", t("send"));
@@ -517,7 +676,7 @@
   }
 
   function showSettingsCategory(category) {
-    const allowed = ["models", "language", "appearance"];
+    const allowed = ["models", "language", "appearance", "advanced"];
     const cat = allowed.indexOf(category) >= 0 ? category : "models";
     if (els.settingsNav) {
       els.settingsNav.querySelectorAll(".settings-nav-item").forEach(function (btn) {
@@ -548,6 +707,7 @@
       messages: [],
       mode: mode,
       modelId: selectedModelId,
+      selection: null,
       createdAt: Date.now(),
     };
     session.agents.unshift(agent);
@@ -555,12 +715,75 @@
     return agent;
   }
 
+  /** Drop huge PNG before writing session to clientStorage. */
+  function slimSelectionForStore(sel) {
+    if (!sel || typeof sel !== "object") return null;
+    const copy = {};
+    for (const k in sel) {
+      if (!Object.prototype.hasOwnProperty.call(sel, k)) continue;
+      if (k === "previewPngDataUrl") continue;
+      copy[k] = sel[k];
+    }
+    return copy;
+  }
+
   function persistSession() {
-    return F.storageSet(F.STORAGE_SESSION, session);
+    const agents = (session.agents || []).map(function (a) {
+      const row = Object.assign({}, a);
+      if (row.selection) {
+        row.selection = slimSelectionForStore(row.selection);
+      }
+      return row;
+    });
+    return F.storageSet(F.STORAGE_SESSION, {
+      agents: agents,
+      activeAgentId: session.activeAgentId,
+    });
+  }
+
+  /** Bind canvas selection to the active chat only (per-chat like VS Code chips). */
+  function setActiveSelection(sel, opts) {
+    selection = sel || null;
+    const agent = activeAgent();
+    if (agent) {
+      agent.selection = sel || null;
+      agent.updatedAt = Date.now();
+    }
+    if (!opts || opts.render !== false) {
+      renderSelection();
+    }
+    if (opts && opts.persist) {
+      void persistSession();
+    }
+  }
+
+  function loadSelectionForAgent(agent) {
+    selection = (agent && agent.selection) || null;
+    renderSelection();
+  }
+
+  function readSettingsFromDom() {
+    if (els.langSelect) {
+      settings.language = els.langSelect.value || "en";
+    }
+    if (els.fontSizeRange) {
+      settings.fontSize = Number(els.fontSizeRange.value) || 13;
+    }
+    if (els.settingsRejectUnauthorized) {
+      settings.rejectUnauthorized = !!els.settingsRejectUnauthorized.checked;
+    }
   }
 
   function persistSettings() {
+    readSettingsFromDom();
+    void syncSidecarTlsSettings();
     return F.storageSet(F.STORAGE_SETTINGS, settings);
+  }
+
+  function syncSidecarTlsSettings() {
+    var Sidecar = window.__harborFigmaSidecar;
+    if (!Sidecar || typeof Sidecar.syncTlsSettings !== "function") return;
+    void Sidecar.syncTlsSettings(settings);
   }
 
   function shortModelChip(raw) {
@@ -598,7 +821,23 @@
     });
     if (idx < 0) return;
     const wasActive = session.activeAgentId === agentId;
+    const running = runningByAgentId.get(agentId);
+    if (running) {
+      running.abort();
+      runningByAgentId.delete(agentId);
+    }
     session.agents.splice(idx, 1);
+    try {
+      var Sidecar =
+        typeof window !== "undefined" && window.__harborFigmaSidecar
+          ? window.__harborFigmaSidecar
+          : null;
+      if (Sidecar && typeof Sidecar.discardChat === "function") {
+        void Sidecar.discardChat(settings, agentId);
+      }
+    } catch (_e) {
+      /* ignore */
+    }
     if (wasActive) {
       session.activeAgentId = session.agents[0] ? session.agents[0].id : null;
       lastAssistantText = "";
@@ -608,12 +847,15 @@
           mode = normalizeMode(next.mode);
           selectedModelId = next.modelId || selectedModelId;
         }
+        loadSelectionForAgent(next);
       } else {
         ensureAgent();
+        loadSelectionForAgent(activeAgent());
       }
     }
     renderAgents();
     renderChat();
+    updateSendButton();
     applyChrome();
     void persistSession();
   }
@@ -638,7 +880,7 @@
         }) || {}).id ||
         "";
       const runMode = normalizeMode(a.mode || mode);
-      const isRunning = busy && busyAgentId === a.id;
+      const isRunning = isAgentRunning(a.id);
       const statusHtml = isRunning
         ? '<span class="agent-run-status agent-run-status-running" data-mode="' +
           escapeHtml(runMode) +
@@ -683,8 +925,10 @@
         session.activeAgentId = a.id;
         mode = normalizeMode(a.mode);
         selectedModelId = a.modelId || selectedModelId;
+        loadSelectionForAgent(a);
         renderChat();
         renderAgents();
+        updateSendButton();
         setAgentsRailOpen(false);
         showScreen("chat");
         applyChrome();
@@ -715,6 +959,9 @@
     if (els.langSelect) els.langSelect.value = settings.language || "en";
     if (els.fontSizeRange) {
       els.fontSizeRange.value = String(settings.fontSize || 13);
+    }
+    if (els.settingsRejectUnauthorized) {
+      els.settingsRejectUnauthorized.checked = settings.rejectUnauthorized !== false;
     }
     showSettingsCategory("models");
     showScreen("settings");
@@ -754,6 +1001,176 @@
     );
   }
 
+  function formatDurationMs(ms) {
+    if (!(ms > 0)) return "";
+    const seconds = ms / 1000;
+    const isRu = settings.language === "ru";
+    if (isRu) {
+      return seconds >= 90
+        ? Math.floor(seconds / 60) +
+            " мин " +
+            Math.round(seconds % 60) +
+            " с"
+        : seconds.toFixed(1).replace(".", ",") + " с";
+    }
+    return seconds >= 90
+      ? Math.floor(seconds / 60) + " min " + Math.round(seconds % 60) + " s"
+      : seconds.toFixed(1) + " s";
+  }
+
+  function formatTurnTiming(ttftMs, totalMs) {
+    if (!(totalMs > 0)) return "";
+    const total = formatDurationMs(totalMs);
+    if (ttftMs > 0 && ttftMs < totalMs) {
+      const ttftRaw = formatDurationMs(ttftMs).replace(
+        /\s*(с|s|мин|min).*$/,
+        ""
+      );
+      return t("runTiming")
+        .replace("{ttft}", ttftRaw)
+        .replace("{total}", total);
+    }
+    return total;
+  }
+
+  function normalizeStepStatus(status) {
+    const s = String(status || "running").toLowerCase();
+    if (s === "done" || s === "ok" || s === "success") return "ok";
+    if (s === "error" || s === "failed") return "error";
+    return "running";
+  }
+
+  function stepStatusLabel(status) {
+    const s = normalizeStepStatus(status);
+    if (s === "ok") return t("toolOk");
+    if (s === "error") return t("toolError");
+    return t("toolRunning");
+  }
+
+  function toolGroupSummary(steps, turnBusy, message) {
+    const list = Array.isArray(steps) ? steps : [];
+    const n = list.length;
+    const running = list.filter(function (s) {
+      return normalizeStepStatus(s.status) === "running";
+    });
+    const failed = list.some(function (s) {
+      return normalizeStepStatus(s.status) === "error";
+    });
+    const countLabel = t("toolStepsCount").replace("{n}", String(n));
+    if (turnBusy || running.length) {
+      const live = running[running.length - 1] || list[list.length - 1];
+      const liveLabel =
+        (live && (live.label || live.name)) || t("runWorking");
+      return t("runWorking") + " · " + liveLabel;
+    }
+    let base = failed
+      ? t("toolError") + " · " + countLabel
+      : t("runDone") + " · " + countLabel;
+    const timing = formatTurnTiming(
+      message && message.ttftMs,
+      message && message.durationMs
+    );
+    if (timing) {
+      base += " · " + timing;
+    }
+    return base;
+  }
+
+  function renderToolStepsGroup(message, messageIndex, turnBusy) {
+    const steps = message.steps || [];
+    if (!steps.length && !(message.ttftMs > 0 || message.durationMs > 0)) {
+      return null;
+    }
+
+    const expanded = !!message.stepsExpanded;
+    const group = document.createElement("div");
+    group.className =
+      "figma-tool-group" + (expanded ? "" : " is-collapsed");
+    group.dataset.messageIndex = String(messageIndex);
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "figma-tool-group-toggle";
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+    const summary = document.createElement("span");
+    summary.className = "figma-tool-group-summary";
+    summary.textContent = steps.length
+      ? toolGroupSummary(steps, turnBusy, message)
+      : formatTurnTiming(message.ttftMs, message.durationMs) ||
+        t("runDone");
+
+    const chevron = document.createElement("span");
+    chevron.className = "material-symbols-outlined figma-tool-group-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.textContent = "expand_more";
+
+    toggle.appendChild(summary);
+    if (steps.length) {
+      toggle.appendChild(chevron);
+    }
+    toggle.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!steps.length) return;
+      message.stepsExpanded = !message.stepsExpanded;
+      renderChat();
+    });
+
+    const body = document.createElement("div");
+    body.className = "figma-tool-group-body";
+    steps.forEach(function (step) {
+      const status = normalizeStepStatus(step.status);
+      const row = document.createElement("div");
+      row.className = "figma-tool-step is-" + status;
+      if (step.error) {
+        row.classList.add("has-error");
+      }
+      const head = document.createElement("div");
+      head.className = "figma-tool-step-head";
+      const label = document.createElement("span");
+      label.className = "figma-tool-step-label";
+      label.textContent = step.label || step.name || "tool";
+      const statusEl = document.createElement("span");
+      statusEl.className = "figma-tool-step-status";
+      var statusText = stepStatusLabel(status);
+      if (
+        typeof step.durationMs === "number" &&
+        step.durationMs >= 0 &&
+        status !== "running"
+      ) {
+        statusText += " · " + formatDurationMs(step.durationMs);
+      }
+      statusEl.textContent = statusText;
+      head.appendChild(label);
+      head.appendChild(statusEl);
+      row.appendChild(head);
+      if (step.error) {
+        const errEl = document.createElement("div");
+        errEl.className = "figma-tool-step-error";
+        errEl.textContent = step.error;
+        row.appendChild(errEl);
+      }
+      body.appendChild(row);
+    });
+
+    group.appendChild(toggle);
+    if (steps.length) {
+      group.appendChild(body);
+    }
+    return group;
+  }
+
+  function formatProviderErrorText(text) {
+    var s = String(text || "").trim();
+    if (!s) return s;
+    var lower = s.toLowerCase();
+    if (lower === "param incorrect" || lower.indexOf("param incorrect") >= 0) {
+      return t("providerParamError");
+    }
+    return s;
+  }
+
   function renderChat() {
     const agent = ensureAgent();
     if (els.chatAgentName) els.chatAgentName.textContent = agent.name || "Chat";
@@ -778,7 +1195,7 @@
       els.messages.appendChild(empty);
       return;
     }
-    agent.messages.forEach(function (m) {
+    agent.messages.forEach(function (m, messageIndex) {
       const wrap = document.createElement("div");
       wrap.className =
         "msg-wrap " +
@@ -790,33 +1207,11 @@
         bubble.setAttribute("data-mode", msgMode);
       }
       if (m.role === "assistant") {
-        if (m.steps && m.steps.length) {
-          const stepsEl = document.createElement("div");
-          stepsEl.className = "figma-tool-steps";
-          m.steps.forEach(function (step) {
-            const row = document.createElement("div");
-            row.className =
-              "figma-tool-step is-" + (step.status || "running");
-            const label = document.createElement("span");
-            label.className = "figma-tool-step-label";
-            label.textContent = step.label || step.name || "tool";
-            const status = document.createElement("span");
-            status.className = "figma-tool-step-status";
-            status.textContent =
-              step.status === "ok"
-                ? t("toolOk")
-                : step.status === "error"
-                  ? t("toolError")
-                  : t("toolRunning");
-            row.appendChild(label);
-            row.appendChild(status);
-            if (step.error) {
-              row.title = step.error;
-            }
-            stepsEl.appendChild(row);
-          });
-          bubble.appendChild(stepsEl);
-        }
+        const turnBusy =
+          messageIndex === agent.messages.length - 1 &&
+          isAgentRunning(agent.id);
+        const stepsGroup = renderToolStepsGroup(m, messageIndex, turnBusy);
+        if (stepsGroup) bubble.appendChild(stepsGroup);
         const md = document.createElement("div");
         md.className = "msg-md";
         md.innerHTML = renderMarkdown(m.text || "");
@@ -829,7 +1224,13 @@
       wrap.appendChild(bubble);
       els.messages.appendChild(wrap);
     });
-    if (busy) {
+    const lastMsg = agent.messages[agent.messages.length - 1];
+    const lastHasSteps =
+      lastMsg &&
+      lastMsg.role === "assistant" &&
+      lastMsg.steps &&
+      lastMsg.steps.length > 0;
+    if (isAgentRunning(agent.id) && !lastHasSteps) {
       const runEl = document.createElement("div");
       const liveUser =
         agent.messages.length >= 2
@@ -858,9 +1259,6 @@
       }
     }
     els.messages.scrollTop = els.messages.scrollHeight;
-    if (els.copyBriefBtn) {
-      els.copyBriefBtn.hidden = mode !== "plan" || !lastAssistantText;
-    }
   }
 
   function renderSelection() {
@@ -875,12 +1273,27 @@
       els.selectionPreview.removeAttribute("tabindex");
       return;
     }
-    const n = selection.nodes[0];
-    let meta =
-      n.name +
-      " · " +
-      n.type +
-      (n.width && n.height ? " · " + n.width + "×" + n.height : "");
+    const realNodes = selection.nodes.filter(function (n) {
+      return n && n.id !== "__more_roots" && n.type !== "TRUNCATED";
+    });
+    const count =
+      typeof selection.selectedCount === "number"
+        ? selection.selectedCount
+        : realNodes.length;
+    const n = realNodes[0] || selection.nodes[0];
+    let meta;
+    if (count > 1) {
+      meta = t("selectionCount").replace("{n}", String(count));
+      if (n && n.name) {
+        meta += " · " + n.name + (count > 1 ? "…" : "");
+      }
+    } else {
+      meta =
+        n.name +
+        " · " +
+        n.type +
+        (n.width && n.height ? " · " + n.width + "×" + n.height : "");
+    }
     if (selection.canWrite === false) {
       meta += " · " + t("canvasReadOnly");
     }
@@ -1091,6 +1504,18 @@
     modelEditIndex = null;
   }
 
+  function guessPromptCacheForUrl(baseUrl) {
+    const u = String(baseUrl || "").toLowerCase();
+    if (!u) return false;
+    if (
+      /openai\.com|api\.openai/.test(u) &&
+      !/openrouter|litellm|anthropic/.test(u)
+    ) {
+      return false;
+    }
+    return /litellm|openrouter|anthropic|claude/.test(u);
+  }
+
   function openProviderEdit(index) {
     ensureDefaultProviderForm();
     providerEditIndex = index;
@@ -1101,6 +1526,7 @@
           name: "",
           baseUrl: "https://api.openai.com/v1",
           apiKey: "",
+          promptCache: false,
         }
       : settings.providers[index];
     if (isNew) {
@@ -1119,6 +1545,12 @@
     if (els.providerEditApiKey) {
       els.providerEditApiKey.value = provider.apiKey || "";
     }
+    if (els.providerEditPromptCache) {
+      els.providerEditPromptCache.checked =
+        typeof provider.promptCache === "boolean"
+          ? provider.promptCache
+          : guessPromptCacheForUrl(provider.baseUrl);
+    }
     if (els.providerEditModal) els.providerEditModal.hidden = false;
     if (els.providerEditName) els.providerEditName.focus();
   }
@@ -1134,6 +1566,9 @@
       (els.providerEditBaseUrl && els.providerEditBaseUrl.value.trim()) || "";
     p.apiKey =
       (els.providerEditApiKey && els.providerEditApiKey.value) || "";
+    p.promptCache = !!(
+      els.providerEditPromptCache && els.providerEditPromptCache.checked
+    );
     closeProviderEdit();
     renderSettingsCatalog();
     void persistSettings().then(flashSaved);
@@ -1201,7 +1636,8 @@
   }
 
   async function sendMessage() {
-    if (busy) return;
+    const agent = ensureAgent();
+    if (isAgentRunning(agent.id)) return;
     const text = (els.prompt && els.prompt.value.trim()) || "";
     if (!text) return;
     const model = (settings.models || []).find(function (m) {
@@ -1218,7 +1654,13 @@
       return;
     }
 
-    const agent = ensureAgent();
+    const hostOk = await refreshSidecarHealth();
+    if (!hostOk) {
+      setStatus(t("hostOffline"));
+      return;
+    }
+
+    const runAgentId = agent.id;
     agent.messages.push({ role: "user", text: text, mode: mode });
     if (agent.name === "Chat" && text.length > 0) {
       agent.name = text.slice(0, 40);
@@ -1229,17 +1671,46 @@
     renderChat();
     renderAgents();
 
-    busy = true;
-    busyAgentId = agent.id;
-    abortCtrl = new AbortController();
+    const abortCtrl = new AbortController();
+    runningByAgentId.set(runAgentId, abortCtrl);
     updateSendButton();
-    setStatus(t("runWorking"));
+    if (session.activeAgentId === runAgentId) {
+      setStatus(t("runWorking"));
+    }
     renderAgents();
     renderChat();
 
-    if (typeof F.refreshSelection === "function") {
-      const fresh = await F.refreshSelection();
-      if (fresh) selection = fresh;
+    if (typeof F.refreshSelectionForTurn === "function") {
+      const fresh = await F.refreshSelectionForTurn(false);
+      if (fresh) {
+        // Bind refreshed canvas selection to this chat only.
+        if (session.activeAgentId === runAgentId) {
+          setActiveSelection(fresh, { render: true });
+        } else {
+          agent.selection = fresh;
+        }
+      }
+    }
+
+    // Lazy preview: request only when model supports vision, cache by nodeId.
+    var turnSelection = agent.selection || selection;
+    if (
+      model.supportsVision &&
+      turnSelection &&
+      turnSelection.primaryNodeId &&
+      !turnSelection.previewPngDataUrl &&
+      typeof F.requestPreview === "function"
+    ) {
+      var cachedPreview = previewCache.get(turnSelection.primaryNodeId);
+      if (cachedPreview) {
+        turnSelection.previewPngDataUrl = cachedPreview;
+      } else {
+        var pv = await F.requestPreview(turnSelection.primaryNodeId);
+        if (pv) {
+          turnSelection.previewPngDataUrl = pv;
+          previewCache.set(turnSelection.primaryNodeId, pv);
+        }
+      }
     }
 
     const history = agent.messages.slice(0, -1).map(function (m) {
@@ -1252,62 +1723,143 @@
     renderAgents();
 
     try {
-      const full = await Turn.runFigmaAgentTurn({
+      const Sidecar =
+        typeof window !== "undefined" && window.__harborFigmaSidecar
+          ? window.__harborFigmaSidecar
+          : null;
+      if (!Sidecar || typeof Sidecar.runFigmaSidecarTurn !== "function") {
+        throw new Error("Figma Cline sidecar client missing from UI bundle");
+      }
+      const full = await Sidecar.runFigmaSidecarTurn({
+        settings: settings,
         provider: provider,
         model: model,
         mode: mode,
         userText: text,
         history: history,
-        selection: selection,
+        selection: turnSelection,
+        chatId: runAgentId,
         signal: abortCtrl.signal,
         invokeTool: function (name, args) {
           return F.invokeTool(name, args);
         },
         onToolStep: function (step) {
           if (!assistant.steps) assistant.steps = [];
-          const prev = assistant.steps[assistant.steps.length - 1];
-          if (
-            prev &&
-            prev.name === step.name &&
-            prev.status === "running" &&
-            step.status !== "running"
-          ) {
-            prev.status = step.status;
+          var stepId = step.stepId || step.name;
+          var status = normalizeStepStatus(step.status);
+          var prev = assistant.steps.find(function (s) {
+            return s.stepId === stepId;
+          });
+          if (prev) {
+            prev.status = status;
             prev.error = step.error;
+            prev.label = step.label || prev.label;
+            if (step.name) prev.name = step.name;
+            if (typeof step.durationMs === "number") {
+              prev.durationMs = step.durationMs;
+            }
           } else {
             assistant.steps.push({
+              stepId: stepId,
               name: step.name,
               label: step.label,
-              status: step.status,
+              status: status,
               error: step.error,
+              durationMs: step.durationMs,
             });
           }
-          renderChat();
+          if (session.activeAgentId === runAgentId) {
+            renderChat();
+          }
+          renderAgents();
+        },
+        onTiming: function (timing) {
+          if (!timing) return;
+          if (typeof timing.ttftMs === "number" && timing.ttftMs > 0) {
+            assistant.ttftMs = timing.ttftMs;
+          }
+          if (typeof timing.durationMs === "number" && timing.durationMs >= 0) {
+            assistant.durationMs = timing.durationMs;
+          }
+          if (session.activeAgentId === runAgentId) {
+            renderChat();
+          }
+        },
+        onStatus: function (statusText) {
+          if (!statusText) return;
+          var st = String(statusText).toLowerCase();
+          if (
+            st === "failed" ||
+            st === "error" ||
+            (st.indexOf("unauthorized") >= 0 && st.indexOf("401") >= 0)
+          ) {
+            if (session.activeAgentId === runAgentId) {
+              setStatus(t("runWorking") + " — " + statusText);
+            }
+          }
         },
         onDelta: function (piece) {
           assistant.text += piece;
-          lastAssistantText = assistant.text;
-          renderChat();
+          if (session.activeAgentId === runAgentId) {
+            lastAssistantText = assistant.text;
+            renderChat();
+          }
         },
       });
-      assistant.text = full || assistant.text;
-      lastAssistantText = assistant.text;
-      setStatus("");
+      assistant.text = formatProviderErrorText(full || assistant.text);
+      if (
+        !String(assistant.text || "").trim() &&
+        !(assistant.steps && assistant.steps.length)
+      ) {
+        assistant.text = t("emptyTurnError");
+      }
+      if (session.activeAgentId === runAgentId) {
+        lastAssistantText = assistant.text;
+      }
+      if (assistant.steps && assistant.steps.length) {
+        assistant.steps.forEach(function (s) {
+          if (normalizeStepStatus(s.status) === "running") {
+            s.status = "ok";
+          }
+        });
+      }
+      if (session.activeAgentId === runAgentId) {
+        setStatus("");
+      }
     } catch (err) {
       if (err && err.name === "AbortError") {
-        setStatus("Stopped");
+        if (session.activeAgentId === runAgentId) {
+          setStatus("Stopped");
+        }
       } else {
-        assistant.text =
+        assistant.text = formatProviderErrorText(
           assistant.text ||
-          "Error: " + ((err && err.message) || String(err));
-        setStatus(assistant.text.slice(0, 120));
+            "Error: " + ((err && err.message) || String(err))
+        );
+        if (session.activeAgentId === runAgentId) {
+          setStatus(assistant.text.slice(0, 120));
+        }
       }
-      lastAssistantText = assistant.text;
+      if (session.activeAgentId === runAgentId) {
+        lastAssistantText = assistant.text;
+      }
+      if (assistant.steps && assistant.steps.length) {
+        assistant.steps.forEach(function (s) {
+          if (normalizeStepStatus(s.status) === "running") {
+            s.status = err && err.name === "AbortError" ? "error" : "ok";
+          }
+        });
+      }
     }
 
-    busy = false;
-    busyAgentId = null;
-    abortCtrl = null;
+    if (runningByAgentId.get(runAgentId) === abortCtrl) {
+      runningByAgentId.delete(runAgentId);
+    }
+    // Apply any canvas selection that arrived while the chat was running.
+    if (pendingCanvasSelection && session.activeAgentId === runAgentId) {
+      setActiveSelection(pendingCanvasSelection, { persist: false });
+      pendingCanvasSelection = null;
+    }
     updateSendButton();
     renderChat();
     renderAgents();
@@ -1317,13 +1869,18 @@
   function onHostMessage(msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "figmaSelectionChanged") {
-      selection = msg.selection || null;
-      renderSelection();
+      // While the active chat is running, don't overwrite its selection —
+      // buffer the canvas click and apply it when the run finishes.
+      if (isAgentRunning(session.activeAgentId)) {
+        pendingCanvasSelection = msg.selection || null;
+      } else {
+        setActiveSelection(msg.selection || null, { persist: false });
+      }
       if (msg.requestId && F.pendingSelection) {
         const resolve = F.pendingSelection.get(msg.requestId);
         if (resolve) {
           F.pendingSelection.delete(msg.requestId);
-          resolve(selection);
+          resolve(msg.selection || null);
         }
       }
       return;
@@ -1358,8 +1915,15 @@
       }
       return;
     }
-    if (msg.type === "copied") {
-      setStatus(t("briefCopied"));
+    if (msg.type === "figmaPreviewResult") {
+      if (F.pendingPreview) {
+        const resolve = F.pendingPreview.get(msg.requestId);
+        if (resolve) {
+          F.pendingPreview.delete(msg.requestId);
+          resolve(msg.preview || null);
+        }
+      }
+      return;
     }
   }
 
@@ -1374,8 +1938,10 @@
 
   if (els.sendBtn) {
     els.sendBtn.addEventListener("click", function () {
-      if (busy) {
-        if (abortCtrl) abortCtrl.abort();
+      const activeId = session.activeAgentId;
+      if (isAgentRunning(activeId)) {
+        const ctrl = runningByAgentId.get(activeId);
+        if (ctrl) ctrl.abort();
         return;
       }
       void sendMessage();
@@ -1401,7 +1967,7 @@
     els.prompt.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (!busy) void sendMessage();
+        if (!isActiveChatBusy()) void sendMessage();
       }
     });
   }
@@ -1465,11 +2031,19 @@
       session.activeAgentId = null;
       ensureAgent();
       lastAssistantText = "";
+      loadSelectionForAgent(activeAgent());
       renderAgents();
       renderChat();
+      updateSendButton();
       setAgentsRailOpen(false);
       showScreen("chat");
       void persistSession();
+      // Pull current canvas into this new chat only.
+      if (typeof F.refreshSelection === "function") {
+        void F.refreshSelection().then(function (fresh) {
+          if (fresh) setActiveSelection(fresh, { persist: true });
+        });
+      }
     });
   }
   if (els.openSettingsBtn) {
@@ -1479,8 +2053,10 @@
     els.closeSettingsBtn.addEventListener("click", function () {
       closeProviderEdit();
       closeModelEdit();
-      showScreen("chat");
-      renderModelMenu();
+      void persistSettings().then(function () {
+        showScreen("chat");
+        renderModelMenu();
+      });
     });
   }
   if (els.settingsNav) {
@@ -1590,33 +2166,72 @@
       void persistSettings().then(flashSaved);
     });
   }
-  if (els.copyBriefBtn) {
-    els.copyBriefBtn.addEventListener("click", function () {
-      const brief = Turn.buildHandoffBrief(lastAssistantText, selection);
-      void navigator.clipboard.writeText(brief).then(
-        function () {
-          host.postMessage({ type: "copyBrief", text: brief });
-          setStatus(t("briefCopied"));
-        },
-        function () {
-          host.postMessage({ type: "copyBrief", text: brief });
-        }
-      );
+  if (els.settingsRejectUnauthorized) {
+    els.settingsRejectUnauthorized.addEventListener("change", function () {
+      settings.rejectUnauthorized = !!els.settingsRejectUnauthorized.checked;
+      void persistSettings().then(flashSaved);
     });
+    var tlsSwitch = els.settingsRejectUnauthorized.closest(".settings-switch");
+    if (tlsSwitch) {
+      tlsSwitch.addEventListener("click", function (event) {
+        if (event.target === els.settingsRejectUnauthorized) return;
+        els.settingsRejectUnauthorized.checked =
+          !els.settingsRejectUnauthorized.checked;
+        els.settingsRejectUnauthorized.dispatchEvent(
+          new Event("change", { bubbles: true })
+        );
+      });
+    }
   }
-
   async function boot() {
     const storedSettings = await F.storageGet(F.STORAGE_SETTINGS);
     if (storedSettings && typeof storedSettings === "object") {
       settings = Object.assign(settings, storedSettings);
       if (!Array.isArray(settings.providers)) settings.providers = [];
       if (!Array.isArray(settings.models)) settings.models = [];
+      if (typeof settings.rejectUnauthorized !== "boolean") {
+        settings.rejectUnauthorized = true;
+      }
     }
+    // Sync TLS setting from the sidecar settings file — it survives plugin
+    // reloads even when figma.clientStorage lost the value or the sidecar
+    // was offline when the user toggled the switch.
+    // Prefer the less-strict side: if either store says false, use false
+    // (corporate MITM). Then push the resolved value back to the sidecar.
+    try {
+      var Sidecar =
+        typeof window !== "undefined" && window.__harborFigmaSidecar
+          ? window.__harborFigmaSidecar
+          : null;
+      if (Sidecar && typeof Sidecar.fetchTlsSettings === "function") {
+        var remote = await Sidecar.fetchTlsSettings(settings);
+        if (remote && remote.rejectUnauthorized === false) {
+          settings.rejectUnauthorized = false;
+        }
+        if (settings.rejectUnauthorized === false) {
+          void F.storageSet(F.STORAGE_SETTINGS, settings);
+          if (typeof Sidecar.syncTlsSettings === "function") {
+            void Sidecar.syncTlsSettings(settings);
+          }
+        }
+      }
+    } catch (_e) { /* ignore */ }
     const storedSession = await F.storageGet(F.STORAGE_SESSION);
     if (storedSession && typeof storedSession === "object") {
       session = Object.assign(session, storedSession);
       if (!Array.isArray(session.agents)) session.agents = [];
     }
+    const storedUi = await F.storageGet(F.STORAGE_UI);
+    if (
+      storedUi &&
+      typeof storedUi === "object" &&
+      storedUi.width &&
+      storedUi.height
+    ) {
+      panelSize = clampPanelSize(storedUi.width, storedUi.height);
+    }
+    applyPanelSize(panelSize.width, panelSize.height, false);
+    bindPanelResizeHandle();
     ensureAgent();
     const agent = activeAgent();
     if (agent) {
@@ -1627,13 +2242,16 @@
     renderModelMenu();
     renderAgents();
     renderChat();
-    renderSelection();
+    loadSelectionForAgent(agent);
+    updateSendButton();
     showScreen("chat");
     if (!hasUsableSetup()) {
       // Soft nudge: empty state CTA already points to Settings.
     }
     host.postMessage({ type: "ready", surface: "figma" });
+    // Refresh live canvas into the active chat only (other chats keep their own).
     host.postMessage({ type: "figmaGetSelection" });
+    void refreshSidecarHealth();
   }
 
   void boot();

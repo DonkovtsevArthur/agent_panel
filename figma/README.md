@@ -2,9 +2,16 @@
 
 Designer-focused Harbor host (Agent / Ask / Plan + canvas tools). Isolated from VS Code / WebStorm builds.
 
+Chat turns use **Cline** via a background local process (cannot run Node inside the Figma sandbox). After one-time install it stays under the hood.
+
 ## Quick start
 
 ```bash
+# One-time: Cline host as background service (macOS)
+npm run compile
+npm run figma:host:install
+
+# Rebuild plugin UI when needed
 npm run build:figma
 ```
 
@@ -17,7 +24,8 @@ In **Figma Desktop** (not the browser):
    (folder must contain `manifest.json`, `code.js`, `ui.html` side by side)
 4. Run **Plugins → Development → Harbor Agents**
 
-You should see a toast «Harbor Agents» and a panel.
+No terminal needed for each chat — host is KeepAlive / login.  
+Dev without LaunchAgent: `npm run figma:host:ensure`. Uninstall: `npm run figma:host:uninstall`.
 
 ### If you see «An error occurred while loading the plugin environment»
 
@@ -38,5 +46,6 @@ That toast often means Figma’s plugin **sandbox** failed to start (not a Harbo
 | `code.js` | Main thread (selection + storage) |
 | `ui.html` | Panel UI (built from shell + panel-figma) |
 | `src/` | Optional TS sources (not required to run) |
+| `../out/figmaSidecar.js` | Local Cline host (LaunchAgent / `figma:host`) |
 
 See [`../docs/figma-plugin.md`](../docs/figma-plugin.md).

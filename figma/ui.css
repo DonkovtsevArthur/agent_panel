@@ -82,9 +82,13 @@ html, body {
 }
 .settings-switch input {
   position: absolute;
+  inset: 0;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
 }
 .settings-switch-track {
   width: 34px;
@@ -93,6 +97,7 @@ html, body {
   background: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
   transition: background 0.15s ease;
   position: relative;
+  pointer-events: none;
 }
 .settings-switch-track::after {
   content: "";
@@ -235,6 +240,56 @@ html[data-surface="figma"] .figma-tool-steps {
   gap: 4px;
   margin: 0 0 8px;
 }
+html[data-surface="figma"] .figma-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  width: 100%;
+}
+html[data-surface="figma"] .figma-tool-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+html[data-surface="figma"] .figma-tool-group-toggle:hover {
+  color: var(--vscode-foreground);
+}
+html[data-surface="figma"] .figma-tool-group-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+html[data-surface="figma"] .figma-tool-group-chevron {
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+html[data-surface="figma"] .figma-tool-group:not(.is-collapsed) .figma-tool-group-chevron {
+  transform: rotate(180deg);
+}
+html[data-surface="figma"] .figma-tool-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+html[data-surface="figma"] .figma-tool-group.is-collapsed .figma-tool-group-body {
+  display: none;
+}
 html[data-surface="figma"] .figma-tool-step {
   display: flex;
   align-items: center;
@@ -246,14 +301,27 @@ html[data-surface="figma"] .figma-tool-step {
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
   color: var(--vscode-descriptionForeground);
 }
-html[data-surface="figma"] .figma-tool-step.is-ok {
+html[data-surface="figma"] .figma-tool-step.is-ok,
+html[data-surface="figma"] .figma-tool-step.is-done {
   color: var(--mode-ask, #2d6a4f);
 }
 html[data-surface="figma"] .figma-tool-step.is-error {
   color: #c0392b;
 }
+html[data-surface="figma"] .figma-tool-step.is-running .figma-tool-step-status {
+  color: var(--mode-agent, #0d99ff);
+}
 html[data-surface="figma"] .figma-tool-step-label {
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-surface="figma"] .figma-tool-step-status {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 html[data-surface="figma"] .msg.user[data-mode="agent"] {
   border-color: color-mix(
@@ -309,6 +377,35 @@ html[data-surface="figma"] .figma-run-working[data-mode="agent"] .figma-run-work
 }
 html[data-surface="figma"] .figma-run-working-label {
   font-weight: 500;
+}
+
+html[data-surface="figma"] .figma-panel-resize-handle {
+  position: fixed;
+  right: 2px;
+  bottom: 2px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: nwse-resize;
+  color: var(--vscode-descriptionForeground, #888);
+  opacity: 0.55;
+  z-index: 100;
+  border-radius: 4px;
+  user-select: none;
+  touch-action: none;
+}
+
+html[data-surface="figma"] .figma-panel-resize-handle:hover,
+html[data-surface="figma"] .figma-panel-resize-handle.is-dragging {
+  opacity: 0.95;
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+html[data-surface="figma"] .figma-panel-resize-handle .material-symbols-outlined {
+  font-size: 16px;
+  pointer-events: none;
 }
 
 

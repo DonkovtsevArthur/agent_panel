@@ -17,3 +17,4 @@ vendor/cline/**/dist/
 vendor/cline/**/.turbo/
 vendor/cline/bun.lock
 .tmp-harbor-qa/
+.harbor-figma-dev/

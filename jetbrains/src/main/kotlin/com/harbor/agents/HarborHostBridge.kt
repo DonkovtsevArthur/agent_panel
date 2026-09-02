@@ -395,12 +395,15 @@ class HarborHostBridge(
         BrowserUtil.browse(url)
       }
       "openFile", "openFileDiff" -> {
+        // JCEF JSQuery runs off the EDT; FileEditorManager.openFile asserts EDT.
         val raw = obj.get("path")?.asString ?: return
-        val vf = resolvePanelFile(raw)
-        if (vf != null) {
-          FileEditorManager.getInstance(project).openFile(vf, true)
-        } else {
-          openAbbreviatedFile(raw)
+        ApplicationManager.getApplication().invokeLater {
+          val vf = resolvePanelFile(raw)
+          if (vf != null) {
+            FileEditorManager.getInstance(project).openFile(vf, true)
+          } else {
+            openAbbreviatedFile(raw)
+          }
         }
       }
       "skillsOpenPath" -> {
@@ -532,7 +535,9 @@ class HarborHostBridge(
         }
       }
       "openScm" -> {
-        ToolWindowManager.getInstance(project).getToolWindow("Commit")?.show()
+        ApplicationManager.getApplication().invokeLater {
+          ToolWindowManager.getInstance(project).getToolWindow("Commit")?.show()
+        }
       }
       "deleteAgent", "deleteAllArchived", "deleteBranch" -> {
         ApplicationManager.getApplication().invokeLater {

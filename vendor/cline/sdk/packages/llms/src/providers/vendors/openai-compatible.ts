@@ -7,6 +7,10 @@ import type {
 import { wrapLanguageModel } from "ai";
 import { ensureFetch, resolveApiKey } from "../http";
 import { splitToolImagesMiddleware } from "../middleware/split-tool-images";
+import {
+	chainTransformRequestBody,
+	withMiMoReasoningContentPassthrough,
+} from "../mimo-reasoning-passthrough";
 import { isOpenAIReasoningEraModelId } from "../model-facts";
 import type { ProviderFactoryResult } from "./types";
 
@@ -158,7 +162,10 @@ export async function createOpenAICompatibleProviderModule(
 		...(config.headers ? { headers: config.headers } : {}),
 		...(providerFetch ? { fetch: providerFetch } : {}),
 		includeUsage: true,
-		transformRequestBody: withMaxCompletionTokensForReasoningModels,
+		transformRequestBody: chainTransformRequestBody(
+			withMaxCompletionTokensForReasoningModels,
+			withMiMoReasoningContentPassthrough,
+		),
 	} as never);
 	return {
 		// Wrap each constructed model with `splitToolImagesMiddleware` so

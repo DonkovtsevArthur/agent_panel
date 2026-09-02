@@ -1,0 +1,13 @@
+{
+  "name": "Harbor Smoke",
+  "id": "harbor-agents-figma-smoke",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma", "figjam", "dev"],
+  "capabilities": ["inspect"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Smoke test only."
+  }
+}

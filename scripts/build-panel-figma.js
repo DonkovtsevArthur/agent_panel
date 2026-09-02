@@ -24,6 +24,7 @@ const MODULES = [
   "01-host-bridge.js",
   "02-agent-turn.js",
   "02a-markdown.js",
+  "02b-sidecar-client.js",
   "03-app.js",
 ];
 

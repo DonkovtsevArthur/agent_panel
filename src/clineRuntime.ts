@@ -86,6 +86,7 @@ import {
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
+import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
 import { withTurnImages } from "./turnImageInject";
 import { buildSpecialMentionsPrompt } from "./mentions";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
@@ -93,6 +94,7 @@ import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
 import { withTodoStepEmitter } from "./todoStepContext";
 import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
+import { recordToolFailure, clearToolFailures } from "./learnedErrors";
 import {
   harborClineToolPolicies,
   harborToolApprovalsFingerprint,
@@ -1606,6 +1608,7 @@ export async function discardClineChatSession(
     return;
   }
   clearIdleEvictTimer(id);
+  clearToolFailures(id);
   const live = liveClineByChatId.get(id);
   if (!live) {
     return;
@@ -1798,7 +1801,12 @@ export async function disposeClineRuntime(): Promise<void> {
  */
 function buildHarborProviderConfig(
   modelInfo?: ClineKnownModelInfo,
-  options?: { promptCache?: boolean; providerId?: string }
+  options?: {
+    promptCache?: boolean;
+    providerId?: string;
+    model?: string;
+    baseUrl?: string;
+  }
 ): {
   providerId: string;
   fetch: typeof fetch;
@@ -1824,9 +1832,13 @@ function buildHarborProviderConfig(
   };
 } {
   const promptCacheEnabled = Boolean(options?.promptCache);
+  const fetchImpl = wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
+    model: options?.model || modelInfo?.id,
+    baseUrl: options?.baseUrl,
+  });
   return {
     providerId: options?.providerId || "openai-compatible",
-    fetch: harborFetch as typeof fetch,
+    fetch: fetchImpl,
     ...(modelInfo
       ? {
           modelInfo,
@@ -2356,6 +2368,14 @@ export async function runClineAgentTurn(options: {
                   : "";
           const failed = Boolean(errMsg) || toolOutputIsSoftFail(event.output);
           const metrics = parseToolMetrics(name, event.output, input);
+          // Record failures for learned-errors context on the next turn.
+          if (failed && errMsg && chatId) {
+            recordToolFailure(chatId, {
+              toolName: name,
+              error: errMsg.slice(0, 200),
+              path: pathFromToolInput(input),
+            });
+          }
           if (name === TODO_TOOL) {
             // Plan card is rendered from the execute-side event; on failure
             // surface the error there instead of a duplicate tool row.
@@ -2625,6 +2645,7 @@ export async function runClineAgentTurn(options: {
       : await buildTurnContextBlock({
           skipActiveFilePrefetch: activeFileAlreadyInlined(inlined.paths),
           lastAgentEditedPaths: options.lastAgentEditedPaths,
+          chatId,
           slim: followUpContextMode === "slim",
         });
   timing.end("context");
@@ -2885,7 +2906,12 @@ export async function runClineAgentTurn(options: {
           // "Request failed with status code N" — critical for spawn_agent children.
           providerConfig: buildHarborProviderConfig(
             modelInfoData.knownModels[options.model],
-            { promptCache: enablePromptCache, providerId: clineProviderId }
+            {
+              promptCache: enablePromptCache,
+              providerId: clineProviderId,
+              model: options.model,
+              baseUrl: endpoint.baseUrl,
+            }
           ),
         },
       });

@@ -1,7 +1,6 @@
 /**
- * Slim OpenAI-compatible chat turn for the Figma host.
- * Runs in the UI iframe (fetch). No Cline, no IDE tools.
- * Mirror of media/src/panel-figma/02-agent-turn.js — keep in sync conceptually.
+ * Design-prompt helpers for the Figma host (legacy / docs mirror).
+ * Live turns run via local Cline sidecar (`src/figmaClineTurn.ts`).
  */
 
 export type FigmaProvider = {
@@ -51,14 +50,19 @@ function designSystemPrompt(mode: "ask" | "plan" | "agent"): string {
     "You are Harbor Agents for Figma — a design assistant inside Figma. " +
     "You help designers critique, name, structure, and hand off UI. " +
     "Ground answers in the current selection JSON and screenshot when provided. " +
-    "Use tools to inspect or focus nodes by real ids from the selection — never invent node ids. " +
+    "The selection JSON lists every selected root (id, name, type, size) — up to ~100. " +
+    "When the user asks to list or name their selection, answer from that JSON; " +
+    "do not call figma_list_frames on the whole page to rediscover it. " +
+    "If you need a selection inventory via tools, use figma_list_frames with selectedOnly=true " +
+    "or figma_get_selection. Never invent node ids. " +
     "Be concise. Do not invent layers that are not in the selection.";
   if (mode === "agent") {
     return (
       base +
-      " Mode: Agent. You may edit the canvas via write tools " +
-      "(rename, set text, solid fills, auto-layout padding/gap). " +
-      "Do not create or delete nodes. Prefer small targeted edits. " +
+      " Mode: Agent. You fully edit the Figma canvas via write tools: " +
+      "create, duplicate, delete, rename, set text, fills, opacity, corner radius, " +
+      "geometry, reparent, auto-layout, prototype links. " +
+      "Use figma_delete_node only when the user wants layers removed. " +
       "If a write fails (e.g. Dev Mode), explain and continue with advice only."
     );
   }
@@ -83,10 +87,15 @@ export function buildSelectionContextText(
   if (!selection || !selection.nodes || selection.nodes.length === 0) {
     return "Current Figma selection: (none — ask the user to select a frame or node).";
   }
+  const count =
+    typeof selection.selectedCount === "number"
+      ? selection.selectedCount
+      : selection.nodes.filter((n) => n && n.id !== "__more_roots").length;
   const header = [
     selection.fileName ? `File: ${selection.fileName}` : null,
     selection.pageName ? `Page: ${selection.pageName}` : null,
     selection.nodeUrl ? `Link: ${selection.nodeUrl}` : null,
+    `Selected roots: ${count}`,
     selection.canWrite === false
       ? "Canvas writes: unavailable (Dev Mode)"
       : "Canvas writes: available in Agent mode",

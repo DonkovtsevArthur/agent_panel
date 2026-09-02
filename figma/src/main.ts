@@ -7,7 +7,7 @@
  * esbuild `define` for HTML (it becomes a template literal and breaks).
  */
 
-import { captureSelection } from "./selection";
+import { captureSelection, capturePreviewForNode } from "./selection";
 import {
   FIGMA_STORAGE_SESSION,
   FIGMA_STORAGE_SETTINGS,
@@ -36,6 +36,7 @@ try {
 type UiToMain =
   | { type: "ready"; surface?: string }
   | { type: "figmaGetSelection"; requestId?: string }
+  | { type: "figmaGetPreview"; nodeId: string; requestId: string }
   | { type: "figmaClientStorageGet"; key: string; requestId: string }
   | {
       type: "figmaClientStorageSet";
@@ -77,6 +78,15 @@ async function handleMessage(raw: unknown): Promise<void> {
       case "figmaGetSelection":
         await pushSelection(msg.requestId);
         break;
+      case "figmaGetPreview": {
+        const preview = await capturePreviewForNode(msg.nodeId);
+        postToUi({
+          type: "figmaPreviewResult",
+          preview: preview ?? null,
+          requestId: msg.requestId,
+        });
+        break;
+      }
       case "figmaClientStorageGet": {
         const value = await figma.clientStorage.getAsync(msg.key);
         postToUi({

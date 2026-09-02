@@ -39,16 +39,6 @@
           <div class="chat-top-text">
             <div id="chatAgentName" class="chat-agent-name">Chat</div>
           </div>
-          <button
-            type="button"
-            class="icon-btn"
-            id="copyBriefBtn"
-            title="Copy brief"
-            aria-label="Copy brief"
-            hidden
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
-          </button>
           <button type="button" class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings">
             <span class="material-symbols-outlined" aria-hidden="true">settings</span>
           </button>
@@ -103,6 +93,10 @@
               </div>
             </div>
           </div>
+          <div class="host-status-row" id="hostStatusRow">
+            <span id="hostStatusDot" class="host-status-dot" aria-hidden="true"></span>
+            <span id="hostStatusLabel" class="host-status-label"></span>
+          </div>
           <div id="statusLine" class="status-line"></div>
         </div>
       </section>
@@ -129,6 +123,10 @@
           <button type="button" class="settings-nav-item" data-settings-cat="appearance">
             <span class="material-symbols-outlined" aria-hidden="true">format_size</span>
             <span class="settings-nav-label" data-i18n="appearance">Appearance</span>
+          </button>
+          <button type="button" class="settings-nav-item" data-settings-cat="advanced">
+            <span class="material-symbols-outlined" aria-hidden="true">tune</span>
+            <span class="settings-nav-label" data-i18n="advanced">Advanced</span>
           </button>
         </nav>
         <div class="settings-body" id="settingsBody">
@@ -172,6 +170,19 @@
               The agent will reply at this size.
             </p>
           </section>
+          <section class="settings-panel" data-settings-panel="advanced" hidden>
+            <h3 class="settings-section-title" data-i18n="advanced">Advanced</h3>
+            <div class="settings-field settings-check">
+              <span class="settings-label" data-i18n="validateTls">Validate TLS certificate</span>
+              <span class="settings-switch">
+                <input id="settingsRejectUnauthorized" type="checkbox" checked />
+                <span class="settings-switch-track" aria-hidden="true"></span>
+              </span>
+            </div>
+            <p class="settings-hint" data-i18n="validateTlsHint">
+              Turn off for corporate LiteLLM / proxy gateways with a self-signed MITM certificate.
+            </p>
+          </section>
         </div>
       </div>
 
@@ -202,6 +213,16 @@
               <span class="settings-label">API Key</span>
               <input id="providerEditApiKey" class="settings-input" type="password" autocomplete="off" />
             </label>
+            <label class="settings-field settings-check">
+              <span class="settings-label" data-i18n="promptCache">Prompt cache (LiteLLM / OpenRouter / Claude)</span>
+              <span class="settings-switch">
+                <input id="providerEditPromptCache" type="checkbox" />
+                <span class="settings-switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <p class="settings-hint" data-i18n="promptCacheHint">
+              Speeds up follow-ups. Leave off for strict OpenAI (api.openai.com).
+            </p>
           </div>
           <div class="settings-modal-foot">
             <button type="button" class="text-btn" id="providerEditCancelBtn" data-i18n="cancel">Cancel</button>
@@ -251,6 +272,17 @@
         </div>
       </div>
     </section>
+
+    <div
+      id="panelResizeHandle"
+      class="figma-panel-resize-handle"
+      title="Drag to resize"
+      aria-label="Resize panel"
+      role="separator"
+      aria-orientation="both"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">south_east</span>
+    </div>
 
     <script>
       (function () {

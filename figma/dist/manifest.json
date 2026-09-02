@@ -8,6 +8,6 @@
   "capabilities": ["inspect"],
   "networkAccess": {
     "allowedDomains": ["*"],
-    "reasoning": "OpenAI-compatible provider base URLs configured by the user in Harbor Settings."
+    "reasoning": "OpenAI-compatible provider base URLs from Harbor Settings, plus local Harbor Figma Host (Cline sidecar) on 127.0.0.1."
   }
 }

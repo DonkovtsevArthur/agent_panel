@@ -1,7 +1,11 @@
 (function () {
-  /** Slim OpenAI-compatible turn — Figma host only (no Cline / IDE tools). */
+  /**
+   * Legacy OpenAI tool schemas / helpers for Figma.
+   * Live turns go through the Cline sidecar (`02b-sidecar-client.js`).
+   * Keep schemas here as reference for canvas tools + Copy brief helpers.
+   */
 
-  var MAX_TOOL_ROUNDS = 8;
+  var MAX_TOOL_ROUNDS = 24;
 
   function trimSlash(url) {
     return String(url || "").replace(/\/+$/, "");
@@ -12,14 +16,24 @@
       "You are Harbor Agents for Figma — a design assistant inside Figma. " +
       "You help designers critique, name, structure, and hand off UI. " +
       "Ground answers in the current selection JSON and screenshot when provided. " +
-      "Use tools to inspect or focus nodes by real ids from the selection — never invent node ids. " +
+      "The selection JSON lists every selected root (id, name, type, size) — up to ~100. " +
+      "When the user asks to list or name their selection, answer from that JSON; " +
+      "do not call figma_list_frames on the whole page to rediscover it. " +
+      "If you need a selection inventory via tools, use figma_list_frames with selectedOnly=true " +
+      "or figma_get_selection. Never invent node ids. " +
+      "Hidden layers (eye-off) are omitted from trees; do not invent or edit them. " +
       "Be concise. Do not invent layers that are not in the selection.";
     if (mode === "agent") {
       return (
         base +
-        " Mode: Agent. You may edit the canvas via write tools " +
-        "(rename, set text, solid fills, auto-layout padding/gap). " +
-        "Do not create or delete nodes. Prefer small targeted edits. " +
+        " Mode: Agent. SCOPE: change only what the user asked this turn — " +
+        "do not also fix siblings/other screens for consistency unless asked. " +
+        "If they say only one place / leave the rest alone, stop after that change. " +
+        "Match existing mockup style — prefer duplicate, or create with styleFromId / figma_copy_styles. " +
+        "Inspect nearby layers before inventing fills/fonts. " +
+        "Full canvas writes: create, duplicate, delete, copy styles, font, stroke, fills, geometry, reparent, auto-layout, prototypes. " +
+        "For clickable prototypes: first figma_list_frames (prefer topLevel screens), " +
+        "then figma_set_prototype_flow with ALL links in one call. " +
         "If a write fails (e.g. Dev Mode), explain and continue with advice only."
       );
     }
@@ -42,10 +56,17 @@
     if (!selection || !selection.nodes || selection.nodes.length === 0) {
       return "Current Figma selection: (none — ask the user to select a frame or node).";
     }
+    var count =
+      typeof selection.selectedCount === "number"
+        ? selection.selectedCount
+        : selection.nodes.filter(function (n) {
+            return n && n.id !== "__more_roots";
+          }).length;
     var header = [
       selection.fileName ? "File: " + selection.fileName : null,
       selection.pageName ? "Page: " + selection.pageName : null,
       selection.nodeUrl ? "Link: " + selection.nodeUrl : null,
+      "Selected roots: " + count,
       selection.canWrite === false
         ? "Canvas writes: unavailable (Dev Mode)"
         : "Canvas writes: available in Agent mode",
@@ -127,6 +148,49 @@
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "figma_list_frames",
+          description:
+            "List FRAME/COMPONENT nodes on the current page (id, name, depth), or the current selection when selectedOnly=true. " +
+            "Prefer selectedOnly when the user asks about their multi-select. " +
+            "For page-wide lists, prefer topLevel screens; check truncated/totalMatched if the page is large. " +
+            "Use before building prototype flows to resolve real node ids by screen name.",
+          parameters: {
+            type: "object",
+            properties: {
+              maxDepth: {
+                type: "number",
+                description:
+                  "Search depth from page children (1–4, default 2). Ignored when selectedOnly.",
+              },
+              selectedOnly: {
+                type: "boolean",
+                description:
+                  "If true, list only the current canvas selection roots (all types), not the whole page.",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_get_reactions",
+          description:
+            "Read prototype reactions on a node (triggers, navigate targets, transitions).",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
     ];
   }
 
@@ -152,14 +216,25 @@
         type: "function",
         function: {
           name: "figma_set_text",
-          description: "Set characters on a TEXT node (loads font first).",
+          description:
+            "Set characters on a TEXT node (or the first TEXT child of a frame). " +
+            "Loads all fonts used in the layer before editing; falls back to Inter if missing. " +
+            "Prefer search+replace for small edits (e.g. search \"5\", replace \"6\").",
           parameters: {
             type: "object",
             properties: {
               nodeId: { type: "string" },
               characters: { type: "string" },
+              search: {
+                type: "string",
+                description: "Optional substring to replace (use with replace).",
+              },
+              replace: {
+                type: "string",
+                description: "Replacement for the first search match.",
+              },
             },
-            required: ["nodeId", "characters"],
+            required: ["nodeId"],
             additionalProperties: false,
           },
         },
@@ -215,6 +290,386 @@
           },
         },
       },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_prototype_link",
+          description:
+            "Add or replace a prototype link: trigger (default ON_CLICK) navigates to destinationId frame. " +
+            "Use replaceAll:true to keep only this link on the source node.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: {
+                type: "string",
+                description: "Source node (frame or hotspot layer)",
+              },
+              destinationId: {
+                type: "string",
+                description: "Target frame node id",
+              },
+              trigger: {
+                type: "string",
+                enum: [
+                  "ON_CLICK",
+                  "ON_HOVER",
+                  "ON_PRESS",
+                  "ON_DRAG",
+                  "MOUSE_ENTER",
+                  "MOUSE_LEAVE",
+                  "MOUSE_UP",
+                  "MOUSE_DOWN",
+                ],
+              },
+              transition: {
+                type: "string",
+                enum: [
+                  "INSTANT",
+                  "DISSOLVE",
+                  "SMART_ANIMATE",
+                  "MOVE_IN",
+                  "MOVE_OUT",
+                  "PUSH",
+                  "SLIDE_IN",
+                  "SLIDE_OUT",
+                ],
+                description: "INSTANT = no animation (default).",
+              },
+              duration: {
+                type: "number",
+                description: "Transition duration in seconds (default 0.3).",
+              },
+              direction: {
+                type: "string",
+                enum: ["LEFT", "RIGHT", "TOP", "BOTTOM"],
+                description: "For MOVE_IN/SLIDE_IN/etc. (default LEFT).",
+              },
+              replace: {
+                type: "boolean",
+                description:
+                  "Replace existing reactions with the same trigger (default true).",
+              },
+              replaceAll: {
+                type: "boolean",
+                description: "Replace every reaction on the node (default true).",
+              },
+            },
+            required: ["nodeId", "destinationId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_prototype_flow",
+          description:
+            "Batch-create prototype links for a click-through flow. " +
+            "PREFERRED for multi-screen flows — pass every screen-to-screen link in one call. " +
+            "Each item: sourceId (or nodeId), destinationId; optional trigger/transition. " +
+            "Continues on per-link errors; check failed count in the result.",
+          parameters: {
+            type: "object",
+            properties: {
+              links: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    sourceId: { type: "string" },
+                    nodeId: { type: "string" },
+                    destinationId: { type: "string" },
+                    trigger: { type: "string" },
+                    transition: { type: "string" },
+                    duration: { type: "number" },
+                  },
+                  required: ["destinationId"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["links"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_clear_reactions",
+          description: "Remove all prototype reactions from a node.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_create_node",
+          description:
+            "Create FRAME/RECTANGLE/ELLIPSE/TEXT. Prefer styleFromId from a similar layer to match mockup style.",
+          parameters: {
+            type: "object",
+            properties: {
+              type: {
+                type: "string",
+                enum: ["FRAME", "RECTANGLE", "ELLIPSE", "TEXT"],
+              },
+              name: { type: "string" },
+              parentId: {
+                type: "string",
+                description: "Parent frame/page id (default: current page)",
+              },
+              styleFromId: {
+                type: "string",
+                description: "Copy styles from this existing node after create",
+              },
+              width: { type: "number" },
+              height: { type: "number" },
+              x: { type: "number" },
+              y: { type: "number" },
+              characters: {
+                type: "string",
+                description: "Initial text for TEXT nodes (default \"Text\")",
+              },
+              color: {
+                type: "object",
+                properties: {
+                  r: { type: "number" },
+                  g: { type: "number" },
+                  b: { type: "number" },
+                  a: { type: "number" },
+                },
+                required: ["r", "g", "b"],
+              },
+              layoutMode: {
+                type: "string",
+                enum: ["NONE", "HORIZONTAL", "VERTICAL"],
+                description: "Auto-layout for FRAME only",
+              },
+              select: {
+                type: "boolean",
+                description: "Select and zoom to the new node (default true)",
+              },
+            },
+            required: ["type"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_duplicate_node",
+          description:
+            "Clone an existing node (and its subtree). Default offset +40,+40 so the copy is visible. " +
+            "Optional rename via name; optional parentId to reparent the clone.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: {
+                type: "string",
+                description: "Source node to clone",
+              },
+              name: {
+                type: "string",
+                description: "Optional new name for the clone",
+              },
+              offsetX: {
+                type: "number",
+                description: "X offset from source (default 40)",
+              },
+              offsetY: {
+                type: "number",
+                description: "Y offset from source (default 40)",
+              },
+              parentId: {
+                type: "string",
+                description: "Optional new parent for the clone",
+              },
+              select: {
+                type: "boolean",
+                description: "Select and zoom to the clone (default true)",
+              },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_delete_node",
+          description:
+            "Delete one or more nodes from the canvas (and their subtrees). " +
+            "Pass nodeId and/or nodeIds (max 50). Cannot delete PAGE/DOCUMENT.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              nodeIds: {
+                type: "array",
+                items: { type: "string" },
+                description: "Batch delete (max 50)",
+              },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_geometry",
+          description:
+            "Set position (x/y) and/or size (width/height) on an existing node.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              x: { type: "number" },
+              y: { type: "number" },
+              width: { type: "number" },
+              height: { type: "number" },
+              select: {
+                type: "boolean",
+                description: "Also select/zoom (default false)",
+              },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_reparent_node",
+          description:
+            "Move a node under a new parent frame/page. Optional index among siblings; optional x/y after move.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              parentId: { type: "string" },
+              index: {
+                type: "number",
+                description: "Child index under the new parent (0 = first)",
+              },
+              x: { type: "number" },
+              y: { type: "number" },
+              select: { type: "boolean" },
+            },
+            required: ["nodeId", "parentId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_opacity",
+          description: "Set node opacity (0–1).",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              opacity: { type: "number", description: "0–1" },
+            },
+            required: ["nodeId", "opacity"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_corner_radius",
+          description:
+            "Set corner radius (uniform via radius, or per-corner topLeft/topRight/bottomRight/bottomLeft).",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              radius: { type: "number" },
+              topLeft: { type: "number" },
+              topRight: { type: "number" },
+              bottomRight: { type: "number" },
+              bottomLeft: { type: "number" },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_copy_styles",
+          description:
+            "Copy visual styles from one node to another. Prefer this to keep mockup style.",
+          parameters: {
+            type: "object",
+            properties: {
+              fromNodeId: { type: "string" },
+              toNodeId: { type: "string" },
+            },
+            required: ["fromNodeId", "toNodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_stroke",
+          description: "Set a solid stroke color and optional weight.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              color: {
+                type: "object",
+                properties: {
+                  r: { type: "number" },
+                  g: { type: "number" },
+                  b: { type: "number" },
+                  a: { type: "number" },
+                },
+                required: ["r", "g", "b"],
+              },
+              weight: { type: "number" },
+            },
+            required: ["nodeId", "color"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "figma_set_font",
+          description: "Set TEXT font family/style and optional fontSize.",
+          parameters: {
+            type: "object",
+            properties: {
+              nodeId: { type: "string" },
+              family: { type: "string" },
+              style: { type: "string" },
+              fontSize: { type: "number" },
+            },
+            required: ["nodeId"],
+            additionalProperties: false,
+          },
+        },
+      },
     ];
   }
 
@@ -226,15 +681,34 @@
     return tools;
   }
 
-  function toolLabel(name) {
+  function toolLabel(name, args) {
+    if (name === "figma_set_prototype_flow" && args && args.links) {
+      var n = Array.isArray(args.links) ? args.links.length : 0;
+      if (n > 0) return "Prototype flow (" + n + ")";
+    }
     var map = {
       figma_get_selection: "Get selection",
       figma_inspect_node: "Inspect node",
       figma_focus_node: "Focus node",
+      figma_list_frames: "List frames",
+      figma_get_reactions: "Get reactions",
       figma_set_name: "Rename",
       figma_set_text: "Set text",
       figma_set_fills: "Set fill",
       figma_set_auto_layout: "Auto-layout",
+      figma_set_prototype_link: "Prototype link",
+      figma_set_prototype_flow: "Prototype flow",
+      figma_clear_reactions: "Clear reactions",
+      figma_create_node: "Create node",
+      figma_duplicate_node: "Duplicate",
+      figma_delete_node: "Delete",
+      figma_set_geometry: "Set geometry",
+      figma_reparent_node: "Reparent",
+      figma_set_opacity: "Set opacity",
+      figma_set_corner_radius: "Corner radius",
+      figma_copy_styles: "Copy styles",
+      figma_set_stroke: "Set stroke",
+      figma_set_font: "Set font",
     };
     return map[name] || name;
   }
@@ -443,52 +917,74 @@
       };
       messages.push(assistantMsg);
 
-      for (var j = 0; j < result.toolCalls.length; j++) {
-        var call = result.toolCalls[j];
+      var toolJobs = result.toolCalls.map(function (call, j) {
         var callId = call.id || "call_" + round + "_" + j;
         var args = parseArgs(call.arguments);
-        if (onToolStep) {
-          onToolStep({
-            name: call.name,
-            label: toolLabel(call.name),
-            status: "running",
-            args: args,
-          });
-        }
-        var toolResult;
-        var toolError = null;
-        try {
-          toolResult = await invokeTool(call.name, args);
-          if (onToolStep) {
-            onToolStep({
-              name: call.name,
-              label: toolLabel(call.name),
-              status: "ok",
-              args: args,
-            });
-          }
-        } catch (err) {
-          toolError = (err && err.message) || String(err);
-          toolResult = { error: toolError };
-          if (onToolStep) {
-            onToolStep({
-              name: call.name,
-              label: toolLabel(call.name),
-              status: "error",
-              error: toolError,
-              args: args,
-            });
-          }
-        }
+        return {
+          callId: callId,
+          name: call.name,
+          args: args,
+          promise: (async function () {
+            if (onToolStep) {
+              onToolStep({
+                stepId: callId,
+                name: call.name,
+                label: toolLabel(call.name, args),
+                status: "running",
+                args: args,
+              });
+            }
+            try {
+              var toolResult = await invokeTool(call.name, args);
+              if (onToolStep) {
+                onToolStep({
+                  stepId: callId,
+                  name: call.name,
+                  label: toolLabel(call.name, args),
+                  status: "ok",
+                  args: args,
+                });
+              }
+              return { callId: callId, content: JSON.stringify(toolResult) };
+            } catch (err) {
+              var toolError = (err && err.message) || String(err);
+              if (onToolStep) {
+                onToolStep({
+                  stepId: callId,
+                  name: call.name,
+                  label: toolLabel(call.name, args),
+                  status: "error",
+                  error: toolError,
+                  args: args,
+                });
+              }
+              return {
+                callId: callId,
+                content: JSON.stringify({ error: toolError }),
+              };
+            }
+          })(),
+        };
+      });
+
+      var toolOutcomes = await Promise.all(
+        toolJobs.map(function (job) {
+          return job.promise;
+        })
+      );
+      for (var j = 0; j < toolOutcomes.length; j++) {
         messages.push({
           role: "tool",
-          tool_call_id: callId,
-          content: JSON.stringify(toolResult),
+          tool_call_id: toolOutcomes[j].callId,
+          content: toolOutcomes[j].content,
         });
       }
     }
 
-    return assistantText || "(tool round limit reached)";
+    return (
+      assistantText ||
+      "(tool round limit reached — ask the agent to continue the remaining prototype links)"
+    );
   }
 
   window.__harborFigmaTurn = {
