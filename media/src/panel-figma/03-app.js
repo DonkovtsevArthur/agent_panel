@@ -360,14 +360,14 @@
     if (!els.hostStatusRow || !els.hostStatusLabel) return;
     els.hostStatusRow.classList.remove("is-online", "is-offline");
     if (sidecarHealthState === "online") {
-      els.hostStatusRow.classList.add("is-online");
-      els.hostStatusLabel.textContent = t("hostOnline");
+      els.hostStatusRow.hidden = true;
     } else if (sidecarHealthState === "offline") {
+      els.hostStatusRow.hidden = false;
       els.hostStatusRow.classList.add("is-offline");
       els.hostStatusLabel.textContent =
         t("hostOffline") + " — " + t("hostOfflineHint");
     } else {
-      els.hostStatusLabel.textContent = "";
+      els.hostStatusRow.hidden = true;
     }
   }
 
