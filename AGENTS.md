@@ -139,6 +139,20 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - Pure logic that tests can import should avoid top-level `vscode` requires (lazy-require or keep helpers free of the API).
 - Commit messages for this repo: Russian, when the user asks to commit.
 
+## Supplementary rules (`.cursor/rules/*.mdc`)
+
+Before making changes, read the project rules in `.cursor/rules/`:
+
+| File | Covers |
+|------|--------|
+| `agent-edit-policy.mdc` | What agents may/must not edit; git via shell forbidden; no drive-by cleanup |
+| `vscode-webstorm-parity.mdc` | Plugin logic changes must cover both VS Code and WebStorm |
+| `vscode-build-and-workspace.mdc` | Build, package, install flow; agents stored in workspaceState only |
+| `no-cursor-branding.mdc` | Never mention Cursor in user-facing copy |
+| `material-icons.mdc` | UI icons: Material Symbols Outlined only, local font |
+
+These files are **not** auto-loaded into agent context — read them with `read_file` or `search_files` when the task touches the relevant area.
+
 ## Model: `builtin:zai-coding-plan/GLM-5.2` operating constraints
 
 These constraints apply **only** when the model actually serving the session is `builtin:zai-coding-plan/GLM-5.2`. Harbor injects the real selected model id into the session rules (`harborModelIdentityRulesForLanguage` in `src/i18n.ts`); model ids named in workspace docs — including this section — are repo documentation, never your identity. When asked which model you are, answer with the injected active-model id.
