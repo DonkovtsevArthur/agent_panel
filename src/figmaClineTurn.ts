@@ -592,6 +592,10 @@ function toolLabel(name: string, args: Record<string, unknown>): string {
     figma_list_fonts: "List fonts",
     figma_swap_component: "Swap component",
     figma_bind_variable: "Bind variable",
+    figma_subtree_summary: "Subtree summary",
+    figma_style_audit: "Style audit",
+    figma_normalize_styles: "Normalize styles",
+    figma_smart_duplicate: "Smart duplicate",
     skills: "Load skill",
   };
   const base = map[name] || name;

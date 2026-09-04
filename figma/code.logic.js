@@ -751,6 +751,8 @@ var CANVAS_WRITE_TOOLS = {
   figma_batch_tools: 1,
   figma_apply_to_children: 1,
   figma_nudge_nodes: 1,
+  figma_normalize_styles: 1,
+  figma_smart_duplicate: 1,
 };
 
 function solidPaintFromArgs(color) {
@@ -4301,6 +4303,432 @@ function setNodeCornerRadius(args) {
   });
 }
 
+function subtreeSummary(args) {
+  if (!args.nodeId) {
+    return Promise.reject(new Error("nodeId is required"));
+  }
+  return resolveNode(args.nodeId).then(function (root) {
+    var maxDepth = Math.min(Math.max(Number(args.maxDepth) || 2, 1), 4);
+    var maxChildren = Math.min(Math.max(Number(args.maxChildren) || 40, 1), 80);
+    var totalNodes = 0;
+    var textNodes = 0;
+    var componentNodes = 0;
+    var instanceNodes = 0;
+    var fillSet = {};
+    var fontSet = {};
+
+    function walk(node, depth) {
+      if (!node || isHiddenLayer(node)) return;
+      totalNodes++;
+      if (node.type === "TEXT") {
+        textNodes++;
+        try {
+          if (node.fontName && node.fontName !== figma.mixed) {
+            var fk = node.fontName.family + " " + node.fontName.style;
+            fontSet[fk] = (fontSet[fk] || 0) + 1;
+          }
+        } catch (_e) {}
+      }
+      if (node.type === "COMPONENT" || node.type === "COMPONENT_SET") {
+        componentNodes++;
+      }
+      if (node.type === "INSTANCE") {
+        instanceNodes++;
+      }
+      try {
+        if ("fills" in node && node.fills && node.fills !== figma.mixed) {
+          for (var i = 0; i < node.fills.length && i < 4; i++) {
+            var p = paintToSimple(node.fills[i]);
+            if (p) {
+              var key =
+                "rgb(" +
+                Math.round(p.r * 255) +
+                "," +
+                Math.round(p.g * 255) +
+                "," +
+                Math.round(p.b * 255) +
+                ")";
+              fillSet[key] = (fillSet[key] || 0) + 1;
+            }
+          }
+        }
+      } catch (_eF) {}
+      if (depth >= maxDepth) return;
+      if (!node.children || !node.children.length) return;
+      for (var c = 0; c < node.children.length; c++) {
+        walk(node.children[c], depth + 1);
+      }
+    }
+
+    // Build compact children list (direct children only)
+    var children = [];
+    var kids = root.children || [];
+    var hiddenSkipped = 0;
+    for (var i = 0; i < kids.length; i++) {
+      var ch = kids[i];
+      if (isHiddenLayer(ch)) {
+        hiddenSkipped++;
+        continue;
+      }
+      if (children.length >= maxChildren) break;
+      var row = {
+        id: ch.id,
+        name: ch.name,
+        type: ch.type,
+      };
+      attachNodeGeometry(ch, row);
+      if (ch.layoutMode && ch.layoutMode !== "NONE") {
+        row.layoutMode = ch.layoutMode;
+      }
+      if (ch.type === "TEXT") {
+        var chars = String(ch.characters || "");
+        row.textPreview = chars.length > 60 ? chars.slice(0, 57) + "..." : chars;
+      }
+      if (ch.type === "INSTANCE" && ch.mainComponent) {
+        row.componentName = ch.mainComponent.name || undefined;
+      }
+      children.push(row);
+    }
+
+    // Walk full subtree for counts
+    walk(root, 0);
+
+    // Sort fills/fonts by frequency
+    function topKeys(obj, limit) {
+      return Object.keys(obj)
+        .sort(function (a, b) {
+          return obj[b] - obj[a];
+        })
+        .slice(0, limit || 8)
+        .map(function (k) {
+          return { value: k, count: obj[k] };
+        });
+    }
+
+    return {
+      id: root.id,
+      name: root.name,
+      type: root.type,
+      width: "width" in root ? Math.round(root.width) : undefined,
+      height: "height" in root ? Math.round(root.height) : undefined,
+      layoutMode: root.layoutMode || "NONE",
+      children: children,
+      childCount: children.length,
+      hiddenChildCount: hiddenSkipped || undefined,
+      totalNodes: totalNodes,
+      textNodes: textNodes,
+      components: componentNodes || undefined,
+      instances: instanceNodes || undefined,
+      topFills: topKeys(fillSet, 6),
+      topFonts: topKeys(fontSet, 6),
+    };
+  });
+}
+
+function styleAudit(args) {
+  if (!args.nodeId) {
+    return Promise.reject(new Error("nodeId is required"));
+  }
+  return resolveNode(args.nodeId).then(function (root) {
+    var maxDepth = Math.min(Math.max(Number(args.maxDepth) || 6, 1), 12);
+    var fills = {};
+    var fonts = {};
+    var radii = {};
+    var strokeWeights = {};
+
+    function colorKey(paint) {
+      if (!paint || !paint.color) return null;
+      var c = paint.color;
+      return (
+        "rgb(" +
+        Math.round(c.r * 255) +
+        "," +
+        Math.round(c.g * 255) +
+        "," +
+        Math.round(c.b * 255) +
+        ")"
+      );
+    }
+
+    function addToMap(map, key, nodeId) {
+      if (!key) return;
+      if (!map[key]) map[key] = [];
+      map[key].push(nodeId);
+    }
+
+    function walk(node, depth) {
+      if (!node || isHiddenLayer(node)) return;
+      // Fills
+      try {
+        if ("fills" in node && node.fills && node.fills !== figma.mixed) {
+          for (var i = 0; i < node.fills.length; i++) {
+            var ck = colorKey(node.fills[i]);
+            if (ck) addToMap(fills, ck, node.id);
+          }
+        }
+      } catch (_eF) {}
+      // Fonts (TEXT only)
+      if (node.type === "TEXT") {
+        try {
+          if (node.fontName && node.fontName !== figma.mixed) {
+            var fk = node.fontName.family + " " + node.fontName.style;
+            addToMap(fonts, fk, node.id);
+          }
+        } catch (_eFont) {}
+      }
+      // Corner radius
+      try {
+        if (
+          "cornerRadius" in node &&
+          node.cornerRadius !== figma.mixed &&
+          node.cornerRadius !== undefined
+        ) {
+          addToMap(radii, String(node.cornerRadius), node.id);
+        }
+      } catch (_eR) {}
+      // Stroke weight
+      try {
+        if (
+          "strokeWeight" in node &&
+          node.strokeWeight !== figma.mixed &&
+          node.strokeWeight !== undefined
+        ) {
+          addToMap(strokeWeights, String(node.strokeWeight), node.id);
+        }
+      } catch (_eS) {}
+      if (depth >= maxDepth) return;
+      if (!node.children || !node.children.length) return;
+      for (var c = 0; c < node.children.length; c++) {
+        walk(node.children[c], depth + 1);
+      }
+    }
+
+    walk(root, 0);
+
+    function groupSummary(map) {
+      return Object.keys(map)
+        .map(function (key) {
+          return { value: key, nodeIds: map[key], count: map[key].length };
+        })
+        .sort(function (a, b) {
+          return b.count - a.count;
+        });
+    }
+
+    var fillsGroups = groupSummary(fills);
+    var fontsGroups = groupSummary(fonts);
+    var radiiGroups = groupSummary(radii);
+    var strokeGroups = groupSummary(strokeWeights);
+
+    return {
+      id: root.id,
+      name: root.name,
+      fills: fillsGroups,
+      fonts: fontsGroups,
+      cornerRadii: radiiGroups,
+      strokeWeights: strokeGroups,
+      inconsistent:
+        fillsGroups.length > 1 ||
+        fontsGroups.length > 1 ||
+        radiiGroups.length > 1 ||
+        strokeGroups.length > 1,
+    };
+  });
+}
+
+function normalizeStyles(args) {
+  requireWrite();
+  if (!args.parentId) {
+    return Promise.reject(new Error("parentId is required"));
+  }
+  if (!args.referenceNodeId) {
+    return Promise.reject(new Error("referenceNodeId is required"));
+  }
+  var maxTargets = Math.min(Math.max(Number(args.maxTargets) || 40, 1), 80);
+  var nameFilter = args.nameContains
+    ? String(args.nameContains).toLowerCase()
+    : null;
+  var typeFilter = args.type ? String(args.type).toUpperCase() : null;
+  var include = Array.isArray(args.include) ? args.include : null;
+
+  return Promise.all([
+    resolveNode(args.parentId),
+    resolveNode(args.referenceNodeId),
+  ]).then(function (pair) {
+    var parent = pair[0];
+    var reference = pair[1];
+    if (!parent || !parent.children) {
+      throw new Error("parentId must be a container with children");
+    }
+    commitCanvasUndo();
+
+    // Collect matching children
+    var targets = [];
+    for (var i = 0; i < parent.children.length; i++) {
+      var ch = parent.children[i];
+      if (isHiddenLayer(ch)) continue;
+      if (ch.locked) continue;
+      if (ch.id === reference.id) continue; // skip reference itself
+      if (
+        nameFilter &&
+        String(ch.name || "")
+          .toLowerCase()
+          .indexOf(nameFilter) < 0
+      ) {
+        continue;
+      }
+      if (typeFilter && String(ch.type).toUpperCase() !== typeFilter) {
+        continue;
+      }
+      targets.push(ch);
+      if (targets.length >= maxTargets) break;
+    }
+
+    if (!targets.length) {
+      return { updated: 0, parentId: parent.id, referenceId: reference.id };
+    }
+
+    // Apply styles to each target
+    var updated = 0;
+    var applied = [];
+    var fontChain = Promise.resolve();
+
+    for (var t = 0; t < targets.length; t++) {
+      var target = targets[t];
+      var visApplied = copyVisualStyles(reference, target, {
+        include: include
+          ? include.filter(function (k) {
+              return k !== "font";
+            })
+          : null,
+      });
+      if (visApplied.length) updated++;
+      applied = applied.concat(visApplied);
+
+      // Copy font for TEXT nodes
+      if (
+        target.type === "TEXT" &&
+        reference.type === "TEXT" &&
+        (!include || include.indexOf("font") >= 0)
+      ) {
+        fontChain = fontChain
+          .then(
+            (function (ref, tgt) {
+              return function () {
+                return copyTextStyles(ref, tgt);
+              };
+            })(reference, target)
+          )
+          .catch(function () {
+            /* font load failed */
+          });
+      }
+    }
+
+    return fontChain.then(function () {
+      pushSelection(undefined, { withTree: false, withPreview: false });
+      return {
+        parentId: parent.id,
+        referenceId: reference.id,
+        matched: targets.length,
+        updated: updated,
+      };
+    });
+  });
+}
+
+function smartDuplicate(args) {
+  requireWrite();
+  var nodeId = args.nodeId;
+  if (!nodeId) {
+    return Promise.reject(new Error("nodeId is required"));
+  }
+  return resolveNode(nodeId).then(function (node) {
+    if (
+      !node ||
+      node.type === "PAGE" ||
+      node.type === "DOCUMENT" ||
+      typeof node.clone !== "function"
+    ) {
+      throw new Error("Cannot duplicate this node type: " + (node && node.type));
+    }
+    var clone = node.clone();
+    var offsetX =
+      args.offsetX != null && !isNaN(Number(args.offsetX))
+        ? Number(args.offsetX)
+        : 40;
+    var offsetY =
+      args.offsetY != null && !isNaN(Number(args.offsetY))
+        ? Number(args.offsetY)
+        : 40;
+    if ("x" in clone && "x" in node) clone.x = node.x + offsetX;
+    if ("y" in clone && "y" in node) clone.y = node.y + offsetY;
+    if (args.name != null && String(args.name).trim()) {
+      clone.name = String(args.name);
+    }
+
+    function finish() {
+      selectCreatedNode(clone, args.select);
+      return Object.assign(nodeCreateSummary(clone), {
+        sourceId: node.id,
+        textReplaced: textReplacements,
+      });
+    }
+
+    // Apply text replacements
+    var textMap = args.textMap;
+    var textReplacements = 0;
+    var textChain = Promise.resolve();
+
+    if (textMap && typeof textMap === "object") {
+      var textNodes = [];
+      collectTextNodes(clone, 0, textNodes);
+      var entries = Object.keys(textMap);
+
+      for (var i = 0; i < textNodes.length; i++) {
+        var tn = textNodes[i];
+        var currentChars = String(tn.characters || "");
+        for (var j = 0; j < entries.length; j++) {
+          var oldText = entries[j];
+          var newText = String(textMap[oldText] || "");
+          if (currentChars === oldText || currentChars.indexOf(oldText) >= 0) {
+            var replacement = currentChars.replace(oldText, newText);
+            if (replacement !== currentChars) {
+              textChain = textChain
+                .then(
+                  (function (node, text) {
+                    return function () {
+                      return loadFontsForTextNode(node)
+                        .catch(function () {})
+                        .then(function () {
+                          node.characters = text;
+                        });
+                    };
+                  })(tn, replacement)
+                )
+                .catch(function () {});
+              textReplacements++;
+            }
+            break; // first match wins per text node
+          }
+        }
+      }
+    }
+
+    return textChain.then(function () {
+      if (!args.parentId) {
+        return finish();
+      }
+      return resolveParentContainer(args.parentId).then(function (parent) {
+        if (clone.parent !== parent) {
+          parent.appendChild(clone);
+        }
+        return finish();
+      });
+    });
+  });
+}
+
 function invokeTool(name, args, opts) {
   args = args && typeof args === "object" ? args : {};
   var quiet = !!(opts && opts.quiet);
@@ -4482,7 +4910,19 @@ function invokeTool(name, args, opts) {
     return swapInstanceComponent(args).then(afterWrite);
   }
   if (name === "figma_bind_variable") {
-    return bindVariableToNode(args).then(afterWrite);
+    return bindVariableToNode(args);
+  }
+  if (name === "figma_subtree_summary") {
+    return subtreeSummary(args);
+  }
+  if (name === "figma_style_audit") {
+    return styleAudit(args);
+  }
+  if (name === "figma_normalize_styles") {
+    return normalizeStyles(args).then(afterWrite);
+  }
+  if (name === "figma_smart_duplicate") {
+    return smartDuplicate(args).then(afterWrite);
   }
   return Promise.reject(new Error("Unknown tool: " + name));
 }

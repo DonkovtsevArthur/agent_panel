@@ -9,10 +9,17 @@ import { applyFigmaTlsCaFromSettings } from "./mcp/tlsCa";
 import { applyHarborTlsPolicy } from "./tlsPolicy";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
 import { ensureFigmaHostInBackground } from "./figmaHostEnsure";
+import { seedDefaultHarborSkills } from "./harborSkills";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
   applyHarborTlsPolicy();
+  // Idempotent: copies packaged defaults into ~/.harbor/skills (never overwrites).
+  try {
+    seedDefaultHarborSkills(context.extensionPath);
+  } catch {
+    /* ignore seed failures — skills remain optional */
+  }
   ensureFigmaHostInBackground(context.extensionPath);
   const mcpManager = initMcpManager(context);
   const provider = new AgentPanelProvider(context.extensionUri, context);

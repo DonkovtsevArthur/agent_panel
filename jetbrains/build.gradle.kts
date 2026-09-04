@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.0.29"
+version = "2.0.32"
 
 repositories {
     mavenCentral()
@@ -208,6 +208,10 @@ tasks.register<Copy>("prepareHarborResources") {
     val cline = outDir.resolve("clineBundle.js")
     if (cline.exists()) {
         from(cline) { into("sidecar") }
+    }
+    val bundledSkills = outDir.resolve("bundled-skills")
+    if (bundledSkills.exists()) {
+        from(bundledSkills) { into("sidecar/bundled-skills") }
     }
 }
 

@@ -7,6 +7,7 @@ import {
   getConfig,
   getEnabledModels,
   resolveModelEndpoint,
+  resolveModelSupportsReasoningEffort,
 } from "./config";
 import {
   defaultCommitMessagePromptForLanguage,
@@ -14,6 +15,7 @@ import {
   resolveUiLanguage,
 } from "./i18n";
 import { getOpenAICompatibleClient } from "./openaiClient";
+import type { ChatCompletionRequest } from "./openaiTypes";
 import {
   capWorkspaceRuleText,
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
@@ -23,6 +25,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 const MAX_DIFF_CHARS = 90_000;
+const COMMIT_DOC_RULE_CHAR_CAP = 32_000;
 
 /** Thrown when Settings → Commit messages has no usable model selected. */
 export class CommitMessageModelNotConfiguredError extends Error {
@@ -63,6 +66,15 @@ const COMMIT_RULE_CANDIDATES = [
 
 const RULE_HINT =
   /commit\s*message|сообщен\w*\s+коммит|git\s+commit|conventional\s+commits|generate commit/i;
+
+function capCommitRuleText(sourcePath: string, text: string): string {
+  const isDocumentRule =
+    /(^|\/)AGENTS\.md$/i.test(sourcePath) || /\.md$/i.test(sourcePath);
+  return capWorkspaceRuleText(
+    text,
+    isDocumentRule ? COMMIT_DOC_RULE_CHAR_CAP : DEFAULT_WORKSPACE_RULE_CHAR_CAP
+  );
+}
 
 type GitRepository = {
   rootUri: vscode.Uri;
@@ -278,6 +290,46 @@ function cleanCommitMessage(raw: string): string {
   return (firstLine || text).trim();
 }
 
+/** Текст из content ответа (string или массив parts с text). */
+function extractContentText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) =>
+        part && typeof part === "object" && "text" in part
+          ? String((part as { text?: unknown }).text || "")
+          : ""
+      )
+      .join("");
+  }
+  return "";
+}
+
+const CONVENTIONAL_COMMIT_LINE =
+  /^(?:feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert)(?:\([^)\n]+\))?!?:\s+\S.{0,150}$/i;
+
+/**
+ * Последний conventional-commit-подобный рядок из reasoning_content —
+ * последний шанс, когда модель ушла в thinking и не вернула content.
+ */
+function extractCommitMessageFromReasoning(reasoning: string): string {
+  const lines = String(reasoning || "").split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+      .trim()
+      .replace(/^[-*>"'`\s]+/, "")
+      .replace(/["'`.]+$/, "")
+      .replace(/\*\*/g, "")
+      .trim();
+    if (CONVENTIONAL_COMMIT_LINE.test(line)) {
+      return line;
+    }
+  }
+  return "";
+}
+
 async function findCommitRuleInCursorRules(
   root: string
 ): Promise<string | undefined> {
@@ -299,14 +351,14 @@ async function findCommitRuleInCursorRules(
   for (const name of byName) {
     const body = await readWorkspaceRuleFile(path.join(rulesDir, name));
     if (body) {
-      return body;
+      return capCommitRuleText(name, body);
     }
   }
 
   for (const name of files) {
     const body = await readWorkspaceRuleFile(path.join(rulesDir, name));
     if (body && RULE_HINT.test(body)) {
-      return body;
+      return capCommitRuleText(name, body);
     }
   }
   return undefined;
@@ -323,7 +375,8 @@ async function findGitCommitTemplate(cwd: string): Promise<string | undefined> {
     const resolved = path.isAbsolute(template)
       ? template
       : path.join(cwd, template);
-    return readWorkspaceRuleFile(resolved);
+    const body = await readWorkspaceRuleFile(resolved);
+    return body ? capCommitRuleText(resolved, body) : undefined;
   } catch {
     return undefined;
   }
@@ -345,17 +398,17 @@ export async function loadProjectCommitRule(
     ) {
       continue;
     }
-    return capWorkspaceRuleText(body, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
+    return capCommitRuleText(rel, body);
   }
 
   const fromRules = await findCommitRuleInCursorRules(root);
   if (fromRules) {
-    return capWorkspaceRuleText(fromRules, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
+    return fromRules;
   }
 
   const fromTemplate = await findGitCommitTemplate(root);
   if (fromTemplate) {
-    return capWorkspaceRuleText(fromTemplate, DEFAULT_WORKSPACE_RULE_CHAR_CAP);
+    return fromTemplate;
   }
 
   return undefined;
@@ -365,20 +418,20 @@ function buildPrompts(
   lang: "en" | "ru",
   diff: string,
   source: "staged" | "unstaged",
-  projectRule?: string
+  instruction?: string
 ): { system: string; user: string } {
   const baseSystem =
     lang === "ru"
       ? "Ты помогаешь писать сообщения git-коммитов. Используй формат: <тип>(<область>): <описание> — одно краткое предложение на русском. Типы: feat/fix/docs/style/refactor/test/chore/perf. Ответь ТОЛЬКО текстом сообщения — без кавычек, без markdown, без префикса."
       : "You write git commit messages. Use the format: <type>(<scope>): <description> — one concise sentence. Types: feat/fix/docs/style/refactor/test/chore/perf. Reply with the commit message text only — no quotes, no markdown, no prefix.";
 
-  // Если передан кастомный промпт — используем его как основной system prompt,
-  // а дефолтный добавляем только как «без markdown/кавычек»约束 в конце.
-  const system = projectRule
-    ? lang === "ru"
-      ? `${projectRule}\n\nОтвечай ТОЛЬКО текстом сообщения коммита — без кавычек, без markdown, без префикса «Commit message:» или «Сообщение коммита:»`
-      : `${projectRule}\n\nReply with the commit message text only — no quotes, no markdown, no 'Commit message:' prefix`
-    : baseSystem;
+  const outputOnlyTail =
+    lang === "ru"
+      ? "Отвечай ТОЛЬКО текстом сообщения коммита — без кавычек, без markdown, без префикса «Commit message:» или «Сообщение коммита:»"
+      : "Reply with the commit message text only — no quotes, no markdown, no 'Commit message:' prefix";
+  const system = instruction
+    ? `${instruction}\n\n${baseSystem}\n${outputOnlyTail}`
+    : `${baseSystem}\n${outputOnlyTail}`;
 
   if (lang === "ru") {
     return {
@@ -426,6 +479,8 @@ export function fallbackCommitMessage(
 /**
  * Сгенерировать текст сообщения коммита по diff.
  * Без UI — для SCM-команды и детерминированного commit/push из панели.
+ * Бросает ошибку с текстом последней неудачи, если все выбранные модели
+ * упали или вернули пустой ответ (caller решает: показать или fallback).
  */
 export async function composeCommitMessageText(
   cwd: string,
@@ -480,15 +535,16 @@ export async function composeCommitMessageText(
   ).trim();
   const hasCustomPrompt =
     Boolean(storedPrompt) && !isBuiltinCommitMessagePrompt(storedPrompt);
-  const projectRule = hasCustomPrompt
-    ? undefined
-    : await loadProjectCommitRule(cwd);
-  const instruction = hasCustomPrompt
+  const projectRule = await loadProjectCommitRule(cwd);
+  const fallbackInstruction = hasCustomPrompt
     ? storedPrompt
-    : projectRule || defaultCommitMessagePromptForLanguage(lang);
-  // Если кастомный промпт на русском — force lang="ru" для user prompt.
+    : defaultCommitMessagePromptForLanguage(lang);
+  const instruction = projectRule || fallbackInstruction;
+  // Если проектных правил нет, а fallback-промпт задан на русском — force lang="ru".
   const effectiveLang =
-    hasCustomPrompt && /[а-яА-ЯёЁ]/.test(storedPrompt) ? "ru" : lang;
+    !projectRule && hasCustomPrompt && /[а-яА-ЯёЁ]/.test(storedPrompt)
+      ? "ru"
+      : lang;
   const prompts = buildPrompts(
     effectiveLang,
     data.diff,
@@ -496,7 +552,11 @@ export async function composeCommitMessageText(
     instruction
   );
 
-  const COMMIT_MODEL_TIMEOUT_MS = 10_000;
+  // Reasoning-модели на большом diff регулярно не укладываются в 10 с.
+  const COMMIT_MODEL_TIMEOUT_MS = 30_000;
+  // 256 съедался thinking-бюджетом reasoning-моделей → пустой content.
+  // (Kimi/Claude/GLM registry всё равно поднимает floor до 16000.)
+  const COMMIT_MAX_TOKENS = 1024;
   const tlsOptions = {
     rejectUnauthorized: config.rejectUnauthorized,
     caBundlePath: config.caBundlePath,
@@ -526,43 +586,78 @@ export async function composeCommitMessageText(
     const combined = AbortSignal.any(signals);
 
     try {
-      const result = await client.chatCompletions(
-        {
-          model: modelId,
-          messages: [
-            { role: "system", content: prompts.system },
-            { role: "user", content: prompts.user },
-          ],
-          temperature: 0.2,
-          max_tokens: 256,
-        },
-        combined
+      const requestBody: ChatCompletionRequest = {
+        model: modelId,
+        messages: [
+          { role: "system", content: prompts.system },
+          { role: "user", content: prompts.user },
+        ],
+        temperature: 0.2,
+        max_tokens: COMMIT_MAX_TOKENS,
+      };
+      const result = await client.chatCompletions(requestBody, combined);
+      const cleaned = cleanCommitMessage(
+        extractContentText(result.message.content)
       );
-      const content = result.message.content;
-      const raw =
-        typeof content === "string"
-          ? content
-          : Array.isArray(content)
-            ? content
-                .map((part) =>
-                  part && typeof part === "object" && "text" in part
-                    ? String(part.text || "")
-                    : ""
-                )
-                .join("")
-            : "";
-      return cleanCommitMessage(raw) || fallbackCommitMessage(paths, lang);
+      if (cleaned) {
+        return cleaned;
+      }
+      // Пустой content: reasoning-модель могла уйти в thinking. Один повтор
+      // с отключённым thinking, затем — извлечение строки из reasoning_content.
+      const reasoning =
+        typeof result.message.reasoning_content === "string"
+          ? result.message.reasoning_content
+          : "";
+      if (resolveModelSupportsReasoningEffort(modelId)) {
+        try {
+          const retried = await client.chatCompletions(
+            { ...requestBody, reasoning_effort: "none" },
+            combined
+          );
+          const retryCleaned = cleanCommitMessage(
+            extractContentText(retried.message.content)
+          );
+          if (retryCleaned) {
+            return retryCleaned;
+          }
+        } catch {
+          // Гейтвей не принял reasoning_effort — остаётся извлечение.
+        }
+      }
+      const fromReasoning = extractCommitMessageFromReasoning(reasoning);
+      if (fromReasoning) {
+        return fromReasoning;
+      }
+      lastError = new Error(
+        lang === "ru" ? `${modelId}: пустой ответ` : `${modelId}: empty response`
+      );
     } catch (error) {
       if (signal?.aborted) {
         throw new Error("aborted");
       }
-      lastError = error;
+      lastError = deadline.signal.aborted
+        ? new Error(
+            lang === "ru"
+              ? `${modelId}: таймаут ${COMMIT_MODEL_TIMEOUT_MS / 1000} с`
+              : `${modelId}: timed out after ${COMMIT_MODEL_TIMEOUT_MS / 1000}s`
+          )
+        : error;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  return fallbackCommitMessage(paths, lang);
+  const reason =
+    lastError instanceof Error
+      ? lastError.message
+      : String(
+          lastError || (lang === "ru" ? "неизвестная ошибка" : "unknown error")
+        );
+  throw new Error(
+    lang === "ru"
+      ? `Все выбранные модели завершились ошибкой. Последняя: ${reason}`
+      : `All selected models failed. Last error: ${reason}`
+  );
 }
 
 export async function generateCommitMessage(

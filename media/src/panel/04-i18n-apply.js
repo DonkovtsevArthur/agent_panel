@@ -727,6 +727,10 @@
   let lastRunDurationMs = 0;
   let lastTtftMs = 0;
   let composerDragDepth = 0;
+  /** Live stopwatch: wall-clock ms when the current run started. */
+  let runStartedAt = 0;
+  /** Live stopwatch interval id (updates .tool-group-duration every second). */
+  let runStopwatchInterval = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
   const MAX_PENDING_SELECTIONS = 8;

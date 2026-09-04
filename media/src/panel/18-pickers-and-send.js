@@ -622,6 +622,13 @@
     if (busy) {
       lastRunDurationMs = 0;
       lastTtftMs = 0;
+      runStartedAt = Date.now();
+      if (runStopwatchInterval) {
+        clearInterval(runStopwatchInterval);
+      }
+      runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
+      // Show initial "0.0 s" immediately
+      updateLiveStopwatch();
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
@@ -632,6 +639,11 @@
     }
     updateSendButton();
     if (!busy) {
+      if (runStopwatchInterval) {
+        clearInterval(runStopwatchInterval);
+        runStopwatchInterval = 0;
+      }
+      runStartedAt = 0;
       finalizeRunningTimelines();
       focusPrompt();
     }

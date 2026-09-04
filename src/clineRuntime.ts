@@ -2032,15 +2032,54 @@ export async function runClineAgentTurn(options: {
   // Lazy Figma: only reach for the network when this turn actually references
   // a Figma URL — the per-turn fingerprint must never wait on a reconnect
   // attempt (a blocked network stalls it for the OS TCP timeout otherwise).
+  // Start all independent async phases in parallel — figma and fingerprint
+  // are awaited next (needed for session fingerprint); images, inline,
+  // mentions, history run in the background while session setup proceeds.
   timing.start("figma");
-  const figmaWanted = messageHasFigmaUrl(String(options.userText || ""));
-  let figmaUnavailable = false;
-  if (figmaWanted) {
-    figmaUnavailable = !(await ensureHarborFigmaConnected());
-  }
-  timing.end("figma");
+  const figmaPromise = (async () => {
+    const wanted = messageHasFigmaUrl(String(options.userText || ""));
+    let unavailable = false;
+    if (wanted) {
+      unavailable = !(await ensureHarborFigmaConnected());
+    }
+    return { wanted, unavailable };
+  })();
+
   timing.start("fingerprint");
-  const mcpFingerprint = await harborMcpToolFingerprint(clineMode === "plan");
+  const fingerprintPromise = harborMcpToolFingerprint(clineMode === "plan");
+
+  timing.start("images");
+  const imagesPromise = collectTurnImageDataUrls(
+    options.attachments,
+    options.history,
+    options.storageUri
+  );
+
+  timing.start("inline");
+  const inlinePromise = buildInlinedAttachmentsPrompt(
+    options.userText,
+    options.attachments
+  );
+
+  timing.start("mentions");
+  const mentionsPromise = buildSpecialMentionsPrompt(
+    String(options.userText || "")
+  );
+
+  timing.start("history");
+  const historyPromise = harborHistoryToClineMessages(
+    options.history,
+    options.storageUri,
+    options.priorUiMessages
+  );
+
+  // Await figma and fingerprint — needed for session fingerprint below.
+  const figmaResult = await figmaPromise;
+  timing.end("figma");
+  const figmaWanted = figmaResult.wanted;
+  const figmaUnavailable = figmaResult.unavailable;
+
+  const mcpFingerprint = await fingerprintPromise;
   timing.end("fingerprint");
   // systemPrompt is fixed at core.start and core.send cannot update it, so
   // any prompt-affecting change (Harbor rules, custom system prompt, Cline
@@ -2596,36 +2635,28 @@ export async function runClineAgentTurn(options: {
     }
   }
 
-  timing.start("images");
-  const imageBundle = await collectTurnImageDataUrls(
-    options.attachments,
-    options.history,
-    options.storageUri
-  );
+  // Await the remaining parallel phases (started above, running during
+  // session setup). images + inline must resolve before context; mentions
+  // and history are fully independent — all four run concurrently.
+  const [imageBundle, inlined, specialMentions, initialMessages] =
+    await Promise.all([imagesPromise, inlinePromise, mentionsPromise, historyPromise]);
   timing.end("images");
+  timing.end("inline");
+  timing.end("mentions");
+  timing.end("history");
+
   const currentImageUrls = imageBundle.urls.slice(0, imageBundle.fromCurrent);
   const currentHasImage = currentImageUrls.length > 0;
   let userImages = imageBundle.urls;
   const chatSeesImages = resolveModelSupportsVision(options.model);
 
   let userPrompt = String(options.userText || "").trim();
-  timing.start("inline");
-  const inlined = await buildInlinedAttachmentsPrompt(
-    options.userText,
-    options.attachments
-  );
-  timing.end("inline");
   if (inlined.text) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${inlined.text}`
       : inlined.text;
   }
   // Special @problems / @terminal / @url mentions inject live snapshots.
-  timing.start("mentions");
-  const specialMentions = await buildSpecialMentionsPrompt(
-    String(options.userText || "")
-  );
-  timing.end("mentions");
   if (specialMentions) {
     userPrompt = userPrompt
       ? `${userPrompt}\n\n${specialMentions}`
@@ -2742,14 +2773,6 @@ export async function runClineAgentTurn(options: {
   ) {
     userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
-
-  timing.start("history");
-  const initialMessages = await harborHistoryToClineMessages(
-    options.history,
-    options.storageUri,
-    options.priorUiMessages
-  );
-  timing.end("history");
 
   const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
     ? toClineReasoningOptions(

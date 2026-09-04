@@ -76,7 +76,7 @@
   "config.skills.disabled.description": "Имена skills, исключённые из tool skills (name из frontmatter или имя каталога).",
   "config.selectionHints.enabled.description": "Показывать всплывающие действия «Добавить в чат» над выделенным кодом в редакторе.",
   "config.rejectUnauthorized.description": "Проверять TLS-сертификаты. Включено (по умолчанию) — строгая проверка по системному хранилищу. Выключено — принимать самоподписанные сертификаты корпоративного прокси (небезопасно; opt-in, если нет CA bundle).",
-  "config.commitMessage.prompt.description": "Своё правило/промпт для генерации сообщений коммита в SCM. Пусто = правила проекта, затем встроенный дефолт.",
+  "config.commitMessage.prompt.description": "Fallback-правило/промпт для генерации сообщений коммита в SCM. Правила проекта имеют приоритет; этот текст используется, когда в проекте нет своих правил генерации. Пусто = встроенный дефолт.",
   "config.commitMessage.modelIds.description": "Id моделей из agentPanel.models для генерации сообщений коммита. Модели пробуются по порядку списка; если не отвечает 10 с — переход к следующей. Пусто = при генерации попросит выбрать модель в настройках.",
   "config.commitMessage.language.description": "Язык сгенерированных сообщений коммита",
   "config.commitMessage.language.enum.auto": "Как язык интерфейса плагина",

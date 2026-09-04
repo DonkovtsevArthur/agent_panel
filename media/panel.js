@@ -581,7 +581,7 @@
         "Пусто — берётся из PATH. При сохранении пишется ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
-      commitMessagesNote: "Генерация сообщений коммита в SCM по diff.",
+      commitMessagesNote: "Генерация сообщений коммита в SCM по diff. Выберите хотя бы одну модель ниже.",
       commitGeneration: "Генерация",
       commitStorage: "Область сохранения",
       commitScope: "Применить к",
@@ -2331,6 +2331,10 @@
   let lastRunDurationMs = 0;
   let lastTtftMs = 0;
   let composerDragDepth = 0;
+  /** Live stopwatch: wall-clock ms when the current run started. */
+  let runStartedAt = 0;
+  /** Live stopwatch interval id (updates .tool-group-duration every second). */
+  let runStopwatchInterval = 0;
 
   const MAX_PENDING_ATTACHMENTS = 8;
   const MAX_PENDING_SELECTIONS = 8;
@@ -7774,6 +7778,36 @@
     return seconds >= 90
       ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`
       : `${seconds.toFixed(1)} s`;
+  }
+
+  /**
+   * Live stopwatch: update the .tool-group-duration element of the active
+   * tool group with the elapsed wall-clock time since runStartedAt.
+   * Called every second by the interval started in setBusy(true).
+   */
+  function updateLiveStopwatch() {
+    if (!runStartedAt) {
+      return;
+    }
+    const group = getActiveToolGroup();
+    if (!group) {
+      return;
+    }
+    let durationEl = group.querySelector(".tool-group-duration");
+    if (!durationEl) {
+      const toggle = group.querySelector(".tool-group-toggle");
+      if (toggle) {
+        durationEl = document.createElement("span");
+        durationEl.className = "tool-group-duration";
+        toggle.appendChild(durationEl);
+      }
+    }
+    if (!durationEl) {
+      return;
+    }
+    const elapsed = Date.now() - runStartedAt;
+    durationEl.hidden = false;
+    durationEl.textContent = formatRunDuration(elapsed);
   }
 
   /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
@@ -15466,6 +15500,13 @@
     if (busy) {
       lastRunDurationMs = 0;
       lastTtftMs = 0;
+      runStartedAt = Date.now();
+      if (runStopwatchInterval) {
+        clearInterval(runStopwatchInterval);
+      }
+      runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
+      // Show initial "0.0 s" immediately
+      updateLiveStopwatch();
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
@@ -15476,6 +15517,11 @@
     }
     updateSendButton();
     if (!busy) {
+      if (runStopwatchInterval) {
+        clearInterval(runStopwatchInterval);
+        runStopwatchInterval = 0;
+      }
+      runStartedAt = 0;
       finalizeRunningTimelines();
       focusPrompt();
     }

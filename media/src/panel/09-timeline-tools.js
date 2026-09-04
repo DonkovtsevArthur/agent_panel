@@ -1353,6 +1353,36 @@
       : `${seconds.toFixed(1)} s`;
   }
 
+  /**
+   * Live stopwatch: update the .tool-group-duration element of the active
+   * tool group with the elapsed wall-clock time since runStartedAt.
+   * Called every second by the interval started in setBusy(true).
+   */
+  function updateLiveStopwatch() {
+    if (!runStartedAt) {
+      return;
+    }
+    const group = getActiveToolGroup();
+    if (!group) {
+      return;
+    }
+    let durationEl = group.querySelector(".tool-group-duration");
+    if (!durationEl) {
+      const toggle = group.querySelector(".tool-group-toggle");
+      if (toggle) {
+        durationEl = document.createElement("span");
+        durationEl.className = "tool-group-duration";
+        toggle.appendChild(durationEl);
+      }
+    }
+    if (!durationEl) {
+      return;
+    }
+    const elapsed = Date.now() - runStartedAt;
+    durationEl.hidden = false;
+    durationEl.textContent = formatRunDuration(elapsed);
+  }
+
   /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
   function formatTurnTiming(ttftMs, totalMs) {
     if (!(totalMs > 0)) {

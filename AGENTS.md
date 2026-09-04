@@ -27,7 +27,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | Commit message generation | `src/commitMessage.ts` |
 | Commit + push from review tags | `src/commitAndPush.ts` |
 | Workspace rules loader | `src/workspaceRules.ts` (`AGENTS.md` + `.cursor/rules/*.mdc`) — used by commit utility path |
-| Agent Skills | `src/harborSkills.ts` + Settings → Skills; dirs `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus `agentPanel.skills.extraDirectories`. Per-source toggles: `workspaceEnabled` / `globalEnabled` / `disabledExtraDirectories`. No auto-scan of `.agents` / `.cline` / `.cursor` skill trees. Runtime: Cline `skills` tool via `clineRuntime` `localRuntime.userInstructionService`. |
+| Agent Skills | `src/harborSkills.ts` + Settings → Skills; dirs `<workspace>/.harbor/skills`, `~/.harbor/skills`, plus `agentPanel.skills.extraDirectories`. On activate, packaged defaults from `bundled-skills/` are copied into `~/.harbor/skills` if missing (never overwritten). Per-source toggles: `workspaceEnabled` / `globalEnabled` / `disabledExtraDirectories`. No auto-scan of `.agents` / `.cline` / `.cursor` skill trees. Runtime: Cline `skills` tool via `clineRuntime` `localRuntime.userInstructionService`. |
 | Cline SDK reference (workspace skill) | `.harbor/skills/cline-sdk/` — upstream Cline SDK docs (`cline/sdk-skill`, Apache-2.0) as a workspace skill. Provides ClineCore / Agent API reference for Harbor agents during development. Covers: tools, events, plugins, providers, scheduling, multi-agent, production. Note: upstream docs, not our `vendor/cline/` fork — some patterns may differ. |
 | MCP / Figma | `src/mcp/*`, Settings → MCP Servers |
 | Webview UI (generated) | `media/panel.js` — built from `media/src/panel/NN-*.js`, `media/panel.css` (HostBridge: `__harborHost \|\| acquireVsCodeApi`) |
@@ -131,6 +131,7 @@ All chat models use the **ClineCore local session host** (`src/clineRuntime.ts` 
 - When a task has multiple valid approaches — briefly describe the options and let the user pick, rather than choosing silently.
 - If unsure whether existing code, comments, branches, flags, or files are unused / safe to remove — **ask**; do not delete on a guess.
 - This rule applies even in Agent mode. Acting on assumptions wastes user time; one clarifying question upfront is always better than a wrong fix.
+- **Target platform**: this project has three targets — VS Code, WebStorm (JetBrains), Figma plugin. Each has its own file areas, build commands, and constraints. When the user's request does not explicitly state which target to work on — **ask before starting**: «Задача для VS Code, WebStorm или Figma-плагина?» Do not guess from context. Skip the question only when the user named the platform, the task is clearly about the shared layer (`packages/`, `media/src/panel/`, protocol), or the task is unrelated to plugin code.
 
 ## Coding norms for this repo
 

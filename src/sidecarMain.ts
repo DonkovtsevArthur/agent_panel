@@ -28,6 +28,7 @@ import {
   setToolApprovalHook,
   waitForToolApprovalResult,
 } from "./toolApproval";
+import { seedDefaultHarborSkills } from "./harborSkills";
 
 function writeNotification(method: string, params: unknown): void {
   process.stdout.write(
@@ -158,6 +159,13 @@ function main(): void {
   const settingsPath =
     process.env.HARBOR_SETTINGS_PATH || paths.settingsPath;
   const settings = readSettingsFile(settingsPath);
+
+  // Same defaults as VS Code activate — package lives next to harborSidecar.js.
+  try {
+    seedDefaultHarborSkills(path.dirname(__filename));
+  } catch {
+    /* ignore */
+  }
 
   HarborHeadless.install({
     workspaceRoot,

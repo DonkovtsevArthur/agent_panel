@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.7.87",
+	"version": "2.7.90",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -749,7 +749,7 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./ && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
+		"compile": "tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
 		"build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
 		"build:sidecar": "npm run compile",
 		"build:figma": "node scripts/build-figma.js",

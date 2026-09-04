@@ -244,6 +244,96 @@ export function ensureHarborSkillRoots(cwd: string): void {
   }
 }
 
+/**
+ * Resolve the packaged `bundled-skills` directory shipped with the extension /
+ * sidecar. Tries extension root first, then next to this module (`out/`).
+ */
+export function resolveBundledSkillsDir(
+  extensionPath?: string
+): string | undefined {
+  const candidates: string[] = [];
+  if (extensionPath) {
+    candidates.push(path.join(extensionPath, "bundled-skills"));
+  }
+  // Compiled: out/harborSkills.js → ../bundled-skills (repo) or ./bundled-skills
+  candidates.push(path.join(__dirname, "bundled-skills"));
+  candidates.push(path.join(__dirname, "..", "bundled-skills"));
+  for (const dir of candidates) {
+    try {
+      if (fs.statSync(dir).isDirectory()) {
+        return dir;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return undefined;
+}
+
+function skillHasSkillMd(skillDir: string): boolean {
+  try {
+    return fs.statSync(path.join(skillDir, SKILL_MD)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy packaged default skills into `~/.harbor/skills` on install / activate.
+ * Never overwrites an existing skill folder or symlink (user wins).
+ * Returns names that were newly added.
+ */
+export function seedDefaultHarborSkills(extensionPath?: string): string[] {
+  const bundled = resolveBundledSkillsDir(extensionPath);
+  if (!bundled) {
+    return [];
+  }
+  const destRoot = globalHarborSkillsDir();
+  try {
+    fs.mkdirSync(destRoot, { recursive: true });
+  } catch {
+    return [];
+  }
+
+  const added: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(bundled, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+      continue;
+    }
+    const name = entry.name;
+    if (name.startsWith(".")) {
+      continue;
+    }
+    const src = path.join(bundled, name);
+    if (!skillHasSkillMd(src)) {
+      continue;
+    }
+    const dest = path.join(destRoot, name);
+    try {
+      if (fs.lstatSync(dest)) {
+        // Exists (dir, file, or symlink) — leave user content alone.
+        continue;
+      }
+    } catch {
+      /* missing — copy */
+    }
+    try {
+      fs.cpSync(src, dest, { recursive: true });
+      added.push(name);
+    } catch {
+      /* ignore individual failures */
+    }
+  }
+  return added;
+}
+
 function sourceForDir(
   dirPath: string,
   cwd: string,

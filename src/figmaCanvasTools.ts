@@ -226,6 +226,52 @@ const READ_TOOLS: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "figma_subtree_summary",
+    description:
+      "Compact overview of a frame/group subtree in ONE call: direct children with id/name/type/size/layout/textPreview, " +
+      "total node count, text node count, component/instance count, and unique fills/fonts. " +
+      "Use INSTEAD of multiple figma_list_children + figma_inspect_node when exploring a screen or section. " +
+      "Optional maxDepth (default 2) and maxChildren (default 40).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodeId: { type: "string", description: "Root frame/group to summarize" },
+        maxDepth: {
+          type: "number",
+          description: "Depth to traverse (1–4, default 2).",
+        },
+        maxChildren: {
+          type: "number",
+          description: "Max children per level (default 40).",
+        },
+      },
+      required: ["nodeId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "figma_style_audit",
+    description:
+      "Find style inconsistencies across a subtree in ONE call: groups nodes by fills, fonts, corner radii, and stroke weights. " +
+      "Returns each unique value with the node ids that use it. " +
+      "Use BEFORE figma_normalize_styles to see what needs fixing, or when the user says «приведи к единому стилю».",
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodeId: {
+          type: "string",
+          description: "Root frame/group to audit",
+        },
+        maxDepth: {
+          type: "number",
+          description: "Depth to traverse (1–8, default 6).",
+        },
+      },
+      required: ["nodeId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const WRITE_TOOLS: ToolDef[] = [
@@ -1221,6 +1267,89 @@ const WRITE_TOOLS: ToolDef[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: "figma_normalize_styles",
+    description:
+      "Copy visual styles from a reference node to all matching children in a subtree (ONE call). " +
+      "Use AFTER figma_style_audit to fix inconsistencies. " +
+      "Copies fills, cornerRadius, strokeWeight, opacity, font (for TEXT) from referenceNodeId to every node " +
+      "matching nameContains/type under parentId. Returns count of updated nodes.",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        parentId: {
+          type: "string",
+          description: "Root frame/group whose children to normalize",
+        },
+        referenceNodeId: {
+          type: "string",
+          description: "Node whose styles become the target (source of truth)",
+        },
+        nameContains: {
+          type: "string",
+          description: "Only normalize children whose name matches (case-insensitive)",
+        },
+        type: {
+          type: "string",
+          description: "Only normalize children of this type (FRAME, TEXT, …)",
+        },
+        include: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["fills", "cornerRadius", "strokeWeight", "opacity", "font"],
+          },
+          description: "Subset of styles to copy (default: all applicable)",
+        },
+        maxTargets: {
+          type: "number",
+          description: "Max nodes to update (default 40, max 80)",
+        },
+      },
+      required: ["parentId", "referenceNodeId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "figma_smart_duplicate",
+    description:
+      "Duplicate a node and replace text content in ONE call. " +
+      "textMap: { \"Old Text\": \"New Text\", … } — matched by exact or substring on TEXT children. " +
+      "Use INSTEAD of figma_duplicate_node + multiple figma_set_text when creating similar cards/screens.",
+    write: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        nodeId: { type: "string", description: "Source node to duplicate" },
+        name: { type: "string", description: "Optional new name for the clone" },
+        textMap: {
+          type: "object",
+          description:
+            '{ "Old Text": "New Text" } — replaces TEXT children content. Exact match first, then substring.',
+          additionalProperties: { type: "string" },
+        },
+        offsetX: {
+          type: "number",
+          description: "X offset from source (default 40)",
+        },
+        offsetY: {
+          type: "number",
+          description: "Y offset from source (default 40)",
+        },
+        parentId: {
+          type: "string",
+          description: "Optional new parent for the clone",
+        },
+        select: {
+          type: "boolean",
+          description: "Select and zoom to the clone (default true)",
+        },
+      },
+      required: ["nodeId"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 function stringifyResult(value: unknown): string {
@@ -1342,11 +1471,14 @@ export function designSystemPrompt(mode: string, language?: string): string {
       "5) figma_layout_report on the CONTENT parent, not only the page root. " +
       "Select the inner node in Figma when possible — selection JSON then has its id. " +
       "SPEED: find layers with figma_find_nodes (not whole-page list_frames). " +
+      "Explore a screen/section: figma_subtree_summary (compact overview in ONE call — children, counts, top fills/fonts). " +
       "Layout recipes: figma_apply_recipe (resize_center, center_content, …) — one call. " +
       "Multi-step read/write: figma_batch_tools (≤12 calls, one RPC). " +
       "Inspect: pass fields:[\"geometry\",\"layout\"] to figma_inspect_node for fast reads. " +
       "Resize+breakpoint: figma_resize_frame or recipe resize_center (not set_geometry alone). " +
       "Mass text: figma_batch_text_replace. Match another screen: figma_match_layout. " +
+      "Style consistency: figma_style_audit (find inconsistencies) → figma_normalize_styles (fix in ONE call). " +
+      "Duplicate with text changes: figma_smart_duplicate (clone + replace text in ONE call). " +
       "Verify layout: figma_layout_report (needsFollowUp=false → done; skip extra inspect). " +
       "After figma_apply_edits when applied===total and no errors, do NOT re-inspect unless layout_report says needsFollowUp. " +
       "For 2+ property edits prefer figma_apply_edits in one call " +
