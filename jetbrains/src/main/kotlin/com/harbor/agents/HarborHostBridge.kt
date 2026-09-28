@@ -44,6 +44,8 @@ class HarborHostBridge(
   private val vfsRefresh: HarborVfsRefreshService,
   private val onCloseSettings: (() -> Unit)? = null,
   private val onShowSettings: (() -> Unit)? = null,
+  /** Fired each time the webview finishes a page load (initial + navigations). */
+  private val onPageLoaded: (() -> Unit)? = null,
 ) : Disposable {
   private val log = Logger.getInstance(HarborHostBridge::class.java)
   private val gson = Gson()
@@ -71,6 +73,7 @@ class HarborHostBridge(
       ) {
         if (!isLoading) {
           injectBridge()
+          onPageLoaded?.invoke()
         }
       }
     }, browser.cefBrowser)
@@ -268,7 +271,12 @@ class HarborHostBridge(
       })();
     """.trimIndent()
     ApplicationManager.getApplication().invokeLater {
-      browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+      // Empty url (page not committed yet) makes CEF reject the script.
+      val scriptUrl = browser.cefBrowser.url.ifBlank { "about:blank" }
+      browser.cefBrowser.executeJavaScript(script, scriptUrl, 0)
+      // OSR may drop the frame after a host-driven DOM swap (no user input in
+      // the browser to force a paint) — nudge it, same as postToWebview.
+      scheduleBrowserRepaint()
     }
   }
 
@@ -289,6 +297,7 @@ class HarborHostBridge(
     """.trimIndent()
     ApplicationManager.getApplication().invokeLater {
       browser.cefBrowser.executeJavaScript(script, browser.cefBrowser.url, 0)
+      scheduleBrowserRepaint()
     }
   }
 

@@ -10,6 +10,7 @@ import {
   resolveModelRequestMaxTokens,
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
+import { getPinnedCaForHost } from "./pinnedCa";
 import type {
   ChatCompletionDelta,
   ChatCompletionRequest,
@@ -339,7 +340,8 @@ const openAIClientPool = new Map<string, unknown>();
 
 function buildKeepAliveAgentOptions(
   tls: ClientTlsOptions,
-  forHttps: boolean
+  forHttps: boolean,
+  pinnedCa?: string
 ): http.AgentOptions | https.AgentOptions {
   const options: http.AgentOptions & https.AgentOptions = {
     keepAlive: true,
@@ -354,6 +356,9 @@ function buildKeepAliveAgentOptions(
       if (fs.existsSync(caPath)) {
         (options as https.AgentOptions).ca = fs.readFileSync(caPath);
       }
+    } else if (pinnedCa) {
+      // TOFU pin from tlsPolicy — strict validation against the pinned chain.
+      (options as https.AgentOptions).ca = pinnedCa;
     }
   }
   return options;
@@ -367,13 +372,19 @@ export function getOrCreateHttpAgent(
   const parsed = typeof url === "string" ? new URL(url) : url;
   const isHttps = parsed.protocol === "https:";
   const port = parsed.port || (isHttps ? "443" : "80");
-  const key = agentPoolKey(parsed.protocol, parsed.hostname, port, tls);
+  const pinnedCa =
+    isHttps && !String(tls.caBundlePath || "").trim()
+      ? getPinnedCaForHost(parsed.hostname)
+      : undefined;
+  const key = `${agentPoolKey(parsed.protocol, parsed.hostname, port, tls)}|pin:${
+    pinnedCa ? "1" : "0"
+  }`;
   const existing = httpAgentPool.get(key);
   if (existing) {
     return existing;
   }
   const agent = isHttps
-    ? new https.Agent(buildKeepAliveAgentOptions(tls, true))
+    ? new https.Agent(buildKeepAliveAgentOptions(tls, true, pinnedCa))
     : new http.Agent(buildKeepAliveAgentOptions(tls, false));
   httpAgentPool.set(key, agent);
   return agent;

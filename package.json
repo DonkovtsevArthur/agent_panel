@@ -1,783 +1,788 @@
 {
-	"name": "vscode-agent-panel",
-	"displayName": "%displayName%",
-	"description": "%description%",
-	"version": "2.7.90",
-	"publisher": "DonkovtsevArthur",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/DonkovtsevArthur/agent_panel.git"
-	},
-	"bugs": {
-		"url": "https://github.com/DonkovtsevArthur/agent_panel/issues"
-	},
-	"homepage": "https://github.com/DonkovtsevArthur/agent_panel#readme",
-	"icon": "media/icon-marketplace.png",
-	"galleryBanner": {
-		"color": "#1E1E1E",
-		"theme": "dark"
-	},
-	"engines": {
-		"vscode": "^1.101.0"
-	},
-	"categories": [
-		"Machine Learning",
-		"Other"
-	],
-	"activationEvents": [
-		"onStartupFinished"
-	],
-	"main": "./out/extension.js",
-	"contributes": {
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "agentPanel",
-					"title": "%viewsContainer.title%",
-					"icon": "media/icon.svg"
-				}
-			]
-		},
-		"views": {
-			"agentPanel": [
-				{
-					"type": "webview",
-					"id": "agentPanel.chat",
-					"name": "%view.name%",
-					"visibility": "visible"
-				}
-			]
-		},
-		"commands": [
-			{
-				"command": "agentPanel.open",
-				"title": "%command.open.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.openSettings",
-				"title": "%command.openSettings.title%",
-				"category": "%command.category%",
-				"icon": "$(gear)"
-			},
-			{
-				"command": "agentPanel.newChat",
-				"title": "%command.newAgent.title%",
-				"category": "%command.category%",
-				"icon": "$(add)"
-			},
-			{
-				"command": "agentPanel.searchChat",
-				"title": "%command.searchChat.title%",
-				"category": "%command.category%",
-				"icon": "$(search)"
-			},
-			{
-				"command": "agentPanel.clearChat",
-				"title": "%command.clearChat.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.pickAttachments",
-				"title": "%command.attachFile.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.addSelectionToChat",
-				"title": "%command.addSelection.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.addSelectionToNewChat",
-				"title": "%command.addSelectionToNewChat.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.addFileToChat",
-				"title": "%command.addFile.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.addFileToNewChat",
-				"title": "%command.addFileToNewChat.title%",
-				"category": "%command.category%"
-			},
-			{
-				"command": "agentPanel.generateCommitMessage",
-				"title": "%command.generateCommitMessage.title%",
-				"category": "%command.category%",
-				"icon": "$(sparkle)"
-			}
-		],
-		"menus": {
-			"view/title": [
-				{
-					"command": "agentPanel.newChat",
-					"when": "view == agentPanel.chat",
-					"group": "navigation@1"
-				},
-				{
-					"command": "agentPanel.searchChat",
-					"when": "view == agentPanel.chat",
-					"group": "navigation@2"
-				},
-				{
-					"command": "agentPanel.openSettings",
-					"when": "view == agentPanel.chat",
-					"group": "navigation@3"
-				}
-			],
-			"commandPalette": [
-				{
-					"command": "agentPanel.open"
-				},
-				{
-					"command": "agentPanel.openSettings"
-				},
-				{
-					"command": "agentPanel.newChat"
-				},
-				{
-					"command": "agentPanel.searchChat"
-				},
-				{
-					"command": "agentPanel.addSelectionToChat",
-					"when": "editorHasSelection"
-				},
-				{
-					"command": "agentPanel.addSelectionToNewChat",
-					"when": "editorHasSelection"
-				},
-				{
-					"command": "agentPanel.addFileToChat",
-					"when": "resourceScheme == file || resourceScheme == untitled"
-				},
-				{
-					"command": "agentPanel.addFileToNewChat",
-					"when": "resourceScheme == file || resourceScheme == untitled"
-				},
-				{
-					"command": "agentPanel.generateCommitMessage"
-				}
-			],
-			"editor/context": [
-				{
-					"command": "agentPanel.addFileToChat",
-					"when": "resourceScheme == file || resourceScheme == untitled",
-					"group": "navigation@8"
-				},
-				{
-					"command": "agentPanel.addFileToNewChat",
-					"when": "resourceScheme == file || resourceScheme == untitled",
-					"group": "navigation@8.5"
-				},
-				{
-					"command": "agentPanel.addSelectionToChat",
-					"when": "editorHasSelection",
-					"group": "navigation@9"
-				},
-				{
-					"command": "agentPanel.addSelectionToNewChat",
-					"when": "editorHasSelection",
-					"group": "navigation@10"
-				}
-			],
-			"explorer/context": [
-				{
-					"command": "agentPanel.addFileToChat",
-					"when": "!explorerResourceIsFolder",
-					"group": "navigation@9"
-				},
-				{
-					"command": "agentPanel.addFileToNewChat",
-					"when": "!explorerResourceIsFolder",
-					"group": "navigation@10"
-				}
-			],
-			"scm/title": [
-				{
-					"command": "agentPanel.generateCommitMessage",
-					"when": "scmProvider == git || gitOpenRepositoryCount > 0",
-					"group": "navigation@1"
-				}
-			]
-		},
-		"keybindings": [
-			{
-				"command": "agentPanel.addSelectionToChat",
-				"key": "ctrl+shift+l",
-				"mac": "cmd+shift+l",
-				"when": "editorTextFocus && editorHasSelection"
-			},
-			{
-				"command": "agentPanel.addSelectionToNewChat",
-				"key": "ctrl+alt+l",
-				"mac": "cmd+alt+l",
-				"when": "editorTextFocus && editorHasSelection"
-			},
-			{
-				"command": "agentPanel.addFileToChat",
-				"key": "ctrl+shift+h",
-				"mac": "cmd+shift+h",
-				"when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
-			},
-			{
-				"command": "agentPanel.addFileToNewChat",
-				"key": "ctrl+alt+h",
-				"mac": "cmd+alt+h",
-				"when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
-			}
-		],
-		"configuration": {
-			"title": "%config.title%",
-			"properties": {
-				"agentPanel.language": {
-					"type": "string",
-					"default": "auto",
-					"enum": [
-						"auto",
-						"en",
-						"ru"
-					],
-					"enumDescriptions": [
-						"%config.language.enum.auto%",
-						"%config.language.enum.en%",
-						"%config.language.enum.ru%"
-					],
-					"description": "%config.language.description%"
-				},
-				"agentPanel.fontSize": {
-					"type": "number",
-					"default": 13,
-					"minimum": 11,
-					"maximum": 20,
-					"description": "%config.fontSize.description%"
-				},
-				"agentPanel.baseUrl": {
-					"type": "string",
-					"default": "",
-					"description": "%config.baseUrl.description%"
-				},
-				"agentPanel.apiKey": {
-					"type": "string",
-					"default": "",
-					"description": "%config.apiKey.description%"
-				},
-				"agentPanel.providers": {
-					"type": "array",
-					"default": [],
-					"description": "%config.providers.description%",
-					"items": {
-						"type": "object",
-						"required": [
-							"id",
-							"baseUrl"
-						],
-						"properties": {
-							"id": {
-								"type": "string",
-								"description": "%config.providers.id.description%"
-							},
-							"name": {
-								"type": "string",
-								"description": "%config.providers.name.description%"
-							},
-							"baseUrl": {
-								"type": "string",
-								"description": "%config.providers.baseUrl.description%"
-							},
-							"statusUrl": {
-								"type": "string",
-								"default": "",
-								"description": "%config.providers.statusUrl.description%"
-							},
-							"apiKey": {
-								"type": "string",
-								"description": "%config.providers.apiKey.description%"
-							},
-							"promptCache": {
-								"type": "boolean",
-								"default": false,
-								"description": "%config.providers.promptCache.description%"
-							},
-							"protocol": {
-								"type": "string",
-								"enum": [
-									"openai-compatible",
-									"anthropic"
-								],
-								"default": "openai-compatible",
-								"description": "%config.providers.protocol.description%"
-							}
-						}
-					}
-				},
-				"agentPanel.models": {
-					"type": "array",
-					"default": [
-						{
-							"id": "DeepSeek-V4-Flash",
-							"label": "DeepSeek V4 Flash"
-						},
-						{
-							"id": "Qwen3-Coder-Next",
-							"label": "Qwen3 Coder Next"
-						},
-						{
-							"id": "Gemma-4-31b",
-							"label": "Gemma 4 31B"
-						},
-						{
-							"id": "claude-sonnet-4-5",
-							"label": "Claude Sonnet 4.5"
-						},
-						{
-							"id": "gpt-4.1",
-							"label": "GPT-4.1"
-						},
-						{
-							"id": "Gemini 2.5 Flash",
-							"label": "Gemini 2.5 Flash"
-						}
-					],
-					"description": "%config.models.description%",
-					"items": {
-						"type": "object",
-						"required": [
-							"id"
-						],
-						"properties": {
-							"id": {
-								"type": "string",
-								"description": "%config.models.id.description%"
-							},
-							"label": {
-								"type": "string",
-								"description": "%config.models.label.description%"
-							},
-							"providerId": {
-								"type": "string",
-								"description": "%config.models.providerId.description%"
-							},
-							"contextWindow": {
-								"type": "number",
-								"minimum": 1024,
-								"description": "%config.models.contextWindow.description%"
-							},
-							"max_input_tokens": {
-								"type": "number",
-								"minimum": 1024,
-								"description": "%config.models.contextWindow.description%"
-							},
-							"maxInputTokens": {
-								"type": "number",
-								"minimum": 1024,
-								"description": "%config.models.contextWindow.description%"
-							},
-							"maxOutputTokens": {
-								"type": "number",
-								"minimum": 1,
-								"description": "%config.models.maxOutputTokens.description%"
-							},
-							"max_output_tokens": {
-								"type": "number",
-								"minimum": 1,
-								"description": "%config.models.maxOutputTokens.description%"
-							},
-							"enabled": {
-								"type": "boolean",
-								"default": true,
-								"description": "%config.models.enabled.description%"
-							},
-							"favorite": {
-								"type": "boolean",
-								"default": false,
-								"description": "%config.models.favorite.description%"
-							},
-							"supportsVision": {
-								"type": "boolean",
-								"description": "%config.models.supportsVision.description%"
-							},
-							"reasoningEffort": {
-								"type": "string",
-								"enum": [
-									"low",
-									"medium",
-									"high",
-									"xhigh"
-								],
-								"description": "%config.models.reasoningEffort.description%"
-							}
-						}
-					}
-				},
-				"agentPanel.defaultModel": {
-					"type": "string",
-					"default": "DeepSeek-V4-Flash",
-					"description": "%config.defaultModel.description%"
-				},
-				"agentPanel.defaultContextWindow": {
-					"type": "number",
-					"default": 128000,
-					"minimum": 1024,
-					"description": "%config.defaultContextWindow.description%"
-				},
-				"agentPanel.systemPrompt": {
-					"type": "string",
-					"default": "",
-					"description": "%config.systemPrompt.description%"
-				},
-				"agentPanel.modes": {
-					"type": "array",
-					"default": [],
-					"description": "%config.modes.description%",
-					"items": {
-						"type": "object",
-						"required": [
-							"id",
-							"label"
-						],
-						"properties": {
-							"id": {
-								"type": "string"
-							},
-							"label": {
-								"type": "string"
-							},
-							"description": {
-								"type": "string"
-							},
-							"tools": {
-								"type": "string",
-								"enum": [
-									"agent",
-									"readonly"
-								],
-								"default": "agent"
-							},
-							"prompt": {
-								"type": "string"
-							},
-							"placeholder": {
-								"type": "string"
-							},
-							"color": {
-								"type": "string",
-								"description": "Accent color for composer and user messages (#rrggbb)"
-							},
-							"enabled": {
-								"type": "boolean",
-								"default": true
-							}
-						}
-					}
-				},
-				"agentPanel.visionRouting.preferredModelIds": {
-					"type": "array",
-					"default": [],
-					"items": {
-						"type": "string"
-					},
-					"description": "%config.visionRouting.preferredModelIds.description%"
-				},
-				"agentPanel.visionRouting.preferredModelId": {
-					"type": "string",
-					"default": "",
-					"description": "%config.visionRouting.preferredModelId.description%",
-					"deprecationMessage": "Use agentPanel.visionRouting.preferredModelIds"
-				},
-				"agentPanel.soundNotifications.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.soundNotifications.enabled.description%"
-				},
-				"agentPanel.subagents.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.subagents.enabled.description%"
-				},
-				"agentPanel.parallelToolCalls.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.parallelToolCalls.enabled.description%"
-				},
-				"agentPanel.autoCompact.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.autoCompact.enabled.description%"
-				},
-				"agentPanel.sessions.idleEvictMinutes": {
-					"type": "number",
-					"default": 60,
-					"minimum": 1,
-					"description": "%config.sessions.idleEvictMinutes.description%"
-				},
-				"agentPanel.sessions.inactivityTimeoutMinutes": {
-					"type": "number",
-					"default": 5,
-					"minimum": 1,
-					"description": "%config.sessions.inactivityTimeoutMinutes.description%"
-				},
-				"agentPanel.promptCache.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.promptCache.enabled.description%"
-				},
-				"agentPanel.tools.autoApprove": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.tools.autoApprove.description%"
-				},
-				"agentPanel.tools.approvals": {
-					"type": "object",
-					"default": {},
-					"description": "%config.tools.approvals.description%",
-					"additionalProperties": false,
-					"properties": {
-						"reads": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.reads.description%"
-						},
-						"web": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.web.description%"
-						},
-						"edits": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.edits.description%"
-						},
-						"commands": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.commands.description%"
-						},
-						"mcp": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.mcp.description%"
-						},
-						"subagents": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.subagents.description%"
-						},
-						"plan": {
-							"type": "boolean",
-							"description": "%config.tools.approvals.plan.description%"
-						}
-					}
-				},
-				"agentPanel.turnContext.followUps": {
-					"type": "string",
-					"enum": [
-						"full",
-						"slim",
-						"none"
-					],
-					"default": "slim",
-					"enumDescriptions": [
-						"%config.turnContext.followUps.full.description%",
-						"%config.turnContext.followUps.slim.description%",
-						"%config.turnContext.followUps.none.description%"
-					],
-					"description": "%config.turnContext.followUps.description%"
-				},
-				"agentPanel.checkpoints.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.checkpoints.enabled.description%"
-				},
-				"agentPanel.skills.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.skills.enabled.description%"
-				},
-				"agentPanel.skills.workspaceEnabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.skills.workspaceEnabled.description%"
-				},
-				"agentPanel.skills.globalEnabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.skills.globalEnabled.description%"
-				},
-				"agentPanel.skills.extraDirectories": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [],
-					"description": "%config.skills.extraDirectories.description%"
-				},
-				"agentPanel.skills.disabledExtraDirectories": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [],
-					"description": "%config.skills.disabledExtraDirectories.description%"
-				},
-				"agentPanel.skills.disabled": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [],
-					"description": "%config.skills.disabled.description%"
-				},
-				"agentPanel.selectionHints.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.selectionHints.enabled.description%"
-				},
-				"agentPanel.rejectUnauthorized": {
-					"type": "boolean",
-					"default": true,
-					"description": "%config.rejectUnauthorized.description%"
-				},
-				"agentPanel.commitMessage.prompt": {
-					"type": "string",
-					"default": "",
-					"description": "%config.commitMessage.prompt.description%"
-				},
-				"agentPanel.commitMessage.modelIds": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [],
-					"description": "%config.commitMessage.modelIds.description%"
-				},
-				"agentPanel.commitMessage.language": {
-					"type": "string",
-					"default": "auto",
-					"enum": [
-						"auto",
-						"en",
-						"ru"
-					],
-					"enumDescriptions": [
-						"%config.commitMessage.language.enum.auto%",
-						"%config.commitMessage.language.enum.en%",
-						"%config.commitMessage.language.enum.ru%"
-					],
-					"description": "%config.commitMessage.language.description%"
-				},
-				"agentPanel.figma.enabled": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.figma.enabled.description%"
-				},
-				"agentPanel.autoglm.enabled": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.autoglm.enabled.description%"
-				},
-				"agentPanel.autoglm.binaryPath": {
-					"type": "string",
-					"default": "",
-					"description": "%config.autoglm.binaryPath.description%"
-				},
-				"agentPanel.autoglm.browser": {
-					"type": "string",
-					"enum": [
-						"chrome",
-						"edge"
-					],
-					"default": "chrome",
-					"description": "%config.autoglm.browser.description%"
-				},
-				"agentPanel.autoglm.autoApprove": {
-					"type": "boolean",
-					"default": false,
-					"description": "%config.autoglm.autoApprove.description%"
-				},
-				"agentPanel.mcp.servers": {
-					"type": "array",
-					"default": [],
-					"description": "%config.mcp.servers.description%",
-					"items": {
-						"type": "object",
-						"required": [
-							"id",
-							"name",
-							"transport"
-						],
-						"properties": {
-							"id": {
-								"type": "string"
-							},
-							"name": {
-								"type": "string"
-							},
-							"enabled": {
-								"type": "boolean",
-								"default": true
-							},
-							"transport": {
-								"type": "string",
-								"enum": [
-									"stdio",
-									"http"
-								]
-							},
-							"command": {
-								"type": "string"
-							},
-							"args": {
-								"type": "array",
-								"items": {
-									"type": "string"
-								}
-							},
-							"env": {
-								"type": "object",
-								"additionalProperties": {
-									"type": "string"
-								}
-							},
-							"cwd": {
-								"type": "string"
-							},
-							"url": {
-								"type": "string"
-							}
-						}
-					}
-				}
-			}
-		}
-	},
-	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
-		"build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
-		"build:sidecar": "npm run compile",
-		"build:figma": "node scripts/build-figma.js",
-		"build:panel:figma": "node scripts/build-panel-figma.js",
-		"build:figma-sidecar": "node scripts/bundle-figma-sidecar.js",
-		"figma:host": "node out/figmaSidecar.js",
-		"figma:host:install": "node scripts/figma-host-install.js",
-		"figma:host:uninstall": "node scripts/figma-host-uninstall.js",
-		"figma:host:ensure": "node scripts/figma-host-ensure.js",
-		"figma:dev": "npm run build:figma && npm run figma:host:ensure",
-		"figma:package": "node scripts/package-figma.js",
-		"watch": "tsc -watch -p ./",
-		"lint": "tsc --noEmit",
-		"package": "vsce package",
-		"test": "npm run compile && node --test tests/*.test.js"
-	},
-	"devDependencies": {
-		"@types/node": "^20.11.0",
-		"@types/vscode": "^1.101.0",
-		"@vscode/vsce": "^3.9.2",
-		"esbuild": "^0.25.0",
-		"typescript": "^5.3.3"
-	},
-	"dependencies": {
-		"@cline/sdk": "^0.0.75",
-		"@modelcontextprotocol/sdk": "^1.30.0",
-		"marked": "^15.0.12",
-		"playwright-core": "^1.62.1",
-		"zod": "^4.4.3"
-	}
+  "name": "vscode-agent-panel",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "2.7.98",
+  "publisher": "DonkovtsevArthur",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonkovtsevArthur/agent_panel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DonkovtsevArthur/agent_panel/issues"
+  },
+  "homepage": "https://github.com/DonkovtsevArthur/agent_panel#readme",
+  "icon": "media/icon-marketplace.png",
+  "galleryBanner": {
+    "color": "#1E1E1E",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentPanel",
+          "title": "%viewsContainer.title%",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentPanel": [
+        {
+          "type": "webview",
+          "id": "agentPanel.chat",
+          "name": "%view.name%",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentPanel.open",
+        "title": "%command.open.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.openSettings",
+        "title": "%command.openSettings.title%",
+        "category": "%command.category%",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "agentPanel.newChat",
+        "title": "%command.newAgent.title%",
+        "category": "%command.category%",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentPanel.searchChat",
+        "title": "%command.searchChat.title%",
+        "category": "%command.category%",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentPanel.clearChat",
+        "title": "%command.clearChat.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.pickAttachments",
+        "title": "%command.attachFile.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addSelectionToChat",
+        "title": "%command.addSelection.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addSelectionToNewChat",
+        "title": "%command.addSelectionToNewChat.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addFileToChat",
+        "title": "%command.addFile.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.addFileToNewChat",
+        "title": "%command.addFileToNewChat.title%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "agentPanel.generateCommitMessage",
+        "title": "%command.generateCommitMessage.title%",
+        "category": "%command.category%",
+        "icon": "$(sparkle)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentPanel.newChat",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentPanel.searchChat",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentPanel.openSettings",
+          "when": "view == agentPanel.chat",
+          "group": "navigation@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentPanel.open"
+        },
+        {
+          "command": "agentPanel.openSettings"
+        },
+        {
+          "command": "agentPanel.newChat"
+        },
+        {
+          "command": "agentPanel.searchChat"
+        },
+        {
+          "command": "agentPanel.addSelectionToChat",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "agentPanel.addSelectionToNewChat",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "agentPanel.addFileToChat",
+          "when": "resourceScheme == file || resourceScheme == untitled"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "resourceScheme == file || resourceScheme == untitled"
+        },
+        {
+          "command": "agentPanel.generateCommitMessage"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "agentPanel.addFileToChat",
+          "when": "resourceScheme == file || resourceScheme == untitled",
+          "group": "navigation@8"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "resourceScheme == file || resourceScheme == untitled",
+          "group": "navigation@8.5"
+        },
+        {
+          "command": "agentPanel.addSelectionToChat",
+          "when": "editorHasSelection",
+          "group": "navigation@9"
+        },
+        {
+          "command": "agentPanel.addSelectionToNewChat",
+          "when": "editorHasSelection",
+          "group": "navigation@10"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "agentPanel.addFileToChat",
+          "when": "!explorerResourceIsFolder",
+          "group": "navigation@9"
+        },
+        {
+          "command": "agentPanel.addFileToNewChat",
+          "when": "!explorerResourceIsFolder",
+          "group": "navigation@10"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "agentPanel.generateCommitMessage",
+          "when": "scmProvider == git || gitOpenRepositoryCount > 0",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "agentPanel.addSelectionToChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "agentPanel.addSelectionToNewChat",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "agentPanel.addFileToChat",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h",
+        "when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
+      },
+      {
+        "command": "agentPanel.addFileToNewChat",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h",
+        "when": "editorTextFocus && (resourceScheme == file || resourceScheme == untitled)"
+      }
+    ],
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "agentPanel.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "enumDescriptions": [
+            "%config.language.enum.auto%",
+            "%config.language.enum.en%",
+            "%config.language.enum.ru%"
+          ],
+          "description": "%config.language.description%"
+        },
+        "agentPanel.fontSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 11,
+          "maximum": 20,
+          "description": "%config.fontSize.description%"
+        },
+        "agentPanel.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "%config.baseUrl.description%"
+        },
+        "agentPanel.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "%config.apiKey.description%"
+        },
+        "agentPanel.providers": {
+          "type": "array",
+          "default": [],
+          "description": "%config.providers.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "baseUrl"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "%config.providers.id.description%"
+              },
+              "name": {
+                "type": "string",
+                "description": "%config.providers.name.description%"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "%config.providers.baseUrl.description%"
+              },
+              "statusUrl": {
+                "type": "string",
+                "default": "",
+                "description": "%config.providers.statusUrl.description%"
+              },
+              "apiKey": {
+                "type": "string",
+                "description": "%config.providers.apiKey.description%"
+              },
+              "promptCache": {
+                "type": "boolean",
+                "default": false,
+                "description": "%config.providers.promptCache.description%"
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "openai-compatible",
+                  "anthropic"
+                ],
+                "default": "openai-compatible",
+                "description": "%config.providers.protocol.description%"
+              }
+            }
+          }
+        },
+        "agentPanel.models": {
+          "type": "array",
+          "default": [
+            {
+              "id": "DeepSeek-V4-Flash",
+              "label": "DeepSeek V4 Flash"
+            },
+            {
+              "id": "Qwen3-Coder-Next",
+              "label": "Qwen3 Coder Next"
+            },
+            {
+              "id": "Gemma-4-31b",
+              "label": "Gemma 4 31B"
+            },
+            {
+              "id": "claude-sonnet-4-5",
+              "label": "Claude Sonnet 4.5"
+            },
+            {
+              "id": "gpt-4.1",
+              "label": "GPT-4.1"
+            },
+            {
+              "id": "Gemini 2.5 Flash",
+              "label": "Gemini 2.5 Flash"
+            }
+          ],
+          "description": "%config.models.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "%config.models.id.description%"
+              },
+              "label": {
+                "type": "string",
+                "description": "%config.models.label.description%"
+              },
+              "providerId": {
+                "type": "string",
+                "description": "%config.models.providerId.description%"
+              },
+              "contextWindow": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "%config.models.contextWindow.description%"
+              },
+              "max_input_tokens": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "%config.models.contextWindow.description%"
+              },
+              "maxInputTokens": {
+                "type": "number",
+                "minimum": 1024,
+                "description": "%config.models.contextWindow.description%"
+              },
+              "maxOutputTokens": {
+                "type": "number",
+                "minimum": 1,
+                "description": "%config.models.maxOutputTokens.description%"
+              },
+              "max_output_tokens": {
+                "type": "number",
+                "minimum": 1,
+                "description": "%config.models.maxOutputTokens.description%"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "%config.models.enabled.description%"
+              },
+              "favorite": {
+                "type": "boolean",
+                "default": false,
+                "description": "%config.models.favorite.description%"
+              },
+              "supportsVision": {
+                "type": "boolean",
+                "description": "%config.models.supportsVision.description%"
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh"
+                ],
+                "description": "%config.models.reasoningEffort.description%"
+              }
+            }
+          }
+        },
+        "agentPanel.defaultModel": {
+          "type": "string",
+          "default": "DeepSeek-V4-Flash",
+          "description": "%config.defaultModel.description%"
+        },
+        "agentPanel.defaultContextWindow": {
+          "type": "number",
+          "default": 128000,
+          "minimum": 1024,
+          "description": "%config.defaultContextWindow.description%"
+        },
+        "agentPanel.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "description": "%config.systemPrompt.description%"
+        },
+        "agentPanel.modes": {
+          "type": "array",
+          "default": [],
+          "description": "%config.modes.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "readonly"
+                ],
+                "default": "agent"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string",
+                "description": "Accent color for composer and user messages (#rrggbb)"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        },
+        "agentPanel.visionRouting.preferredModelIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "%config.visionRouting.preferredModelIds.description%"
+        },
+        "agentPanel.visionRouting.preferredModelId": {
+          "type": "string",
+          "default": "",
+          "description": "%config.visionRouting.preferredModelId.description%",
+          "deprecationMessage": "Use agentPanel.visionRouting.preferredModelIds"
+        },
+        "agentPanel.soundNotifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.soundNotifications.enabled.description%"
+        },
+        "agentPanel.subagents.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.subagents.enabled.description%"
+        },
+        "agentPanel.parallelToolCalls.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.parallelToolCalls.enabled.description%"
+        },
+        "agentPanel.autoCompact.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.autoCompact.enabled.description%"
+        },
+        "agentPanel.sessions.idleEvictMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "description": "%config.sessions.idleEvictMinutes.description%"
+        },
+        "agentPanel.sessions.inactivityTimeoutMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "%config.sessions.inactivityTimeoutMinutes.description%"
+        },
+        "agentPanel.promptCache.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.promptCache.enabled.description%"
+        },
+        "agentPanel.tools.autoApprove": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.tools.autoApprove.description%"
+        },
+        "agentPanel.tools.approvals": {
+          "type": "object",
+          "default": {},
+          "description": "%config.tools.approvals.description%",
+          "additionalProperties": false,
+          "properties": {
+            "reads": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.reads.description%"
+            },
+            "web": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.web.description%"
+            },
+            "edits": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.edits.description%"
+            },
+            "commands": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.commands.description%"
+            },
+            "mcp": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.mcp.description%"
+            },
+            "subagents": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.subagents.description%"
+            },
+            "plan": {
+              "type": "boolean",
+              "description": "%config.tools.approvals.plan.description%"
+            }
+          }
+        },
+        "agentPanel.turnContext.followUps": {
+          "type": "string",
+          "enum": [
+            "full",
+            "slim",
+            "none"
+          ],
+          "default": "slim",
+          "enumDescriptions": [
+            "%config.turnContext.followUps.full.description%",
+            "%config.turnContext.followUps.slim.description%",
+            "%config.turnContext.followUps.none.description%"
+          ],
+          "description": "%config.turnContext.followUps.description%"
+        },
+        "agentPanel.checkpoints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.checkpoints.enabled.description%"
+        },
+        "agentPanel.skills.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.enabled.description%"
+        },
+        "agentPanel.skills.workspaceEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.workspaceEnabled.description%"
+        },
+        "agentPanel.skills.globalEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.skills.globalEnabled.description%"
+        },
+        "agentPanel.skills.extraDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.extraDirectories.description%"
+        },
+        "agentPanel.skills.disabledExtraDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.disabledExtraDirectories.description%"
+        },
+        "agentPanel.skills.disabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.skills.disabled.description%"
+        },
+        "agentPanel.selectionHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.selectionHints.enabled.description%"
+        },
+        "agentPanel.rejectUnauthorized": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.rejectUnauthorized.description%"
+        },
+        "agentPanel.tls.autoTrustInternalCa": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.tls.autoTrustInternalCa.description%"
+        },
+        "agentPanel.commitMessage.prompt": {
+          "type": "string",
+          "default": "",
+          "description": "%config.commitMessage.prompt.description%"
+        },
+        "agentPanel.commitMessage.modelIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%config.commitMessage.modelIds.description%"
+        },
+        "agentPanel.commitMessage.language": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "enumDescriptions": [
+            "%config.commitMessage.language.enum.auto%",
+            "%config.commitMessage.language.enum.en%",
+            "%config.commitMessage.language.enum.ru%"
+          ],
+          "description": "%config.commitMessage.language.description%"
+        },
+        "agentPanel.figma.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.figma.enabled.description%"
+        },
+        "agentPanel.autoglm.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.autoglm.enabled.description%"
+        },
+        "agentPanel.autoglm.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "%config.autoglm.binaryPath.description%"
+        },
+        "agentPanel.autoglm.browser": {
+          "type": "string",
+          "enum": [
+            "chrome",
+            "edge"
+          ],
+          "default": "chrome",
+          "description": "%config.autoglm.browser.description%"
+        },
+        "agentPanel.autoglm.autoApprove": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.autoglm.autoApprove.description%"
+        },
+        "agentPanel.mcp.servers": {
+          "type": "array",
+          "default": [],
+          "description": "%config.mcp.servers.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "transport"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http"
+                ]
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
+    "build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
+    "build:sidecar": "npm run compile",
+    "build:figma": "node scripts/build-figma.js",
+    "build:panel:figma": "node scripts/build-panel-figma.js",
+    "build:figma-sidecar": "node scripts/bundle-figma-sidecar.js",
+    "figma:host": "node out/figmaSidecar.js",
+    "figma:host:install": "node scripts/figma-host-install.js",
+    "figma:host:uninstall": "node scripts/figma-host-uninstall.js",
+    "figma:host:ensure": "node scripts/figma-host-ensure.js",
+    "figma:dev": "npm run build:figma && npm run figma:host:ensure",
+    "figma:package": "node scripts/package-figma.js",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc --noEmit",
+    "package": "vsce package",
+    "test": "npm run compile && node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.101.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@cline/sdk": "^0.0.75",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "marked": "^15.0.12",
+    "playwright-core": "^1.62.1",
+    "zod": "^4.4.3"
+  }
 }

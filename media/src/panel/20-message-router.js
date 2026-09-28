@@ -1,3 +1,25 @@
+  /**
+   * JetBrains: a late `ready` burst (init/showChat arriving right after the
+   * page finished loading, or the host's 800 ms ready timer) must not yank the
+   * user out of the Settings screen they just opened. Deliberate navigation
+   * (New Chat from the toolbar while Settings is open) still wins — the
+   * suppression only covers a short window after Settings was shown.
+   * VS Code never sets __harborHost, so this stays inert there.
+   */
+  let settingsShownAt = 0;
+
+  function settingsSwitchSuppressed() {
+    if (
+      typeof harborHostAvailable !== "function" ||
+      !harborHostAvailable() ||
+      !settingsScreen ||
+      settingsScreen.hidden
+    ) {
+      return false;
+    }
+    return Date.now() - settingsShownAt < 4000;
+  }
+
   window.addEventListener("message", (event) => {
     const msg = event.data;
     switch (msg.type) {
@@ -51,7 +73,9 @@
           });
         }
         renderChatBranches(msg.branches);
-        showScreen(msg.screen || "agents");
+        if (!settingsSwitchSuppressed()) {
+          showScreen(msg.screen || "agents");
+        }
         setBusy(Boolean(msg.busy));
         renderMessageQueue();
         break;
@@ -91,7 +115,10 @@
           }
         }
         renderAgentsList();
-        if (msg.screen === "agents" || msg.screen === "chat") {
+        if (
+          !settingsSwitchSuppressed() &&
+          (msg.screen === "agents" || msg.screen === "chat")
+        ) {
           showScreen(msg.screen);
         }
         break;
@@ -109,6 +136,7 @@
         setBusy(Boolean(msg.busy));
         break;
       case "showSettings":
+        settingsShownAt = Date.now();
         showScreen("settings");
         showSettingsCategory(
           msg.openMcp
@@ -117,6 +145,9 @@
               ? msg.settingsCategory
               : "models"
         );
+        // JetBrains OSR: the screen swap may come from a host-driven inject
+        // without user input in the browser — force a paint frame.
+        forceHarborUiRepaint();
         setBusy(Boolean(msg.busy));
         break;
       case "openChatSearch":
@@ -219,7 +250,9 @@
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
           });
         }
-        showScreen("chat");
+        if (!settingsSwitchSuppressed()) {
+          showScreen("chat");
+        }
         setBusy(Boolean(msg.busy));
         renderMessageQueue();
         {

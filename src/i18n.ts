@@ -267,9 +267,10 @@ export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
 /**
  * Injected into Cline rules only for Harbor's Ask mode. Ask and Plan share the
  * same underlying Cline `plan` mode (read-only tools), so Cline's base prompt
- * always says "You are in Plan mode" / "toggle to Act mode" — this overrides
- * that framing so the model calls the mode "Ask" (what the user actually sees
- * in the UI) and doesn't tell the user to "switch to Act mode".
+ * always says "You are in Plan mode" / "Present your plan as a structured
+ * outline" / "toggle to Act mode" — this overrides that framing so the model
+ * calls the mode "Ask" (what the user actually sees in the UI), doesn't tell
+ * the user to "switch to Act mode", and doesn't draft plans: Ask is Q&A.
  */
 export function harborAskModeRulesForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
@@ -277,14 +278,22 @@ export function harborAskModeRulesForLanguage(lang: UiLanguage): string {
       "# Режим: Ask",
       "Ты сейчас в режиме Ask интерфейса Harbor Agents (не Plan). Под капотом это тот же read-only движок, что у Plan (поэтому базовый системный промпт говорит «Plan mode»), но в интерфейсе и в общении с пользователем этот режим называется именно «Ask».",
       "Если пользователь спрашивает, в каком режиме ты — отвечай «Ask», а не «Plan».",
-      "Не предлагай пользователю «переключиться в Act mode» и не упоминай тумблер Act — в Ask это неприменимо, просто отвечай на вопросы и не предлагай план изменений.",
+      "Не предлагай пользователю «переключиться в Act mode» и не упоминай тумблер Act — в Ask это неприменимо.",
+      "Отвечай на вопрос напрямую. Инструкция базового промпта «present your plan as a structured outline with clear steps» здесь НЕ применяется: в Ask ты отвечаешь и объясняешь, а не строишь план работ.",
+      "Не оформляй ответ как план реализации (блоки Goal/Цель + Steps/Шаги, «План реализации», нумерованные шаги работ) и не предлагай план сам — планами занимается режим Plan.",
+      "Никогда не используй теги <proposed_plan>…</proposed_plan> в Ask — они только для режима Plan.",
+      "Если пользователь явно просит план именно здесь — дай его обычным markdown-текстом, как обычный ответ на вопрос.",
     ].join("\n");
   }
   return [
     "# Mode: Ask",
     "You are currently in Harbor Agents' Ask mode (not Plan). Under the hood it shares the same read-only engine as Plan (so the base system prompt says \"Plan mode\"), but in the UI and to the user this mode is called \"Ask\".",
     "If the user asks what mode you're in, answer \"Ask\", not \"Plan\".",
-    "Do not tell the user to \"switch to Act mode\" or mention the Act toggle — that doesn't apply in Ask; just answer questions and don't propose an implementation plan.",
+    "Do not tell the user to \"switch to Act mode\" or mention the Act toggle — that doesn't apply in Ask.",
+    "Answer the question directly. The base prompt's \"Present your plan as a structured outline with clear steps\" instruction does NOT apply here: in Ask you answer and explain, you don't draft work plans.",
+    "Do not format replies as an implementation plan (Goal/Steps blocks, \"Implementation plan\", numbered work steps) and never propose a plan on your own — plans belong to Plan mode.",
+    "Never emit <proposed_plan>…</proposed_plan> tags in Ask — they are Plan-mode only.",
+    "If the user explicitly asks for a plan here, give it as plain markdown text — a regular answer to the question.",
   ].join("\n");
 }
 

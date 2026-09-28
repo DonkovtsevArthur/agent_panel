@@ -2,6 +2,27 @@
  * JetBrains Node sidecar entry.
  * Installs vscode headless stub, starts HeadlessPanelHost + JSON-RPC stdio.
  */
+
+// Node < 20 does not expose the File global. clineBundle.js (Zod validators)
+// uses bare `instanceof File` in several places — these throw ReferenceError
+// when File is undefined. Polyfill minimally so instanceof returns false.
+if (typeof globalThis.File === "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
+  (globalThis as Record<string, unknown>).File = class File extends Blob {
+    name: string;
+    lastModified: number;
+    constructor(
+      parts: BlobPart[],
+      name: string,
+      options?: FilePropertyBag,
+    ) {
+      super(parts, options);
+      this.name = name;
+      this.lastModified = options?.lastModified ?? Date.now();
+    }
+  };
+}
+
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";

@@ -303,6 +303,7 @@
       agent: "Agent",
       plan: "Plan",
       ask: "Ask",
+      auto: "Auto",
       branch: "Branch",
       branchDefault: "Branch",
       regenerateLast: "Regenerate last answer",
@@ -774,6 +775,7 @@
       agent: "Агент",
       plan: "План",
       ask: "Спросить",
+      auto: "Авто",
       branch: "Ответвить",
       branchDefault: "Ветка",
       regenerateLast: "Перегенерировать последний ответ",
@@ -2191,6 +2193,20 @@
             : "Ask about code or a task... (@ for file)",
       };
     }
+    if (meta.id === "auto") {
+      return {
+        ...meta,
+        label: t("auto"),
+        description:
+          UI_LANG === "ru"
+            ? "Сам выбирает Агент/План/Спросить под запрос"
+            : "Picks Agent/Plan/Ask per request",
+        placeholder:
+          UI_LANG === "ru"
+            ? "Напишите что угодно — режим подберётся сам… (@ — файл)"
+            : "Type anything — the mode is picked per request... (@ for file)",
+      };
+    }
     return meta;
   }
 
@@ -2321,7 +2337,7 @@
   let plusMenuOpen = false;
   let modeMenuOpen = false;
   let reasonMenuOpen = false;
-  let agentMode = "agent";
+  let agentMode = "auto";
   let selectedReasoningEffort = "medium";
   let modeEditIndex = null;
   let modeEditSource = "settings";
@@ -12196,6 +12212,20 @@
           ? "Спросите про код или задачу… (@ — файл)"
           : "Ask about code or a task... (@ for file)",
     },
+    {
+      id: "auto",
+      label: t("auto"),
+      description:
+        UI_LANG === "ru"
+          ? "Сам выбирает Агент/План/Спросить под запрос"
+          : "Picks Agent/Plan/Ask per request",
+      tools: "agent",
+      builtin: true,
+      placeholder:
+        UI_LANG === "ru"
+          ? "Напишите что угодно — режим подберётся сам… (@ — файл)"
+          : "Type anything — the mode is picked per request... (@ for file)",
+    },
   ];
   if (!chatModes.length) {
     chatModes = DEFAULT_CHAT_MODES.slice();
@@ -15267,11 +15297,9 @@
       }
     }
     if (fromHost) {
-      return modes[0]?.id || "agent";
+      return modes.find((m) => m.id === "auto")?.id || modes[0]?.id || "auto";
     }
-    return modes.some((m) => m.id === "agent")
-      ? "agent"
-      : modes[0]?.id || "agent";
+    return modes.find((m) => m.id === "auto")?.id || modes[0]?.id || "auto";
   }
 
   function applySelectedMode(preferredId, { notify = false } = {}) {
@@ -18020,6 +18048,28 @@
     });
   }
 
+  /**
+   * JetBrains: a late `ready` burst (init/showChat arriving right after the
+   * page finished loading, or the host's 800 ms ready timer) must not yank the
+   * user out of the Settings screen they just opened. Deliberate navigation
+   * (New Chat from the toolbar while Settings is open) still wins — the
+   * suppression only covers a short window after Settings was shown.
+   * VS Code never sets __harborHost, so this stays inert there.
+   */
+  let settingsShownAt = 0;
+
+  function settingsSwitchSuppressed() {
+    if (
+      typeof harborHostAvailable !== "function" ||
+      !harborHostAvailable() ||
+      !settingsScreen ||
+      settingsScreen.hidden
+    ) {
+      return false;
+    }
+    return Date.now() - settingsShownAt < 4000;
+  }
+
   window.addEventListener("message", (event) => {
     const msg = event.data;
     switch (msg.type) {
@@ -18073,7 +18123,9 @@
           });
         }
         renderChatBranches(msg.branches);
-        showScreen(msg.screen || "agents");
+        if (!settingsSwitchSuppressed()) {
+          showScreen(msg.screen || "agents");
+        }
         setBusy(Boolean(msg.busy));
         renderMessageQueue();
         break;
@@ -18113,7 +18165,10 @@
           }
         }
         renderAgentsList();
-        if (msg.screen === "agents" || msg.screen === "chat") {
+        if (
+          !settingsSwitchSuppressed() &&
+          (msg.screen === "agents" || msg.screen === "chat")
+        ) {
           showScreen(msg.screen);
         }
         break;
@@ -18131,6 +18186,7 @@
         setBusy(Boolean(msg.busy));
         break;
       case "showSettings":
+        settingsShownAt = Date.now();
         showScreen("settings");
         showSettingsCategory(
           msg.openMcp
@@ -18139,6 +18195,9 @@
               ? msg.settingsCategory
               : "models"
         );
+        // JetBrains OSR: the screen swap may come from a host-driven inject
+        // without user input in the browser — force a paint frame.
+        forceHarborUiRepaint();
         setBusy(Boolean(msg.busy));
         break;
       case "openChatSearch":
@@ -18241,7 +18300,9 @@
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
           });
         }
-        showScreen("chat");
+        if (!settingsSwitchSuppressed()) {
+          showScreen("chat");
+        }
         setBusy(Boolean(msg.busy));
         renderMessageQueue();
         {

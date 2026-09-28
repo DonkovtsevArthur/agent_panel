@@ -389,11 +389,9 @@
       }
     }
     if (fromHost) {
-      return modes[0]?.id || "agent";
+      return modes.find((m) => m.id === "auto")?.id || modes[0]?.id || "auto";
     }
-    return modes.some((m) => m.id === "agent")
-      ? "agent"
-      : modes[0]?.id || "agent";
+    return modes.find((m) => m.id === "auto")?.id || modes[0]?.id || "auto";
   }
 
   function applySelectedMode(preferredId, { notify = false } = {}) {

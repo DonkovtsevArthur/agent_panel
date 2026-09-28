@@ -9,6 +9,7 @@
   /* Mode accent colors — mixed onto borders (user bubbles stronger, composer softer) */
   --mode-plan: #a67c00;
   --mode-ask: #2d6a4f;
+  --mode-auto: #6a4fa3;
   --mode-border-user: 40%;
   --mode-border-composer: 22%;
   /* Chat: white workspace, grey bubbles (former panel bg) */
@@ -246,6 +247,10 @@ body {
 
 .msg.user[data-mode="ask"] {
   background: color-mix(in srgb, var(--mode-ask) 10%, var(--harbor-chat-bg));
+}
+
+.msg.user[data-mode="auto"] {
+  background: color-mix(in srgb, var(--mode-auto) 10%, var(--harbor-chat-bg));
 }
 
 .msg.user.is-editing {
@@ -1134,6 +1139,43 @@ body.vscode-dark .md-pre .syntax-property {
   .tool-group.agent-timeline.has-steps.is-run-working
   .tool-group-toggle::before {
   background: var(--mode-ask);
+}
+
+.chat-turn:has(.msg.user[data-mode="auto"])
+  .tool-group.agent-timeline:not([data-sealed])
+  .tool-group-toggle::before,
+.chat-turn:has(.msg.user[data-mode="auto"])
+  .tool-group.agent-timeline.has-steps.is-run-working
+  .tool-group-toggle::before {
+  background: var(--mode-auto);
+}
+
+/* Running cube bits in the chat area: tint by the user-bubble mode. */
+.chat-turn:has(.msg.user[data-mode="plan"])
+  .agent-run-status-running .cube-bit {
+  border-color: color-mix(in srgb, var(--mode-plan) 35%, transparent);
+  background: color-mix(in srgb, var(--mode-plan) 12%, transparent);
+}
+.chat-turn:has(.msg.user[data-mode="ask"])
+  .agent-run-status-running .cube-bit {
+  border-color: color-mix(in srgb, var(--mode-ask) 35%, transparent);
+  background: color-mix(in srgb, var(--mode-ask) 12%, transparent);
+}
+.chat-turn:has(.msg.user[data-mode="auto"])
+  .agent-run-status-running .cube-bit {
+  border-color: color-mix(in srgb, var(--mode-auto) 35%, transparent);
+  background: color-mix(in srgb, var(--mode-auto) 12%, transparent);
+}
+
+/* Thinking card: tint the description label by the user-bubble mode. */
+.chat-turn:has(.msg.user[data-mode="plan"]) .agent-step-head {
+  color: var(--mode-plan);
+}
+.chat-turn:has(.msg.user[data-mode="ask"]) .agent-step-head {
+  color: var(--mode-ask);
+}
+.chat-turn:has(.msg.user[data-mode="auto"]) .agent-step-head {
+  color: var(--mode-auto);
 }
 
 .tool-group.agent-timeline[data-sealed]:not([data-failed]):not(.is-run-working)
@@ -2398,6 +2440,16 @@ body.vscode-dark .md-pre .syntax-property {
   border-color: color-mix(
     in srgb,
     var(--mode-ask) var(--mode-border-composer),
+    transparent
+  );
+}
+
+.composer[data-mode="auto"],
+.msg-edit-composer[data-mode="auto"],
+.msg-edit-composer:has(.msg-edit-mode-picker[data-mode="auto"]) {
+  border-color: color-mix(
+    in srgb,
+    var(--mode-auto) var(--mode-border-composer),
     transparent
   );
 }
@@ -5902,6 +5954,10 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 
 .agent-run-status-running[data-mode="ask"] {
   --cube-accent: var(--mode-ask);
+}
+
+.agent-run-status-running[data-mode="auto"] {
+  --cube-accent: var(--mode-auto);
 }
 
 .agent-run-status-running .cube-bit {

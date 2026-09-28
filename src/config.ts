@@ -324,6 +324,10 @@ export interface AgentPanelConfig {
   };
   rejectUnauthorized: boolean;
   caBundlePath: string;
+  /** Trust-on-first-use: prompt + pin internal CA chains per host on strict-verification failure. */
+  tls: {
+    autoTrustInternalCa: boolean;
+  };
   commitMessage: {
     prompt: string;
     /** Ordered model ids for commit generation. Empty = prompt user to select. */
@@ -731,6 +735,10 @@ export function getConfig(): AgentPanelConfig {
     },
     rejectUnauthorized: cfg.get<boolean>("rejectUnauthorized") ?? true,
     caBundlePath: "",
+    tls: {
+      autoTrustInternalCa:
+        cfg.get<boolean>("tls.autoTrustInternalCa") !== false,
+    },
     commitMessage: (() => {
       const commitLanguage = readCommitMessageLanguage(
         cfg.get("commitMessage.language")

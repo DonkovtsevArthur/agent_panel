@@ -587,6 +587,20 @@
             : "Ask about code or a task... (@ for file)",
       };
     }
+    if (meta.id === "auto") {
+      return {
+        ...meta,
+        label: t("auto"),
+        description:
+          UI_LANG === "ru"
+            ? "Сам выбирает Агент/План/Спросить под запрос"
+            : "Picks Agent/Plan/Ask per request",
+        placeholder:
+          UI_LANG === "ru"
+            ? "Напишите что угодно — режим подберётся сам… (@ — файл)"
+            : "Type anything — the mode is picked per request... (@ for file)",
+      };
+    }
     return meta;
   }
 
@@ -717,7 +731,7 @@
   let plusMenuOpen = false;
   let modeMenuOpen = false;
   let reasonMenuOpen = false;
-  let agentMode = "agent";
+  let agentMode = "auto";
   let selectedReasoningEffort = "medium";
   let modeEditIndex = null;
   let modeEditSource = "settings";

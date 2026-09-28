@@ -44,8 +44,11 @@ class HarborJcefSession(
       onShowSettings = {
         SwingUtilities.invokeLater { openSettingsSurface() }
       },
+      onPageLoaded = {
+        SwingUtilities.invokeLater { reapplySettingsSurfaceIfOpen() }
+      },
     )
-  private var settingsOpen: Boolean = false
+  @Volatile private var settingsOpen: Boolean = false
 
   init {
     Disposer.register(parentDisposable, this)
@@ -117,7 +120,25 @@ class HarborJcefSession(
     msg.addProperty("type", "showSettings")
     sidecar.request("webview.handle", msg) { }
     hostBridge.injectSettingsChrome()
+    // A dropped executeJavaScript (page still committing, OSR hiccup) would
+    // otherwise make the click silently do nothing — retry idempotently.
+    scheduleSettingsChromeRetry(700)
+    scheduleSettingsChromeRetry(2200)
     return true
+  }
+
+  private fun scheduleSettingsChromeRetry(delayMs: Int) {
+    javax.swing.Timer(delayMs) {
+      try {
+        if (settingsOpen) {
+          hostBridge.injectSettingsChrome()
+        }
+      } catch (_: Throwable) {
+      }
+    }.also {
+      it.isRepeats = false
+      it.start()
+    }
   }
 
   override fun openSettingsModal(): Boolean = openSettingsSurface()
@@ -131,6 +152,20 @@ class HarborJcefSession(
     focusBrowser()
     hostBridge.removeSettingsChrome()
     hostBridge.requestReady(surface = "panel")
+  }
+
+  /**
+   * Cold-start race: the user may click Settings before the initial JCEF page
+   * load commits — that inject ran against an empty document and did nothing.
+   * Once the page is up, re-apply the settings surface so the click is not lost.
+   */
+  private fun reapplySettingsSurfaceIfOpen() {
+    if (!settingsOpen) return
+    try {
+      hostBridge.injectSettingsChrome()
+    } catch (t: Throwable) {
+      log.warn("Harbor settings re-apply after page load failed", t)
+    }
   }
 
   override fun postToWebview(json: String, forceRepaint: Boolean) {

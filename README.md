@@ -55,7 +55,7 @@
 
 1. Установите **Harbor Agents** из Marketplace
 2. Откройте **Settings** → **Harbor Agents**
-3. Добавьте провайдера (`baseUrl`, `apiKey`) и модели
+3. Добавьте провайдера (`baseUrl`, `apiKey`) и модели — пошагово: [docs/providers-and-models.md](docs/providers-and-models.md)
 4. Откройте панель: Command Palette → **Harbor Agents: Open**
 
 Подсказка: выделите код → **Harbor Agents: Add Selection to Chat** (`Cmd+Shift+L` / `Ctrl+Shift+L`).
@@ -94,7 +94,7 @@
 }
 ```
 
-Корпоративный TLS (опционально): `agentPanel.rejectUnauthorized` (по умолчанию выкл. — без CA bundle).
+Корпоративный TLS (опционально): `agentPanel.rejectUnauthorized` — по умолчанию `true` (строгая проверка); выключайте только для прокси с самоподписанным сертификатом. Подробнее: [docs/providers-and-models.md](docs/providers-and-models.md).
 
 ## Приватность
 

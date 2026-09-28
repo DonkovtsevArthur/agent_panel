@@ -173,8 +173,10 @@ export function lastUiUserText(
 /**
  * Finale text shown in chat. Show a Plan card only for an implementation plan
  * (model tags, Goal+Steps, or Plan-mode numbered steps) — not for Q&A / status
- * just because the picker is on Plan. Do not wrap Build/Agent recaps: that
- * would resurrect the composer «Собрать» tag after the plan is already executed.
+ * just because the picker is on Plan. Ask never gets a Plan card: it is Q&A,
+ * so model-emitted tags are stripped and structured answers stay plain chat.
+ * Do not wrap Build/Agent recaps: that would resurrect the composer «Собрать»
+ * tag after the plan is already executed.
  */
 export function assistantFinaleDisplayText(
   text: string,
@@ -197,6 +199,13 @@ export function assistantFinaleDisplayText(
     if (opts.hadFileEdits) {
       return value;
     }
+  }
+  // Ask is Q&A: no Plan card / Build chip ever. Strip model-emitted
+  // <proposed_plan> tags (history mimicry) and never heuristic-wrap a
+  // structured answer — Cline's plan-mode base prompt pushes Goal/Steps
+  // outlines into Ask too (harborAskModeRulesForLanguage counters it).
+  if (modeId === "ask") {
+    return stripProposedPlanTags(value);
   }
   if (looksLikeCasualUserTurn(userText)) {
     return stripProposedPlanTags(value);

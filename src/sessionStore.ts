@@ -48,6 +48,11 @@ export interface UiMessage {
   /** Chat mode at send time (agent / plan / ask) — colors user bubble border. */
   mode?: string;
   /**
+   * Engine the Auto mode resolved for this turn ("agent"/"plan"/"ask").
+   * Present only when the picker was on auto — drives the «Авто → …» chip.
+   */
+  autoResolvedMode?: string;
+  /**
    * Full provider/gateway payload for `error` bubbles.
    * Short `text` is shown by default; webview reveals this via the ? control.
    */
@@ -515,7 +520,7 @@ function createEmptyChat(selectedModel = ""): ChatSession {
     id: uid("chat"),
     title: "New Agent",
     selectedModel,
-    selectedMode: "agent",
+    selectedMode: "auto",
     history: [],
     uiMessages: [],
     createdAt: now,

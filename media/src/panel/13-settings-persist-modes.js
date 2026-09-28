@@ -425,6 +425,20 @@
           ? "Спросите про код или задачу… (@ — файл)"
           : "Ask about code or a task... (@ for file)",
     },
+    {
+      id: "auto",
+      label: t("auto"),
+      description:
+        UI_LANG === "ru"
+          ? "Сам выбирает Агент/План/Спросить под запрос"
+          : "Picks Agent/Plan/Ask per request",
+      tools: "agent",
+      builtin: true,
+      placeholder:
+        UI_LANG === "ru"
+          ? "Напишите что угодно — режим подберётся сам… (@ — файл)"
+          : "Type anything — the mode is picked per request... (@ for file)",
+    },
   ];
   if (!chatModes.length) {
     chatModes = DEFAULT_CHAT_MODES.slice();

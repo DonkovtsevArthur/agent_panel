@@ -76,6 +76,7 @@ import {
 import { searchWorkspaceFiles } from "./fileMentions";
 import { commitAndPushPaths } from "./commitAndPush";
 import { discardPaths } from "./discardPaths";
+import type { VsCodeHarborCore } from "./vscodeHarborCore";
 import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
@@ -92,6 +93,7 @@ import {
   parseCustomModes,
   type AgentModeDef,
 } from "./modes";
+import { AUTO_MODE_ID, resolveAutoMode } from "./autoMode";
 import {
   getOpenAICompatibleClient,
   type ChatMessage,
@@ -368,7 +370,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private history: ChatMessage[] = [];
   private uiMessages: UiMessage[] = [];
   private selectedModel = "";
-  private selectedMode = "agent";
+  private selectedMode = "auto";
   private selectedReasoningEffort: ReasoningEffortLevel | "" = "";
   private lastTurnModel = "";
   private contextTokens = 0;
@@ -425,9 +427,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly context: vscode.ExtensionContext
+    private readonly context: vscode.ExtensionContext,
+    private readonly harborCore?: VsCodeHarborCore
   ) {
-    this.loadStore();
+    // loadStore is now async (uses harborCore session port when available).
+    // The constructor kicks it off without awaiting — the store is ready
+    // before resolveWebviewView runs (VS Code awaits activation).
+    void this.loadStore();
     const mcp = getMcpManager();
     if (mcp) {
       this.disposables.push(
@@ -689,6 +695,67 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.newChat();
   }
 
+  // ─── Accessors for VsCodeHarborCore turn runner ──────────────────────────
+
+  /** Current chat history (Cline messages) for the active chat. */
+  getHistory(): ChatMessage[] {
+    return this.history;
+  }
+
+  /** Replace the active chat history (after a successful turn). */
+  setHistory(history: ChatMessage[]): void {
+    this.history = history;
+  }
+
+  /** Prior UI messages for session seeding (tool cards, compaction, etc.). */
+  getPriorUiMessages(chatId: string): UiMessage[] {
+    return this.store.chats[chatId]?.uiMessages || [];
+  }
+
+  /** Last agent-edited paths for a chat (for git guard). */
+  getLastAgentEditedPaths(chatId: string): string[] {
+    return this.store.chats[chatId]?.lastAgentEditedPaths || [];
+  }
+
+  // ─── HarborCore event handler ────────────────────────────────────────────
+
+  /**
+   * Handle events from VsCodeHarborCore (turn.step, turn.delta, turn.idle, etc.).
+   * Wired by extension.ts after construction.
+   */
+  handleCoreEvent(event: string, params: unknown): void {
+    // Forward turn events to the webview as appropriate.
+    // This is the VS Code equivalent of the JetBrains sidecar's
+    // core.setEventHandler() → writeNotification() pipeline.
+    switch (event) {
+      case "turn.step":
+        this.view?.webview.postMessage({ type: "turnStep", ...(params as object) });
+        break;
+      case "turn.delta":
+        this.view?.webview.postMessage({ type: "turnDelta", ...(params as object) });
+        break;
+      case "turn.reasoning":
+        this.view?.webview.postMessage({ type: "turnReasoning", ...(params as object) });
+        break;
+      case "turn.idle":
+        this.view?.webview.postMessage({ type: "idle", ...(params as object) });
+        break;
+      case "turn.failed": {
+        const p = params as { error?: string } | undefined;
+        this.view?.webview.postMessage({
+          type: "runFailed",
+          message: p?.error || "Turn failed",
+        });
+        break;
+      }
+      case "turn.review":
+        this.view?.webview.postMessage({ type: "review", ...(params as object) });
+        break;
+      default:
+        break;
+    }
+  }
+
   dispose(): void {
     this.abortAllRuns("discard");
     this.stopProviderConnPolling();
@@ -697,6 +764,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.persistActiveChat();
     this.saveStore();
+    this.harborCore?.dispose();
     void disposeClineRuntime();
     this.settingsPanel?.dispose();
     this.settingsPanel = undefined;
@@ -770,7 +838,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.syncProviderConnPolling();
   }
 
-  private loadStore(): void {
+  private async loadStore(): Promise<void> {
     const config = getConfig();
     const enabled = getEnabledModels();
     const fallbackModel =
@@ -779,17 +847,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         : "") ||
       enabled[0]?.id ||
       "";
-    const workspaceV2 = this.context.workspaceState.get(STORAGE_KEY_V2);
-    const workspaceV1 = this.context.workspaceState.get(STORAGE_KEY_V1);
-    const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
 
-    let raw: unknown = workspaceV2 ?? workspaceV1;
+    // Use the core's session port when available — this is the same
+    // path that JetBrains sidecar uses (file-backed or workspaceState).
+    // Falls back to direct workspaceState access for backward compat.
+    let raw: unknown;
     let seededFromGlobal = false;
 
-    // Workspace пуст — один раз переносим глобальный список сюда.
-    if (!raw && globalV2) {
-      raw = globalV2;
-      seededFromGlobal = true;
+    if (this.harborCore) {
+      raw = await this.harborCore.loadSession();
+    } else {
+      const workspaceV2 = this.context.workspaceState.get(STORAGE_KEY_V2);
+      const workspaceV1 = this.context.workspaceState.get(STORAGE_KEY_V1);
+      const globalV2 = this.context.globalState.get(STORAGE_KEY_V2);
+      raw = workspaceV2 ?? workspaceV1;
+      if (!raw && globalV2) {
+        raw = globalV2;
+        seededFromGlobal = true;
+      }
     }
 
     this.store = migrateToStoreV2(raw, fallbackModel);
@@ -858,7 +933,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.history = [];
     this.uiMessages = [];
     this.selectedModel = getConfig().defaultModel || "";
-    this.selectedMode = "agent";
+    this.selectedMode = "auto";
     this.selectedReasoningEffort = "";
     this.lastTurnModel = "";
     this.contextTokens = 0;
@@ -1224,7 +1299,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         while (this.persistedStoreRevision < this.storeRevision) {
           const revision = this.storeRevision;
           const snapshot = cloneStore(this.store);
-          await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
+          if (this.harborCore) {
+            await this.harborCore.saveSession(snapshot);
+          } else {
+            await this.context.workspaceState.update(STORAGE_KEY_V2, snapshot);
+          }
           this.persistedStoreRevision = revision;
         }
       });
@@ -3470,7 +3549,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           : sourceChat.selectedMode)
     );
     // Режим из UI — как выбрал пользователь. Не подменяем Agent→Ask.
-    const modeForRun = selectedMode;
+    // Исключение — Auto: пользователь сам выбрал, что движок (agent/plan/ask)
+    // подбирается под каждый запрос; пикер остаётся на «auto», а в ход идёт
+    // конкретный id (не молча — пузырь получает чип «Авто → …»).
+    const autoResolvedMode =
+      selectedMode.id === AUTO_MODE_ID ? resolveAutoMode(trimmed) : undefined;
+    const modeForRun = autoResolvedMode
+      ? getModeById(autoResolvedMode)
+      : selectedMode;
     // Картинки: пиксели уходят в Cline как image parts; vision/placeholder —
     // на стороне Cline по capabilities модели. Harbor модель не подменяет.
     const chosen = requestedModel;
@@ -3482,7 +3568,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           : sourceChat.selectedReasoningEffort)
     );
     if (this.isActiveChat(runChatId)) {
-      this.selectedMode = modeForRun.id;
+      // Keep the picker on the user's choice ("auto" stays auto).
+      this.selectedMode = selectedMode.id;
       if (reasoningEffortForRun) {
         this.selectedReasoningEffort = reasoningEffortForRun;
       }
@@ -3494,7 +3581,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const runRef = this.beginChatRun(runChatId);
     const currentRun = runRef.controller;
     touchChat(this.store, runChatId, {
-      selectedMode: modeForRun.id,
+      selectedMode: selectedMode.id,
       ...(reasoningEffortForRun
         ? { selectedReasoningEffort: reasoningEffortForRun }
         : {}),
@@ -3552,8 +3639,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const uiMsg: UiMessage = {
         role: "user",
         text: trimmed,
-        mode: modeForRun.id,
+        mode: selectedMode.id,
       };
+      if (autoResolvedMode) {
+        uiMsg.autoResolvedMode = autoResolvedMode;
+      }
       runUiMessages.push(uiMsg);
       syncRunChat();
     }

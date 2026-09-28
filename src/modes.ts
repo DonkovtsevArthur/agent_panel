@@ -21,7 +21,7 @@ export interface AgentModeDef {
   placeholder?: string;
 }
 
-export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask"]);
+export const BUILTIN_MODE_IDS = new Set(["agent", "plan", "ask", "auto"]);
 
 export const BUILTIN_MODES: AgentModeDef[] = [
   {
@@ -48,6 +48,17 @@ export const BUILTIN_MODES: AgentModeDef[] = [
     tools: "readonly",
     builtin: true,
     placeholder: "Ask about code or a task... (@ for file)",
+  },
+  {
+    // Auto: the host resolves agent/plan/ask per turn from the user text
+    // (src/autoMode.ts). tools "agent" is only the unmapped fallback — the
+    // resolved engine id reaches runClineAgentTurn, never "auto" itself.
+    id: "auto",
+    label: "Auto",
+    description: "Picks Agent/Plan/Ask per request",
+    tools: "agent",
+    builtin: true,
+    placeholder: "Type anything — the mode is picked per request... (@ for file)",
   },
 ];
 

@@ -23,6 +23,7 @@ import {
   resolveProviderProbeUrl,
 } from "./config";
 import { buildHarborSettingsPayloadCore } from "./settingsPayload";
+import { AUTO_MODE_ID, resolveAutoMode } from "./autoMode";
 import {
   buildSkillsListPayload,
   ensureHarborSkillRoots,
@@ -204,7 +205,7 @@ export class HeadlessPanelHost {
     const cfg = getConfig();
     this.selectedModel =
       chat?.selectedModel || cfg.defaultModel || cfg.models[0]?.id || "";
-    this.selectedMode = chat?.selectedMode || "agent";
+    this.selectedMode = chat?.selectedMode || "auto";
     this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
     // Copy arrays — sharing store refs lets later mutations (or a concurrent
     // turn) silently rewrite another chat's transcript on disk.
@@ -463,7 +464,7 @@ export class HeadlessPanelHost {
         this.ensureProviderProbe(this.selectedModel);
         return { ok: true };
       case "modeChanged":
-        this.selectedMode = String(msg.mode || "agent").trim() || "agent";
+        this.selectedMode = String(msg.mode || "auto").trim() || "auto";
         if (this.store.activeChatId) {
           touchChat(this.store, this.store.activeChatId, {
             selectedMode: this.selectedMode,
@@ -2000,7 +2001,7 @@ export class HeadlessPanelHost {
 
     this.abortChatRun(this.store.activeChatId, "edit-message");
 
-    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
+    const agentMode = String(msg.agentMode || this.selectedMode || "auto");
     const model =
       String(msg.model || "").trim() ||
       this.selectedModel ||
@@ -2062,7 +2063,7 @@ export class HeadlessPanelHost {
     this.history = state.history;
     this.uiMessages = state.uiMessages;
     this.selectedModel = state.model;
-    const agentMode = String(msg.agentMode || this.selectedMode || "agent");
+    const agentMode = String(msg.agentMode || this.selectedMode || "auto");
     this.selectedMode = agentMode;
     if (this.store.activeChatId) {
       touchChat(this.store, this.store.activeChatId, {
@@ -2158,8 +2159,15 @@ export class HeadlessPanelHost {
       sourceChat.selectedModel ||
       getConfig().defaultModel;
     const agentMode = String(
-      msg.agentMode || this.selectedMode || sourceChat.selectedMode || "agent"
+      msg.agentMode || this.selectedMode || sourceChat.selectedMode || "auto"
     );
+    // Auto: resolve the engine per turn (VS Code parity, src/autoMode.ts).
+    // agentMode stays "auto" for the picker/store; runs carry a concrete id.
+    const autoResolvedMode =
+      agentMode.toLowerCase() === AUTO_MODE_ID
+        ? resolveAutoMode(text)
+        : undefined;
+    const runModeId = autoResolvedMode || agentMode;
     const reasoningEffort = String(
       msg.reasoningEffort ||
         this.selectedReasoningEffort ||
@@ -2238,6 +2246,9 @@ export class HeadlessPanelHost {
         text,
         mode: agentMode,
       };
+      if (autoResolvedMode) {
+        userUi.autoResolvedMode = autoResolvedMode;
+      }
       const attachmentsForUi = attachments.map(stripAttachmentPayload);
       if (attachmentsForUi.length) {
         userUi.attachments = attachmentsForUi;
@@ -2263,7 +2274,7 @@ export class HeadlessPanelHost {
     let lastGroupStep: AgentStepEvent | undefined;
     let runTtftMs = 0;
     this.setRunStateForChat(runChatId, "running");
-    const mode = getModeById(agentMode);
+    const mode = getModeById(runModeId);
     let activeTurnModel = model;
     this.setStatusForChat(
       runChatId,
@@ -2280,7 +2291,7 @@ export class HeadlessPanelHost {
         userText: text,
         attachments: attachments.length ? attachments : undefined,
         signal: ac.signal,
-        agentMode,
+        agentMode: runModeId,
         reasoningEffort: reasoningEffort || undefined,
         lastAgentEditedPaths:
           this.store.chats[runChatId]?.lastAgentEditedPaths || [],
@@ -2420,7 +2431,7 @@ export class HeadlessPanelHost {
             if (!runActive()) return;
             const raw = full || assistantText;
             const displayText = assistantFinaleDisplayText(raw, {
-              modeId: agentMode,
+              modeId: runModeId,
               hadFileEdits: editedPaths.length > 0,
               previousUserText: lastUiUserText(runUiMessages),
             });
