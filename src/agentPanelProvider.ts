@@ -196,6 +196,8 @@ type SettingsPayload = {
   commitMessageLanguage?: string;
   commitMessageModelIds?: string[];
   commitMessageScope?: "global" | "workspace";
+  /** Preferred vision models for image describe (flash / text-only chat). */
+  visionRoutingPreferredModelIds?: string[];
   figmaEnabled?: boolean;
   autoglmEnabled?: boolean;
   autoglmBinaryPath?: string;
@@ -3826,6 +3828,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                   argsPreview: event.argsPreview,
                   status: event.status,
                   resultPreview: event.resultPreview,
+                  // Vision-helper inventory (and similar) — the visible card.
+                  text: event.text,
                   metrics: event.metrics,
                   ...(typeof event.durationMs === "number" &&
                   event.durationMs >= 0
@@ -5803,6 +5807,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     );
 
     await this.saveCommitMessageSettings(raw);
+    await this.saveVisionRoutingSettings(raw);
 
     const figmaEnabled = raw.figmaEnabled === true;
     await cfg.update("figma.enabled", figmaEnabled, target);
@@ -5901,6 +5906,29 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("commitMessage.modelIds", modelIds, target);
     // Clear legacy single-model setting.
     await cfg.update("commitMessage.modelId", undefined, target);
+  }
+
+  private async saveVisionRoutingSettings(
+    raw: SettingsPayload
+  ): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration("agentPanel");
+    const modelIds = Array.isArray(raw.visionRoutingPreferredModelIds)
+      ? raw.visionRoutingPreferredModelIds
+          .map((v) => String(v || "").trim())
+          .filter(Boolean)
+          .filter((id, i, all) => all.indexOf(id) === i)
+      : [];
+    await cfg.update(
+      "visionRouting.preferredModelIds",
+      modelIds,
+      vscode.ConfigurationTarget.Global
+    );
+    // Clear deprecated single-model setting.
+    await cfg.update(
+      "visionRouting.preferredModelId",
+      undefined,
+      vscode.ConfigurationTarget.Global
+    );
   }
 
   private async saveModes(raw: SettingsPayload["modes"]): Promise<void> {
@@ -6230,6 +6258,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           <span class="material-symbols-outlined" aria-hidden="true">dns</span>
           <span class="settings-nav-label" data-i18n-nav="modelsProviders">Models &amp; providers</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="vision">
+          <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+          <span class="settings-nav-label" data-i18n-nav="visionRoutingTitle">Images (vision)</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="modes">
           <span class="material-symbols-outlined" aria-hidden="true">tune</span>
           <span class="settings-nav-label" data-i18n-nav="modes">Modes</span>
@@ -6270,14 +6302,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       <div class="settings-body" id="settingsBody">
         <section class="settings-panel" data-settings-panel="models">
           <h3 class="settings-section-title" id="settingsModelsProvidersTitle">Models &amp; providers</h3>
-          <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.</p>
-          <div id="settingsProvidersModelsList" class="settings-models"></div>
-          <div class="settings-add-actions">
-            <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
-            <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+          <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Select a provider to see its models.</p>
+          <div id="settingsProvidersModelsList" class="settings-catalog">
+            <div class="settings-catalog-col">
+              <div class="settings-catalog-providers" id="settingsProvidersPane"></div>
+              <div class="settings-catalog-foot">
+                <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+              </div>
+            </div>
+            <div class="settings-catalog-col">
+              <div class="settings-catalog-models" id="settingsModelsPane"></div>
+              <div class="settings-catalog-foot">
+                <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
+              </div>
+            </div>
           </div>
           <div id="settingsModelsHint" class="settings-hint" hidden></div>
           <div id="settingsProvidersHint" class="settings-hint" hidden></div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="vision" hidden>
+          <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
+          <p class="settings-section-note" id="settingsVisionRoutingNote">Preferred models that describe screenshots when the chat model is text-only or weak at vision (flash / mini). First enabled match wins.</p>
+          <div class="settings-field">
+            <span class="settings-label" id="settingsVisionModelsLabel">Preferred vision models</span>
+            <div id="settingsVisionModelList" class="settings-fetch-models-list"></div>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="modes" hidden>

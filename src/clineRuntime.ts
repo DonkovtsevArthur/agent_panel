@@ -14,6 +14,7 @@ import {
   resolveModelReasoningEffort,
   resolveModelSupportsReasoningEffort,
   resolveModelSupportsVision,
+  resolveModelNeedsVisionHelper,
 } from "./config";
 import {
   resolveModelCapabilities,
@@ -22,6 +23,7 @@ import {
 import {
   appendModelIdentityRuntimeNudge,
   appendSubagentsRuntimeNudge,
+  appendVerifyRuntimeNudge,
   appendTodoRuntimeNudge,
   appendVisionInspectRuntimeNudge,
   harborAskModeRulesForLanguage,
@@ -31,7 +33,9 @@ import {
   harborFigmaUnavailableNoteForLanguage,
   harborFullPathRulesForLanguage,
   harborModelIdentityRulesForLanguage,
+  harborEvidenceRulesForLanguage,
   harborOutputTokenRulesForLanguage,
+  harborVerifyRulesForLanguage,
   harborSubagentsRulesForLanguage,
   harborTodoRulesForLanguage,
   harborVisionInspectRulesForLanguage,
@@ -85,6 +89,7 @@ import {
   HARBOR_CLINE_DISTINCT_ID,
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
+import { needsPlanCard } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
 import { withTurnImages } from "./turnImageInject";
@@ -94,6 +99,11 @@ import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
 import { withTodoStepEmitter } from "./todoStepContext";
 import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
+import {
+  clearTurnEditedPaths,
+  createVerifyEditsTool,
+  noteTurnEditedPath,
+} from "./verifyEditsTool";
 import { recordToolFailure, clearToolFailures } from "./learnedErrors";
 import {
   harborClineToolPolicies,
@@ -502,6 +512,7 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
             bundle.createTool,
             plannerModelId
           );
+          const verifyEdits = createVerifyEditsTool(bundle.createTool);
           return {
             ...input,
             config: {
@@ -511,6 +522,7 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
               extraTools: [
                 ...priorExtra,
                 ...(inspectImages ? [inspectImages] : []),
+                verifyEdits,
                 ...mcp.tools,
               ],
               // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
@@ -1292,6 +1304,38 @@ function errorMessageFromToolOutput(output: unknown): string {
   }
 }
 
+/** Full text payload of a tool result (string output or common wrappers). */
+function textFromToolOutput(output: unknown): string {
+  if (typeof output === "string") {
+    return output.trim();
+  }
+  if (!output || typeof output !== "object") {
+    return "";
+  }
+  const row = output as {
+    text?: unknown;
+    result?: unknown;
+    content?: unknown;
+  };
+  if (typeof row.text === "string") {
+    return row.text.trim();
+  }
+  if (typeof row.result === "string") {
+    return row.result.trim();
+  }
+  if (Array.isArray(row.content)) {
+    return row.content
+      .map((part) =>
+        part && typeof part === "object" && "text" in part
+          ? String((part as { text?: unknown }).text || "")
+          : ""
+      )
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
 function pathFromToolInput(input: unknown): string | undefined {
   if (!input || typeof input !== "object") {
     return undefined;
@@ -1940,9 +1984,15 @@ export async function runClineAgentTurn(options: {
   // stays intact instead of being replaced wholesale.
   const uiLang = resolveUiLanguage(getConfig().language);
   const enableSpawnAgent = config.subagents.enabled !== false;
-  /** update_todo plan card — Agent/Plan only (Ask is Q&A, not multi-step work). */
+  /**
+   * update_todo plan card — Agent/Plan. The tool stays registered for the
+   * whole session (a follow-up can be multi-step); the turn-local nudge is
+   * gated by needsPlanCard so short Q&A skips the extra LLM round-trip.
+   */
   const harborModeId = String(options.agentMode || "agent").toLowerCase();
   const enableTodoTool = harborModeId !== "ask";
+  const todoNudgeThisTurn =
+    enableTodoTool && needsPlanCard(options.userText || "");
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
@@ -1961,14 +2011,18 @@ export async function runClineAgentTurn(options: {
     harborBatchReadsRulesForLanguage(uiLang),
     // Output token safety: route long artefacts through tool calls, not inline text.
     harborOutputTokenRulesForLanguage(uiLang),
+    // After writes: collect IDE diagnostics before claiming done.
+    harborVerifyRulesForLanguage(uiLang),
+    // Finale needs path:line + real verify evidence — no fake «готово».
+    harborEvidenceRulesForLanguage(uiLang),
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
     // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
     enableTodoTool ? harborTodoRulesForLanguage(uiLang) : "",
-    resolveModelSupportsVision(options.model)
-      ? ""
-      : harborVisionInspectRulesForLanguage(uiLang),
+    resolveModelNeedsVisionHelper(options.model)
+      ? harborVisionInspectRulesForLanguage(uiLang)
+      : "",
     // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
     String(options.agentMode || "").toLowerCase() === "plan"
       ? HARBOR_PLAN_MODE_CARD_HINT
@@ -2437,6 +2491,12 @@ export async function runClineAgentTurn(options: {
             argsPreview: spawnAgentArgsPreview(name, input),
             status: failed ? "error" : "done",
             resultPreview: spawnAgentResultPreview(name, event.output, errMsg),
+            // Vision inventory must stay readable in the UI card — not the
+            // 240-char resultPreview. inspect_images returns the helper text
+            // as its tool output.
+            ...(name === "inspect_images" && !failed
+              ? { text: textFromToolOutput(event.output) }
+              : {}),
             ...(metrics ? { metrics } : {}),
             ...(typeof durationMs === "number" && durationMs >= 0
               ? { durationMs }
@@ -2453,7 +2513,15 @@ export async function runClineAgentTurn(options: {
                 created: false,
               };
               edits.push(edit);
+              noteTurnEditedPath(filePath);
               callbacks.onFileEdit(edit);
+            }
+            for (const p of collectInputPaths(
+              (input && typeof input === "object"
+                ? input
+                : {}) as Record<string, unknown>
+            )) {
+              noteTurnEditedPath(p);
             }
           }
         }
@@ -2649,6 +2717,8 @@ export async function runClineAgentTurn(options: {
   const currentHasImage = currentImageUrls.length > 0;
   let userImages = imageBundle.urls;
   const chatSeesImages = resolveModelSupportsVision(options.model);
+  // Flash-tier accepts pixels but invents UI content — describe via helper.
+  const needsVisionHelper = resolveModelNeedsVisionHelper(options.model);
 
   let userPrompt = String(options.userText || "").trim();
   if (inlined.text) {
@@ -2688,7 +2758,7 @@ export async function runClineAgentTurn(options: {
   if (!userPrompt) {
     userPrompt = "Look at the attached image(s) and answer.";
   }
-  if (!chatSeesImages) {
+  if (needsVisionHelper) {
     const describeHistoryFollowUp =
       !currentHasImage &&
       imageBundle.fromHistory > 0 &&
@@ -2721,10 +2791,20 @@ export async function runClineAgentTurn(options: {
           status: helper.text ? "done" : "error",
           argsPreview: helper.visionModelId || options.model,
           resultPreview: (helper.text || "").slice(0, 400),
+          // Full inventory for a visible card — the model prompt block is
+          // hidden from the user, so the UI must show this description itself.
+          text: helper.description || undefined,
         });
         if (helper.text) {
           userPrompt = `${helper.text}\n\n${userPrompt}`;
+          // Helper description is the source of truth — drop raw pixels so
+          // flash-tier cannot invent content from a half-readable screenshot.
+          userImages = [];
+        } else if (!chatSeesImages) {
+          // Text-only model cannot use pixels even as a fallback.
+          userImages = [];
         }
+        // weakVision + helper failed → keep pixels as last resort.
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         emitStep(callbacks, {
@@ -2734,10 +2814,14 @@ export async function runClineAgentTurn(options: {
           status: "error",
           resultPreview: message.slice(0, 400),
         });
+        if (!chatSeesImages) {
+          userImages = [];
+        }
       }
+    } else if (!chatSeesImages) {
+      // Text model cannot use pixels; sending them only makes it deny the image.
+      userImages = [];
     }
-    // Text model cannot use pixels; sending them only makes it deny the image.
-    userImages = [];
     timing.end("vision");
   }
   userPrompt = appendFigmaRuntimeNudge(userPrompt);
@@ -2754,8 +2838,11 @@ export async function runClineAgentTurn(options: {
     options.model,
     uiLang
   );
-  // update_todo plan card — build it at the very start of every Agent/Plan turn.
-  userPrompt = appendTodoRuntimeNudge(userPrompt, enableTodoTool, uiLang);
+  // update_todo nudge only on multi-step turns (short Q&A skips the card).
+  userPrompt = appendTodoRuntimeNudge(userPrompt, todoNudgeThisTurn, uiLang);
+  // After edits: verify_edits + evidence-based finale (anti fake-«готово»).
+  clearTurnEditedPaths();
+  userPrompt = appendVerifyRuntimeNudge(userPrompt, true, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(
     userPrompt,
     enableSpawnAgent,
@@ -2763,10 +2850,11 @@ export async function runClineAgentTurn(options: {
   );
   userPrompt = appendVisionInspectRuntimeNudge(
     userPrompt,
-    !chatSeesImages && imageBundle.urls.length > 0,
+    needsVisionHelper && imageBundle.urls.length > 0,
     uiLang
   );
   if (
+    !needsVisionHelper &&
     chatSeesImages &&
     imageBundle.fromHistory > 0 &&
     !currentHasImage
@@ -2898,9 +2986,11 @@ export async function runClineAgentTurn(options: {
           disableMcpSettingsTools: true,
           maxParallelToolCalls,
           // Harbor plan card (update_todo) — Agent/Plan only.
-          ...(enableTodoTool
-            ? { extraTools: [createTodoTool(bundle.createTool)] }
-            : {}),
+          // verify_edits is always on: read-only diagnostics after writes.
+          extraTools: [
+            ...(enableTodoTool ? [createTodoTool(bundle.createTool)] : []),
+            createVerifyEditsTool(bundle.createTool),
+          ],
           // TLS: pass Harbor fetch so corporate self-signed proxies work when
           // Advanced → Validate TLS is off (default).
           fetch: harborFetch as typeof fetch,

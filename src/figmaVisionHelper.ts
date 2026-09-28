@@ -27,7 +27,7 @@ export async function describeChatImagesForMainModel(options: {
   userQuestion?: string;
   chatModelId?: string;
   signal?: AbortSignal;
-}): Promise<{ text: string; visionModelId?: string }> {
+}): Promise<{ text: string; description?: string; visionModelId?: string }> {
   const {
     getConfig,
     getEnabledModels,
@@ -99,6 +99,7 @@ export async function describeChatImagesForMainModel(options: {
       visionModelId: routed.modelId,
       description,
     }),
+    description,
     visionModelId: routed.modelId,
   };
 }

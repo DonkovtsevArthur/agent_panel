@@ -62,7 +62,7 @@
       saved: "Saved",
       providers: "Providers",
       providersNote:
-        "Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.",
+        "Base URL and API key for each OpenAI-compatible API. Select a provider to see its models.",
       addProvider: "+ Provider",
       models: "Models",
       modelsProviders: "Models & providers",
@@ -73,6 +73,8 @@
       providerNameLabel: "Provider name",
       otherProvider: "Other",
       noProvidersOrModels: "No providers yet — add a provider or a model.",
+      selectProviderToSeeModels: "Select a provider to see its models.",
+      noModelsForProvider: "No models for this provider yet.",
       baseUrl: "Base URL",
       statusUrl: "Status URL",
       statusUrlHint: "Empty = Base URL + /models",
@@ -128,6 +130,10 @@
       commitModel: "Model",
       commitModels: "Models",
       commitModelEmpty: "Auto (light model)",
+      visionRoutingTitle: "Images (vision)",
+      visionRoutingNote:
+        "Preferred models that describe screenshots when the chat model is text-only or weak at vision (flash / mini). First enabled match wins.",
+      visionModels: "Preferred vision models",
       commitPrompt: "Prompt / rule",
       commitPromptEmpty: "Empty — project rules, then the built-in default.",
       commitPromptPlaceholder:
@@ -424,6 +430,7 @@
       thinkingLabel: "Thoughts",
       thinkingWorking: "Thoughts…",
       textStepLabel: "Note",
+      visionDescTitle: "Screenshot description",
       zoomImage: "Zoom image",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
@@ -530,7 +537,7 @@
       saved: "Сохранено",
       providers: "Провайдеры",
       providersNote:
-        "Base URL и API key для каждого OpenAI-compatible API. Модели сгруппированы по провайдеру.",
+        "Base URL и API key для каждого OpenAI-compatible API. Выберите провайдера, чтобы увидеть его модели.",
       addProvider: "+ Провайдер",
       models: "Модели",
       modelsProviders: "Модели и провайдеры",
@@ -541,6 +548,8 @@
       providerNameLabel: "Имя провайдера",
       otherProvider: "Другое",
       noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
+      selectProviderToSeeModels: "Выберите провайдера, чтобы увидеть его модели.",
+      noModelsForProvider: "У этого провайдера пока нет моделей.",
       baseUrl: "Base URL",
       statusUrl: "URL проверки статуса",
       statusUrlHint: "Пусто = Base URL + /models",
@@ -596,6 +605,10 @@
       commitModel: "Модель",
       commitModels: "Модели",
       commitModelEmpty: "Авто (лёгкая модель)",
+      visionRoutingTitle: "Изображения (vision)",
+      visionRoutingNote:
+        "Предпочитаемые модели для описания скриншотов, если модель чата текстовая или слабая в vision (flash / mini). Берётся первая включённая.",
+      visionModels: "Предпочитаемые vision-модели",
       commitPrompt: "Промпт / правило",
       commitPromptEmpty: "Пусто — правила проекта, затем встроенный дефолт.",
       commitPromptPlaceholder:
@@ -896,6 +909,7 @@
       thinkingLabel: "Мысли",
       thinkingWorking: "Мысли…",
       textStepLabel: "Сообщение",
+      visionDescTitle: "Описание скриншота",
       zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
       stepsMany: (n) => {
@@ -1108,10 +1122,8 @@
   const chatBranchesEl = document.getElementById("chatBranches");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
-  const settingsModelsList = document.getElementById(
-    "settingsProvidersModelsList"
-  );
-  const settingsProvidersList = settingsModelsList;
+  const settingsProvidersList = document.getElementById("settingsProvidersPane");
+  const settingsModelsList = document.getElementById("settingsModelsPane");
   const newAgentBtn = document.getElementById("newAgentBtn");
   const chatNewAgentBtn = document.getElementById("chatNewAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
@@ -1330,6 +1342,10 @@
     "settingsCommitLanguage"
   );
   const settingsCommitModelList = document.getElementById("settingsCommitModelList");
+  const settingsVisionModelList = document.getElementById("settingsVisionModelList");
+  const settingsVisionRoutingTitle = document.getElementById("settingsVisionRoutingTitle");
+  const settingsVisionRoutingNote = document.getElementById("settingsVisionRoutingNote");
+  const settingsVisionModelsLabel = document.getElementById("settingsVisionModelsLabel");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
   const settingsCommitPromptToggle = document.getElementById(
     "settingsCommitPromptToggle"
@@ -1495,6 +1511,8 @@
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
+  /** Selected provider key in the models catalog: provider id or "__orphans__". */
+  let selectedSettingsProviderKey = "";
   /** @type {Record<string, { providerId?: string, providerName?: string, state?: string, message?: string }>} */
   let providerConnById = {};
   let settingsModes = [];
@@ -1518,6 +1536,8 @@
   let settingsHydrating = false;
   /** Last known commit-message model selection (survives list rebuild / empty DOM). */
   let settingsCommitMessageModelIds = [];
+  /** Last known preferred vision model selection. */
+  let settingsVisionModelIds = [];
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
   let settingsModelTipEl = null;
@@ -2130,6 +2150,15 @@
     }
     if (settingsCommitModelsLabel) {
       settingsCommitModelsLabel.textContent = t("commitModels");
+    }
+    if (settingsVisionRoutingTitle) {
+      settingsVisionRoutingTitle.textContent = t("visionRoutingTitle");
+    }
+    if (settingsVisionRoutingNote) {
+      settingsVisionRoutingNote.textContent = t("visionRoutingNote");
+    }
+    if (settingsVisionModelsLabel) {
+      settingsVisionModelsLabel.textContent = t("visionModels");
     }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
@@ -8134,35 +8163,37 @@
 
   /**
    * Intermediate assistant text (a completed text block from an earlier
-   * model round of this turn). Rendered as a muted markdown card INSIDE the
-   * collapsed tool group so the finale-only bubble does not wipe mid-turn
-   * lists / answers the model keeps referring to.
+   * model round of this turn). Rendered OUTSIDE the collapsed tool group as a
+   * visible note card — the model often answers mid-turn («описание выше»)
+   * and the user must see that text without expanding «выполнено».
    */
   function upsertTextBlockStep(step) {
     const raw = String(step.text || "").trim();
     if (!raw) {
       return null;
     }
-    const group = ensureActiveToolGroup();
-    const body = group.querySelector(".tool-group-body");
-    if (!body) {
-      return null;
-    }
+    const turnScope =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
     const stepId = String(step.stepId || "");
-    let el = body.querySelector(
-      `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-    );
+    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    let el = turnScope.querySelector(stepSel);
     if (!el) {
       el = document.createElement("div");
-      el.className = "msg tool agent-step";
+      el.className = "msg tool agent-step agent-step-text-outside";
       el.dataset.stepId = stepId;
-      body.appendChild(el);
+      // Place above the active/sealed tool group so «описание выше» is findable.
+      const group = turnScope.querySelector(".tool-group.agent-timeline");
+      if (group) {
+        turnScope.insertBefore(el, group);
+      } else {
+        turnScope.appendChild(el);
+      }
     }
     el.dataset.stepKind = "text";
     el.dataset.status = "done";
     el.classList.add("agent-step-text");
-    // Комментарий модели — обычная строка ленты (иконка + текст),
-    // идёт в общем порядке событий перед вызванным инструментом.
     el.innerHTML =
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">subject</span>` +
       `<span class="agent-step-label agent-step-text-label"></span>`;
@@ -8170,18 +8201,73 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
-    // «Живая» строка под статусом: последний комментарий модели, пока
-    // лента свёрнута (CSS прячет её в развёрнутом виде и после финиша).
-    // Только живой поток — при перерисовке истории тикер не оживляем.
-    if (!restoringChatScroll) {
-      let note = group.querySelector(".tool-group-live-note");
-      if (!note) {
-        note = document.createElement("div");
-        note.className = "tool-group-live-note";
-        const body = group.querySelector(".tool-group-body");
-        group.insertBefore(note, body || null);
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
+  }
+
+  /**
+   * Vision-helper inventory: a visible card outside the collapsed tool group.
+   * The model prompt block is hidden from the user — without this card
+   * answers like «описание выше» point at nothing.
+   */
+  function upsertVisionDescriptionCard(step) {
+    let raw = String(step.text || "").trim();
+    // Tool outputs wrap the inventory in the Harbor helper header — keep
+    // only the "## What is in the image" body for the visible card.
+    const bodyIx = raw.indexOf("## What is in the image");
+    if (bodyIx >= 0) {
+      raw = raw.slice(bodyIx + "## What is in the image".length).trim();
+    }
+    const turnScope =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+    const stepId = String(step.stepId || "") + ":desc";
+    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    let el = turnScope.querySelector(stepSel);
+    if (!raw) {
+      if (el) {
+        el.remove();
       }
-      note.innerHTML = renderInlineMarkdown(raw);
+      return null;
+    }
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "msg tool agent-step agent-step-vision-desc";
+      el.dataset.stepId = stepId;
+      el.dataset.stepKind = "tool";
+      const group = turnScope.querySelector(".tool-group.agent-timeline");
+      if (group) {
+        turnScope.insertBefore(el, group);
+      } else {
+        turnScope.appendChild(el);
+      }
+    }
+    el.dataset.status = "done";
+    const prevOpen = el.dataset.visionOpen === "1";
+    el.dataset.visionOpen = prevOpen ? "1" : "0";
+    el.innerHTML =
+      `<div class="vision-desc-head">` +
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">image_search</span>` +
+      `<span class="vision-desc-title"></span>` +
+      `<span class="material-symbols-outlined vision-desc-chevron" aria-hidden="true">${prevOpen ? "expand_less" : "expand_more"}</span>` +
+      `</div>` +
+      `<div class="vision-desc-body" ${prevOpen ? "" : "hidden"}></div>`;
+    const titleEl = el.querySelector(".vision-desc-title");
+    if (titleEl) {
+      titleEl.textContent = t("visionDescTitle");
+    }
+    const bodyEl = el.querySelector(".vision-desc-body");
+    if (bodyEl) {
+      bodyEl.innerHTML = renderInlineMarkdown(raw);
+    }
+    const head = el.querySelector(".vision-desc-head");
+    if (head) {
+      head.onclick = () => {
+        el.dataset.visionOpen = el.dataset.visionOpen === "1" ? "0" : "1";
+        upsertVisionDescriptionCard({ ...step, text: raw });
+      };
     }
     keepStatusAtEnd();
     scrollToBottom();
@@ -8447,6 +8533,15 @@
           dur.className = "agent-step-duration";
           dur.textContent = formatRunDuration(toolMs);
           labelEl.appendChild(dur);
+        }
+      }
+      // Vision-helper inventory → visible card above the collapsed timeline.
+      if (step.name === "vision" || step.name === "inspect_images") {
+        const descText =
+          step.text ||
+          String(step.resultPreview || el.dataset.resultPreview || "");
+        if (descText) {
+          upsertVisionDescriptionCard({ ...step, text: descText });
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся
@@ -8844,6 +8939,7 @@
   function showSettingsCategory(category) {
     const allowed = [
       "models",
+      "vision",
       "modes",
       "language",
       "appearance",
@@ -9584,6 +9680,7 @@
       promptCache: baseUrlSuggestsPromptCache(baseUrl),
     };
     settingsProviders.push(next);
+    selectedSettingsProviderKey = id;
     return id;
   }
 
@@ -9704,6 +9801,9 @@
     }
     closeProviderEditModal();
     setProvidersHint("");
+    if (next.id) {
+      selectedSettingsProviderKey = String(next.id).trim();
+    }
     renderSettingsProviders();
     renderSettingsModels();
     fillModelProviderSelect(modelEditProvider?.value || "");
@@ -9714,15 +9814,89 @@
     renderSettingsCatalog();
   }
 
+  const ORPHANS_PROVIDER_KEY = "__orphans__";
+
+  function providerSelectionKey(provider) {
+    return String(provider?.id || "").trim();
+  }
+
+  function modelsForProviderKey(key) {
+    if (key === ORPHANS_PROVIDER_KEY) {
+      const usedIds = new Set(
+        settingsProviders.map((p) => String(p.id || "").trim()).filter(Boolean)
+      );
+      return settingsModels
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          const pid = String(model.providerId || "").trim();
+          return !pid || !usedIds.has(pid);
+        });
+    }
+    return settingsModels
+      .map((model, index) => ({ model, index }))
+      .filter(
+        ({ model }) => String(model.providerId || "").trim() === key
+      );
+  }
+
+  function listProviderSelectionKeys() {
+    const keys = settingsProviders
+      .map(providerSelectionKey)
+      .filter(Boolean);
+    if (modelsForProviderKey(ORPHANS_PROVIDER_KEY).length) {
+      keys.push(ORPHANS_PROVIDER_KEY);
+    }
+    return keys;
+  }
+
+  function ensureSelectedSettingsProvider() {
+    const keys = listProviderSelectionKeys();
+    if (!keys.length) {
+      selectedSettingsProviderKey = "";
+      return;
+    }
+    if (!keys.includes(selectedSettingsProviderKey)) {
+      selectedSettingsProviderKey = keys[0];
+    }
+  }
+
+  function selectSettingsProvider(key) {
+    const next = String(key || "");
+    if (next && next === selectedSettingsProviderKey) {
+      return;
+    }
+    selectedSettingsProviderKey = next;
+    renderSettingsCatalog();
+  }
+
+  function selectedProviderLabel() {
+    if (!selectedSettingsProviderKey) {
+      return "";
+    }
+    if (selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY) {
+      return t("otherProvider");
+    }
+    return providerLabel(selectedSettingsProviderKey);
+  }
+
   function appendProviderHead(listEl, provider, index) {
     const row = document.createElement("div");
-    row.className = "settings-provider-head";
-    row.dataset.providerIndex = String(index);
     const providerId = String(provider.id || "").trim();
+    const selectionKey = providerId || ORPHANS_PROVIDER_KEY;
+    const selected = selectedSettingsProviderKey === selectionKey;
+    row.className =
+      "settings-provider-head settings-provider-select" +
+      (selected ? " is-selected" : "");
+    row.dataset.providerIndex = String(index);
+    row.dataset.providerKey = selectionKey;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", selected ? "true" : "false");
+    row.tabIndex = 0;
     if (providerId) {
       row.dataset.providerId = providerId;
     }
     const title = provider.name || provider.id || t("providerTitle");
+    const modelCount = modelsForProviderKey(selectionKey).length;
     row.innerHTML =
       `<div class="settings-model-info">` +
       `<div class="settings-model-name">` +
@@ -9732,6 +9906,7 @@
       `</div>` +
       `<div class="settings-model-id"></div>` +
       `</div>` +
+      `<span class="settings-provider-count" aria-hidden="true"></span>` +
       `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
       CLOUD_DOWNLOAD_ICON +
       `</button>` +
@@ -9744,6 +9919,10 @@
     row.querySelector(".provider-status-title").textContent = title;
     row.querySelector(".settings-model-id").textContent =
       provider.baseUrl || provider.id || "";
+    const countEl = row.querySelector(".settings-provider-count");
+    if (countEl) {
+      countEl.textContent = String(modelCount);
+    }
     listEl.appendChild(row);
     applyProviderHeadStatus(row, providerConnById[providerId]);
   }
@@ -9857,65 +10036,100 @@
     listEl.appendChild(row);
   }
 
+  function appendOrphanProviderHead(listEl) {
+    const selected = selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY;
+    const modelCount = modelsForProviderKey(ORPHANS_PROVIDER_KEY).length;
+    const row = document.createElement("div");
+    row.className =
+      "settings-provider-head settings-provider-select" +
+      (selected ? " is-selected" : "");
+    row.dataset.providerKey = ORPHANS_PROVIDER_KEY;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", selected ? "true" : "false");
+    row.tabIndex = 0;
+    row.innerHTML =
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-name">` +
+      `<span class="provider-status-title"></span>` +
+      `</div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<span class="settings-provider-count" aria-hidden="true"></span>`;
+    row.querySelector(".provider-status-title").textContent =
+      t("otherProvider");
+    row.querySelector(".settings-model-id").textContent = "";
+    const countEl = row.querySelector(".settings-provider-count");
+    if (countEl) {
+      countEl.textContent = String(modelCount);
+    }
+    listEl.appendChild(row);
+  }
+
   function renderSettingsCatalog() {
-    if (!settingsModelsList) {
+    if (!settingsProvidersList || !settingsModelsList) {
       return;
     }
     hideSettingsModelTip();
     sortSettingsModels();
+    ensureSelectedSettingsProvider();
+    settingsProvidersList.innerHTML = "";
     settingsModelsList.innerHTML = "";
+
     if (!settingsProviders.length && !settingsModels.length) {
-      settingsModelsList.innerHTML =
+      settingsProvidersList.innerHTML =
         `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      settingsModelsList.innerHTML =
+        `<div class="settings-models-empty">${t("selectProviderToSeeModels")}</div>`;
       syncDefaultModelSelect();
       return;
     }
 
-    const used = new Set();
+    if (!settingsProviders.length) {
+      settingsProvidersList.innerHTML =
+        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+    } else {
+      settingsProvidersList.setAttribute("role", "listbox");
+      settingsProviders.forEach((provider, providerIndex) => {
+        appendProviderHead(settingsProvidersList, provider, providerIndex);
+      });
+    }
 
-    const appendModels = (entries, nested, parentEl) => {
-      const target = parentEl || settingsModelsList;
+    const orphanEntries = modelsForProviderKey(ORPHANS_PROVIDER_KEY);
+    if (orphanEntries.length) {
+      appendOrphanProviderHead(settingsProvidersList);
+    }
+
+    const header = document.createElement("div");
+    header.className = "settings-catalog-models-head";
+    const titleEl = document.createElement("div");
+    titleEl.className = "settings-catalog-models-title";
+    titleEl.textContent =
+      selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY
+        ? t("otherProvider")
+        : selectedProviderLabel() || t("models");
+    header.appendChild(titleEl);
+    const countEl = document.createElement("div");
+    countEl.className = "settings-catalog-models-count";
+    const entries = selectedSettingsProviderKey
+      ? modelsForProviderKey(selectedSettingsProviderKey)
+      : [];
+    countEl.textContent = String(entries.length);
+    header.appendChild(countEl);
+    settingsModelsList.appendChild(header);
+
+    if (!selectedSettingsProviderKey) {
+      const empty = document.createElement("div");
+      empty.className = "settings-models-empty";
+      empty.textContent = t("selectProviderToSeeModels");
+      settingsModelsList.appendChild(empty);
+    } else if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "settings-models-empty";
+      empty.textContent = t("noModelsForProvider");
+      settingsModelsList.appendChild(empty);
+    } else {
       for (const { model, index } of entries) {
-        used.add(index);
-        appendModelRow(target, model, index, nested);
-      }
-    };
-
-    settingsProviders.forEach((provider, providerIndex) => {
-      const group = document.createElement("div");
-      group.className = "settings-provider-group";
-      appendProviderHead(group, provider, providerIndex);
-      const pid = String(provider.id || "").trim();
-      const entries = settingsModels
-        .map((model, index) => ({ model, index }))
-        .filter(
-          ({ model }) => String(model.providerId || "").trim() === pid
-        );
-      appendModels(entries, true, group);
-      settingsModelsList.appendChild(group);
-    });
-
-    const orphans = settingsModels
-      .map((model, index) => ({ model, index }))
-      .filter(({ index }) => !used.has(index));
-    if (orphans.length) {
-      if (settingsProviders.length) {
-        const group = document.createElement("div");
-        group.className = "settings-provider-group";
-        const orphanHead = document.createElement("div");
-        orphanHead.className = "settings-provider-head";
-        orphanHead.innerHTML =
-          `<div class="settings-model-info">` +
-          `<div class="settings-model-name"></div>` +
-          `<div class="settings-model-id"></div>` +
-          `</div>`;
-        orphanHead.querySelector(".settings-model-name").textContent =
-          t("otherProvider");
-        group.appendChild(orphanHead);
-        appendModels(orphans, true, group);
-        settingsModelsList.appendChild(group);
-      } else {
-        appendModels(orphans, false, settingsModelsList);
+        appendModelRow(settingsModelsList, model, index, true);
       }
     }
 
@@ -9925,6 +10139,7 @@
   function renderSettingsModels() {
     renderSettingsCatalog();
     fillCommitMessageModelCheckboxes(readCommitMessageModelIdsFromDom());
+    fillVisionModelCheckboxes(readVisionModelIdsFromDom());
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {
@@ -9980,6 +10195,79 @@
       return settingsCommitMessageModelIds.slice();
     }
     settingsCommitMessageModelIds = fromDom;
+    return fromDom;
+  }
+
+  function fillVisionModelCheckboxes(selectedIds) {
+    if (!settingsVisionModelList) {
+      return;
+    }
+    const selected = new Set(
+      (Array.isArray(selectedIds) ? selectedIds : [])
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    );
+    settingsVisionModelIds = [...selected];
+    const enabled = settingsModels
+      .filter((m) => m && m.id && m.enabled !== false)
+      .slice()
+      .sort((a, b) => {
+        const aVis = mSupportsVision(a);
+        const bVis = mSupportsVision(b);
+        if (aVis !== bVis) {
+          return aVis ? -1 : 1;
+        }
+        return String(a.label || a.id).localeCompare(String(b.label || b.id));
+      });
+    settingsVisionModelList.innerHTML = "";
+    for (const model of enabled) {
+      const label = document.createElement("label");
+      label.className = "settings-fetch-model-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.modelId = model.id;
+      if (selected.has(model.id)) {
+        cb.checked = true;
+      }
+      const span = document.createElement("span");
+      span.className = "settings-fetch-model-id";
+      const name = model.label || model.id;
+      span.textContent = mSupportsVision(model)
+        ? name
+        : name + " · text";
+      label.appendChild(cb);
+      label.appendChild(span);
+      settingsVisionModelList.appendChild(label);
+    }
+  }
+
+  function mSupportsVision(model) {
+    if (!model) {
+      return false;
+    }
+    if (typeof model.supportsVision === "boolean") {
+      return model.supportsVision;
+    }
+    return Boolean(guessModelSupportsVision && guessModelSupportsVision(model.id));
+  }
+
+  function readVisionModelIdsFromDom() {
+    if (!settingsVisionModelList) {
+      return settingsVisionModelIds.slice();
+    }
+    const fromDom = [
+      ...settingsVisionModelList.querySelectorAll("input:checked"),
+    ]
+      .map((el) => String(el.dataset.modelId || "").trim())
+      .filter(Boolean);
+    if (
+      fromDom.length === 0 &&
+      settingsVisionModelList.querySelectorAll("input").length === 0 &&
+      settingsVisionModelIds.length > 0
+    ) {
+      return settingsVisionModelIds.slice();
+    }
+    settingsVisionModelIds = fromDom;
     return fromDom;
   }
 
@@ -10968,7 +11256,10 @@
       modelEditLabel.value = model.label || "";
     }
     const preferredProvider = isNew
-      ? primaryProviderId() || NEW_PROVIDER_VALUE
+      ? (selectedSettingsProviderKey &&
+        selectedSettingsProviderKey !== ORPHANS_PROVIDER_KEY
+          ? selectedSettingsProviderKey
+          : primaryProviderId()) || NEW_PROVIDER_VALUE
       : model.providerId || primaryProviderId() || NEW_PROVIDER_VALUE;
     fillModelProviderSelect(preferredProvider);
     syncModelNewProviderFields();
@@ -11912,6 +12203,7 @@
       updateCommitPromptPreview();
     }
     fillCommitMessageModelCheckboxes(settings.commitMessageModelIds || []);
+    fillVisionModelCheckboxes(settings.visionRoutingPreferredModelIds || []);
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -12078,6 +12370,7 @@
         ? settingsCommitLanguage.value
         : "auto",
       commitMessageModelIds: readCommitMessageModelIdsFromDom(),
+      visionRoutingPreferredModelIds: readVisionModelIdsFromDom(),
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"
@@ -16545,11 +16838,14 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
           readCommitMessageModelIdsFromDom();
+        }
+        if (target.closest("#settingsVisionModelList")) {
+          readVisionModelIdsFromDom();
         }
         persistSettingsNow();
       }
@@ -16927,6 +17223,13 @@
 
   if (settingsProvidersList) {
     settingsProvidersList.addEventListener("click", (event) => {
+      const selectRow = event.target.closest(".settings-provider-select");
+      if (selectRow) {
+        const key = selectRow.dataset.providerKey || "";
+        if (key) {
+          selectSettingsProvider(key);
+        }
+      }
       const fetchBtn = event.target.closest(".settings-provider-fetch");
       if (fetchBtn) {
         const index = Number(fetchBtn.dataset.index);
@@ -16961,10 +17264,29 @@
             model.providerId = fallback;
           }
         }
+        if (
+          selectedSettingsProviderKey === String(removedId || "").trim()
+        ) {
+          selectedSettingsProviderKey = "";
+        }
         renderSettingsProviders();
         renderSettingsModels();
         fillModelProviderSelect(modelEditProvider?.value || fallback);
         schedulePersistSettings(0);
+      }
+    });
+    settingsProvidersList.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const selectRow = event.target.closest(".settings-provider-select");
+      if (!selectRow) {
+        return;
+      }
+      event.preventDefault();
+      const key = selectRow.dataset.providerKey || "";
+      if (key) {
+        selectSettingsProvider(key);
       }
     });
   }

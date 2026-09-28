@@ -163,6 +163,7 @@
       promptCache: baseUrlSuggestsPromptCache(baseUrl),
     };
     settingsProviders.push(next);
+    selectedSettingsProviderKey = id;
     return id;
   }
 
@@ -283,6 +284,9 @@
     }
     closeProviderEditModal();
     setProvidersHint("");
+    if (next.id) {
+      selectedSettingsProviderKey = String(next.id).trim();
+    }
     renderSettingsProviders();
     renderSettingsModels();
     fillModelProviderSelect(modelEditProvider?.value || "");
@@ -293,15 +297,89 @@
     renderSettingsCatalog();
   }
 
+  const ORPHANS_PROVIDER_KEY = "__orphans__";
+
+  function providerSelectionKey(provider) {
+    return String(provider?.id || "").trim();
+  }
+
+  function modelsForProviderKey(key) {
+    if (key === ORPHANS_PROVIDER_KEY) {
+      const usedIds = new Set(
+        settingsProviders.map((p) => String(p.id || "").trim()).filter(Boolean)
+      );
+      return settingsModels
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          const pid = String(model.providerId || "").trim();
+          return !pid || !usedIds.has(pid);
+        });
+    }
+    return settingsModels
+      .map((model, index) => ({ model, index }))
+      .filter(
+        ({ model }) => String(model.providerId || "").trim() === key
+      );
+  }
+
+  function listProviderSelectionKeys() {
+    const keys = settingsProviders
+      .map(providerSelectionKey)
+      .filter(Boolean);
+    if (modelsForProviderKey(ORPHANS_PROVIDER_KEY).length) {
+      keys.push(ORPHANS_PROVIDER_KEY);
+    }
+    return keys;
+  }
+
+  function ensureSelectedSettingsProvider() {
+    const keys = listProviderSelectionKeys();
+    if (!keys.length) {
+      selectedSettingsProviderKey = "";
+      return;
+    }
+    if (!keys.includes(selectedSettingsProviderKey)) {
+      selectedSettingsProviderKey = keys[0];
+    }
+  }
+
+  function selectSettingsProvider(key) {
+    const next = String(key || "");
+    if (next && next === selectedSettingsProviderKey) {
+      return;
+    }
+    selectedSettingsProviderKey = next;
+    renderSettingsCatalog();
+  }
+
+  function selectedProviderLabel() {
+    if (!selectedSettingsProviderKey) {
+      return "";
+    }
+    if (selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY) {
+      return t("otherProvider");
+    }
+    return providerLabel(selectedSettingsProviderKey);
+  }
+
   function appendProviderHead(listEl, provider, index) {
     const row = document.createElement("div");
-    row.className = "settings-provider-head";
-    row.dataset.providerIndex = String(index);
     const providerId = String(provider.id || "").trim();
+    const selectionKey = providerId || ORPHANS_PROVIDER_KEY;
+    const selected = selectedSettingsProviderKey === selectionKey;
+    row.className =
+      "settings-provider-head settings-provider-select" +
+      (selected ? " is-selected" : "");
+    row.dataset.providerIndex = String(index);
+    row.dataset.providerKey = selectionKey;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", selected ? "true" : "false");
+    row.tabIndex = 0;
     if (providerId) {
       row.dataset.providerId = providerId;
     }
     const title = provider.name || provider.id || t("providerTitle");
+    const modelCount = modelsForProviderKey(selectionKey).length;
     row.innerHTML =
       `<div class="settings-model-info">` +
       `<div class="settings-model-name">` +
@@ -311,6 +389,7 @@
       `</div>` +
       `<div class="settings-model-id"></div>` +
       `</div>` +
+      `<span class="settings-provider-count" aria-hidden="true"></span>` +
       `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
       CLOUD_DOWNLOAD_ICON +
       `</button>` +
@@ -323,6 +402,10 @@
     row.querySelector(".provider-status-title").textContent = title;
     row.querySelector(".settings-model-id").textContent =
       provider.baseUrl || provider.id || "";
+    const countEl = row.querySelector(".settings-provider-count");
+    if (countEl) {
+      countEl.textContent = String(modelCount);
+    }
     listEl.appendChild(row);
     applyProviderHeadStatus(row, providerConnById[providerId]);
   }
@@ -436,65 +519,100 @@
     listEl.appendChild(row);
   }
 
+  function appendOrphanProviderHead(listEl) {
+    const selected = selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY;
+    const modelCount = modelsForProviderKey(ORPHANS_PROVIDER_KEY).length;
+    const row = document.createElement("div");
+    row.className =
+      "settings-provider-head settings-provider-select" +
+      (selected ? " is-selected" : "");
+    row.dataset.providerKey = ORPHANS_PROVIDER_KEY;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", selected ? "true" : "false");
+    row.tabIndex = 0;
+    row.innerHTML =
+      `<div class="settings-model-info">` +
+      `<div class="settings-model-name">` +
+      `<span class="provider-status-title"></span>` +
+      `</div>` +
+      `<div class="settings-model-id"></div>` +
+      `</div>` +
+      `<span class="settings-provider-count" aria-hidden="true"></span>`;
+    row.querySelector(".provider-status-title").textContent =
+      t("otherProvider");
+    row.querySelector(".settings-model-id").textContent = "";
+    const countEl = row.querySelector(".settings-provider-count");
+    if (countEl) {
+      countEl.textContent = String(modelCount);
+    }
+    listEl.appendChild(row);
+  }
+
   function renderSettingsCatalog() {
-    if (!settingsModelsList) {
+    if (!settingsProvidersList || !settingsModelsList) {
       return;
     }
     hideSettingsModelTip();
     sortSettingsModels();
+    ensureSelectedSettingsProvider();
+    settingsProvidersList.innerHTML = "";
     settingsModelsList.innerHTML = "";
+
     if (!settingsProviders.length && !settingsModels.length) {
-      settingsModelsList.innerHTML =
+      settingsProvidersList.innerHTML =
         `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      settingsModelsList.innerHTML =
+        `<div class="settings-models-empty">${t("selectProviderToSeeModels")}</div>`;
       syncDefaultModelSelect();
       return;
     }
 
-    const used = new Set();
+    if (!settingsProviders.length) {
+      settingsProvidersList.innerHTML =
+        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+    } else {
+      settingsProvidersList.setAttribute("role", "listbox");
+      settingsProviders.forEach((provider, providerIndex) => {
+        appendProviderHead(settingsProvidersList, provider, providerIndex);
+      });
+    }
 
-    const appendModels = (entries, nested, parentEl) => {
-      const target = parentEl || settingsModelsList;
+    const orphanEntries = modelsForProviderKey(ORPHANS_PROVIDER_KEY);
+    if (orphanEntries.length) {
+      appendOrphanProviderHead(settingsProvidersList);
+    }
+
+    const header = document.createElement("div");
+    header.className = "settings-catalog-models-head";
+    const titleEl = document.createElement("div");
+    titleEl.className = "settings-catalog-models-title";
+    titleEl.textContent =
+      selectedSettingsProviderKey === ORPHANS_PROVIDER_KEY
+        ? t("otherProvider")
+        : selectedProviderLabel() || t("models");
+    header.appendChild(titleEl);
+    const countEl = document.createElement("div");
+    countEl.className = "settings-catalog-models-count";
+    const entries = selectedSettingsProviderKey
+      ? modelsForProviderKey(selectedSettingsProviderKey)
+      : [];
+    countEl.textContent = String(entries.length);
+    header.appendChild(countEl);
+    settingsModelsList.appendChild(header);
+
+    if (!selectedSettingsProviderKey) {
+      const empty = document.createElement("div");
+      empty.className = "settings-models-empty";
+      empty.textContent = t("selectProviderToSeeModels");
+      settingsModelsList.appendChild(empty);
+    } else if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "settings-models-empty";
+      empty.textContent = t("noModelsForProvider");
+      settingsModelsList.appendChild(empty);
+    } else {
       for (const { model, index } of entries) {
-        used.add(index);
-        appendModelRow(target, model, index, nested);
-      }
-    };
-
-    settingsProviders.forEach((provider, providerIndex) => {
-      const group = document.createElement("div");
-      group.className = "settings-provider-group";
-      appendProviderHead(group, provider, providerIndex);
-      const pid = String(provider.id || "").trim();
-      const entries = settingsModels
-        .map((model, index) => ({ model, index }))
-        .filter(
-          ({ model }) => String(model.providerId || "").trim() === pid
-        );
-      appendModels(entries, true, group);
-      settingsModelsList.appendChild(group);
-    });
-
-    const orphans = settingsModels
-      .map((model, index) => ({ model, index }))
-      .filter(({ index }) => !used.has(index));
-    if (orphans.length) {
-      if (settingsProviders.length) {
-        const group = document.createElement("div");
-        group.className = "settings-provider-group";
-        const orphanHead = document.createElement("div");
-        orphanHead.className = "settings-provider-head";
-        orphanHead.innerHTML =
-          `<div class="settings-model-info">` +
-          `<div class="settings-model-name"></div>` +
-          `<div class="settings-model-id"></div>` +
-          `</div>`;
-        orphanHead.querySelector(".settings-model-name").textContent =
-          t("otherProvider");
-        group.appendChild(orphanHead);
-        appendModels(orphans, true, group);
-        settingsModelsList.appendChild(group);
-      } else {
-        appendModels(orphans, false, settingsModelsList);
+        appendModelRow(settingsModelsList, model, index, true);
       }
     }
 
@@ -504,6 +622,7 @@
   function renderSettingsModels() {
     renderSettingsCatalog();
     fillCommitMessageModelCheckboxes(readCommitMessageModelIdsFromDom());
+    fillVisionModelCheckboxes(readVisionModelIdsFromDom());
   }
 
   function fillCommitMessageModelCheckboxes(selectedIds) {
@@ -559,6 +678,79 @@
       return settingsCommitMessageModelIds.slice();
     }
     settingsCommitMessageModelIds = fromDom;
+    return fromDom;
+  }
+
+  function fillVisionModelCheckboxes(selectedIds) {
+    if (!settingsVisionModelList) {
+      return;
+    }
+    const selected = new Set(
+      (Array.isArray(selectedIds) ? selectedIds : [])
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    );
+    settingsVisionModelIds = [...selected];
+    const enabled = settingsModels
+      .filter((m) => m && m.id && m.enabled !== false)
+      .slice()
+      .sort((a, b) => {
+        const aVis = mSupportsVision(a);
+        const bVis = mSupportsVision(b);
+        if (aVis !== bVis) {
+          return aVis ? -1 : 1;
+        }
+        return String(a.label || a.id).localeCompare(String(b.label || b.id));
+      });
+    settingsVisionModelList.innerHTML = "";
+    for (const model of enabled) {
+      const label = document.createElement("label");
+      label.className = "settings-fetch-model-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.modelId = model.id;
+      if (selected.has(model.id)) {
+        cb.checked = true;
+      }
+      const span = document.createElement("span");
+      span.className = "settings-fetch-model-id";
+      const name = model.label || model.id;
+      span.textContent = mSupportsVision(model)
+        ? name
+        : name + " · text";
+      label.appendChild(cb);
+      label.appendChild(span);
+      settingsVisionModelList.appendChild(label);
+    }
+  }
+
+  function mSupportsVision(model) {
+    if (!model) {
+      return false;
+    }
+    if (typeof model.supportsVision === "boolean") {
+      return model.supportsVision;
+    }
+    return Boolean(guessModelSupportsVision && guessModelSupportsVision(model.id));
+  }
+
+  function readVisionModelIdsFromDom() {
+    if (!settingsVisionModelList) {
+      return settingsVisionModelIds.slice();
+    }
+    const fromDom = [
+      ...settingsVisionModelList.querySelectorAll("input:checked"),
+    ]
+      .map((el) => String(el.dataset.modelId || "").trim())
+      .filter(Boolean);
+    if (
+      fromDom.length === 0 &&
+      settingsVisionModelList.querySelectorAll("input").length === 0 &&
+      settingsVisionModelIds.length > 0
+    ) {
+      return settingsVisionModelIds.slice();
+    }
+    settingsVisionModelIds = fromDom;
     return fromDom;
   }
 
@@ -1547,7 +1739,10 @@
       modelEditLabel.value = model.label || "";
     }
     const preferredProvider = isNew
-      ? primaryProviderId() || NEW_PROVIDER_VALUE
+      ? (selectedSettingsProviderKey &&
+        selectedSettingsProviderKey !== ORPHANS_PROVIDER_KEY
+          ? selectedSettingsProviderKey
+          : primaryProviderId()) || NEW_PROVIDER_VALUE
       : model.providerId || primaryProviderId() || NEW_PROVIDER_VALUE;
     fillModelProviderSelect(preferredProvider);
     syncModelNewProviderFields();

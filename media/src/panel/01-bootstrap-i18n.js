@@ -62,7 +62,7 @@
       saved: "Saved",
       providers: "Providers",
       providersNote:
-        "Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.",
+        "Base URL and API key for each OpenAI-compatible API. Select a provider to see its models.",
       addProvider: "+ Provider",
       models: "Models",
       modelsProviders: "Models & providers",
@@ -73,6 +73,8 @@
       providerNameLabel: "Provider name",
       otherProvider: "Other",
       noProvidersOrModels: "No providers yet — add a provider or a model.",
+      selectProviderToSeeModels: "Select a provider to see its models.",
+      noModelsForProvider: "No models for this provider yet.",
       baseUrl: "Base URL",
       statusUrl: "Status URL",
       statusUrlHint: "Empty = Base URL + /models",
@@ -128,6 +130,10 @@
       commitModel: "Model",
       commitModels: "Models",
       commitModelEmpty: "Auto (light model)",
+      visionRoutingTitle: "Images (vision)",
+      visionRoutingNote:
+        "Preferred models that describe screenshots when the chat model is text-only or weak at vision (flash / mini). First enabled match wins.",
+      visionModels: "Preferred vision models",
       commitPrompt: "Prompt / rule",
       commitPromptEmpty: "Empty — project rules, then the built-in default.",
       commitPromptPlaceholder:
@@ -424,6 +430,7 @@
       thinkingLabel: "Thoughts",
       thinkingWorking: "Thoughts…",
       textStepLabel: "Note",
+      visionDescTitle: "Screenshot description",
       zoomImage: "Zoom image",
       stepsOne: "1 step",
       stepsMany: (n) => `${n} steps`,
@@ -530,7 +537,7 @@
       saved: "Сохранено",
       providers: "Провайдеры",
       providersNote:
-        "Base URL и API key для каждого OpenAI-compatible API. Модели сгруппированы по провайдеру.",
+        "Base URL и API key для каждого OpenAI-compatible API. Выберите провайдера, чтобы увидеть его модели.",
       addProvider: "+ Провайдер",
       models: "Модели",
       modelsProviders: "Модели и провайдеры",
@@ -541,6 +548,8 @@
       providerNameLabel: "Имя провайдера",
       otherProvider: "Другое",
       noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
+      selectProviderToSeeModels: "Выберите провайдера, чтобы увидеть его модели.",
+      noModelsForProvider: "У этого провайдера пока нет моделей.",
       baseUrl: "Base URL",
       statusUrl: "URL проверки статуса",
       statusUrlHint: "Пусто = Base URL + /models",
@@ -596,6 +605,10 @@
       commitModel: "Модель",
       commitModels: "Модели",
       commitModelEmpty: "Авто (лёгкая модель)",
+      visionRoutingTitle: "Изображения (vision)",
+      visionRoutingNote:
+        "Предпочитаемые модели для описания скриншотов, если модель чата текстовая или слабая в vision (flash / mini). Берётся первая включённая.",
+      visionModels: "Предпочитаемые vision-модели",
       commitPrompt: "Промпт / правило",
       commitPromptEmpty: "Пусто — правила проекта, затем встроенный дефолт.",
       commitPromptPlaceholder:
@@ -896,6 +909,7 @@
       thinkingLabel: "Мысли",
       thinkingWorking: "Мысли…",
       textStepLabel: "Сообщение",
+      visionDescTitle: "Описание скриншота",
       zoomImage: "Увеличить изображение",
       stepsOne: "1 шаг",
       stepsMany: (n) => {

@@ -61,7 +61,9 @@ export function formatChatVisionHelperPrompt(options: {
   const description = String(options.description || "").trim();
   return [
     `${HARBOR_VISION_HELPER_MARKER} · ${options.visionModelId}]`,
-    "The selected chat model cannot view images. Treat the description below as what you would see on the screenshot. Answer the user from it; do not say you cannot see the picture. If this inventory is not enough, call inspect_images with a specific question — do not spawn_agent for vision.",
+    "The selected chat model cannot view images. Treat the description below as what you would see on the screenshot.",
+    "IMPORTANT: this block is NOT visible to the user. Always write the complete answer in your own reply. Never say «описание выше» / «see above» / «description above» / «as written above» — restate the needed content yourself.",
+    "Do not say you cannot see the picture. If this inventory is not enough, call inspect_images with a specific question — do not spawn_agent for vision.",
     "",
     "## What is in the image",
     description || "(Vision helper returned an empty description.)",
@@ -105,6 +107,7 @@ export function formatVisionHelperToolResult(options: {
     "The chat model cannot see raw screenshot bytes in tool results.",
     "Use the labels below as the primary source for concrete UI strings (columns, buttons, filters).",
     "Do NOT claim fields are «not fixed» / «ColumnDef not captured» when they appear below.",
+    "This block is NOT visible to the user — restate the needed content in your reply; never say «описание выше» / «see above».",
   ].join(" ");
 
   const sections: string[] = [header];

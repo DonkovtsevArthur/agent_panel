@@ -435,13 +435,19 @@ function enforceLiveCap(keepChatId: string): void {
 }
 
 function resolveFigmaVision(params: FigmaTurnParams): boolean {
+  // Flash-tier accepts pixels but invents UI content — route through the
+  // vision helper instead (same as IDE resolveModelNeedsVisionHelper).
+  const caps = resolveModelCapabilities(params.model);
+  if (caps.weakVision) {
+    return false;
+  }
   if (params.supportsVision === true) return true;
   if (params.supportsVision === false) {
     // Still honor id heuristics when Settings left the flag off for a known
     // vision model (same rationale as IDE resolveModelSupportsVision).
-    return resolveModelCapabilities(params.model).supportsVision;
+    return caps.supportsVision;
   }
-  return resolveModelCapabilities(params.model).supportsVision;
+  return caps.supportsVision;
 }
 
 function buildFigmaModelInfo(params: FigmaTurnParams): {

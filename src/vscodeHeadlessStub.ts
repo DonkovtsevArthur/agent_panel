@@ -159,6 +159,8 @@ class HeadlessConfiguration {
     "commitMessage.modelIds": ["commitMessageModelIds"],
     "commitMessage.modelId": ["commitMessageModelId"],
     "commitMessage.scope": ["commitMessageScope"],
+    "visionRouting.preferredModelIds": ["visionRoutingPreferredModelIds"],
+    "visionRouting.preferredModelId": ["visionRoutingPreferredModelId"],
     "autoglm.enabled": ["autoglmEnabled"],
     "autoglm.browser": ["autoglmBrowser"],
     "autoglm.autoApprove": ["autoglmAutoApprove"],

@@ -679,12 +679,11 @@ export function getConfig(): AgentPanelConfig {
       };
     })(),
     turnContext: {
-      followUps:
-        cfg.get("turnContext.followUps") === "none"
-          ? "none"
-          : cfg.get("turnContext.followUps") === "slim"
-            ? "slim"
-            : "full",
+      // Default slim: full IDE block only on the first turn of a chat.
+      followUps: (() => {
+        const raw = cfg.get("turnContext.followUps");
+        return raw === "none" ? "none" : raw === "full" ? "full" : "slim";
+      })(),
     },
     checkpoints: {
       enabled: cfg.get<boolean>("checkpoints.enabled") !== false,
@@ -833,6 +832,24 @@ export function resolveModelSupportsVision(
     return true;
   }
   return resolveModelCapabilities(id).supportsVision;
+}
+
+/**
+ * True when images must go through `describeChatImagesForMainModel`
+ * instead of raw pixels: text-only models, or vision-weak flash-tier
+ * (accepts images but hallucinates on dense UI).
+ */
+export function resolveModelNeedsVisionHelper(
+  modelOrId: AgentModel | string | undefined
+): boolean {
+  if (!modelOrId) {
+    return true;
+  }
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  if (!resolveModelSupportsVision(modelOrId)) {
+    return true;
+  }
+  return resolveModelCapabilities(id).weakVision === true;
 }
 
 /**

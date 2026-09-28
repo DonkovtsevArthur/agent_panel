@@ -125,6 +125,7 @@
       updateCommitPromptPreview();
     }
     fillCommitMessageModelCheckboxes(settings.commitMessageModelIds || []);
+    fillVisionModelCheckboxes(settings.visionRoutingPreferredModelIds || []);
     if (typeof settings.figmaEnabled === "boolean") {
       figmaStatus = {
         ...figmaStatus,
@@ -291,6 +292,7 @@
         ? settingsCommitLanguage.value
         : "auto",
       commitMessageModelIds: readCommitMessageModelIdsFromDom(),
+      visionRoutingPreferredModelIds: readVisionModelIdsFromDom(),
       commitMessageScope: settingsCommitScope
         ? settingsCommitScope.value === "workspace"
           ? "workspace"

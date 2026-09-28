@@ -1,6 +1,7 @@
   function showSettingsCategory(category) {
     const allowed = [
       "models",
+      "vision",
       "modes",
       "language",
       "appearance",

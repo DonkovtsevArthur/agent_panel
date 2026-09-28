@@ -43,6 +43,8 @@ export type HarborSettingsPayloadCore = {
   commitMessageLanguage: string;
   commitMessageModelIds: string[];
   commitMessageScope: AgentPanelConfig["commitMessage"]["scope"];
+  /** Ordered preferred vision models for under-the-hood image describe. */
+  visionRoutingPreferredModelIds: string[];
   figmaEnabled: boolean;
   autoglmEnabled: boolean;
   autoglmBinaryPath: string;
@@ -127,6 +129,7 @@ export function buildHarborSettingsPayloadCore(
     commitMessageLanguage: config.commitMessage.language,
     commitMessageModelIds: config.commitMessage.modelIds,
     commitMessageScope: config.commitMessage.scope,
+    visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
     figmaEnabled: config.figma.enabled,
     autoglmEnabled: config.autoglm.enabled,
     autoglmBinaryPath: config.autoglm.binaryPath,

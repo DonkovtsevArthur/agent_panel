@@ -45,7 +45,7 @@
   "config.defaultContextWindow.description": "Контекстное окно по умолчанию (токены), если у модели не задан contextWindow",
   "config.systemPrompt.description": "Системный промпт агента",
   "config.modes.description": "Пользовательские режимы composer (Агент/План/Спросить встроены). Каждый: { id, label, description?, tools: \"agent\"|\"readonly\", prompt?, enabled? }",
-  "config.visionRouting.preferredModelIds.description": "Предпочитаемые vision-модели, если выбранная модель чата не видит картинки (и для скриншотов Figma). Берётся первая включённая.",
+  "config.visionRouting.preferredModelIds.description": "Предпочитаемые vision-модели, если выбранная модель чата не видит картинки или слаба в vision (flash/mini), и для скриншотов Figma. Берётся первая включённая.",
   "config.visionRouting.preferredModelId.description": "Устарело. См. agentPanel.visionRouting.preferredModelIds (для чата тоже не используется).",
   "config.soundNotifications.enabled.description": "Проигрывать звук при успешном завершении или ошибке агента.",
   "config.subagents.enabled.description": "Разрешить параллельных субагентов (spawn_agent) в Agent, Plan и Ask. Вкл — модель получает правило делегировать независимые части через spawn_agent; выкл — tool недоступен. Дети наследуют режим: в Plan/Ask только исследование, в Agent — и правки.",

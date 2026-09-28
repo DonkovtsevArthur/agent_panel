@@ -49,11 +49,9 @@ export function createTodoTool(createTool: CreateTool): unknown {
     name: TODO_TOOL,
     description: [
       "Maintain the visible task plan shown to the user as a progress card.",
-      "In Agent and Plan modes call it ALWAYS, on every user request, without exception — as your VERY FIRST tool, with the full step list (all 'pending', first 'in_progress'). Even a single-step task gets one step.",
-      "Call it again whenever a step completes or the plan changes — always pass the FULL updated list (it replaces the card, it is not an append).",
-      "When everything is done, make a final call with every step 'done'.",
-      "After calling this tool, IMMEDIATELY proceed to execute the next step — do NOT ask the user for confirmation or permission. Just do it.",
-      "Main agent only: do not call from spawned sub-agents.",
+      "Multi-step work only (2+ steps): call FIRST with the full step list (all 'pending', first 'in_progress'), then after each step with the FULL updated list (it replaces the card).",
+      "Skip for short questions and single actions. Finale: every step 'done'. Main agent only.",
+      "After calling this tool, IMMEDIATELY proceed to execute the next step — do NOT ask the user for confirmation.",
     ].join(" "),
     inputSchema: {
       type: "object",

@@ -525,6 +525,15 @@
     if (settingsCommitModelsLabel) {
       settingsCommitModelsLabel.textContent = t("commitModels");
     }
+    if (settingsVisionRoutingTitle) {
+      settingsVisionRoutingTitle.textContent = t("visionRoutingTitle");
+    }
+    if (settingsVisionRoutingNote) {
+      settingsVisionRoutingNote.textContent = t("visionRoutingNote");
+    }
+    if (settingsVisionModelsLabel) {
+      settingsVisionModelsLabel.textContent = t("visionModels");
+    }
     if (settingsCommitPromptLabel) {
       settingsCommitPromptLabel.textContent = t("commitPrompt");
     }

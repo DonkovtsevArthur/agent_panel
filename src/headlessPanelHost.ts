@@ -2370,6 +2370,8 @@ export class HeadlessPanelHost {
                   argsPreview: event.argsPreview,
                   status: event.status,
                   resultPreview: event.resultPreview,
+                  // Vision-helper inventory (and similar) — the visible card.
+                  text: event.text,
                   metrics: event.metrics,
                   ...(typeof event.durationMs === "number" &&
                   event.durationMs >= 0

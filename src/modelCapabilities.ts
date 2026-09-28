@@ -1,6 +1,12 @@
 export interface ModelCapabilities {
   contextWindow?: number;
   supportsVision: boolean;
+  /**
+   * Vision quality: accepts pixels but invents content on dense UI (flash /
+   * mini / lite). Harbor routes those through the vision helper instead of
+   * feeding raw images to the chat model.
+   */
+  weakVision: boolean;
   family?: "kimi";
   omitTemperature: boolean;
   requiresReasoningContentForToolCalls: boolean;
@@ -36,6 +42,7 @@ export interface ModelCapabilities {
 export interface ModelCapabilityOverrides {
   contextWindow?: number;
   supportsVision?: boolean;
+  weakVision?: boolean;
   reasoningEffort?: string;
 }
 
@@ -78,7 +85,11 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
   },
   {
     exactId: "Gemini 2.5 Flash",
-    capabilities: { contextWindow: 1_048_576, supportsVision: true },
+    capabilities: {
+      contextWindow: 1_048_576,
+      supportsVision: true,
+      weakVision: true,
+    },
   },
   {
     pattern: /kimi|moonshot/i,
@@ -148,6 +159,12 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     pattern: /gemma-3|gemma3/i,
     capabilities: { supportsVision: true },
   },
+  {
+    // Flash / mini / lite / haiku accept image parts but hallucinate on
+    // dense UI screenshots — run them through the vision helper.
+    pattern: /\bflash\b|[\w.-]*-flash|[\w.-]*flash\b|\bmini\b|[\w.-]*-mini|\blite\b|[\w.-]*-lite|\bhaiku\b|\bnano\b/i,
+    capabilities: { weakVision: true },
+  },
 ];
 
 function isPositiveInteger(value: unknown): value is number {
@@ -188,6 +205,9 @@ export function resolveModelCapabilities(
   if (typeof overrides.supportsVision === "boolean") {
     resolved.supportsVision = overrides.supportsVision;
   }
+  if (typeof overrides.weakVision === "boolean") {
+    resolved.weakVision = overrides.weakVision;
+  }
   if (
     typeof overrides.reasoningEffort === "string" &&
     overrides.reasoningEffort.trim()
@@ -209,6 +229,7 @@ export function resolveModelCapabilities(
       ? { reasoningEffortDefault: resolved.reasoningEffortDefault }
       : {}),
     supportsVision: resolved.supportsVision === true,
+    weakVision: resolved.weakVision === true,
     omitTemperature: resolved.omitTemperature === true,
     requiresReasoningContentForToolCalls:
       resolved.requiresReasoningContentForToolCalls === true,

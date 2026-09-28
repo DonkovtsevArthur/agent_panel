@@ -239,11 +239,14 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
           readCommitMessageModelIdsFromDom();
+        }
+        if (target.closest("#settingsVisionModelList")) {
+          readVisionModelIdsFromDom();
         }
         persistSettingsNow();
       }
@@ -621,6 +624,13 @@
 
   if (settingsProvidersList) {
     settingsProvidersList.addEventListener("click", (event) => {
+      const selectRow = event.target.closest(".settings-provider-select");
+      if (selectRow) {
+        const key = selectRow.dataset.providerKey || "";
+        if (key) {
+          selectSettingsProvider(key);
+        }
+      }
       const fetchBtn = event.target.closest(".settings-provider-fetch");
       if (fetchBtn) {
         const index = Number(fetchBtn.dataset.index);
@@ -655,10 +665,29 @@
             model.providerId = fallback;
           }
         }
+        if (
+          selectedSettingsProviderKey === String(removedId || "").trim()
+        ) {
+          selectedSettingsProviderKey = "";
+        }
         renderSettingsProviders();
         renderSettingsModels();
         fillModelProviderSelect(modelEditProvider?.value || fallback);
         schedulePersistSettings(0);
+      }
+    });
+    settingsProvidersList.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const selectRow = event.target.closest(".settings-provider-select");
+      if (!selectRow) {
+        return;
+      }
+      event.preventDefault();
+      const key = selectRow.dataset.providerKey || "";
+      if (key) {
+        selectSettingsProvider(key);
       }
     });
   }

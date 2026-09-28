@@ -41,10 +41,8 @@
   const chatBranchesEl = document.getElementById("chatBranches");
   const agentsListEl = document.getElementById("agentsList");
   const archiveListEl = document.getElementById("archiveList");
-  const settingsModelsList = document.getElementById(
-    "settingsProvidersModelsList"
-  );
-  const settingsProvidersList = settingsModelsList;
+  const settingsProvidersList = document.getElementById("settingsProvidersPane");
+  const settingsModelsList = document.getElementById("settingsModelsPane");
   const newAgentBtn = document.getElementById("newAgentBtn");
   const chatNewAgentBtn = document.getElementById("chatNewAgentBtn");
   const openArchiveBtn = document.getElementById("openArchiveBtn");
@@ -263,6 +261,10 @@
     "settingsCommitLanguage"
   );
   const settingsCommitModelList = document.getElementById("settingsCommitModelList");
+  const settingsVisionModelList = document.getElementById("settingsVisionModelList");
+  const settingsVisionRoutingTitle = document.getElementById("settingsVisionRoutingTitle");
+  const settingsVisionRoutingNote = document.getElementById("settingsVisionRoutingNote");
+  const settingsVisionModelsLabel = document.getElementById("settingsVisionModelsLabel");
   const settingsCommitPrompt = document.getElementById("settingsCommitPrompt");
   const settingsCommitPromptToggle = document.getElementById(
     "settingsCommitPromptToggle"
@@ -428,6 +430,8 @@
   let renamingAgentId = null;
   let settingsModels = [];
   let settingsProviders = [];
+  /** Selected provider key in the models catalog: provider id or "__orphans__". */
+  let selectedSettingsProviderKey = "";
   /** @type {Record<string, { providerId?: string, providerName?: string, state?: string, message?: string }>} */
   let providerConnById = {};
   let settingsModes = [];
@@ -451,6 +455,8 @@
   let settingsHydrating = false;
   /** Last known commit-message model selection (survives list rebuild / empty DOM). */
   let settingsCommitMessageModelIds = [];
+  /** Last known preferred vision model selection. */
+  let settingsVisionModelIds = [];
   let settingsSaveTimer = null;
   let settingsSaveStatusTimer = null;
   let settingsModelTipEl = null;

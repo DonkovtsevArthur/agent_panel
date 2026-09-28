@@ -136,6 +136,10 @@
           <span class="material-symbols-outlined" aria-hidden="true">dns</span>
           <span class="settings-nav-label" data-i18n-nav="modelsProviders">Models &amp; providers</span>
         </button>
+        <button type="button" class="settings-nav-item" data-settings-cat="vision">
+          <span class="material-symbols-outlined" aria-hidden="true">visibility</span>
+          <span class="settings-nav-label" data-i18n-nav="visionRoutingTitle">Images (vision)</span>
+        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="modes">
           <span class="material-symbols-outlined" aria-hidden="true">tune</span>
           <span class="settings-nav-label" data-i18n-nav="modes">Modes</span>
@@ -176,14 +180,32 @@
       <div class="settings-body" id="settingsBody">
         <section class="settings-panel" data-settings-panel="models">
           <h3 class="settings-section-title" id="settingsModelsProvidersTitle">Models &amp; providers</h3>
-          <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Models are grouped under their provider.</p>
-          <div id="settingsProvidersModelsList" class="settings-models"></div>
-          <div class="settings-add-actions">
-            <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
-            <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+          <p class="settings-section-note" id="settingsProvidersNote">Base URL and API key for each OpenAI-compatible API. Select a provider to see its models.</p>
+          <div id="settingsProvidersModelsList" class="settings-catalog">
+            <div class="settings-catalog-col">
+              <div class="settings-catalog-providers" id="settingsProvidersPane"></div>
+              <div class="settings-catalog-foot">
+                <button type="button" class="text-btn settings-add-model" id="addProviderBtn">+ Provider</button>
+              </div>
+            </div>
+            <div class="settings-catalog-col">
+              <div class="settings-catalog-models" id="settingsModelsPane"></div>
+              <div class="settings-catalog-foot">
+                <button type="button" class="text-btn settings-add-model" id="addModelBtn">+ Model</button>
+              </div>
+            </div>
           </div>
           <div id="settingsModelsHint" class="settings-hint" hidden></div>
           <div id="settingsProvidersHint" class="settings-hint" hidden></div>
+        </section>
+
+        <section class="settings-panel" data-settings-panel="vision" hidden>
+          <h3 class="settings-section-title" id="settingsVisionRoutingTitle">Images (vision)</h3>
+          <p class="settings-section-note" id="settingsVisionRoutingNote">Preferred models that describe screenshots when the chat model is text-only or weak at vision (flash / mini). First enabled match wins.</p>
+          <div class="settings-field">
+            <span class="settings-label" id="settingsVisionModelsLabel">Preferred vision models</span>
+            <div id="settingsVisionModelList" class="settings-fetch-models-list"></div>
+          </div>
         </section>
 
         <section class="settings-panel" data-settings-panel="modes" hidden>

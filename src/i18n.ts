@@ -101,22 +101,16 @@ export function harborBatchReadsRulesForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
       "# Экономия round-trip'ов",
-      "ВАЖНО: все независимые tool calls (read_files, search_codebase, run_commands, fetch_web_content) ОБЯЗАНЫ быть в одном ответе. Никогда не вызывай их по одному — это критически важно для производительности.",
-      "Несколько файлов, которые ты уже решил прочитать, запрашивай ОДНИМ вызовом read_files (список путей), а не по файлу на сообщение; держи батч в пределах ~5 файлов.",
-      "Если тебе нужно прочитать 2 файла — сгенерируй 2 tool_use блока в одном assistant-сообщении, а не 2 отдельных хода.",
-      "Не перечитывай файл, содержимое которого уже есть в контексте (контекст хода, предыдущие чтения).",
-      "В больших файлах при известном регионе запрашивай сразу диапазон start_line/end_line, не листай с первой строки.",
-      "Правки файлов (edit/apply_patch) не объединяй в батч с непрочитанными результатами — выполняй после чтения.",
+      "Все независимые tool calls (read/search/run/fetch) — в одном ответе, не по одному.",
+      "Несколько файлов — одним read_files (список, ~≤5); диапазон start_line/end_line, если регион известен.",
+      "Не перечитывай файлы, уже бывшие в контексте. Правки — после чтения, не в батче с ними.",
     ].join("\n");
   }
   return [
     "# Round-trip economy",
-    "CRITICAL: all independent tool calls (read_files, search_codebase, run_commands, fetch_web_content) MUST be issued in a single response. Never call them one at a time — this is essential for performance.",
-    "When you have already decided to read several files, request them with ONE read_files call (a list of paths), not one file per message; keep a batch within ~5 files.",
-    "If you need to read 2 files — generate 2 tool_use blocks in one assistant message, not 2 separate turns.",
-    "Do not re-read a file whose content is already in context (turn context, earlier reads).",
-    "For large files where you know the region, request the start_line/end_line range directly instead of paging from line 1.",
-    "Never batch file edits (edit/apply_patch) ahead of unread results — run them after reads.",
+    "All independent tool calls (read/search/run/fetch) MUST be issued in one response, never one at a time.",
+    "Several files — one read_files (list, ~≤5); use start_line/end_line when the region is known.",
+    "Do not re-read files already in context. Edits come after reads, never batched with unread results.",
   ].join("\n");
 }
 
@@ -131,18 +125,14 @@ export function harborOutputTokenRulesForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
       "# Лимит output-токенов",
-      "Каждый твой ответ (assistant message) имеет жёсткий лимит токенов. Если ответ обрезается на полуслове — ход считается неуспешным.",
-      "Длинные артефакты (код, конфиги, документацию, планы) записывай через tool calls (write_to_file, apply_patch), а не генерируй их целиком в тексте ответа.",
-      "Если объём текста в ответе превышает ~4000 токенов — разбей на несколько шагов с tool calls между ними.",
-      "Вместо длинного объяснения «что и почему» — сначала выполни действие (tool call), потом кратко поясни результат.",
+      "Длинные артефакты (код, конфиги, планы) — через tool calls (write/apply_patch), не текстом ответа.",
+      "Если текст ответа грозит >~4000 токенов — разбей на шаги с tool calls. Действие сначала, короткое пояснение после.",
     ].join("\n");
   }
   return [
     "# Output token limit",
-    "Every assistant message has a hard token limit. If a response is cut off mid-sentence, the turn is treated as failed.",
-    "Route long artefacts (code, configs, documentation, plans) through tool calls (write_to_file, apply_patch) instead of generating them inline as plain text.",
-    "If the text in a single response would exceed ~4000 tokens, split the work into multiple steps with tool calls in between.",
-    "Instead of a long explanation of what and why — execute the action (tool call) first, then briefly explain the result.",
+    "Long artefacts (code, configs, plans) go through tool calls (write/apply_patch), not plain text.",
+    "If a reply would exceed ~4000 tokens, split it with tool calls in between. Act first, explain briefly after.",
   ].join("\n");
 }
 
@@ -255,13 +245,78 @@ export function harborVisionInspectRulesForLanguage(lang: UiLanguage): string {
       "# inspect_images — ДОСТУПЕН",
       "Выбранная модель чата не видит пиксели. Если описания скрина не хватает или ты «не видишь» картинку — вызови inspect_images с конкретным вопросом.",
       "Не пиши, что не видишь изображение. Не вызывай spawn_agent, чтобы посмотреть картинку: субагент — та же текстовая модель без vision.",
+      "Служебное описание скрина из vision-хелпера пользователю не видно. Всегда пиши полный ответ в своём сообщении. Никогда не ссылайся на «описание выше» / «see above» — перескажи нужное сам.",
     ].join("\n");
   }
   return [
     "# inspect_images — AVAILABLE",
     "The selected chat model cannot view pixels. If the screenshot description is missing or incomplete, call inspect_images with a specific question.",
     "Do not say you cannot see the image. Do not spawn_agent to look at a picture — the child inherits the same text model.",
+    "The user cannot see the under-the-hood screenshot description. Always write the complete answer in your reply. Never say «описание выше» / «see above» — restate the needed content yourself.",
   ].join("\n");
+}
+
+/**
+ * After file writes the model must collect IDE diagnostics before claiming
+ * done. Paired with the `verify_edits` extraTool (see verifyEditsTool.ts).
+ * One check before the finale — not after every write (latency).
+ */
+export function harborVerifyRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# verify_edits",
+      "Если в ходе были правки файлов — ОДИН раз перед финальным сообщением вызови verify_edits (без paths = файлы этого хода).",
+      "[error] в выводе → исправь и повтори verify_edits; с [error] задачу не закрывай.",
+      "Не выдумывай «тесты прошли» — только реальный вывод verify_edits / run_commands.",
+    ].join("\n");
+  }
+  return [
+    "# verify_edits",
+    "If the turn edited files — call verify_edits ONCE before the final message (no `paths` = files from this turn).",
+    "[error] in the output → fix and re-run verify_edits; never close the task with [error] left.",
+    "Do not invent «tests passed» — only real verify_edits / run_commands output.",
+  ].join("\n");
+}
+
+/**
+ * Finale must be checkable: path:line citations + a real verify snapshot.
+ * Anti-hallucination for «готово / fixed» claims after edits.
+ */
+export function harborEvidenceRulesForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return [
+      "# Финал с правками",
+      "В последнем сообщении: полные пути изменённых файлов + короткий verify-снимок (verify_edits / run_commands exit code).",
+      "«Готово / исправлено» — только с tool-свидетельствами; иначе «правки применены, проверки нет».",
+    ].join("\n");
+  }
+  return [
+    "# Finale after edits",
+    "Last message: full paths of edited files + a short verify snapshot (verify_edits / run_commands exit code).",
+    "«Done / fixed» only with tool evidence; otherwise say «edits applied, no automated check».",
+  ].join("\n");
+}
+
+/** Turn-local nudge: models heed these more reliably than rules alone. */
+export function harborVerifyUserNudgeForLanguage(lang: UiLanguage): string {
+  if (lang === "ru") {
+    return "[Harbor] Правки были? → один verify_edits перед финалом; в ответе path + verify-снимок. Без свидетельств не «готово».";
+  }
+  return "[Harbor] Edited files? → one verify_edits before the finale; reply with path + verify snapshot. No evidence → no «done».";
+}
+
+/** Append verify/evidence instructions to the runtime user prompt. */
+export function appendVerifyRuntimeNudge(
+  userText: string,
+  enabled: boolean,
+  lang: UiLanguage
+): string {
+  const base = String(userText || "").trim();
+  if (!enabled) {
+    return base;
+  }
+  const nudge = harborVerifyUserNudgeForLanguage(lang);
+  return base ? `${base}\n\n${nudge}` : nudge;
 }
 
 /**
@@ -321,9 +376,9 @@ export function harborVisionInspectUserNudgeForLanguage(
   lang: UiLanguage
 ): string {
   if (lang === "ru") {
-    return "[Harbor] Если не хватает описания скрина — вызови inspect_images(question). Не spawn_agent ради vision.";
+    return "[Harbor] Если не хватает описания скрина — вызови inspect_images(question). Не spawn_agent ради vision. Не пиши «описание выше» — пользователь его не видит; дай полный ответ в сообщении.";
   }
-  return "[Harbor] If the screenshot description is not enough, call inspect_images(question). Do not spawn_agent for vision.";
+  return "[Harbor] If the screenshot description is not enough, call inspect_images(question). Do not spawn_agent for vision. Never say «see above» — the user cannot see the helper block; write the full answer in your reply.";
 }
 
 export function appendVisionInspectRuntimeNudge(
@@ -346,19 +401,15 @@ export function appendVisionInspectRuntimeNudge(
 export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
-      "[Harbor] Инструмент update_todo ДОСТУПЕН — вызывай его ВСЕГДА, на каждый запрос в режимах Agent и Plan, без исключений.",
-      "Сделай это САМЫМ ПЕРВЫМ инструментом: построй полный план задачи как список шагов (первый — 'in_progress', остальные 'pending').",
-      "Даже для одношаговой задачи передай один шаг. Затем обновляй статусы по мере выполнения (каждый вызов заменяет карточку целиком).",
-      "В конце — финальный вызов со всеми шагами 'done'.",
-      "После update_todo СРАЗУ переходи к выполнению — НЕ спрашивай пользователя, не предлагай план, просто делай.",
+      "[Harbor] Tool update_todo доступен — только для многошаговой работы.",
+      "Если шагов 2+ — СНАЧАЛА update_todo (полный список, первый 'in_progress'), затем сразу выполняй.",
+      "Короткий вопрос / одно действие — без update_todo, просто ответь или сделай.",
     ].join(" ");
   }
   return [
-    "[Harbor] Tool update_todo is AVAILABLE — call it ALWAYS, on every user request in Agent and Plan modes, without exception.",
-    "Do it as your VERY FIRST tool: build the full task plan as a step list (first step 'in_progress', the rest 'pending').",
-    "Even a single-step task gets one step. Then update statuses as you go (each call replaces the whole card).",
-    "At the end, make a final call with every step 'done'.",
-    "After update_todo, IMMEDIATELY proceed to execute — do NOT ask the user, do NOT present the plan for approval, just do it.",
+    "[Harbor] Tool update_todo is available — multi-step work only.",
+    "If 2+ steps — call update_todo FIRST (full list, first 'in_progress'), then execute immediately.",
+    "Short question / single action — skip update_todo; answer or just do it.",
   ].join(" ");
 }
 
@@ -384,22 +435,16 @@ export function harborTodoRulesForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
       "# update_todo — карточка плана",
-      "Инструмент update_todo показывает пользователю карточку «План · N/M» с шагами и прогрессом задачи.",
-      "Правила:",
-      "1) В режимах Agent и Plan вызывай update_todo ВСЕГДА, на каждый запрос пользователя — первый инструмент с полным списком шагов: все 'pending', первый — 'in_progress'. Даже для одношаговой задачи передай один шаг.",
-      "2) После завершения шага (или смены плана) вызови update_todo снова с ОБНОВЛЁННЫМ полным списком — вызов заменяет карточку целиком, это не append.",
-      "3) Закончив всё — последний вызов со всеми шагами 'done'.",
-      "4) Только main-агент: из spawn_agent-детей не вызывать.",
+      "Только для многошаговой работы (2+ шага). Короткий вопрос или одно действие — НЕ вызывай update_todo.",
+      "Для многошаговой работы: первый вызов — полный список (все 'pending', первый 'in_progress'); далее — обновлённый полный список после каждого шага (вызов заменяет карточку).",
+      "Финал — все шаги 'done'. Из spawn_agent не вызывать.",
     ].join("\n");
   }
   return [
     "# update_todo — plan card",
-    "The update_todo tool shows the user a «Plan · N/M» card with task steps and progress.",
-    "Rules:",
-    "1) In Agent and Plan modes call update_todo ALWAYS, on every user request — call it as your FIRST tool with the full step list: all 'pending', the first one 'in_progress'. Even a single-step task gets one step.",
-    "2) After completing a step (or when the plan changes) call update_todo again with the FULL updated list — each call replaces the card, it is not an append.",
-    "3) When everything is done, make a final call with every step 'done'.",
-    "4) Main agent only: never call it from spawned sub-agents.",
+    "Multi-step work only (2+ steps). Short question or a single action — do NOT call update_todo.",
+    "For multi-step work: first call is the full step list (all 'pending', first 'in_progress'); then the full updated list after each step (each call replaces the card).",
+    "Finale — every step 'done'. Never call it from spawned sub-agents.",
   ].join("\n");
 }
 

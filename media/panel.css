@@ -1343,6 +1343,95 @@ body.vscode-dark .md-pre .syntax-property {
   margin: 0;
 }
 
+/* Mid-turn answer outside the collapsed timeline — must stay visible. */
+.agent-step-text-outside {
+  margin: 4px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  align-items: flex-start;
+}
+
+.agent-step-text-outside .agent-step-text-label {
+  color: var(--vscode-foreground, #ddd);
+  opacity: 0.92;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-step-text-outside .agent-step-text-label p,
+.agent-step-text-outside .agent-step-text-label ul,
+.agent-step-text-outside .agent-step-text-label ol {
+  margin: 0 0 4px;
+}
+
+.agent-step-text-outside .agent-step-text-label > :last-child {
+  margin-bottom: 0;
+}
+
+/* Vision-helper inventory card (what the screenshot shows). */
+.agent-step-vision-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  background: color-mix(in srgb, var(--vscode-editor-background) 94%, transparent);
+  overflow: hidden;
+}
+
+.agent-step-vision-desc .vision-desc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: calc(var(--harbor-font-size) * 0.9);
+}
+
+.agent-step-vision-desc .vision-desc-head:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.agent-step-vision-desc .vision-desc-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.agent-step-vision-desc .vision-desc-chevron {
+  font-size: 16px;
+  opacity: 0.7;
+}
+
+.agent-step-vision-desc .vision-desc-body {
+  padding: 0 10px 10px 32px;
+  color: var(--vscode-foreground, #ddd);
+  opacity: 0.92;
+  font-size: calc(var(--harbor-font-size) * 0.9);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.agent-step-vision-desc .vision-desc-body[hidden] {
+  display: none;
+}
+
+.agent-step-vision-desc .vision-desc-body p,
+.agent-step-vision-desc .vision-desc-body ul,
+.agent-step-vision-desc .vision-desc-body ol {
+  margin: 0 0 6px;
+}
+
+.agent-step-vision-desc .vision-desc-body > :last-child {
+  margin-bottom: 0;
+}
+
 .agent-step[data-step-kind="tool"] .agent-step-label {
   color: var(--vscode-descriptionForeground, #888);
 }
@@ -5264,8 +5353,8 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
-  transition: border-color 0.12s ease;
+  background: transparent;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 
 .settings-models {
@@ -5274,14 +5363,119 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   gap: 10px;
 }
 
+.settings-catalog {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(220px, 1.3fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.settings-catalog-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-catalog-providers,
+.settings-catalog-models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 1 auto;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  overflow: auto;
+  /* Height follows content; long lists scroll instead of stretching empty. */
+  max-height: min(70vh, 640px);
+}
+
+.settings-catalog-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.settings-catalog-models-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  margin-bottom: 2px;
+}
+
+.settings-catalog-models-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-catalog-models-count {
+  flex-shrink: 0;
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.settings-provider-select {
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-provider-select:hover {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 45%, transparent);
+}
+
+.settings-provider-select.is-selected {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 70%, transparent);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 14%, transparent);
+}
+
+.settings-provider-select:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+
+.settings-provider-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+@media (max-width: 560px) {
+  .settings-catalog {
+    grid-template-columns: 1fr;
+  }
+}
+
 .settings-provider-group {
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  border: none;
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  background: transparent;
 }
 
 .settings-provider-group .settings-provider-head {
@@ -5293,7 +5487,7 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 }
 
 .settings-provider-group .settings-model-row {
-  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 55%, transparent);
+  background: transparent;
 }
 
 .settings-model-row:hover {
@@ -5735,7 +5929,6 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 
 .settings-model-row.is-under-provider {
   margin-left: 0;
-  border-style: solid;
 }
 
 .settings-new-provider {

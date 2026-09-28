@@ -67,6 +67,38 @@ const EXPLAIN_RE = new RegExp(
   "i"
 );
 
+/**
+ * Whether this turn needs a visible plan card (`update_todo`).
+ * Skipping it saves a full LLM round-trip on short Q&A and one-liners.
+ */
+export function needsPlanCard(userText: string): boolean {
+  const text = String(userText || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return true;
+  }
+  if (looksLikePlanImplementRequest(text)) {
+    return true;
+  }
+  if (PLAN_INTENT_RE.test(text)) {
+    return true;
+  }
+  if (EXPLAIN_RE.test(text) || /[?？]\s*$/.test(text)) {
+    return false;
+  }
+  if (QUESTION_FRAME_RE.test(text) && text.length < 120) {
+    return false;
+  }
+  if (RU_IMPERATIVE_RE.test(text) || EN_IMPERATIVE_RE.test(text)) {
+    return (
+      text.length >= 60 ||
+      /(?:\n|;|,| и | and | затем | then | потом )/i.test(text)
+    );
+  }
+  return text.length >= 100;
+}
+
 /** Resolve the Auto picker choice into a concrete engine id for one turn. */
 export function resolveAutoMode(userText: string): AutoResolvedModeId {
   const text = String(userText || "")

@@ -14,6 +14,7 @@ const TOOL_GROUP_BY_NAME: Record<string, ToolApprovalGroup> = {
   read_files: "reads",
   search_codebase: "reads",
   skills: "reads",
+  verify_edits: "reads",
   update_todo: "plan",
   inspect_images: "plan",
   fetch_web_content: "web",

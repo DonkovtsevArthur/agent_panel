@@ -1691,35 +1691,37 @@
 
   /**
    * Intermediate assistant text (a completed text block from an earlier
-   * model round of this turn). Rendered as a muted markdown card INSIDE the
-   * collapsed tool group so the finale-only bubble does not wipe mid-turn
-   * lists / answers the model keeps referring to.
+   * model round of this turn). Rendered OUTSIDE the collapsed tool group as a
+   * visible note card — the model often answers mid-turn («описание выше»)
+   * and the user must see that text without expanding «выполнено».
    */
   function upsertTextBlockStep(step) {
     const raw = String(step.text || "").trim();
     if (!raw) {
       return null;
     }
-    const group = ensureActiveToolGroup();
-    const body = group.querySelector(".tool-group-body");
-    if (!body) {
-      return null;
-    }
+    const turnScope =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
     const stepId = String(step.stepId || "");
-    let el = body.querySelector(
-      `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-    );
+    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    let el = turnScope.querySelector(stepSel);
     if (!el) {
       el = document.createElement("div");
-      el.className = "msg tool agent-step";
+      el.className = "msg tool agent-step agent-step-text-outside";
       el.dataset.stepId = stepId;
-      body.appendChild(el);
+      // Place above the active/sealed tool group so «описание выше» is findable.
+      const group = turnScope.querySelector(".tool-group.agent-timeline");
+      if (group) {
+        turnScope.insertBefore(el, group);
+      } else {
+        turnScope.appendChild(el);
+      }
     }
     el.dataset.stepKind = "text";
     el.dataset.status = "done";
     el.classList.add("agent-step-text");
-    // Комментарий модели — обычная строка ленты (иконка + текст),
-    // идёт в общем порядке событий перед вызванным инструментом.
     el.innerHTML =
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">subject</span>` +
       `<span class="agent-step-label agent-step-text-label"></span>`;
@@ -1727,18 +1729,73 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
-    // «Живая» строка под статусом: последний комментарий модели, пока
-    // лента свёрнута (CSS прячет её в развёрнутом виде и после финиша).
-    // Только живой поток — при перерисовке истории тикер не оживляем.
-    if (!restoringChatScroll) {
-      let note = group.querySelector(".tool-group-live-note");
-      if (!note) {
-        note = document.createElement("div");
-        note.className = "tool-group-live-note";
-        const body = group.querySelector(".tool-group-body");
-        group.insertBefore(note, body || null);
+    keepStatusAtEnd();
+    scrollToBottom();
+    return el;
+  }
+
+  /**
+   * Vision-helper inventory: a visible card outside the collapsed tool group.
+   * The model prompt block is hidden from the user — without this card
+   * answers like «описание выше» point at nothing.
+   */
+  function upsertVisionDescriptionCard(step) {
+    let raw = String(step.text || "").trim();
+    // Tool outputs wrap the inventory in the Harbor helper header — keep
+    // only the "## What is in the image" body for the visible card.
+    const bodyIx = raw.indexOf("## What is in the image");
+    if (bodyIx >= 0) {
+      raw = raw.slice(bodyIx + "## What is in the image".length).trim();
+    }
+    const turnScope =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : messagesEl;
+    const stepId = String(step.stepId || "") + ":desc";
+    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    let el = turnScope.querySelector(stepSel);
+    if (!raw) {
+      if (el) {
+        el.remove();
       }
-      note.innerHTML = renderInlineMarkdown(raw);
+      return null;
+    }
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "msg tool agent-step agent-step-vision-desc";
+      el.dataset.stepId = stepId;
+      el.dataset.stepKind = "tool";
+      const group = turnScope.querySelector(".tool-group.agent-timeline");
+      if (group) {
+        turnScope.insertBefore(el, group);
+      } else {
+        turnScope.appendChild(el);
+      }
+    }
+    el.dataset.status = "done";
+    const prevOpen = el.dataset.visionOpen === "1";
+    el.dataset.visionOpen = prevOpen ? "1" : "0";
+    el.innerHTML =
+      `<div class="vision-desc-head">` +
+      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">image_search</span>` +
+      `<span class="vision-desc-title"></span>` +
+      `<span class="material-symbols-outlined vision-desc-chevron" aria-hidden="true">${prevOpen ? "expand_less" : "expand_more"}</span>` +
+      `</div>` +
+      `<div class="vision-desc-body" ${prevOpen ? "" : "hidden"}></div>`;
+    const titleEl = el.querySelector(".vision-desc-title");
+    if (titleEl) {
+      titleEl.textContent = t("visionDescTitle");
+    }
+    const bodyEl = el.querySelector(".vision-desc-body");
+    if (bodyEl) {
+      bodyEl.innerHTML = renderInlineMarkdown(raw);
+    }
+    const head = el.querySelector(".vision-desc-head");
+    if (head) {
+      head.onclick = () => {
+        el.dataset.visionOpen = el.dataset.visionOpen === "1" ? "0" : "1";
+        upsertVisionDescriptionCard({ ...step, text: raw });
+      };
     }
     keepStatusAtEnd();
     scrollToBottom();
@@ -2004,6 +2061,15 @@
           dur.className = "agent-step-duration";
           dur.textContent = formatRunDuration(toolMs);
           labelEl.appendChild(dur);
+        }
+      }
+      // Vision-helper inventory → visible card above the collapsed timeline.
+      if (step.name === "vision" || step.name === "inspect_images") {
+        const descText =
+          step.text ||
+          String(step.resultPreview || el.dataset.resultPreview || "");
+        if (descText) {
+          upsertVisionDescriptionCard({ ...step, text: descText });
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся
