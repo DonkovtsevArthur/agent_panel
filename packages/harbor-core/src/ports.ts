@@ -23,6 +23,7 @@ export interface WorkspacePort {
   openExternal?(url: string): Promise<void> | void;
   openFile?(path: string): Promise<void> | void;
   copyText?(text: string): Promise<void> | void;
+  readClipboardText?(): Promise<string> | string;
 }
 
 export interface SessionPersistencePort {

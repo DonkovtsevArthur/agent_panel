@@ -20,6 +20,21 @@ object HarborClipboard {
   private val log = Logger.getInstance(HarborClipboard::class.java)
   private val imageExt = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
 
+  /** Plain-text clipboard contents for the webview edit context menu (Paste). */
+  fun readText(): String {
+    return try {
+      val contents = CopyPasteManager.getInstance().contents ?: return ""
+      if (contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+        contents.getTransferData(DataFlavor.stringFlavor) as? String ?: ""
+      } else {
+        ""
+      }
+    } catch (t: Throwable) {
+      log.warn("Harbor clipboard text read failed", t)
+      ""
+    }
+  }
+
   fun readImageAttachments(): List<Map<String, Any>> {
     val out = mutableListOf<Map<String, Any>>()
     try {

@@ -10,6 +10,7 @@ import {
 	type AgentToolContext,
 	getDefaultShell,
 	getShellInvocation,
+	listShellExecutables,
 } from "@cline/shared";
 import { TimeoutError } from "../helpers";
 import type { ShellExecutor } from "../types";
@@ -26,6 +27,36 @@ export class CommandExitError extends Error {
 		super(`Command exited with code ${exitCode}`);
 		this.name = "CommandExitError";
 	}
+}
+
+/** spawn failed because the executable is missing (ENOENT) or not runnable. */
+export class ShellNotFoundError extends Error {
+	constructor(
+		readonly executable: string,
+		readonly candidates: readonly string[],
+		cause?: unknown,
+	) {
+		const pathPreview = String(process.env.PATH || "").slice(0, 500);
+		super(
+			`Shell executable not found: "${executable}". ` +
+				`Tried: ${candidates.join(" | ")}. ` +
+				`process.env.PATH=${pathPreview || "(empty)"}. ` +
+				(cause instanceof Error ? cause.message : String(cause ?? "")),
+		);
+		this.name = "ShellNotFoundError";
+	}
+}
+
+function isSpawnMissingExecutableError(error: unknown): boolean {
+	if (!error || typeof error !== "object") {
+		return false;
+	}
+	const err = error as { code?: unknown; message?: unknown };
+	if (err.code === "ENOENT") {
+		return true;
+	}
+	const message = String(err.message ?? "");
+	return /\bENOENT\b/.test(message) || /not found/i.test(message);
 }
 
 /**
@@ -288,6 +319,15 @@ function spawnAndCollect(
 		child.on("error", (error) => {
 			cleanup();
 			if (killed) return;
+			if (isSpawnMissingExecutableError(error)) {
+				const missing = new Error(
+					`Failed to execute command: spawn ${config.executable} ENOENT`,
+				) as Error & { code?: string };
+				missing.code = "ENOENT";
+				missing.cause = error;
+				settle(() => reject(missing));
+				return;
+			}
 			settle(() =>
 				reject(new Error(`Failed to execute command: ${error.message}`)),
 			);
@@ -330,23 +370,48 @@ export function createShellExecutor(
 		options.maxOutputBytes ??
 		MAX_COMMAND_OUTPUT_CHARS;
 
-	return (command, cwd, context) => {
+	return async (command, cwd, context) => {
 		const isStructured = typeof command !== "string";
-		const invocation = isStructured
-			? { args: command.args ?? [] }
-			: getShellInvocation(shell, command);
-		return spawnAndCollect(
-			{
-				executable: isStructured ? command.command : shell,
-				args: invocation.args,
-				cwd,
-				env,
-				input: invocation.input,
-			},
-			context,
-			timeoutMs,
-			maxOutputChars,
-			combineOutput,
-		);
+		if (isStructured) {
+			return spawnAndCollect(
+				{
+					executable: command.command,
+					args: command.args ?? [],
+					cwd,
+					env,
+				},
+				context,
+				timeoutMs,
+				maxOutputChars,
+				combineOutput,
+			);
+		}
+
+		const candidates = listShellExecutables(shell);
+		let lastMissing: Error | undefined;
+		for (const executable of candidates) {
+			const invocation = getShellInvocation(executable, command);
+			try {
+				return await spawnAndCollect(
+					{
+						executable,
+						args: invocation.args,
+						cwd,
+						env,
+						input: invocation.input,
+					},
+					context,
+					timeoutMs,
+					maxOutputChars,
+					combineOutput,
+				);
+			} catch (error) {
+				if (!isSpawnMissingExecutableError(error)) {
+					throw error;
+				}
+				lastMissing = error instanceof Error ? error : undefined;
+			}
+		}
+		throw new ShellNotFoundError(candidates[0] ?? shell, candidates, lastMissing);
 	};
 }

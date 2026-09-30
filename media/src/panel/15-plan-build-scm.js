@@ -192,7 +192,7 @@
     // hidden after syncComposerPlanFromCache / history re-renders.
     uiMessagesCache.push({ role: "user", text: payload, attachments: [] });
     appendMessage("user", payload, uiMessagesCache.length - 1, -1, []);
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     setComposerPlanBuild("", false);
     host.postMessage({
       type: "send",
@@ -408,7 +408,7 @@
       if (busy) {
         return;
       }
-      setBusy(true);
+      setBusy(true, { restartRun: true });
       host.postMessage({
         type: "commitAndPush",
         paths,

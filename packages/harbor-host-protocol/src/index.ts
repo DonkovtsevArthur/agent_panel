@@ -179,6 +179,7 @@ export type WebviewToHost =
       chatId?: string;
     }
   | { type: "copyText"; text: string }
+  | { type: "requestClipboardText"; requestId: string }
   | { type: "chatScroll"; chatId: string; scrollTop: number }
   | { type: "branchFromMessage"; messageIndex: number }
   | { type: "switchBranch"; chatId: string }
@@ -272,6 +273,7 @@ export type HostToWebview =
   | { type: "providerConnStatus"; [key: string]: unknown }
   | { type: "providerModelsListed"; [key: string]: unknown }
   | { type: "copied" }
+  | { type: "clipboardText"; requestId: string; text: string }
   | { type: "openChatSearch" }
   | { type: "messagesReplaced"; [key: string]: unknown }
   | { type: "regenerateState"; [key: string]: unknown }

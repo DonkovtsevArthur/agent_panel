@@ -30,6 +30,7 @@ export interface WorkspacePort {
   openExternal?(url: string): Promise<void> | void;
   openFile?(path: string): Promise<void> | void;
   copyText?(text: string): Promise<void> | void;
+  readClipboardText?(): Promise<string> | string;
 }
 
 export interface SessionPersistencePort {
@@ -133,6 +134,9 @@ function createVsCodeWorkspacePort(): WorkspacePort {
     },
     async copyText(text: string): Promise<void> {
       await vscode.env.clipboard.writeText(text);
+    },
+    async readClipboardText(): Promise<string> {
+      return vscode.env.clipboard.readText();
     },
   };
 }

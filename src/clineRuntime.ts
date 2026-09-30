@@ -48,6 +48,11 @@ import {
   reasonFromAbortSignal,
   type HarborAbortInfo,
 } from "./abortReason";
+import {
+  MAX_TOOL_CONTINUE_ATTEMPTS,
+  detectUnfinishedAssistantTurn,
+  toolContinueNudgePrompt,
+} from "./toolContinue";
 import { toClineReasoningOptions } from "./reasoningEffort";
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiTypes";
@@ -89,7 +94,7 @@ import {
   HARBOR_CLINE_DISTINCT_ID,
 } from "./clineNoopTelemetry";
 import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
-import { needsPlanCard } from "./autoMode";
+import { needsPlanCard, needsVerifyNudge } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
 import { withTurnImages } from "./turnImageInject";
@@ -1993,12 +1998,19 @@ export async function runClineAgentTurn(options: {
   const enableTodoTool = harborModeId !== "ask";
   const todoNudgeThisTurn =
     enableTodoTool && needsPlanCard(options.userText || "");
+  const modeDef = getModeById(options.agentMode);
+  // verify_edits only where edits are possible (not Ask / Plan / readonly custom).
+  const verifyRulesEnabled =
+    harborModeId !== "ask" &&
+    harborModeId !== "plan" &&
+    modeDef.tools !== "readonly";
+  const verifyNudgeThisTurn =
+    verifyRulesEnabled && needsVerifyNudge(options.userText || "");
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
     ? harborDefaultRulesForLanguage(uiLang)
     : String(config.systemPrompt || "").trim();
-  const modeDef = getModeById(options.agentMode);
   const modePrompt = String(modeDef.prompt || "").trim();
   const harborRules = [
     customRules,
@@ -2011,10 +2023,10 @@ export async function runClineAgentTurn(options: {
     harborBatchReadsRulesForLanguage(uiLang),
     // Output token safety: route long artefacts through tool calls, not inline text.
     harborOutputTokenRulesForLanguage(uiLang),
-    // After writes: collect IDE diagnostics before claiming done.
-    harborVerifyRulesForLanguage(uiLang),
+    // After writes: collect IDE diagnostics before claiming done (Agent only).
+    verifyRulesEnabled ? harborVerifyRulesForLanguage(uiLang) : "",
     // Finale needs path:line + real verify evidence — no fake «готово».
-    harborEvidenceRulesForLanguage(uiLang),
+    verifyRulesEnabled ? harborEvidenceRulesForLanguage(uiLang) : "",
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
@@ -2840,9 +2852,9 @@ export async function runClineAgentTurn(options: {
   );
   // update_todo nudge only on multi-step turns (short Q&A skips the card).
   userPrompt = appendTodoRuntimeNudge(userPrompt, todoNudgeThisTurn, uiLang);
-  // After edits: verify_edits + evidence-based finale (anti fake-«готово»).
+  // After edits: verify nudge only on Agent-like turns that may edit files.
   clearTurnEditedPaths();
-  userPrompt = appendVerifyRuntimeNudge(userPrompt, true, uiLang);
+  userPrompt = appendVerifyRuntimeNudge(userPrompt, verifyNudgeThisTurn, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(
     userPrompt,
     enableSpawnAgent,
@@ -3043,6 +3055,80 @@ export async function runClineAgentTurn(options: {
       )
     );
     timing.end("send");
+
+    // Flash-tier models often close a turn with text only («проверю…:» /
+    // empty) and zero tool calls — Cline treats that as the final answer.
+    // Nudge the same live session once or twice so the task actually runs.
+    if (persistSession && !options.signal?.aborted && !harborAbort) {
+      const finishOk = (value: string | undefined): boolean => {
+        const finish = String(value || "").trim().toLowerCase();
+        return !finish || finish === "completed" || finish === "stop";
+      };
+      for (
+        let attempt = 1;
+        attempt <= MAX_TOOL_CONTINUE_ATTEMPTS;
+        attempt += 1
+      ) {
+        if (options.signal?.aborted || harborAbort) {
+          break;
+        }
+        if (!finishOk(result?.finishReason)) {
+          break;
+        }
+        const submit =
+          submitSummary ||
+          submitSummaryFromToolCalls(result?.toolCalls) ||
+          submitSummaryFromMessages(result?.messages);
+        if (submit.trim()) {
+          break;
+        }
+        const finaleCandidate =
+          String(result?.text || "").trim() ||
+          pendingTextTail().trim() ||
+          fullTurnText().trim();
+        const unfinished = detectUnfinishedAssistantTurn(finaleCandidate);
+        if (!unfinished) {
+          break;
+        }
+        // The dangling preamble is intermediate, not the finale — show it as
+        // a text card so the continued stream can own the bubble.
+        flushIntermediateTextBlocks(false);
+        emitStep(callbacks, {
+          stepId: `tool-continue-${attempt}`,
+          kind: "retry",
+          text:
+            uiLang === "ru"
+              ? `Продолжаю ход: ответ без tool calls (${
+                  unfinished === "empty" ? "пустой" : "обещал инструменты"
+                }), попытка ${attempt}/${MAX_TOOL_CONTINUE_ATTEMPTS}`
+              : `Continuing turn: no tool calls (${
+                  unfinished === "empty" ? "empty" : "announced tools"
+                }), attempt ${attempt}/${MAX_TOOL_CONTINUE_ATTEMPTS}`,
+          attempt,
+          maxAttempts: MAX_TOOL_CONTINUE_ATTEMPTS,
+        });
+        try {
+          const next = await core.send({
+            sessionId,
+            prompt: toolContinueNudgePrompt(unfinished, uiLang),
+            mode: clineMode,
+          });
+          if (next === undefined) {
+            break;
+          }
+          result = next;
+        } catch (error) {
+          if (options.signal?.aborted) {
+            break;
+          }
+          console.warn(
+            "[clineRuntime] tool-continue send failed:",
+            error instanceof Error ? error.message : String(error)
+          );
+          break;
+        }
+      }
+    }
 
     if (persistSession) {
       const prev = liveClineByChatId.get(chatId);

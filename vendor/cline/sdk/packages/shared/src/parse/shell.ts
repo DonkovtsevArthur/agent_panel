@@ -12,6 +12,63 @@ export function getDefaultShell(platform: string): string {
 	return platform === "win32" ? "powershell" : "/bin/bash";
 }
 
+function readEnv(name: string): string | undefined {
+	try {
+		return process.env[name];
+	} catch {
+		return undefined;
+	}
+}
+
+function isAbsolutePathLike(shell: string): boolean {
+	return shell.includes("/") || shell.includes("\\") || /^[A-Za-z]:/.test(shell);
+}
+
+/**
+ * Ordered shell executables to try when spawning on Windows.
+ *
+ * Bare `powershell` resolves via PATH only; extension hosts often start with a
+ * stripped PATH (no WindowsPowerShell\v1.0), so spawn fails with ENOENT even
+ * though PowerShell is installed. Absolute SystemRoot paths and cmd.exe do not
+ * depend on PATH. Non-Windows returns the configured shell unchanged.
+ */
+export function listShellExecutables(
+	shell: string,
+	platform: string = typeof process !== "undefined" ? process.platform : "linux",
+): string[] {
+	const configured = shell.trim() || getDefaultShell(platform);
+	if (platform !== "win32") {
+		return [configured];
+	}
+
+	const candidates: string[] = [configured];
+	if (
+		!isAbsolutePathLike(configured) &&
+		!/\.exe$/i.test(configured)
+	) {
+		candidates.push(`${configured}.exe`);
+	}
+
+	const systemRoot = readEnv("SystemRoot") || readEnv("windir") || "C:\\Windows";
+	const programFiles = readEnv("ProgramFiles") || "C:\\Program Files";
+	const kind = getShellKind(configured);
+	if (kind === "powershell") {
+		candidates.push(
+			`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+			"pwsh.exe",
+			`${programFiles}\\PowerShell\\7\\pwsh.exe`,
+			// Last resort: cmd can still run git and most one-liners the agent needs.
+			`${systemRoot}\\System32\\cmd.exe`,
+		);
+	} else if (kind === "cmd") {
+		candidates.push(`${systemRoot}\\System32\\cmd.exe`);
+	} else if (kind === "wsl") {
+		candidates.push(`${systemRoot}\\System32\\wsl.exe`);
+	}
+
+	return [...new Set(candidates)];
+}
+
 /**
  * Shell families that differ in invocation flags and command syntax.
  * "wsl" is the wsl.exe launcher (which runs bash in the default distro);

@@ -590,7 +590,54 @@
     });
   }
 
-  function setBusy(nextBusy) {
+  /**
+   * Start (or re-assert) the live stopwatch for `chatId`.
+   * Re-asserts from showChat/init after a chat switch must keep the original
+   * start time so elapsed time does not reset to zero mid-run.
+   * `restart` forces a fresh stamp — used when the user starts a new run.
+   * `hostStartedAt` seeds the stamp after a webview remount (the Map is empty
+   * but the host still knows the real run start).
+   */
+  function startRunStopwatch(chatId, restart, hostStartedAt) {
+    const key = String(chatId || "");
+    let startedAt = restart ? 0 : runStartedAtByChat.get(key);
+    if (
+      !startedAt &&
+      !restart &&
+      typeof hostStartedAt === "number" &&
+      hostStartedAt > 0
+    ) {
+      startedAt = hostStartedAt;
+      runStartedAtByChat.set(key, startedAt);
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
+      lastRunDurationChatId = "";
+    }
+    if (!startedAt) {
+      startedAt = Date.now();
+      runStartedAtByChat.set(key, startedAt);
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
+      lastRunDurationChatId = "";
+    }
+    runStartedAt = startedAt;
+    if (runStopwatchInterval) {
+      clearInterval(runStopwatchInterval);
+    }
+    runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
+    // Paint immediately with the (possibly restored) elapsed time.
+    updateLiveStopwatch();
+  }
+
+  /**
+   * @param {boolean} nextBusy
+   * @param {{ restartRun?: boolean, runStartedAt?: number }} [opts]
+   *   `restartRun` — new user-initiated run (send/regenerate/edit): reset the
+   *   stopwatch. State re-asserts from showChat/init leave the in-flight start
+   *   time untouched. `runStartedAt` — host stamp of the current run, used when
+   *   the webview was remounted and its Map is empty.
+   */
+  function setBusy(nextBusy, opts) {
     busy = nextBusy;
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
@@ -618,22 +665,21 @@
       }
     }
     if (busy) {
-      lastRunDurationMs = 0;
-      lastTtftMs = 0;
-      runStartedAt = Date.now();
-      if (runStopwatchInterval) {
-        clearInterval(runStopwatchInterval);
-      }
-      runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
-      // Show initial "0.0 s" immediately
-      updateLiveStopwatch();
+      const hostStartedAt =
+        opts && typeof opts.runStartedAt === "number" ? opts.runStartedAt : 0;
+      startRunStopwatch(
+        activeChatId,
+        Boolean(opts && opts.restartRun),
+        hostStartedAt
+      );
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
       closeMentionMenu();
-      if (currentChatTurnEl && messagesEl.contains(currentChatTurnEl)) {
-        ensureActiveToolGroup();
-      }
+      // After a history remount currentChatTurnEl may be gone — still reopen
+      // /create the live group so the stopwatch has a paint target.
+      ensureActiveToolGroup({ freshRun: Boolean(opts && opts.restartRun) });
+      updateLiveStopwatch();
     }
     updateSendButton();
     if (!busy) {
@@ -641,6 +687,9 @@
         clearInterval(runStopwatchInterval);
         runStopwatchInterval = 0;
       }
+      // Drop only this chat's start stamp — other chats may still be running.
+      // (activeChatId is already the newly shown chat here.)
+      runStartedAtByChat.delete(String(activeChatId || ""));
       runStartedAt = 0;
       finalizeRunningTimelines();
       focusPrompt();
@@ -1063,7 +1112,7 @@
     clearPendingMentions();
     closeSlashMenu();
     closeMentionMenu();
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     pinChatToBottom();
     host.postMessage({
       type: "send",

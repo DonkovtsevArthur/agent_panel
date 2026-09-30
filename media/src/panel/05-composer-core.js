@@ -372,7 +372,7 @@
       mode: modeForSend,
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     host.postMessage({
       type: "send",
       text,

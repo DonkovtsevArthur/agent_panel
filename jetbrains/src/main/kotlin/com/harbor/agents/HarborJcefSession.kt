@@ -57,6 +57,7 @@ class HarborJcefSession(
     parent.add(browser.component, BorderLayout.CENTER)
     HarborJcefFocus.install(browser)
     HarborJcefChrome.install(browser)
+    installCopyKeys()
     HarborFileDrop.install(
       browser.component,
       onAttachments = { attachments ->
@@ -112,6 +113,35 @@ class HarborJcefSession(
   }
 
   fun component(): JComponent = browser.component
+
+  /**
+   * IDE Copy (Ctrl/Cmd+C) often never reaches JCEF for non-editable selection.
+   * Webview context-menu Copy works; bridge the keyboard path to the same handler.
+   */
+  private fun installCopyKeys() {
+    val listener = java.awt.event.ActionListener {
+      try {
+        hostBridge.postToWebview("""{"type":"copySelection"}""", forceRepaint = true)
+      } catch (_: Throwable) {
+      }
+    }
+    val masks = listOf(java.awt.event.InputEvent.CTRL_DOWN_MASK, java.awt.event.InputEvent.META_DOWN_MASK)
+    for (target in listOf(browser.component, browser.cefBrowser.uiComponent)) {
+      val jTarget = target as? javax.swing.JComponent ?: continue
+      try {
+        jTarget.isFocusable = true
+        for (mask in masks) {
+          val stroke = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_C, mask)
+          jTarget.registerKeyboardAction(
+            listener,
+            stroke,
+            javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT,
+          )
+        }
+      } catch (_: Throwable) {
+      }
+    }
+  }
 
   override fun openSettingsSurface(): Boolean {
     settingsOpen = true

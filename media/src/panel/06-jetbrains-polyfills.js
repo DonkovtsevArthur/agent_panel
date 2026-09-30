@@ -845,7 +845,7 @@
         }
         harborEditSaveAt = Date.now();
         pinChatToBottom();
-        setBusy(true);
+        setBusy(true, { restartRun: true });
         host.postMessage({
           type: "regenerate",
           agentMode,

@@ -739,6 +739,14 @@
       group.classList.remove("is-run-working");
       updateToolGroupSummary(group);
     }
+    // Host `runDuration` may arrive after finalize hid the time (no step
+    // stamp yet) — paint it so «выполнено · … · 18,6 с» is not lost.
+    if (
+      lastRunDurationMs > 0 &&
+      lastRunDurationChatId === String(activeChatId || "")
+    ) {
+      applyRunDurationToTimeline(lastRunDurationMs, lastTtftMs);
+    }
   }
 
   function sealToolGroups() {    for (const group of messagesEl.querySelectorAll(
@@ -1319,9 +1327,11 @@
     return Boolean(body.querySelector(".msg.tool:not(.agent-step)"));
   }
 
-  /** Full-turn duration stamped on a step by the host (0 when unknown). */
+  /** Full-turn duration stamped on a step (or the group) by the host (0 when unknown). */
   function groupRunDurationMs(group) {
-    const el = group.querySelector("[data-run-duration-ms]");
+    const el =
+      (group.matches("[data-run-duration-ms]") ? group : null) ||
+      group.querySelector("[data-run-duration-ms]");
     if (!el) {
       return 0;
     }
@@ -1332,13 +1342,50 @@
   /** TTFT stamped with run duration (0 when unknown). */
   function groupTtftMs(group) {
     const el =
+      (group.matches("[data-ttft-ms]") ? group : null) ||
       group.querySelector("[data-ttft-ms]") ||
+      (group.matches("[data-run-duration-ms]") ? group : null) ||
       group.querySelector("[data-run-duration-ms]");
     if (!el) {
       return 0;
     }
     const ms = Number(el.getAttribute("data-ttft-ms")) || 0;
     return ms > 0 ? ms : 0;
+  }
+
+  /**
+   * Stamp the collapsed timeline of the current turn with the full run
+   * duration (host `runDuration` message / late step stamp). Also used when
+   * the step-level stamp never landed — otherwise «выполнено» renders
+   * without the time.
+   */
+  function applyRunDurationToTimeline(runDurationMs, ttftMs) {
+    if (!(runDurationMs > 0)) {
+      return;
+    }
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    const groups = scope.querySelectorAll(
+      ".tool-group.agent-timeline"
+    );
+    const group = groups[groups.length - 1];
+    if (!group) {
+      return;
+    }
+    if (groupRunDurationMs(group) <= 0) {
+      group.setAttribute("data-run-duration-ms", String(Math.round(runDurationMs)));
+    }
+    if (ttftMs > 0 && groupTtftMs(group) <= 0) {
+      group.setAttribute("data-ttft-ms", String(Math.round(ttftMs)));
+    }
+    if (!group.dataset.sealed) {
+      group.dataset.sealed = "1";
+    }
+    group.classList.remove("is-run-working");
+    updateToolGroupSummary(group);
   }
 
   function formatRunDuration(ms) {
@@ -1364,6 +1411,10 @@
     }
     const group = getActiveToolGroup();
     if (!group) {
+      return;
+    }
+    // Never clobber the final host stamp («выполнено · 18,6 с»).
+    if (groupRunDurationMs(group) > 0) {
       return;
     }
     let durationEl = group.querySelector(".tool-group-duration");
@@ -1570,7 +1621,7 @@
     return null;
   }
 
-  function ensureActiveToolGroup() {
+  function ensureActiveToolGroup(opts) {
     const existing = getActiveToolGroup();
     if (existing) {
       return existing;
@@ -1588,6 +1639,20 @@
         ".tool-group.agent-timeline.is-run-working[data-sealed]"
       ),
     ];
+    // Mid-run history remount (init/showChat) seals the live group without
+    // is-run-working (restoringChatScroll). Reopen the last group that has no
+    // final duration stamp instead of spawning a second «выполняю».
+    // Skip for a fresh user-initiated run — that must start a new timeline.
+    if (!reopenable.length && busy && !(opts && opts.freshRun)) {
+      const undated = [
+        ...scope.querySelectorAll(
+          ".tool-group.agent-timeline[data-sealed]:not([data-run-duration-ms])"
+        ),
+      ];
+      if (undated.length) {
+        reopenable.push(undated[undated.length - 1]);
+      }
+    }
     if (reopenable.length) {
       const group = reopenable[reopenable.length - 1];
       group.classList.remove("is-run-working");
@@ -1880,24 +1945,24 @@
       }
     }
 
-    const group = ensureActiveToolGroup();
-    const body = group.querySelector(".tool-group-body");
+    const stepIdSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    // Late stamps (runDurationMs) arrive after assistantDone sealed the
+    // original group. Find that step FIRST — ensureActiveToolGroup would
+    // otherwise spawn an empty «Работаю…» card next to the finished timeline.
+    let existingEl = messagesEl.querySelector(stepIdSel);
+    let group;
+    let body;
+    if (existingEl) {
+      group = existingEl.closest(".tool-group") || ensureActiveToolGroup();
+    } else {
+      group = ensureActiveToolGroup();
+    }
+    body = group && group.querySelector(".tool-group-body");
     if (!body) {
       return null;
     }
 
-    let el = body.querySelector(
-      `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-    );
-
-    // If not found in the active group, search all groups (including sealed).
-    // This handles late stamps (e.g. runDurationMs) that arrive after
-    // assistantDone has sealed the original group.
-    if (!el) {
-      el = messagesEl.querySelector(
-        `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-      );
-    }
+    let el = existingEl || body.querySelector(stepIdSel);
 
     if (!el && step.kind === "tool") {
       const key = toolStepMatchKey(step.name, step.argsPreview, "");

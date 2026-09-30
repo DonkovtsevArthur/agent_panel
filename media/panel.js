@@ -306,6 +306,9 @@
       searching: "Searching...",
       copied: "Copied",
       copy: "Copy",
+      cut: "Cut",
+      paste: "Paste",
+      selectAll: "Select all",
       agent: "Agent",
       plan: "Plan",
       ask: "Ask",
@@ -785,6 +788,9 @@
       searching: "Поиск…",
       copied: "Скопировано",
       copy: "Копировать",
+      cut: "Вырезать",
+      paste: "Вставить",
+      selectAll: "Выделить всё",
       agent: "Агент",
       plan: "План",
       ask: "Спросить",
@@ -2375,9 +2381,16 @@
   let streamingRenderScheduled = false;
   let lastRunDurationMs = 0;
   let lastTtftMs = 0;
+  /** Chat the last runDuration stamp belongs to (guards cross-chat paints). */
+  let lastRunDurationChatId = "";
   let composerDragDepth = 0;
   /** Live stopwatch: wall-clock ms when the current run started. */
   let runStartedAt = 0;
+  /**
+   * Per-chat run start times. Chat switches re-assert busy via showChat/init
+   * and must not restart the stopwatch for a run that is already in flight.
+   */
+  const runStartedAtByChat = new Map();
   /** Live stopwatch interval id (updates .tool-group-duration every second). */
   let runStopwatchInterval = 0;
 
@@ -2764,7 +2777,7 @@
       mode: modeForSend,
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     host.postMessage({
       type: "send",
       text,
@@ -3987,7 +4000,7 @@
         }
         harborEditSaveAt = Date.now();
         pinChatToBottom();
-        setBusy(true);
+        setBusy(true, { restartRun: true });
         host.postMessage({
           type: "regenerate",
           agentMode,
@@ -5373,7 +5386,7 @@
     pickAttachmentsForEdit = false;
     harborEditSaveAt = Date.now();
     stickToBottom = true;
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     host.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
@@ -7211,6 +7224,14 @@
       group.classList.remove("is-run-working");
       updateToolGroupSummary(group);
     }
+    // Host `runDuration` may arrive after finalize hid the time (no step
+    // stamp yet) — paint it so «выполнено · … · 18,6 с» is not lost.
+    if (
+      lastRunDurationMs > 0 &&
+      lastRunDurationChatId === String(activeChatId || "")
+    ) {
+      applyRunDurationToTimeline(lastRunDurationMs, lastTtftMs);
+    }
   }
 
   function sealToolGroups() {    for (const group of messagesEl.querySelectorAll(
@@ -7791,9 +7812,11 @@
     return Boolean(body.querySelector(".msg.tool:not(.agent-step)"));
   }
 
-  /** Full-turn duration stamped on a step by the host (0 when unknown). */
+  /** Full-turn duration stamped on a step (or the group) by the host (0 when unknown). */
   function groupRunDurationMs(group) {
-    const el = group.querySelector("[data-run-duration-ms]");
+    const el =
+      (group.matches("[data-run-duration-ms]") ? group : null) ||
+      group.querySelector("[data-run-duration-ms]");
     if (!el) {
       return 0;
     }
@@ -7804,13 +7827,50 @@
   /** TTFT stamped with run duration (0 when unknown). */
   function groupTtftMs(group) {
     const el =
+      (group.matches("[data-ttft-ms]") ? group : null) ||
       group.querySelector("[data-ttft-ms]") ||
+      (group.matches("[data-run-duration-ms]") ? group : null) ||
       group.querySelector("[data-run-duration-ms]");
     if (!el) {
       return 0;
     }
     const ms = Number(el.getAttribute("data-ttft-ms")) || 0;
     return ms > 0 ? ms : 0;
+  }
+
+  /**
+   * Stamp the collapsed timeline of the current turn with the full run
+   * duration (host `runDuration` message / late step stamp). Also used when
+   * the step-level stamp never landed — otherwise «выполнено» renders
+   * without the time.
+   */
+  function applyRunDurationToTimeline(runDurationMs, ttftMs) {
+    if (!(runDurationMs > 0)) {
+      return;
+    }
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    const groups = scope.querySelectorAll(
+      ".tool-group.agent-timeline"
+    );
+    const group = groups[groups.length - 1];
+    if (!group) {
+      return;
+    }
+    if (groupRunDurationMs(group) <= 0) {
+      group.setAttribute("data-run-duration-ms", String(Math.round(runDurationMs)));
+    }
+    if (ttftMs > 0 && groupTtftMs(group) <= 0) {
+      group.setAttribute("data-ttft-ms", String(Math.round(ttftMs)));
+    }
+    if (!group.dataset.sealed) {
+      group.dataset.sealed = "1";
+    }
+    group.classList.remove("is-run-working");
+    updateToolGroupSummary(group);
   }
 
   function formatRunDuration(ms) {
@@ -7836,6 +7896,10 @@
     }
     const group = getActiveToolGroup();
     if (!group) {
+      return;
+    }
+    // Never clobber the final host stamp («выполнено · 18,6 с»).
+    if (groupRunDurationMs(group) > 0) {
       return;
     }
     let durationEl = group.querySelector(".tool-group-duration");
@@ -8042,7 +8106,7 @@
     return null;
   }
 
-  function ensureActiveToolGroup() {
+  function ensureActiveToolGroup(opts) {
     const existing = getActiveToolGroup();
     if (existing) {
       return existing;
@@ -8060,6 +8124,20 @@
         ".tool-group.agent-timeline.is-run-working[data-sealed]"
       ),
     ];
+    // Mid-run history remount (init/showChat) seals the live group without
+    // is-run-working (restoringChatScroll). Reopen the last group that has no
+    // final duration stamp instead of spawning a second «выполняю».
+    // Skip for a fresh user-initiated run — that must start a new timeline.
+    if (!reopenable.length && busy && !(opts && opts.freshRun)) {
+      const undated = [
+        ...scope.querySelectorAll(
+          ".tool-group.agent-timeline[data-sealed]:not([data-run-duration-ms])"
+        ),
+      ];
+      if (undated.length) {
+        reopenable.push(undated[undated.length - 1]);
+      }
+    }
     if (reopenable.length) {
       const group = reopenable[reopenable.length - 1];
       group.classList.remove("is-run-working");
@@ -8352,24 +8430,24 @@
       }
     }
 
-    const group = ensureActiveToolGroup();
-    const body = group.querySelector(".tool-group-body");
+    const stepIdSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+    // Late stamps (runDurationMs) arrive after assistantDone sealed the
+    // original group. Find that step FIRST — ensureActiveToolGroup would
+    // otherwise spawn an empty «Работаю…» card next to the finished timeline.
+    let existingEl = messagesEl.querySelector(stepIdSel);
+    let group;
+    let body;
+    if (existingEl) {
+      group = existingEl.closest(".tool-group") || ensureActiveToolGroup();
+    } else {
+      group = ensureActiveToolGroup();
+    }
+    body = group && group.querySelector(".tool-group-body");
     if (!body) {
       return null;
     }
 
-    let el = body.querySelector(
-      `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-    );
-
-    // If not found in the active group, search all groups (including sealed).
-    // This handles late stamps (e.g. runDurationMs) that arrive after
-    // assistantDone has sealed the original group.
-    if (!el) {
-      el = messagesEl.querySelector(
-        `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
-      );
-    }
+    let el = existingEl || body.querySelector(stepIdSel);
 
     if (!el && step.kind === "tool") {
       const key = toolStepMatchKey(step.name, step.argsPreview, "");
@@ -13466,7 +13544,7 @@
     // hidden after syncComposerPlanFromCache / history re-renders.
     uiMessagesCache.push({ role: "user", text: payload, attachments: [] });
     appendMessage("user", payload, uiMessagesCache.length - 1, -1, []);
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     setComposerPlanBuild("", false);
     host.postMessage({
       type: "send",
@@ -13682,7 +13760,7 @@
       if (busy) {
         return;
       }
-      setBusy(true);
+      setBusy(true, { restartRun: true });
       host.postMessage({
         type: "commitAndPush",
         paths,
@@ -15791,7 +15869,54 @@
     });
   }
 
-  function setBusy(nextBusy) {
+  /**
+   * Start (or re-assert) the live stopwatch for `chatId`.
+   * Re-asserts from showChat/init after a chat switch must keep the original
+   * start time so elapsed time does not reset to zero mid-run.
+   * `restart` forces a fresh stamp — used when the user starts a new run.
+   * `hostStartedAt` seeds the stamp after a webview remount (the Map is empty
+   * but the host still knows the real run start).
+   */
+  function startRunStopwatch(chatId, restart, hostStartedAt) {
+    const key = String(chatId || "");
+    let startedAt = restart ? 0 : runStartedAtByChat.get(key);
+    if (
+      !startedAt &&
+      !restart &&
+      typeof hostStartedAt === "number" &&
+      hostStartedAt > 0
+    ) {
+      startedAt = hostStartedAt;
+      runStartedAtByChat.set(key, startedAt);
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
+      lastRunDurationChatId = "";
+    }
+    if (!startedAt) {
+      startedAt = Date.now();
+      runStartedAtByChat.set(key, startedAt);
+      lastRunDurationMs = 0;
+      lastTtftMs = 0;
+      lastRunDurationChatId = "";
+    }
+    runStartedAt = startedAt;
+    if (runStopwatchInterval) {
+      clearInterval(runStopwatchInterval);
+    }
+    runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
+    // Paint immediately with the (possibly restored) elapsed time.
+    updateLiveStopwatch();
+  }
+
+  /**
+   * @param {boolean} nextBusy
+   * @param {{ restartRun?: boolean, runStartedAt?: number }} [opts]
+   *   `restartRun` — new user-initiated run (send/regenerate/edit): reset the
+   *   stopwatch. State re-asserts from showChat/init leave the in-flight start
+   *   time untouched. `runStartedAt` — host stamp of the current run, used when
+   *   the webview was remounted and its Map is empty.
+   */
+  function setBusy(nextBusy, opts) {
     busy = nextBusy;
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
@@ -15819,22 +15944,21 @@
       }
     }
     if (busy) {
-      lastRunDurationMs = 0;
-      lastTtftMs = 0;
-      runStartedAt = Date.now();
-      if (runStopwatchInterval) {
-        clearInterval(runStopwatchInterval);
-      }
-      runStopwatchInterval = setInterval(updateLiveStopwatch, 1000);
-      // Show initial "0.0 s" immediately
-      updateLiveStopwatch();
+      const hostStartedAt =
+        opts && typeof opts.runStartedAt === "number" ? opts.runStartedAt : 0;
+      startRunStopwatch(
+        activeChatId,
+        Boolean(opts && opts.restartRun),
+        hostStartedAt
+      );
       closePlusMenu();
       closeModeMenu();
       closeSlashMenu();
       closeMentionMenu();
-      if (currentChatTurnEl && messagesEl.contains(currentChatTurnEl)) {
-        ensureActiveToolGroup();
-      }
+      // After a history remount currentChatTurnEl may be gone — still reopen
+      // /create the live group so the stopwatch has a paint target.
+      ensureActiveToolGroup({ freshRun: Boolean(opts && opts.restartRun) });
+      updateLiveStopwatch();
     }
     updateSendButton();
     if (!busy) {
@@ -15842,6 +15966,9 @@
         clearInterval(runStopwatchInterval);
         runStopwatchInterval = 0;
       }
+      // Drop only this chat's start stamp — other chats may still be running.
+      // (activeChatId is already the newly shown chat here.)
+      runStartedAtByChat.delete(String(activeChatId || ""));
       runStartedAt = 0;
       finalizeRunningTimelines();
       focusPrompt();
@@ -16264,7 +16391,7 @@
     clearPendingMentions();
     closeSlashMenu();
     closeMentionMenu();
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     pinChatToBottom();
     host.postMessage({
       type: "send",
@@ -16697,6 +16824,391 @@
     },
     true
   );
+
+  // VS Code / JCEF: Ctrl/Cmd+C по выделению в ответе модели часто не копирует
+  // (workbench/IDE action съедает клавишу). Контекстное Copy работает —
+  // дублируем этот путь с клавиатуры.
+  function isEditableClipboardTarget(el) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      return true;
+    }
+    return Boolean(el && el.isContentEditable);
+  }
+
+  function selectedPlainText() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      return "";
+    }
+    return selection.toString();
+  }
+
+  function writeTextToClipboard(text) {
+    const done = () => showCopyToast(t("copied"));
+    // JCEF: navigator.clipboard пишет только в webview-песочницу и не трогает
+    // системный буфер IDE — на JetBrains всегда дублируем через host.
+    if (harborHostAvailable()) {
+      host.postMessage({ type: "copyText", text });
+      if (
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      return;
+    }
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {
+        // Host пришлёт «copied» сам — не дублируем toast.
+        host.postMessage({ type: "copyText", text });
+      });
+      return;
+    }
+    host.postMessage({ type: "copyText", text });
+  }
+
+  /** Host может позвать copy, когда IDE перехватила Ctrl/Cmd+C до webview. */
+  function copyWebviewSelection() {
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return false;
+    }
+    const text = selectedPlainText();
+    if (!text) {
+      return false;
+    }
+    writeTextToClipboard(text);
+    return true;
+  }
+
+  // ─── Своё контекстное меню правок (нативное в JCEF/VS Code всегда «Copy») ───
+  let editContextMenuEl = null;
+  const pendingClipboardTextReqs = new Map();
+  let clipboardTextReqSeq = 0;
+
+  function ensureEditContextMenu() {
+    if (editContextMenuEl) {
+      return editContextMenuEl;
+    }
+    editContextMenuEl = document.createElement("div");
+    editContextMenuEl.className = "edit-context-menu model-menu is-fixed";
+    editContextMenuEl.setAttribute("role", "menu");
+    editContextMenuEl.hidden = true;
+    document.body.appendChild(editContextMenuEl);
+    return editContextMenuEl;
+  }
+
+  function closeEditContextMenu() {
+    if (editContextMenuEl) {
+      editContextMenuEl.hidden = true;
+    }
+  }
+
+  function editableSelectionRange(el) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      const start = typeof el.selectionStart === "number" ? el.selectionStart : 0;
+      const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+      return end > start ? { start, end } : null;
+    }
+    return null;
+  }
+
+  function contextEditTarget(eventTarget) {
+    if (isEditableClipboardTarget(eventTarget)) {
+      return eventTarget;
+    }
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return document.activeElement;
+    }
+    return null;
+  }
+
+  function selectedTextFor(target) {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      const range = editableSelectionRange(target);
+      return range ? target.value.slice(range.start, range.end) : "";
+    }
+    return selectedPlainText();
+  }
+
+  function insertTextAt(el, text) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      const start = typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+      const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const caret = start + text.length;
+      el.selectionStart = el.selectionEnd = caret;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }
+    if (el && el.isContentEditable) {
+      el.focus();
+      return document.execCommand("insertText", false, text);
+    }
+    return false;
+  }
+
+  function insertTextAtActive(text) {
+    return insertTextAt(document.activeElement, text);
+  }
+
+  function deleteEditableSelection(target) {
+    if (!(target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)) {
+      return false;
+    }
+    const range = editableSelectionRange(target);
+    if (!range) {
+      return false;
+    }
+    target.value = target.value.slice(0, range.start) + target.value.slice(range.end);
+    target.selectionStart = target.selectionEnd = range.start;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
+  function selectAllContextContent(target) {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      target.focus();
+      target.select();
+      return;
+    }
+    if (target && target.isContentEditable) {
+      target.focus();
+      document.execCommand("selectAll");
+      return;
+    }
+    const root = document.body;
+    const selection = window.getSelection();
+    if (selection && root) {
+      const range = document.createRange();
+      range.selectNodeContents(root);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+
+  function requestClipboardTextFromHost() {
+    return new Promise((resolve) => {
+      const requestId = `clipText${++clipboardTextReqSeq}`;
+      pendingClipboardTextReqs.set(requestId, resolve);
+      host.postMessage({ type: "requestClipboardText", requestId });
+      setTimeout(() => {
+        if (pendingClipboardTextReqs.has(requestId)) {
+          pendingClipboardTextReqs.delete(requestId);
+          resolve("");
+        }
+      }, 2000);
+    });
+  }
+
+  /** Host-ответ `{ type: "clipboardText", requestId, text }` (см. message-router). */
+  function resolveClipboardTextFromHost(msg) {
+    const resolve = pendingClipboardTextReqs.get(msg.requestId);
+    if (resolve) {
+      pendingClipboardTextReqs.delete(msg.requestId);
+      resolve(String(msg.text || ""));
+    }
+  }
+
+  async function readClipboardTextForMenu() {
+    // JCEF: navigator.clipboard.readText() часто resolve в "" (или кидает) —
+    // системный буфер IDE доступен только через host (CopyPasteManager).
+    const hostText = harborHostAvailable()
+      ? await requestClipboardTextFromHost()
+      : "";
+    if (hostText) {
+      return hostText;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          return text;
+        }
+      } catch {
+        // ignored
+      }
+    }
+    return "";
+  }
+
+  function runContextMenuCut(target) {
+    const text = selectedTextFor(target);
+    if (text) {
+      writeTextToClipboard(text);
+    }
+    if (target && target.isContentEditable) {
+      document.execCommand("delete");
+      return;
+    }
+    deleteEditableSelection(target);
+  }
+
+  function runContextMenuCopy(target) {
+    const text = selectedTextFor(target);
+    if (!text) {
+      return;
+    }
+    writeTextToClipboard(text);
+  }
+
+  async function runContextMenuPaste(target) {
+    const text = await readClipboardTextForMenu();
+    if (text) {
+      if (target && isEditableClipboardTarget(target)) {
+        target.focus();
+        if (insertTextAt(target, text)) {
+          return;
+        }
+      }
+      if (promptEl && chatScreen && !chatScreen.hidden) {
+        promptEl.focus();
+        insertTextAt(promptEl, text);
+        return;
+      }
+      insertTextAtActive(text);
+      return;
+    }
+    if (harborHostAvailable()) {
+      host.postMessage({ type: "requestClipboardImage" });
+    }
+  }
+
+  function showEditContextMenu(x, y, target) {
+    const menu = ensureEditContextMenu();
+    menu.innerHTML = "";
+    const editable = isEditableClipboardTarget(target);
+    const hasSel = Boolean(selectedTextFor(target));
+
+    const items = [];
+    if (editable && hasSel) {
+      items.push({
+        id: "cut",
+        label: t("cut"),
+        run: () => runContextMenuCut(target),
+      });
+    }
+    if (hasSel) {
+      items.push({
+        id: "copy",
+        label: t("copy"),
+        run: () => runContextMenuCopy(target),
+      });
+    }
+    if (editable || (chatScreen && !chatScreen.hidden)) {
+      items.push({
+        id: "paste",
+        label: t("paste"),
+        run: () => runContextMenuPaste(target),
+      });
+    }
+    items.push({
+      id: "selectAll",
+      label: t("selectAll"),
+      run: () => selectAllContextContent(target),
+    });
+
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "model-option edit-context-item";
+      btn.setAttribute("role", "menuitem");
+      btn.textContent = item.label;
+      btn.addEventListener("mousedown", (event) => {
+        // Не даём выделению схлопнуться до click.
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeEditContextMenu();
+        item.run();
+      });
+      menu.appendChild(btn);
+    }
+
+    menu.hidden = false;
+    // Сброс якоря .model-menu (bottom: calc(100%+6px)) — иначе fixed-меню уезжает.
+    menu.style.position = "fixed";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.zIndex = "10000";
+    menu.style.visibility = "hidden";
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const edgePad = 4;
+    const maxLeft = Math.max(edgePad, window.innerWidth - menuWidth - edgePad);
+    const maxTop = Math.max(edgePad, window.innerHeight - menuHeight - edgePad);
+    const left = Math.min(Math.max(edgePad, x), maxLeft);
+    const top = Math.min(Math.max(edgePad, y), maxTop);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.visibility = "visible";
+    menu.hidden = false;
+    if (typeof forceHarborUiRepaint === "function") {
+      forceHarborUiRepaint();
+      setTimeout(forceHarborUiRepaint, 32);
+    }
+  }
+
+  document.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    closeEditContextMenu();
+    showEditContextMenu(event.clientX, event.clientY, contextEditTarget(event.target));
+  });
+
+  document.addEventListener(
+    "mousedown",
+    (event) => {
+      if (
+        editContextMenuEl &&
+        !editContextMenuEl.hidden &&
+        !editContextMenuEl.contains(event.target)
+      ) {
+        closeEditContextMenu();
+      }
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape") {
+        closeEditContextMenu();
+      }
+    },
+    true
+  );
+
+  window.addEventListener("blur", closeEditContextMenu);
+
+  document.addEventListener("keydown", (event) => {
+    const isCopy =
+      (event.key === "c" || event.key === "C" || event.code === "KeyC") &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!isCopy) {
+      return;
+    }
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return;
+    }
+    const text = selectedPlainText();
+    if (!text) {
+      return;
+    }
+    // Не отдаём клавишу host copy (он скопирует пустой editor selection).
+    event.preventDefault();
+    event.stopPropagation();
+    writeTextToClipboard(text);
+  });
 
   // На случай, если paste пришёл до фокуса webview — подхватим после фокуса по Cmd/Ctrl+V
   document.addEventListener("keydown", (event) => {
@@ -18157,7 +18669,7 @@
         return;
       }
       pinChatToBottom();
-      setBusy(true);
+      setBusy(true, { restartRun: true });
       host.postMessage({
         type: "regenerate",
         agentMode,
@@ -18448,7 +18960,10 @@
         if (!settingsSwitchSuppressed()) {
           showScreen(msg.screen || "agents");
         }
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         renderMessageQueue();
         break;
       case "attachmentsAdded":
@@ -18501,11 +19016,17 @@
         break;
       case "showAgents":
         showScreen("agents");
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "showArchive":
         showScreen("archive");
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "showSettings":
         settingsShownAt = Date.now();
@@ -18520,7 +19041,10 @@
         // JetBrains OSR: the screen swap may come from a host-driven inject
         // without user input in the browser — force a paint frame.
         forceHarborUiRepaint();
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "openChatSearch":
         openChatSearch({ fromAgents: false });
@@ -18625,7 +19149,10 @@
         if (!settingsSwitchSuppressed()) {
           showScreen("chat");
         }
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         renderMessageQueue();
         {
           const highlight =
@@ -18732,6 +19259,15 @@
         break;
       case "copied":
         showCopyToast(t("copied"));
+        break;
+      case "clipboardText":
+        if (typeof resolveClipboardTextFromHost === "function") {
+          resolveClipboardTextFromHost(msg);
+        }
+        break;
+      case "copySelection":
+        // IDE перехватила Ctrl/Cmd+C — webview сама копирует выделение.
+        copyWebviewSelection();
         break;
       case "runFinished":
         playRunFinishedSound(msg.outcome === "error" ? "error" : "success");
@@ -18998,6 +19534,7 @@
         }
         if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
           lastRunDurationMs = msg.runDurationMs;
+          lastRunDurationChatId = String(activeChatId || "");
           if (typeof msg.ttftMs === "number" && msg.ttftMs > 0) {
             lastTtftMs = msg.ttftMs;
           }
@@ -19014,6 +19551,9 @@
               break;
             }
           }
+          // Paint «выполнено · … · 18,6 с» on the timeline even when the
+          // step-level stamp never landed (or arrived before the DOM group).
+          applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
         }
         break;
       }

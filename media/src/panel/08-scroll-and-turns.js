@@ -362,7 +362,7 @@
     pickAttachmentsForEdit = false;
     harborEditSaveAt = Date.now();
     stickToBottom = true;
-    setBusy(true);
+    setBusy(true, { restartRun: true });
     host.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,

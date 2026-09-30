@@ -2,6 +2,14 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [2.9.0] — 2026-08-17
+
+- **Agent:** verify-loop — tool `verify_edits` собирает IDE diagnostics по изменённым файлам; один вызов перед финалом
+- **Agent:** правило доказательств — в финале после правок полные пути + verify-снимок, без «готово» без tool-свидетельств
+- **Скорость:** `update_todo` — карточка плана только для многошаговых задач (короткие вопросы без лишнего round-trip)
+- **Скорость:** ужаты Harbor rules (batch reads / output tokens / todo / verify) — быстрее TTFT
+- **Скорость:** `turnContext.followUps` по умолчанию `slim` (fallback в runtime)
+
 ## [2.7.29] — 2026-08-17
 
 - **Настройки:** Prompt cache — чекбокс заменён на свитч (toggle), перевод на русский

@@ -9,18 +9,22 @@
  *      unambiguous in Russian, so it wins over a question frame
  *      («почему падает и почини?» is a fix request).
  *   4. Question frame at sentence start («как/почему/what/how…») → ask.
- *   5. English imperative verb → agent (checked after the question frame so
+ *   5. Russian collaborative offer («поменяем на 30?», «давай обновим») →
+ *      agent. Action requests even with a trailing "?"; checked after the
+ *      question frame so «как обновим?» stays a question.
+ *   6. English imperative verb → agent (checked after the question frame so
  *      "how do I run tests?" stays a question).
- *   6. Explain / definition verbs («объясни», "explain") → ask.
- *   7. Trailing "?" → ask.
- *   8. Fallback → agent (in a coding panel an ambiguous prompt usually means
+ *   7. Explain / definition verbs («объясни», "explain") → ask.
+ *   8. Trailing "?" → ask.
+ *   9. Fallback → agent (in a coding panel an ambiguous prompt usually means
  *      "do it"; agent can still answer a question, ask cannot edit).
  *
  * Cyrillic notes: JS `\b` is ASCII-only, so Russian patterns rely on the
  * distinctive imperative morphology instead of word boundaries, and
  * `(?![а-яё])` guards question-word prefixes («как» ≠ «какой»). Imperative
- * stems that are also infinitive prefixes get a `(?!ть)` guard so
- * «как удалить файл?» stays a question while «удали файл» is a command.
+ * stems also get a trailing `(?![а-яё])` (with optional polite `-те`) so
+ * they do not match inside future/infinitive forms: «как обновим/обновить
+ * файл?» stays a question while «обнови/обновите файл» is a command.
  */
 import { looksLikePlanImplementRequest } from "./planImplement";
 
@@ -45,7 +49,17 @@ const PLAN_INTENT_RE = new RegExp(
 );
 
 const RU_IMPERATIVE_RE =
-  /(?:добавь|исправь|поменяй|перепиши|отрефактори|порефактори|создай|сделай|реализуй|переименуй|закомменти|раскомменти|отформатируй|обнови(?!ть)|удали(?!ть)|запусти(?!ть)|перенеси(?!ть)|вынеси|поставь|установи(?!ть)|настрой|подними|почини|фиксни|пофикси|напиши|включи(?!ть)|выключи(?!ть)|верни(?!ть)|откат)/i;
+  /(?:добавь|исправь|поменяй|перепиши|отрефактори|порефактори|создай|сделай|реализуй|переименуй|закомменти|раскомменти|отформатируй|обнови|удали|запусти|перенеси|вынеси|поставь|установи|настрой|подними|почини|фиксни|пофикси|напиши|включи|выключи|верни|откат)(?:те)?(?![а-яё])/i;
+
+/**
+ * Collaborative offers: 1st-person-plural future («поменяем на 30?»,
+ * «обновим», «сделаем») and the «давай(те)…» opener. These are action
+ * requests even with a trailing "?", so they outrank the trailing-"?" rule.
+ * They do NOT outrank QUESTION_FRAME_RE: «как обновим?» stays a question.
+ * `[^а-яё]` before «давай» keeps it from matching inside «подавай».
+ */
+const RU_COLLAB_RE =
+  /(?:^|[^а-яё])(?:давай(?:те)?|поменяем|обновим|сделаем|добавим|удалим|создадим|исправим|поправим|перепишем|переименуем|запустим|установим|настроим|поднимем|починим|напишем|включим|выключим|верн[её]м|перенес[её]м|вынесем|отформатируем|закомментируем|раскомментируем|реализуем|отрефакторим|порефакторим|поставим|протестируем|подключим|отключим|переключим|выложим|разбер[её]м)/i;
 
 const QUESTION_FRAME_RE = new RegExp(
   [
@@ -99,6 +113,38 @@ export function needsPlanCard(userText: string): boolean {
   return text.length >= 100;
 }
 
+/**
+ * Whether this turn should carry the verify_edits nudge. Pure Q&A /
+ * explanations rarely edit files — skip the extra prompt tokens.
+ * Short imperative fixes («почини X») still return true.
+ */
+export function needsVerifyNudge(userText: string): boolean {
+  const text = String(userText || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return true;
+  }
+  if (EXPLAIN_RE.test(text)) {
+    return false;
+  }
+  // Collaborative offers edit files — keep the verify nudge despite "?".
+  if (RU_COLLAB_RE.test(text)) {
+    return true;
+  }
+  if (/[?？]\s*$/.test(text)) {
+    return false;
+  }
+  if (
+    QUESTION_FRAME_RE.test(text) &&
+    !RU_IMPERATIVE_RE.test(text) &&
+    text.length < 120
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** Resolve the Auto picker choice into a concrete engine id for one turn. */
 export function resolveAutoMode(userText: string): AutoResolvedModeId {
   const text = String(userText || "")
@@ -118,6 +164,11 @@ export function resolveAutoMode(userText: string): AutoResolvedModeId {
   }
   if (QUESTION_FRAME_RE.test(text)) {
     return "ask";
+  }
+  // Collaborative offers («поменяем на 30?», «давай обновим») are actions
+  // phrased with a trailing "?", not questions — agent, not ask.
+  if (RU_COLLAB_RE.test(text)) {
+    return "agent";
   }
   if (EN_IMPERATIVE_RE.test(text)) {
     return "agent";

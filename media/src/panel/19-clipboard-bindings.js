@@ -99,6 +99,391 @@
     true
   );
 
+  // VS Code / JCEF: Ctrl/Cmd+C по выделению в ответе модели часто не копирует
+  // (workbench/IDE action съедает клавишу). Контекстное Copy работает —
+  // дублируем этот путь с клавиатуры.
+  function isEditableClipboardTarget(el) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      return true;
+    }
+    return Boolean(el && el.isContentEditable);
+  }
+
+  function selectedPlainText() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      return "";
+    }
+    return selection.toString();
+  }
+
+  function writeTextToClipboard(text) {
+    const done = () => showCopyToast(t("copied"));
+    // JCEF: navigator.clipboard пишет только в webview-песочницу и не трогает
+    // системный буфер IDE — на JetBrains всегда дублируем через host.
+    if (harborHostAvailable()) {
+      host.postMessage({ type: "copyText", text });
+      if (
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function"
+      ) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      return;
+    }
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {
+        // Host пришлёт «copied» сам — не дублируем toast.
+        host.postMessage({ type: "copyText", text });
+      });
+      return;
+    }
+    host.postMessage({ type: "copyText", text });
+  }
+
+  /** Host может позвать copy, когда IDE перехватила Ctrl/Cmd+C до webview. */
+  function copyWebviewSelection() {
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return false;
+    }
+    const text = selectedPlainText();
+    if (!text) {
+      return false;
+    }
+    writeTextToClipboard(text);
+    return true;
+  }
+
+  // ─── Своё контекстное меню правок (нативное в JCEF/VS Code всегда «Copy») ───
+  let editContextMenuEl = null;
+  const pendingClipboardTextReqs = new Map();
+  let clipboardTextReqSeq = 0;
+
+  function ensureEditContextMenu() {
+    if (editContextMenuEl) {
+      return editContextMenuEl;
+    }
+    editContextMenuEl = document.createElement("div");
+    editContextMenuEl.className = "edit-context-menu model-menu is-fixed";
+    editContextMenuEl.setAttribute("role", "menu");
+    editContextMenuEl.hidden = true;
+    document.body.appendChild(editContextMenuEl);
+    return editContextMenuEl;
+  }
+
+  function closeEditContextMenu() {
+    if (editContextMenuEl) {
+      editContextMenuEl.hidden = true;
+    }
+  }
+
+  function editableSelectionRange(el) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      const start = typeof el.selectionStart === "number" ? el.selectionStart : 0;
+      const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+      return end > start ? { start, end } : null;
+    }
+    return null;
+  }
+
+  function contextEditTarget(eventTarget) {
+    if (isEditableClipboardTarget(eventTarget)) {
+      return eventTarget;
+    }
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return document.activeElement;
+    }
+    return null;
+  }
+
+  function selectedTextFor(target) {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      const range = editableSelectionRange(target);
+      return range ? target.value.slice(range.start, range.end) : "";
+    }
+    return selectedPlainText();
+  }
+
+  function insertTextAt(el, text) {
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      const start = typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+      const end = typeof el.selectionEnd === "number" ? el.selectionEnd : start;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const caret = start + text.length;
+      el.selectionStart = el.selectionEnd = caret;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }
+    if (el && el.isContentEditable) {
+      el.focus();
+      return document.execCommand("insertText", false, text);
+    }
+    return false;
+  }
+
+  function insertTextAtActive(text) {
+    return insertTextAt(document.activeElement, text);
+  }
+
+  function deleteEditableSelection(target) {
+    if (!(target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)) {
+      return false;
+    }
+    const range = editableSelectionRange(target);
+    if (!range) {
+      return false;
+    }
+    target.value = target.value.slice(0, range.start) + target.value.slice(range.end);
+    target.selectionStart = target.selectionEnd = range.start;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+
+  function selectAllContextContent(target) {
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      target.focus();
+      target.select();
+      return;
+    }
+    if (target && target.isContentEditable) {
+      target.focus();
+      document.execCommand("selectAll");
+      return;
+    }
+    const root = document.body;
+    const selection = window.getSelection();
+    if (selection && root) {
+      const range = document.createRange();
+      range.selectNodeContents(root);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+
+  function requestClipboardTextFromHost() {
+    return new Promise((resolve) => {
+      const requestId = `clipText${++clipboardTextReqSeq}`;
+      pendingClipboardTextReqs.set(requestId, resolve);
+      host.postMessage({ type: "requestClipboardText", requestId });
+      setTimeout(() => {
+        if (pendingClipboardTextReqs.has(requestId)) {
+          pendingClipboardTextReqs.delete(requestId);
+          resolve("");
+        }
+      }, 2000);
+    });
+  }
+
+  /** Host-ответ `{ type: "clipboardText", requestId, text }` (см. message-router). */
+  function resolveClipboardTextFromHost(msg) {
+    const resolve = pendingClipboardTextReqs.get(msg.requestId);
+    if (resolve) {
+      pendingClipboardTextReqs.delete(msg.requestId);
+      resolve(String(msg.text || ""));
+    }
+  }
+
+  async function readClipboardTextForMenu() {
+    // JCEF: navigator.clipboard.readText() часто resolve в "" (или кидает) —
+    // системный буфер IDE доступен только через host (CopyPasteManager).
+    const hostText = harborHostAvailable()
+      ? await requestClipboardTextFromHost()
+      : "";
+    if (hostText) {
+      return hostText;
+    }
+    if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          return text;
+        }
+      } catch {
+        // ignored
+      }
+    }
+    return "";
+  }
+
+  function runContextMenuCut(target) {
+    const text = selectedTextFor(target);
+    if (text) {
+      writeTextToClipboard(text);
+    }
+    if (target && target.isContentEditable) {
+      document.execCommand("delete");
+      return;
+    }
+    deleteEditableSelection(target);
+  }
+
+  function runContextMenuCopy(target) {
+    const text = selectedTextFor(target);
+    if (!text) {
+      return;
+    }
+    writeTextToClipboard(text);
+  }
+
+  async function runContextMenuPaste(target) {
+    const text = await readClipboardTextForMenu();
+    if (text) {
+      if (target && isEditableClipboardTarget(target)) {
+        target.focus();
+        if (insertTextAt(target, text)) {
+          return;
+        }
+      }
+      if (promptEl && chatScreen && !chatScreen.hidden) {
+        promptEl.focus();
+        insertTextAt(promptEl, text);
+        return;
+      }
+      insertTextAtActive(text);
+      return;
+    }
+    if (harborHostAvailable()) {
+      host.postMessage({ type: "requestClipboardImage" });
+    }
+  }
+
+  function showEditContextMenu(x, y, target) {
+    const menu = ensureEditContextMenu();
+    menu.innerHTML = "";
+    const editable = isEditableClipboardTarget(target);
+    const hasSel = Boolean(selectedTextFor(target));
+
+    const items = [];
+    if (editable && hasSel) {
+      items.push({
+        id: "cut",
+        label: t("cut"),
+        run: () => runContextMenuCut(target),
+      });
+    }
+    if (hasSel) {
+      items.push({
+        id: "copy",
+        label: t("copy"),
+        run: () => runContextMenuCopy(target),
+      });
+    }
+    if (editable || (chatScreen && !chatScreen.hidden)) {
+      items.push({
+        id: "paste",
+        label: t("paste"),
+        run: () => runContextMenuPaste(target),
+      });
+    }
+    items.push({
+      id: "selectAll",
+      label: t("selectAll"),
+      run: () => selectAllContextContent(target),
+    });
+
+    for (const item of items) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "model-option edit-context-item";
+      btn.setAttribute("role", "menuitem");
+      btn.textContent = item.label;
+      btn.addEventListener("mousedown", (event) => {
+        // Не даём выделению схлопнуться до click.
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      btn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeEditContextMenu();
+        item.run();
+      });
+      menu.appendChild(btn);
+    }
+
+    menu.hidden = false;
+    // Сброс якоря .model-menu (bottom: calc(100%+6px)) — иначе fixed-меню уезжает.
+    menu.style.position = "fixed";
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.zIndex = "10000";
+    menu.style.visibility = "hidden";
+    const menuWidth = menu.offsetWidth;
+    const menuHeight = menu.offsetHeight;
+    const edgePad = 4;
+    const maxLeft = Math.max(edgePad, window.innerWidth - menuWidth - edgePad);
+    const maxTop = Math.max(edgePad, window.innerHeight - menuHeight - edgePad);
+    const left = Math.min(Math.max(edgePad, x), maxLeft);
+    const top = Math.min(Math.max(edgePad, y), maxTop);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.visibility = "visible";
+    menu.hidden = false;
+    if (typeof forceHarborUiRepaint === "function") {
+      forceHarborUiRepaint();
+      setTimeout(forceHarborUiRepaint, 32);
+    }
+  }
+
+  document.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    closeEditContextMenu();
+    showEditContextMenu(event.clientX, event.clientY, contextEditTarget(event.target));
+  });
+
+  document.addEventListener(
+    "mousedown",
+    (event) => {
+      if (
+        editContextMenuEl &&
+        !editContextMenuEl.hidden &&
+        !editContextMenuEl.contains(event.target)
+      ) {
+        closeEditContextMenu();
+      }
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape") {
+        closeEditContextMenu();
+      }
+    },
+    true
+  );
+
+  window.addEventListener("blur", closeEditContextMenu);
+
+  document.addEventListener("keydown", (event) => {
+    const isCopy =
+      (event.key === "c" || event.key === "C" || event.code === "KeyC") &&
+      (event.metaKey || event.ctrlKey) &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!isCopy) {
+      return;
+    }
+    if (isEditableClipboardTarget(document.activeElement)) {
+      return;
+    }
+    const text = selectedPlainText();
+    if (!text) {
+      return;
+    }
+    // Не отдаём клавишу host copy (он скопирует пустой editor selection).
+    event.preventDefault();
+    event.stopPropagation();
+    writeTextToClipboard(text);
+  });
+
   // На случай, если paste пришёл до фокуса webview — подхватим после фокуса по Cmd/Ctrl+V
   document.addEventListener("keydown", (event) => {
     const isPaste =
@@ -1558,7 +1943,7 @@
         return;
       }
       pinChatToBottom();
-      setBusy(true);
+      setBusy(true, { restartRun: true });
       host.postMessage({
         type: "regenerate",
         agentMode,

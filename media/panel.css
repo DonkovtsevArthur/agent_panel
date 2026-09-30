@@ -3707,12 +3707,27 @@ button.msg-attach-image {
 .model-menu.is-fixed {
   position: fixed;
   /* top / left / bottom / max-height задаются в JS */
+  left: 0;
   right: auto;
+  top: auto;
+  bottom: auto;
   z-index: 10000;
 }
 
 .model-menu[hidden] {
   display: none !important;
+}
+
+.edit-context-menu {
+  min-width: 160px;
+  max-width: 240px;
+  max-height: none;
+  overflow: hidden;
+}
+
+.edit-context-item {
+  padding: 6px 10px;
+  white-space: nowrap;
 }
 
 .model-option {

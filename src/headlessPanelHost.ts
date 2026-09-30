@@ -155,6 +155,11 @@ export class HeadlessPanelHost {
   private contextTokens = 0;
   /** Live turn per chat — parallel chats may run simultaneously (VS Code parity). */
   private readonly chatRuns = new Map<string, AbortController>();
+  /**
+   * Wall-clock start of the in-flight run per chat. Sent on init/showChat so
+   * the live stopwatch restores after a JCEF remount instead of restarting.
+   */
+  private readonly chatRunStartedAt = new Map<string, number>();
   private readonly opts: HeadlessPanelOptions;
   private readonly providerConnStatuses = new Map<string, ProviderConnStatus>();
   private lastTurnModel = "";
@@ -966,6 +971,7 @@ export class HeadlessPanelHost {
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: paintUi,
       busy,
+      runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
       canRegenerate: Boolean(this.getRegenerateState()),
       screen: this.store.screen || "chat",
       ...meta,
@@ -989,6 +995,7 @@ export class HeadlessPanelHost {
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: paintUi,
       busy,
+      runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
       canRegenerate: Boolean(this.getRegenerateState()),
       ...meta,
       contextUsed: this.contextTokens,
@@ -1625,6 +1632,11 @@ export class HeadlessPanelHost {
     return Boolean(chatId && this.chatRuns.has(chatId));
   }
 
+  /** In-flight run start (ms) for the live stopwatch restore, 0 when idle. */
+  private chatRunStartedAtMs(chatId: string | undefined): number {
+    return (chatId && this.chatRunStartedAt.get(chatId)) || 0;
+  }
+
   /**
    * Abort and deregister the live turn of one chat (VS Code parity).
    * Leaves runs of other chats untouched.
@@ -1639,6 +1651,7 @@ export class HeadlessPanelHost {
     const controller = this.chatRuns.get(chatId);
     if (controller) {
       this.chatRuns.delete(chatId);
+      this.chatRunStartedAt.delete(chatId);
       controller.abort(reason);
     }
     // Clear the rail loader immediately — do not wait for the async turn catch.
@@ -2238,6 +2251,7 @@ export class HeadlessPanelHost {
       !ac.signal.aborted && this.chatRuns.get(runChatId) === ac;
     this.abortChatRun(runChatId, "new-run");
     this.chatRuns.set(runChatId, ac);
+    this.chatRunStartedAt.set(runChatId, Date.now());
     retainClineChatSession(runChatId);
 
     if (!msg.hideUser) {
@@ -2660,6 +2674,7 @@ export class HeadlessPanelHost {
         // kill the new run's preloader and reset visible steps.
         if (runActive()) {
           this.chatRuns.delete(runChatId);
+          this.chatRunStartedAt.delete(runChatId);
           this.setStatusForChat(runChatId, "", true);
           postToRun({ type: "idle" });
         }

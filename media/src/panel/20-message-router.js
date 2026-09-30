@@ -76,7 +76,10 @@
         if (!settingsSwitchSuppressed()) {
           showScreen(msg.screen || "agents");
         }
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         renderMessageQueue();
         break;
       case "attachmentsAdded":
@@ -129,11 +132,17 @@
         break;
       case "showAgents":
         showScreen("agents");
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "showArchive":
         showScreen("archive");
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "showSettings":
         settingsShownAt = Date.now();
@@ -148,7 +157,10 @@
         // JetBrains OSR: the screen swap may come from a host-driven inject
         // without user input in the browser — force a paint frame.
         forceHarborUiRepaint();
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         break;
       case "openChatSearch":
         openChatSearch({ fromAgents: false });
@@ -253,7 +265,10 @@
         if (!settingsSwitchSuppressed()) {
           showScreen("chat");
         }
-        setBusy(Boolean(msg.busy));
+        setBusy(Boolean(msg.busy), {
+          runStartedAt:
+            typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
+        });
         renderMessageQueue();
         {
           const highlight =
@@ -360,6 +375,15 @@
         break;
       case "copied":
         showCopyToast(t("copied"));
+        break;
+      case "clipboardText":
+        if (typeof resolveClipboardTextFromHost === "function") {
+          resolveClipboardTextFromHost(msg);
+        }
+        break;
+      case "copySelection":
+        // IDE перехватила Ctrl/Cmd+C — webview сама копирует выделение.
+        copyWebviewSelection();
         break;
       case "runFinished":
         playRunFinishedSound(msg.outcome === "error" ? "error" : "success");
@@ -626,6 +650,7 @@
         }
         if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
           lastRunDurationMs = msg.runDurationMs;
+          lastRunDurationChatId = String(activeChatId || "");
           if (typeof msg.ttftMs === "number" && msg.ttftMs > 0) {
             lastTtftMs = msg.ttftMs;
           }
@@ -642,6 +667,9 @@
               break;
             }
           }
+          // Paint «выполнено · … · 18,6 с» on the timeline even when the
+          // step-level stamp never landed (or arrived before the DOM group).
+          applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
         }
         break;
       }

@@ -105,7 +105,7 @@ export async function buildGitSnapshotMessage(): Promise<string> {
           : `ahead ${ahead}, behind ${behind}`
         : "";
     const body = [
-      "Git snapshot (may be stale — use run_command for exact status/diff):",
+      "Git snapshot (may be stale — use run_commands for exact status/diff):",
       detached ? "- Branch: detached HEAD" : `- Branch: ${branch}`,
       tracking ? `- Upstream: ${tracking}` : "",
       headLine ? `- HEAD: ${headLine}` : "",

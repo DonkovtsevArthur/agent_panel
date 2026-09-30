@@ -281,6 +281,7 @@ type WebviewToHost =
     }
   | { type: "openSearchHit"; agentId: string; messageIndex: number; chatId?: string }
   | { type: "copyText"; text: string }
+  | { type: "requestClipboardText"; requestId: string }
   | { type: "chatScroll"; chatId: string; scrollTop: number }
   | { type: "branchFromMessage"; messageIndex: number }
   | { type: "switchBranch"; chatId: string }
@@ -386,6 +387,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private totalCacheWriteTokens = 0;
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
+  /**
+   * Wall-clock start of the in-flight run per chat. Sent to the webview on
+   * init/showChat restore so the live stopwatch does not restart at "now"
+   * after a remount (settings / other section / view re-resolve).
+   */
+  private readonly chatRunStartedAt = new Map<string, number>();
   private readonly chatRunState = new Map<
     string,
     "running" | "success" | "error"
@@ -1449,6 +1456,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return Boolean(chatId && this.chatRuns.has(chatId));
   }
 
+  /** In-flight run start (ms) for the live stopwatch restore, 0 when idle. */
+  private chatRunStartedAtMs(chatId: string | undefined): number {
+    return (chatId && this.chatRunStartedAt.get(chatId)) || 0;
+  }
+
   private abortChatRun(
     chatId: string | undefined,
     reason = "user-stop"
@@ -1460,6 +1472,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (controller) {
       this.chatRuns.delete(chatId);
       this.chatRunTokens.delete(chatId);
+      this.chatRunStartedAt.delete(chatId);
       controller.abort(reason);
     }
     // Clear list loader immediately — do not wait for the async turn catch.
@@ -1479,6 +1492,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       }
       this.chatRuns.delete(chatId);
       this.chatRunTokens.delete(chatId);
+      this.chatRunStartedAt.delete(chatId);
       controller.abort(reason);
     }
     let cleared = false;
@@ -1514,6 +1528,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const token = this.nextRunToken++;
     this.chatRuns.set(chatId, controller);
     this.chatRunTokens.set(chatId, token);
+    this.chatRunStartedAt.set(chatId, Date.now());
     return {
       controller,
       token,
@@ -1570,6 +1585,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     this.chatRuns.delete(chatId);
     this.chatRunTokens.delete(chatId);
+    this.chatRunStartedAt.delete(chatId);
     onClineActiveChatChanged({
       previousChatId: chatId,
       nextChatId: this.store.activeChatId,
@@ -2270,6 +2286,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
+      runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
       agentId: agent?.id || "",
       agentName,
@@ -2419,6 +2436,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({
           type: "showAgents",
           busy: this.isChatRunning(this.store.activeChatId),
+          runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
         });
         break;
       case "showArchive":
@@ -2429,6 +2447,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.view?.webview.postMessage({
           type: "showArchive",
           busy: this.isChatRunning(this.store.activeChatId),
+          runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
         });
         break;
       case "showSettings":
@@ -2710,6 +2729,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           await vscode.env.clipboard.writeText(text);
           this.view?.webview.postMessage({ type: "copied" });
         }
+        break;
+      }
+      case "requestClipboardText": {
+        const requestId = String(message.requestId || "");
+        let text = "";
+        try {
+          text = await vscode.env.clipboard.readText();
+        } catch {
+          text = "";
+        }
+        this.view?.webview.postMessage({
+          type: "clipboardText",
+          requestId,
+          text,
+        });
         break;
       }
       case "chatScroll": {
@@ -6012,6 +6046,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
       busy: this.isChatRunning(this.store.activeChatId),
+      runStartedAt: this.chatRunStartedAtMs(this.store.activeChatId),
       canRegenerate: this.canRegenerate(),
       screen: this.store.screen,
       agentId: this.store.activeAgentId || "",

@@ -447,8 +447,26 @@ class HarborHostBridge(
       }
       "copyText" -> {
         val text = obj.get("text")?.asString ?: return
-        CopyPasteManager.getInstance().setContents(StringSelection(text))
-        postToWebview("""{"type":"copied"}""")
+        ApplicationManager.getApplication().invokeLater {
+          CopyPasteManager.getInstance().setContents(StringSelection(text))
+          postToWebview("""{"type":"copied"}""")
+        }
+      }
+      "requestClipboardText" -> {
+        val requestId = obj.get("requestId")?.asString.orEmpty()
+        ApplicationManager.getApplication().invokeLater {
+          val text = HarborClipboard.readText()
+          postToWebview(
+            gson.toJson(
+              mapOf(
+                "type" to "clipboardText",
+                "requestId" to requestId,
+                "text" to text,
+              )
+            ),
+            forceRepaint = true,
+          )
+        }
       }
       "requestClipboardImage" -> {
         ApplicationManager.getApplication().executeOnPooledThread {

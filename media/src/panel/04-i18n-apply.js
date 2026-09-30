@@ -749,9 +749,16 @@
   let streamingRenderScheduled = false;
   let lastRunDurationMs = 0;
   let lastTtftMs = 0;
+  /** Chat the last runDuration stamp belongs to (guards cross-chat paints). */
+  let lastRunDurationChatId = "";
   let composerDragDepth = 0;
   /** Live stopwatch: wall-clock ms when the current run started. */
   let runStartedAt = 0;
+  /**
+   * Per-chat run start times. Chat switches re-assert busy via showChat/init
+   * and must not restart the stopwatch for a run that is already in flight.
+   */
+  const runStartedAtByChat = new Map();
   /** Live stopwatch interval id (updates .tool-group-duration every second). */
   let runStopwatchInterval = 0;
 

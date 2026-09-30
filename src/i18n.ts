@@ -268,6 +268,7 @@ export function harborVerifyRulesForLanguage(lang: UiLanguage): string {
       "Если в ходе были правки файлов — ОДИН раз перед финальным сообщением вызови verify_edits (без paths = файлы этого хода).",
       "[error] в выводе → исправь и повтори verify_edits; с [error] задачу не закрывай.",
       "Не выдумывай «тесты прошли» — только реальный вывод verify_edits / run_commands.",
+      "Имя verify_edits и служебный текст проверки в ответ пользователю не выводи.",
     ].join("\n");
   }
   return [
@@ -275,34 +276,38 @@ export function harborVerifyRulesForLanguage(lang: UiLanguage): string {
     "If the turn edited files — call verify_edits ONCE before the final message (no `paths` = files from this turn).",
     "[error] in the output → fix and re-run verify_edits; never close the task with [error] left.",
     "Do not invent «tests passed» — only real verify_edits / run_commands output.",
+    "Do not mention verify_edits or paste the tool check text into the user-facing reply.",
   ].join("\n");
 }
 
 /**
- * Finale must be checkable: path:line citations + a real verify snapshot.
+ * Finale must be checkable: path:line citations + real evidence.
  * Anti-hallucination for «готово / fixed» claims after edits.
+ * The verify tool name stays internal — not in the user-facing reply.
  */
 export function harborEvidenceRulesForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
       "# Финал с правками",
-      "В последнем сообщении: полные пути изменённых файлов + короткий verify-снимок (verify_edits / run_commands exit code).",
-      "«Готово / исправлено» — только с tool-свидетельствами; иначе «правки применены, проверки нет».",
+      "В последнем сообщении: полные пути изменённых файлов.",
+      "Не упоминай verify_edits и не копируй служебный вывод проверки в ответ.",
+      "«Готово / исправлено» — только с реальными tool-свидетельствами; иначе «правки применены, проверки нет».",
     ].join("\n");
   }
   return [
     "# Finale after edits",
-    "Last message: full paths of edited files + a short verify snapshot (verify_edits / run_commands exit code).",
-    "«Done / fixed» only with tool evidence; otherwise say «edits applied, no automated check».",
+    "Last message: full paths of edited files.",
+    "Do not mention verify_edits or paste the tool check output into the reply.",
+    "«Done / fixed» only with real tool evidence; otherwise say «edits applied, no automated check».",
   ].join("\n");
 }
 
 /** Turn-local nudge: models heed these more reliably than rules alone. */
 export function harborVerifyUserNudgeForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
-    return "[Harbor] Правки были? → один verify_edits перед финалом; в ответе path + verify-снимок. Без свидетельств не «готово».";
+    return "[Harbor] Правки были? → один verify_edits перед финалом; в ответе path, без имени verify_edits. Без свидетельств не «готово».";
   }
-  return "[Harbor] Edited files? → one verify_edits before the finale; reply with path + verify snapshot. No evidence → no «done».";
+  return "[Harbor] Edited files? → one verify_edits before the finale; reply with path, no verify_edits mention. No evidence → no «done».";
 }
 
 /** Append verify/evidence instructions to the runtime user prompt. */
@@ -524,15 +529,10 @@ export function isBuiltinCommitMessagePrompt(value: string): boolean {
   if (!text) {
     return true;
   }
-  if (
+  // Exact match only: any edited text (even starting with the default header)
+  // is a user customization and must be preserved on save.
+  return (
     text === defaultCommitMessagePromptForLanguage("ru") ||
     text === defaultCommitMessagePromptForLanguage("en")
-  ) {
-    return true;
-  }
-  // Tolerate minor edits / old copies of the built-in instruction.
-  return (
-    text.startsWith("ИНСТРУКЦИЯ ДЛЯ ГЕНЕРАЦИИ COMMIT MESSAGE:") ||
-    text.startsWith("INSTRUCTION FOR COMMIT MESSAGE GENERATION:")
   );
 }

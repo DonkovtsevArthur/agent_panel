@@ -189,6 +189,12 @@ export class HarborCore {
         await this.ports.workspace.copyText?.(String(msg.text ?? ""));
         this.postToWebview({ type: "copied" });
         return { ok: true };
+      case "requestClipboardText": {
+        const requestId = String(msg.requestId ?? "");
+        const text = (await this.ports.workspace.readClipboardText?.()) ?? "";
+        this.postToWebview({ type: "clipboardText", requestId, text: String(text) });
+        return { ok: true };
+      }
       case "figmaRefreshStatus":
         this.postToWebview({ type: "figmaStatus", connected: false });
         return { ok: true };

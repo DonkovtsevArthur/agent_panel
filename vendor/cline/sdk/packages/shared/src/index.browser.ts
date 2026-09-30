@@ -238,6 +238,7 @@ export {
 	getShellArgs,
 	getShellInvocation,
 	getShellKind,
+	listShellExecutables,
 	type ShellInvocation,
 	type ShellKind,
 } from "./parse/shell";
