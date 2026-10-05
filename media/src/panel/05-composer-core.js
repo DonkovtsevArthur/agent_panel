@@ -80,8 +80,8 @@
         label: "/init",
         description:
           UI_LANG === "ru"
-            ? "Создать AGENTS.md — ориентир для агента"
-            : "Create AGENTS.md agent orientation guide",
+            ? "Создать или обновить AGENTS.md — ориентир для агента"
+            : "Create or update AGENTS.md agent orientation guide",
         kind: "prompt",
       },
       {

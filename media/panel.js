@@ -515,9 +515,9 @@
       failedReadFile: "Failed to read file",
       slashModeSwitched: (label) => `Mode: ${label}`,
       slashInitDefault:
-        "Inspect this repository and create or update AGENTS.md at the workspace root. Keep exploration short: prefer package.json, README, and a quick src/ layout — do not read the whole tree. After 1–2 tool rounds, write AGENTS.md as a concise agent orientation guide: what the project does, stack, how to build/run, main entry points, key folders/files, important conventions/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.",
+        "Inspect this repository and create or update AGENTS.md at the workspace root. Start from what exists: if AGENTS.md or similar agent docs (CLAUDE.md, .cursor/rules) are already present, read them first and update in place — keep valid hand-written sections, fix only what is stale or missing; do not overwrite useful content. Explore briefly and with purpose — a few tool rounds, not the whole tree: manifests (package.json and similar), README, top-level folder layout, docs/, build/test/CI configs, and 2–3 key entry-point files. Write AGENTS.md as a dense orientation guide for a coding agent: what the project is (1–2 lines); an area → where table (entry points, main folders, key files); exact build/run/test commands taken from configs; non-obvious architecture/runtime notes; conventions and hard constraints, especially what the agent must NOT do; gotchas and the best next steps. Every line must be specific and non-obvious — no generic advice, no restating the README. Match the language of the existing docs (or the user's language if none). Use write_file or search_replace, then briefly confirm in chat what you wrote.",
       slashInitWithTarget: (target) =>
-        `Inspect this repository with a focus on ${target} and create or update AGENTS.md at the workspace root. Keep exploration short — after 1–2 tool rounds, write the file. Cover what this part does, key files, how it fits the project, important risks/constraints, and the best next steps. Prefer updating an existing AGENTS.md instead of overwriting useful content. Use write_file or search_replace, then briefly confirm in chat what you wrote.`,
+        `Inspect ${target} in this repository and create or update AGENTS.md at the workspace root with a focus on that part. Start from what exists: if AGENTS.md or similar agent docs (CLAUDE.md, .cursor/rules) already cover this area, read them first and update in place — keep valid hand-written sections, fix only what is stale or missing. Explore briefly and with purpose — a few tool rounds, not the whole tree: ${target} layout, related manifests and build/test configs, and 2–3 key files. Write a dense orientation guide for a coding agent: what this part does (1–2 lines); an area → where table for ${target}; exact commands taken from configs; how it fits the rest of the project; non-obvious architecture/runtime notes; conventions and hard constraints, especially what the agent must NOT do; risks, gotchas and the best next steps. Every line must be specific and non-obvious — no generic advice, no restating the README. Match the language of the existing docs (or the user's language if none). Use write_file or search_replace, then briefly confirm in chat what you wrote.`,
       slashCompactDefault:
         "Compact this chat into a short working summary. Include: goal, what is already done, important files/symbols, current constraints, open questions, and the exact next step. Keep it concise and easy to continue from.",
       slashCompactWithTarget: (target) =>
@@ -1023,9 +1023,9 @@
       failedReadFile: "Не удалось прочитать файл",
       slashModeSwitched: (label) => `Режим: ${label}`,
       slashInitDefault:
-        "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко: хватит package.json, README и быстрого взгляда на src/ — не читай всё дерево. После 1–2 раундов инструментов сразу запиши AGENTS.md — краткий ориентир для агента: что делает проект, стек, как собирать/запускать, основные entry points, ключевые папки/файлы, важные соглашения/ограничения и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
+        "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Начни с существующего: если AGENTS.md или похожие файлы для агентов (CLAUDE.md, .cursor/rules) уже есть — сначала прочитай их и обновляй на месте, сохраняя полезные рукописные разделы; чини только устаревшее или отсутствующее, не затирай полезное. Исследуй коротко и по делу — несколько раундов инструментов, не всё дерево: манифесты (package.json и подобные), README, структуру папок верхнего уровня, docs/, конфиги сборки/тестов/CI и 2–3 ключевых entry point. Запиши AGENTS.md как плотный ориентир для кодинг-агента: что за проект (1–2 строки); таблицу «область → где искать» (entry points, основные папки, ключевые файлы); точные команды сборки/запуска/тестов из конфигов; неочевидные заметки про архитектуру/рантайм; соглашения и жёсткие ограничения — особенно что агенту делать НЕЛЬЗЯ; подводные камни и с чего лучше продолжать. Каждая строка — конкретная и неочевидная: без общих слов и пересказа README. Пиши на языке существующих доков (или на языке пользователя, если их нет). Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
       slashInitWithTarget: (target) =>
-        `Изучи этот репозиторий с фокусом на ${target} и создай или обнови файл AGENTS.md в корне workspace. Исследуй кратко — после 1–2 раундов инструментов сразу пиши файл. Опиши, что делает эта часть, какие файлы ключевые, как она связана с остальным кодом, какие есть ограничения/риски и с чего лучше продолжать. Если AGENTS.md уже есть — обнови его, не затирая полезное. Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.`,
+        `Изучи ${target} в этом репозитории и создай или обнови файл AGENTS.md в корне workspace с фокусом на эту часть. Начни с существующего: если AGENTS.md или похожие файлы для агентов (CLAUDE.md, .cursor/rules) уже описывают эту область — сначала прочитай их и обновляй на месте, сохраняя полезные рукописные разделы. Исследуй коротко и по делу — несколько раундов инструментов, не всё дерево: структуру ${target}, связанные манифесты и конфиги сборки/тестов и 2–3 ключевых файла. Запиши плотный ориентир для кодинг-агента: что делает эта часть (1–2 строки); таблицу «область → где искать» по ${target}; точные команды из конфигов; как эта часть связана с остальным кодом; неочевидные заметки про архитектуру/рантайм; соглашения и жёсткие ограничения — особенно что агенту делать НЕЛЬЗЯ; риски, подводные камни и с чего лучше продолжать. Каждая строка — конкретная и неочевидная: без общих слов и пересказа README. Пиши на языке существующих доков (или на языке пользователя, если их нет). Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.`,
       slashCompactDefault:
         "Сожми текущий чат в короткое рабочее резюме. Включи: цель, что уже сделано, важные файлы/символы, текущие ограничения, открытые вопросы и точный следующий шаг. Пиши коротко, чтобы по summary можно было сразу продолжить работу.",
       slashCompactWithTarget: (target) =>
@@ -2495,8 +2495,8 @@
         label: "/init",
         description:
           UI_LANG === "ru"
-            ? "Создать AGENTS.md — ориентир для агента"
-            : "Create AGENTS.md agent orientation guide",
+            ? "Создать или обновить AGENTS.md — ориентир для агента"
+            : "Create or update AGENTS.md agent orientation guide",
         kind: "prompt",
       },
       {
@@ -4475,6 +4475,14 @@
           ? "Последний вывод терминала / Run"
           : "Last terminal / Run output",
         icon: "terminal",
+      },
+      {
+        special: "logs",
+        name: "@logs",
+        hint: UI_LANG === "ru"
+          ? "Хвост логов и разбор стектрейса: @logs [путь]"
+          : "Log tails + stack trace frames: @logs [path]",
+        icon: "receipt_long",
       },
       {
         special: "db",
@@ -16196,6 +16204,28 @@
     });
   }
 
+  /**
+   * Lost-`idle` safety net: the terminal host burst (assistantDone →
+   * runDuration → idle) crosses an async webview bridge, and a dropped
+   * `idle` (or an exception mid-handler) leaves busy=false with a full
+   * queue and no drain trigger. assistantDone/runDuration arm a short
+   * fallback that starts the queued message unless a run is active.
+   * Inert when `idle` arrived normally: the drain either dispatched
+   * (busy=true) or had nothing queued.
+   */
+  let queueDrainFallbackTimer = 0;
+  function armQueueDrainFallback() {
+    if (queueDrainFallbackTimer) {
+      clearTimeout(queueDrainFallbackTimer);
+    }
+    queueDrainFallbackTimer = setTimeout(() => {
+      queueDrainFallbackTimer = 0;
+      if (!busy) {
+        tryDrainQueue();
+      }
+    }, 1500);
+  }
+
   updateSendButton();
 
   // сразу показать модель, не дожидаясь init
@@ -19729,6 +19759,7 @@
           editingModeId = "";
         }
         setBusy(false);
+        armQueueDrainFallback();
         ensureRegenerateButton();
         // Re-sync Build from history: hide if Build already ran; show only for
         // a fresh unanswered plan (do not resurrect after implement).
@@ -19772,6 +19803,9 @@
           // Paint «выполнено · … · 18,6 с» on the timeline even when the
           // step-level stamp never landed (or arrived before the DOM group).
           applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
+          // Terminal message right before `idle` — arm the drain fallback in
+          // case the idle message is lost on the webview bridge.
+          armQueueDrainFallback();
         }
         break;
       }
@@ -19794,44 +19828,49 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
-        // If assistantDone never arrived, commit whatever streamed so far
-        // instead of orphaning a visible bubble without a cache entry.
-        if (streamingEl && streamingEl.isConnected) {
-          const raw = String(streamingEl.dataset.raw || "").trim();
-          if (raw) {
-            const last = uiMessagesCache[uiMessagesCache.length - 1];
-            if (!(last?.role === "assistant" && String(last.text || "") === raw)) {
-              uiMessagesCache.push({ role: "assistant", text: raw });
-              streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+        // The queue drain MUST run even if the cosmetic DOM work below
+        // throws — one wedged run used to strand every queued message.
+        try {
+          // If assistantDone never arrived, commit whatever streamed so far
+          // instead of orphaning a visible bubble without a cache entry.
+          if (streamingEl && streamingEl.isConnected) {
+            const raw = String(streamingEl.dataset.raw || "").trim();
+            if (raw) {
+              const last = uiMessagesCache[uiMessagesCache.length - 1];
+              if (!(last?.role === "assistant" && String(last.text || "") === raw)) {
+                uiMessagesCache.push({ role: "assistant", text: raw });
+                streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+              }
             }
           }
-        }
-        streamingEl = null;
-        streamingRenderScheduled = false;
-        sealToolGroups();
-        markFailedToolGroups();
-        // If retries show API 5xx but the host never delivered runFailed/append,
-        // synthesize the error bubble so the user is not stuck on «Работаю…».
-        if (
-          busy &&
-          !uiMessagesCache.some(
-            (m, i) =>
-              i >= uiMessagesCache.length - 3 && m && m.role === "error"
-          )
-        ) {
-          const failedGroup = [...messagesEl.querySelectorAll(".tool-group")].find(
-            (g) => g.dataset.failed === "1" || timelineLooksLikeTransportFailure(g)
-          );
-          if (failedGroup) {
-            finishRunWithError(t("runFailedTransport"));
-            break;
+          streamingEl = null;
+          streamingRenderScheduled = false;
+          sealToolGroups();
+          markFailedToolGroups();
+          // If retries show API 5xx but the host never delivered runFailed/append,
+          // synthesize the error bubble so the user is not stuck on «Работаю…».
+          if (
+            busy &&
+            !uiMessagesCache.some(
+              (m, i) =>
+                i >= uiMessagesCache.length - 3 && m && m.role === "error"
+            )
+          ) {
+            const failedGroup = [...messagesEl.querySelectorAll(".tool-group")].find(
+              (g) => g.dataset.failed === "1" || timelineLooksLikeTransportFailure(g)
+            );
+            if (failedGroup) {
+              finishRunWithError(t("runFailedTransport"));
+              break;
+            }
           }
+          completeRunningTodoPlans();
+        } finally {
+          setIdleAndDrain();
+          // Do not show turn timing (TTFT → total) under the answer — duration
+          // stays only in the sealed tool-group summary («выполнено · …»).
+          setAgentStatus("", true);
         }
-        completeRunningTodoPlans();
-        setIdleAndDrain();
-        // Do not show turn timing (TTFT → total) under the answer — duration
-        // stays only in the sealed tool-group summary («выполнено · …»).
-        setAgentStatus("", true);
         break;
       case "stopped":
         if (msg.chatId && !activeChatId) {
@@ -19840,10 +19879,13 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
-        clearStoppedRunArtifacts();
-        sealToolGroups();
-        setAgentStatus("", true);
-        setIdleAndDrain();
+        try {
+          clearStoppedRunArtifacts();
+          sealToolGroups();
+        } finally {
+          setAgentStatus("", true);
+          setIdleAndDrain();
+        }
         break;
       case "cleared":
         messagesEl.innerHTML = "";

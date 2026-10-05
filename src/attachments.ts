@@ -568,6 +568,27 @@ function truncateText(text: string, max = MAX_TEXT_CHARS): string {
   return `${text.slice(0, max)}\n\n[truncated]`;
 }
 
+/**
+ * `.env*` files: keep key names, never values — the model needs to know
+ * which variables exist, secrets must not reach the conversation. Line-based:
+ * comments/blank lines pass, unknown lines (multi-line values) are dropped.
+ */
+export function redactEnvValues(text: string): string {
+  return String(text || "")
+    .split("\n")
+    .map((line) => {
+      if (!line.trim() || /^\s*#/.test(line)) {
+        return line;
+      }
+      const m = line.match(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*\s*=)/);
+      if (m) {
+        return `${m[1]}<redacted>`;
+      }
+      return "[redacted]";
+    })
+    .join("\n");
+}
+
 async function fileTextExcerpt(
   attachment: MessageAttachment,
   maxChars = MAX_TEXT_CHARS,
@@ -585,7 +606,12 @@ async function fileTextExcerpt(
     if (!bytes) {
       return undefined;
     }
-    return truncateText(bytes.toString("utf8"), maxChars);
+    let text = bytes.toString("utf8");
+    // Redact secrets for any `.env*` file (`.env`, `.env.local`, …).
+    if (path.basename(label).startsWith(".env")) {
+      text = `${redactEnvValues(text)}\n[.env: значения переменных скрыты — переданы только имена]`;
+    }
+    return truncateText(text, maxChars);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     return `Не удалось прочитать ${label}: ${text}`;
@@ -643,6 +669,24 @@ export async function buildInlinedAttachmentsPrompt(
 
 const MENTION_RE = /@([^\s@]+)/g;
 
+/**
+ * Special mention words (@problems / @terminal / @db / @logs / …) must not
+ * become file mentions — a workspace often has a `logs` directory, which
+ * would otherwise turn `@logs` into a bogus directory attachment.
+ */
+const SPECIAL_MENTION_WORDS = new Set([
+  "problems",
+  "diagnostics",
+  "terminal",
+  "run",
+  "db",
+  "schema",
+  "database",
+  "logs",
+  "log",
+  "url",
+]);
+
 /** Пути из `@path` в тексте сообщения. */
 export function extractMentionPaths(text: string): string[] {
   const out: string[] = [];
@@ -658,6 +702,9 @@ export function extractMentionPaths(text: string): string[] {
     }
     const rel = raw.replace(/^\.\//, "").replace(/^\/+/, "");
     if (!rel || seen.has(rel)) {
+      continue;
+    }
+    if (SPECIAL_MENTION_WORDS.has(rel.toLowerCase())) {
       continue;
     }
     seen.add(rel);

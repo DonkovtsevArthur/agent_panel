@@ -355,6 +355,14 @@
         icon: "terminal",
       },
       {
+        special: "logs",
+        name: "@logs",
+        hint: UI_LANG === "ru"
+          ? "Хвост логов и разбор стектрейса: @logs [путь]"
+          : "Log tails + stack trace frames: @logs [path]",
+        icon: "receipt_long",
+      },
+      {
         special: "db",
         name: "@db",
         hint: UI_LANG === "ru"

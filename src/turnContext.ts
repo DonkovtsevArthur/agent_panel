@@ -12,6 +12,7 @@ import {
 } from "./editorContext";
 import { buildGitSnapshotMessage } from "./gitStatus";
 import { buildTerminalSnapshotMessage } from "./terminalContext";
+import { buildRuntimeServicesMessage } from "./runtimeServicesContext";
 import {
   buildEnclosingSymbolMessage,
   formatEnclosingSymbolMessage,
@@ -41,7 +42,7 @@ const DIAGNOSTIC_MESSAGE_CHARS = 180;
  * When the total exceeds the budget, lowest-priority blocks are dropped
  * until it fits. The header "[Harbor turn context]" is always kept.
  */
-const TURN_CONTEXT_TOKEN_BUDGET = 4_000;
+const TURN_CONTEXT_TOKEN_BUDGET = 6_000;
 /** Approximate chars per token (conservative for mixed ru/en/code). */
 const CHARS_PER_TOKEN = 4;
 const TURN_CONTEXT_CHAR_BUDGET = TURN_CONTEXT_TOKEN_BUDGET * CHARS_PER_TOKEN;
@@ -397,6 +398,19 @@ export async function buildTurnContextBlock(options: {
     }
   } catch {
     /* headless / no LSP */
+  }
+
+  // --- Priority 8: dev runtime map (docker-compose / .env names) ---
+  try {
+    const roots = (vscode.workspace.workspaceFolders || []).map(
+      (folder) => folder.uri.fsPath
+    );
+    const runtime = buildRuntimeServicesMessage(roots);
+    if (runtime.trim()) {
+      blocks.push({ text: runtime.trim(), priority: 8 });
+    }
+  } catch {
+    /* headless / no workspace */
   }
 
   // --- Priority 8: terminal snapshot ---

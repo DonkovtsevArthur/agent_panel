@@ -361,6 +361,23 @@ const PROVIDER_PROBE_POLL_MS = 15_000;
 const FUZZY_FILE_EXCLUDE =
   "{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/out/**,**/.next/**}";
 
+/**
+ * Image formats the built-in VS Code viewer can render — opened via
+ * `vscode.open` when a text load fails. Other binaries (xlsx, pdf, heic,
+ * archives…) fall back to the OS default application instead.
+ */
+const IMAGE_PREVIEW_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "avif",
+  "cur",
+]);
+
 export class AgentPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "agentPanel.chat";
   /** Shared with JetBrains JCEF via packages/harbor-host-protocol. */
@@ -3346,10 +3363,37 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       const doc = await vscode.workspace.openTextDocument(target);
       await vscode.window.showTextDocument(doc, { preview: true });
     } catch (error) {
+      // Binary payload (xlsx/pdf/zip/…) can't load as a text document —
+      // images go to the built-in viewer, the rest to the OS default app.
+      if (await this.openNonTextFile(target)) {
+        return;
+      }
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(
         `Failed to open ${relativePath}: ${text}`
       );
+    }
+  }
+
+  /**
+   * Fallback for files that refuse `openTextDocument` (binary or unloadable):
+   * render images with the built-in viewer, hand the rest to the OS default
+   * application. False means nothing opened and the caller keeps its error.
+   */
+  private async openNonTextFile(target: vscode.Uri): Promise<boolean> {
+    const ext = path.extname(target.path).toLowerCase().replace(/^\./, "");
+    if (IMAGE_PREVIEW_EXTENSIONS.has(ext)) {
+      try {
+        await vscode.commands.executeCommand("vscode.open", target);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    try {
+      return await vscode.env.openExternal(target);
+    } catch {
+      return false;
     }
   }
 

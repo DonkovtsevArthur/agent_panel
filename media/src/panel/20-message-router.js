@@ -636,6 +636,7 @@
           editingModeId = "";
         }
         setBusy(false);
+        armQueueDrainFallback();
         ensureRegenerateButton();
         // Re-sync Build from history: hide if Build already ran; show only for
         // a fresh unanswered plan (do not resurrect after implement).
@@ -679,6 +680,9 @@
           // Paint «выполнено · … · 18,6 с» on the timeline even when the
           // step-level stamp never landed (or arrived before the DOM group).
           applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
+          // Terminal message right before `idle` — arm the drain fallback in
+          // case the idle message is lost on the webview bridge.
+          armQueueDrainFallback();
         }
         break;
       }
@@ -701,44 +705,49 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
-        // If assistantDone never arrived, commit whatever streamed so far
-        // instead of orphaning a visible bubble without a cache entry.
-        if (streamingEl && streamingEl.isConnected) {
-          const raw = String(streamingEl.dataset.raw || "").trim();
-          if (raw) {
-            const last = uiMessagesCache[uiMessagesCache.length - 1];
-            if (!(last?.role === "assistant" && String(last.text || "") === raw)) {
-              uiMessagesCache.push({ role: "assistant", text: raw });
-              streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+        // The queue drain MUST run even if the cosmetic DOM work below
+        // throws — one wedged run used to strand every queued message.
+        try {
+          // If assistantDone never arrived, commit whatever streamed so far
+          // instead of orphaning a visible bubble without a cache entry.
+          if (streamingEl && streamingEl.isConnected) {
+            const raw = String(streamingEl.dataset.raw || "").trim();
+            if (raw) {
+              const last = uiMessagesCache[uiMessagesCache.length - 1];
+              if (!(last?.role === "assistant" && String(last.text || "") === raw)) {
+                uiMessagesCache.push({ role: "assistant", text: raw });
+                streamingEl.dataset.index = String(uiMessagesCache.length - 1);
+              }
             }
           }
-        }
-        streamingEl = null;
-        streamingRenderScheduled = false;
-        sealToolGroups();
-        markFailedToolGroups();
-        // If retries show API 5xx but the host never delivered runFailed/append,
-        // synthesize the error bubble so the user is not stuck on «Работаю…».
-        if (
-          busy &&
-          !uiMessagesCache.some(
-            (m, i) =>
-              i >= uiMessagesCache.length - 3 && m && m.role === "error"
-          )
-        ) {
-          const failedGroup = [...messagesEl.querySelectorAll(".tool-group")].find(
-            (g) => g.dataset.failed === "1" || timelineLooksLikeTransportFailure(g)
-          );
-          if (failedGroup) {
-            finishRunWithError(t("runFailedTransport"));
-            break;
+          streamingEl = null;
+          streamingRenderScheduled = false;
+          sealToolGroups();
+          markFailedToolGroups();
+          // If retries show API 5xx but the host never delivered runFailed/append,
+          // synthesize the error bubble so the user is not stuck on «Работаю…».
+          if (
+            busy &&
+            !uiMessagesCache.some(
+              (m, i) =>
+                i >= uiMessagesCache.length - 3 && m && m.role === "error"
+            )
+          ) {
+            const failedGroup = [...messagesEl.querySelectorAll(".tool-group")].find(
+              (g) => g.dataset.failed === "1" || timelineLooksLikeTransportFailure(g)
+            );
+            if (failedGroup) {
+              finishRunWithError(t("runFailedTransport"));
+              break;
+            }
           }
+          completeRunningTodoPlans();
+        } finally {
+          setIdleAndDrain();
+          // Do not show turn timing (TTFT → total) under the answer — duration
+          // stays only in the sealed tool-group summary («выполнено · …»).
+          setAgentStatus("", true);
         }
-        completeRunningTodoPlans();
-        setIdleAndDrain();
-        // Do not show turn timing (TTFT → total) under the answer — duration
-        // stays only in the sealed tool-group summary («выполнено · …»).
-        setAgentStatus("", true);
         break;
       case "stopped":
         if (msg.chatId && !activeChatId) {
@@ -747,10 +756,13 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
-        clearStoppedRunArtifacts();
-        sealToolGroups();
-        setAgentStatus("", true);
-        setIdleAndDrain();
+        try {
+          clearStoppedRunArtifacts();
+          sealToolGroups();
+        } finally {
+          setAgentStatus("", true);
+          setIdleAndDrain();
+        }
         break;
       case "cleared":
         messagesEl.innerHTML = "";

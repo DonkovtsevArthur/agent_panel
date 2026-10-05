@@ -6,7 +6,11 @@
  * vscode workspace search is required lazily with an fs-walk fallback.
  */
 import * as fs from "fs";
-import * as path from "path";
+import {
+  collectFilesByGlobs,
+  matchRelPath,
+  relativeToRoots,
+} from "./globFiles";
 
 /** Workspace globs scanned by `@db` (overridable: agentPanel.db.schemaGlobs). */
 export const DEFAULT_DB_SCHEMA_GLOBS: string[] = [
@@ -30,21 +34,6 @@ const TOTAL_CHARS = 32_000;
 const MAX_SCAN_FILES = 80;
 const MAX_FILE_BYTES = 400_000;
 const WALK_MAX_DEPTH = 10;
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  ".hg",
-  ".svn",
-  "dist",
-  "out",
-  "build",
-  "target",
-  "vendor",
-  "__pycache__",
-  ".venv",
-  ".next",
-  ".turbo",
-]);
 
 /** Normalize a user-provided glob list; empty → defaults. */
 export function normalizeDbSchemaGlobs(raw: unknown): string[] {
@@ -54,48 +43,11 @@ export function normalizeDbSchemaGlobs(raw: unknown): string[] {
   return list.length ? list : DEFAULT_DB_SCHEMA_GLOBS;
 }
 
-/** Minimal glob → RegExp: `**` spans separators, `*`/`?` do not. */
-function globToRegExp(glob: string): RegExp {
-  const prefix = glob.startsWith("/") ? "" : "/";
-  let source = "";
-  let i = 0;
-  while (i < glob.length) {
-    const ch = glob[i];
-    if (ch === "*") {
-      if (glob[i + 1] === "*") {
-        // `**/` and `**` — any path (greedy across separators).
-        source += glob[i + 2] === "/" ? "(?:.*/)?" : ".*";
-        i += glob[i + 2] === "/" ? 3 : 2;
-      } else {
-        source += "[^/]*";
-        i += 1;
-      }
-    } else if (ch === "?") {
-      source += "[^/]";
-      i += 1;
-    } else if ("\\^$.|+()[]{}".includes(ch)) {
-      source += `\\${ch}`;
-      i += 1;
-    } else {
-      source += ch;
-      i += 1;
-    }
-  }
-  return new RegExp(`^${prefix}${source}$`);
-}
-
 export function dbSchemaMatchesGlobs(
   relPath: string,
   globs: string[]
 ): boolean {
-  const rel = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
-  return globs.some((g) => {
-    try {
-      return globToRegExp(g).test(`/${rel}`);
-    } catch {
-      return false;
-    }
-  });
+  return matchRelPath(relPath, globs);
 }
 
 /** Schema files first, then changelogs, then migrations, then everything else. */
@@ -117,41 +69,6 @@ function dbSchemaPriority(relPath: string): number {
     return 4;
   }
   return 6;
-}
-
-function* walkFiles(root: string, dir: string, depth: number): Generator<string> {
-  if (depth > WALK_MAX_DEPTH) {
-    return;
-  }
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.name.startsWith(".") && entry.name !== ".") {
-      continue;
-    }
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) {
-        continue;
-      }
-      yield* walkFiles(root, full, depth + 1);
-    } else if (entry.isFile()) {
-      yield full;
-    }
-  }
-}
-
-function relativeToRoots(roots: string[], filePath: string): string {
-  for (const root of roots) {
-    if (filePath.startsWith(root + path.sep)) {
-      return path.relative(root, filePath);
-    }
-  }
-  return filePath;
 }
 
 /** Fast path inside VS Code: workspace search honors default excludes. */
@@ -187,26 +104,10 @@ async function collectWithVscode(
 }
 
 function collectWithWalk(roots: string[], globs: string[]): string[] {
-  const found: string[] = [];
-  for (const root of roots) {
-    try {
-      if (!fs.statSync(root).isDirectory()) {
-        continue;
-      }
-    } catch {
-      continue;
-    }
-    for (const filePath of walkFiles(root, root, 0)) {
-      const rel = relativeToRoots(roots, filePath);
-      if (dbSchemaMatchesGlobs(rel, globs)) {
-        found.push(filePath);
-        if (found.length >= MAX_SCAN_FILES) {
-          return found;
-        }
-      }
-    }
-  }
-  return found;
+  return collectFilesByGlobs(roots, globs, {
+    maxFiles: MAX_SCAN_FILES,
+    maxDepth: WALK_MAX_DEPTH,
+  }).map((ref) => ref.abs);
 }
 
 function readCapped(filePath: string): string {

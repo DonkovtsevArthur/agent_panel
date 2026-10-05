@@ -708,6 +708,28 @@
     });
   }
 
+  /**
+   * Lost-`idle` safety net: the terminal host burst (assistantDone →
+   * runDuration → idle) crosses an async webview bridge, and a dropped
+   * `idle` (or an exception mid-handler) leaves busy=false with a full
+   * queue and no drain trigger. assistantDone/runDuration arm a short
+   * fallback that starts the queued message unless a run is active.
+   * Inert when `idle` arrived normally: the drain either dispatched
+   * (busy=true) or had nothing queued.
+   */
+  let queueDrainFallbackTimer = 0;
+  function armQueueDrainFallback() {
+    if (queueDrainFallbackTimer) {
+      clearTimeout(queueDrainFallbackTimer);
+    }
+    queueDrainFallbackTimer = setTimeout(() => {
+      queueDrainFallbackTimer = 0;
+      if (!busy) {
+        tryDrainQueue();
+      }
+    }, 1500);
+  }
+
   updateSendButton();
 
   // сразу показать модель, не дожидаясь init

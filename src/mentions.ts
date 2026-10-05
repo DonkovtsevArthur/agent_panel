@@ -13,6 +13,7 @@ import {
   collectDbSchemaFiles,
   normalizeDbSchemaGlobs,
 } from "./dbSchemaContext";
+import { buildLogsMessage } from "./logsContext";
 
 const PROBLEMS_MAX_ITEMS = 40;
 const PROBLEMS_MESSAGE_CHARS = 200;
@@ -24,6 +25,9 @@ export interface SpecialMentions {
   problems: boolean;
   terminal: boolean;
   db: boolean;
+  /** `@logs` / `@log` — with the optional path argument from `@logs <path>`. */
+  logs: boolean;
+  logsPath: string;
   urls: string[];
 }
 
@@ -46,12 +50,27 @@ export function extractSpecialMentions(text: string): SpecialMentions {
   while ((match = atUrl.exec(raw))) {
     pushUrl(String(match[1] || ""));
   }
+  // `(?![\w.:@])` keeps "@db" from firing inside emails/hostnames (a@db.corp).
+  const dbMatch = /(?:^|[^@\w])@(?:db|schema|database)\b(?![\w.:@])/i.test(raw);
+  // `@logs` / `@log`, optional explicit file: `@logs var/log/app.log`. A bare
+  // word after @logs is prose, not a path — accept quoted strings or tokens
+  // that look path-like (slash or extension).
+  const logsMatch = /(?:^|[^@\w])@(?:logs|log)\b(?![\w.:@])(?:\s+(?:"([^"]+)"|([^\s@]+)))?/i.exec(
+    raw
+  );
+  let logsPath = String(logsMatch?.[1] || "").trim();
+  if (!logsPath && logsMatch?.[2]) {
+    const tok = String(logsMatch[2]).trim().replace(/[).,;]+$/, "");
+    if (/\.[A-Za-z0-9]+$/.test(tok) || /[\\/]/.test(tok)) {
+      logsPath = tok;
+    }
+  }
   return {
     problems: /@(problems|diagnostics)\b/i.test(raw),
     terminal: /@(terminal|run)\b/i.test(raw),
-    // `(?:^|[^@\w])` + `(?![\w.:@])` keep "@db" from firing inside
-    // emails/hostnames (a@db.corp, user@db).
-    db: /(?:^|[^@\w])@(?:db|schema|database)\b(?![\w.:@])/i.test(raw),
+    db: dbMatch,
+    logs: Boolean(logsMatch),
+    logsPath,
     urls,
   };
 }
@@ -253,6 +272,25 @@ export async function buildSpecialMentionsPrompt(
       parts.push(
         "DB schema (@db): unavailable in this host (no workspace file access)."
       );
+    }
+  }
+
+  if (mentions.logs) {
+    try {
+      const roots = (vscode.workspace.workspaceFolders || []).map(
+        (folder) => folder.uri.fsPath
+      );
+      const terminal = buildTerminalSnapshotMessage();
+      const message = buildLogsMessage(roots, {
+        terminalMessage: terminal,
+        explicitPath: mentions.logsPath || undefined,
+      });
+      parts.push(
+        message ||
+          "App logs (@logs): no recent terminal output and no *.log files in the workspace."
+      );
+    } catch {
+      parts.push("App logs (@logs): unavailable in this host.");
     }
   }
 
