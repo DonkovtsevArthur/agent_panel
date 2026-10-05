@@ -2,6 +2,15 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [2.9.22] — 2026-10-05
+
+- **Agent:** упоминание `@db` — схема БД из репозитория в контекст хода: Prisma-схема, SQL-миграции, Flyway/Liquibase changelog (кап 12 файлов / 32K символов). Живых подключений к БД нет — только файлы workspace. Globs настраиваются: `agentPanel.db.schemaGlobs`
+- **Agent:** новый tool `http_request` — агент сам дёргает локальные/dev HTTP API (method/headers/body → статус + тело) после правок и закрывает цикл «правка → запрос → фикс» без ручного curl
+- **Безопасность:** `http_request` — allowlist хостов: только localhost/127.0.0.1 + `agentPanel.http.allowedHosts` (записи вида `.corp.example` — хост и поддомены); редиректы перепроверяются на каждом прыжке; капы тела/ответа/таймаута
+- **Agent:** backend-скиллы из коробки: `sql-review` (N+1, индексы, транзакции), `api-security-review` (IDOR, инъекции, SSRF, mass-assignment), `db-migration-review` (блокировки, expand→contract, rollback) — копируются в `~/.harbor/skills` при активации, существующие скиллы не перезаписываются
+- **UI:** карточка `http_request` в ленте шагов с метриками (метод · URL · HTTP-статус); `@db` добавлен в меню упоминаний композера
+- **Автоподтверждение:** `http_request` отнесён к группе `web` — наследует существующую настройку `agentPanel.tools.approvals.web`
+
 ## [2.9.0] — 2026-08-17
 
 - **Agent:** verify-loop — tool `verify_edits` собирает IDE diagnostics по изменённым файлам; один вызов перед финалом

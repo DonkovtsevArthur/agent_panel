@@ -19,6 +19,7 @@ import {
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { normalizeReasoningEffort } from "./reasoningEffort";
+import { DEFAULT_DB_SCHEMA_GLOBS } from "./dbSchemaContext";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -271,6 +272,20 @@ export interface AgentPanelConfig {
   tools: {
     autoApprove: boolean;
     approvals: ToolApprovalsConfig;
+  };
+  /**
+   * `@db` mention: workspace globs for DB schema files (Prisma schema, SQL
+   * migrations, changelogs) injected into the turn when the user types @db.
+   */
+  db: {
+    schemaGlobs: string[];
+  };
+  /**
+   * `http_request` extra tool: hosts it may call besides localhost/127.0.0.1.
+   * Entries like `.corp.example` allow the host and all its subdomains.
+   */
+  http: {
+    allowedHosts: string[];
   };
   /**
    * `[Harbor turn context]` IDE block on follow-up turns of a live Cline
@@ -678,6 +693,23 @@ export function getConfig(): AgentPanelConfig {
         approvals,
       };
     })(),
+    db: {
+      schemaGlobs: (() => {
+        const raw = cfg.get<unknown>("db.schemaGlobs");
+        const list = Array.isArray(raw)
+          ? raw.map((g) => String(g || "").trim()).filter(Boolean)
+          : [];
+        return list.length ? list : DEFAULT_DB_SCHEMA_GLOBS;
+      })(),
+    },
+    http: {
+      allowedHosts: (() => {
+        const raw = cfg.get<unknown>("http.allowedHosts");
+        return Array.isArray(raw)
+          ? raw.map((h) => String(h || "").trim()).filter(Boolean)
+          : [];
+      })(),
+    },
     turnContext: {
       // Default slim: full IDE block only on the first turn of a chat.
       followUps: (() => {

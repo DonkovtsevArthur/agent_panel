@@ -28,7 +28,12 @@
 
 
   function setMessageContent(el, role, text) {
-    const raw = text || "";
+    let raw = text || "";
+    // Assistant bubble: drop a text plan that duplicates the visible
+    // update_todo checklist card (same turn). Keeps dataset.raw clean for copy.
+    if (role === "assistant" || role === "error") {
+      raw = maybeStripTodoPlanText(el, raw);
+    }
     el.dataset.raw = raw;
     let body = el.querySelector(".msg-body");
     if (!body) {
@@ -356,6 +361,32 @@
         item.step,
         item.detail
       );
+      // History redraw: thinking-only / text-only turns carry the full-run
+      // duration on the assistant message (no tool step to stamp). Paint it
+      // on the sealed timeline so «выполнено» is never missing the time.
+      const msgRunMs =
+        typeof item.runDurationMs === "number" && item.runDurationMs > 0
+          ? item.runDurationMs
+          : 0;
+      const stepRunMs =
+        item.step &&
+        typeof item.step.runDurationMs === "number" &&
+        item.step.runDurationMs > 0
+          ? item.step.runDurationMs
+          : 0;
+      const runMs = msgRunMs > 0 ? msgRunMs : stepRunMs;
+      if (runMs > 0) {
+        const ttft =
+          (typeof item.ttftMs === "number" && item.ttftMs > 0
+            ? item.ttftMs
+            : 0) ||
+          (item.step &&
+          typeof item.step.ttftMs === "number" &&
+          item.step.ttftMs > 0
+            ? item.step.ttftMs
+            : 0);
+        applyRunDurationToTimeline(runMs, ttft || undefined);
+      }
     }
     restoreAgentStatus();
     syncComposerScmFromCache();

@@ -44,11 +44,24 @@
     host.setState(state);
   }
 
+  /** Per-chat черновики композера; без chatId — общий state.draftPrompt. */
+  function draftPromptSlots() {
+    if (!state.draftPromptByChat || typeof state.draftPromptByChat !== "object") {
+      state.draftPromptByChat = {};
+    }
+    return state.draftPromptByChat;
+  }
+
   function persistDraftPrompt() {
     if (!promptEl) {
       return;
     }
-    state.draftPrompt = promptEl.value || "";
+    const value = promptEl.value || "";
+    if (activeChatId) {
+      draftPromptSlots()[activeChatId] = value;
+    } else {
+      state.draftPrompt = value;
+    }
     persistUiState();
   }
 
@@ -76,14 +89,51 @@
     if (!promptEl || UI_SURFACE !== "panel") {
       return;
     }
-    const draft = typeof state.draftPrompt === "string" ? state.draftPrompt : "";
+    let draft = "";
+    if (activeChatId) {
+      const own = draftPromptSlots()[activeChatId];
+      draft = typeof own === "string" ? own : "";
+    } else if (typeof state.draftPrompt === "string") {
+      draft = state.draftPrompt;
+    }
     if (draft && !promptEl.value) {
       promptEl.value = draft;
     }
     autoResizePrompt();
   }
 
+  /**
+   * Подставить черновик открываемого чата при смене активного чата.
+   * adoptCurrent — старт webview (chatId ещё не был известен): непустой
+   * текст в композере (restore/ввод до первого showChat) закрепляем за
+   * первым показанным чатом, чтобы он не «переезжал» в другие чаты.
+   */
+  function applyDraftPromptForChat(chatId, options) {
+    if (!promptEl || UI_SURFACE !== "panel") {
+      return;
+    }
+    const slots = draftPromptSlots();
+    const own = chatId ? slots[chatId] : "";
+    let draft = typeof own === "string" ? own : "";
+    if (
+      !draft &&
+      options &&
+      options.adoptCurrent &&
+      promptEl.value &&
+      chatId
+    ) {
+      draft = promptEl.value;
+      slots[chatId] = draft;
+      persistUiState();
+    }
+    promptEl.value = draft;
+    autoResizePrompt();
+  }
+
   function clearDraftPrompt() {
+    if (activeChatId) {
+      delete draftPromptSlots()[activeChatId];
+    }
     state.draftPrompt = "";
     persistUiState();
   }

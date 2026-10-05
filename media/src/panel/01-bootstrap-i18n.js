@@ -22,6 +22,7 @@
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
+    draftPromptByChat: {},
     modelByChat: {},
     modeByChat: {},
     reasonByChat: {},
@@ -29,6 +30,9 @@
   };
   if (typeof state.draftPrompt !== "string") {
     state.draftPrompt = "";
+  }
+  if (!state.draftPromptByChat || typeof state.draftPromptByChat !== "object") {
+    state.draftPromptByChat = {};
   }
   if (!state.modelByChat || typeof state.modelByChat !== "object") {
     state.modelByChat = {};
@@ -59,6 +63,8 @@
       showAgentsList: "Show agents",
       hideAgentsList: "Hide agents",
       closeSettings: "Close settings",
+      toggleFullscreen: "Full window",
+      exitFullscreen: "Exit full window",
       saved: "Saved",
       providers: "Providers",
       providersNote:
@@ -444,6 +450,7 @@
       toolHumanSearch: (query) => (query ? `search ${query}` : "search"),
       toolHumanRun: (cmd) => (cmd ? `run ${cmd}` : "run"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanHttp: (s) => (s ? `HTTP ${s}` : "HTTP request"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
         url ? `Screenshot ${url}` : "Screenshot URL",
@@ -537,6 +544,8 @@
       showAgentsList: "Показать агентов",
       hideAgentsList: "Скрыть агентов",
       closeSettings: "Закрыть настройки",
+      toggleFullscreen: "Полный экран",
+      exitFullscreen: "Выйти из полного экрана",
       saved: "Сохранено",
       providers: "Провайдеры",
       providersNote:
@@ -936,6 +945,7 @@
       toolHumanSearch: (query) => (query ? `поиск ${query}` : "поиск"),
       toolHumanRun: (cmd) => (cmd ? `команда ${cmd}` : "команда"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanHttp: (s) => (s ? `HTTP-запрос ${s}` : "HTTP-запрос"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
         url ? `Screenshot ${url}` : "Screenshot URL",

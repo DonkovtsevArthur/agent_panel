@@ -355,6 +355,14 @@
         icon: "terminal",
       },
       {
+        special: "db",
+        name: "@db",
+        hint: UI_LANG === "ru"
+          ? "Схема БД из репозитория (Prisma, миграции)"
+          : "DB schema from the repo (Prisma, migrations)",
+        icon: "database",
+      },
+      {
         special: "url",
         name: "@url",
         hint: UI_LANG === "ru"

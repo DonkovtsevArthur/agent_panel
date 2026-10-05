@@ -935,6 +935,98 @@
     )}</div>`;
   }
 
+  /**
+   * Plan-heading + list blocks that duplicate the visible update_todo card.
+   * Matched only outside <proposed_plan> tags (those stay the Build card).
+   */
+  const TODO_PLAN_HEADING_RE =
+    /^(?:#{1,6}[ \t]*)?(?:План(?:\s+(?:работ|реализации|действий|изменений|выполнения))?|Plan(?:\s+(?:of\s+work|of\s+action|implementation|changes|execution))?|Implementation\s+plan|Что\s+(?:я\s+)?буду\s+делать|What\s+(?:I\s+)?(?:will|'ll)\s+do|Действия|Actions|Шаги|Steps)\s*:?\s*$/i;
+
+  const TODO_PLAN_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+•])\s+\S/;
+
+  /**
+   * Drop «План работ:» / «Implementation plan:» heading + step list from the
+   * assistant text when the turn already shows a plan checklist card — the
+   * text plan is a duplicate. Leaves non-plan narrative intact. No-op when
+   * <proposed_plan> tags are present (Build card path owns that text).
+   */
+  function stripTodoDuplicatedPlanText(text) {
+    const value = String(text || "");
+    if (!value.trim()) {
+      return "";
+    }
+    if (/(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(value)) {
+      return value;
+    }
+    const lines = value.split(/\r?\n/);
+    const out = [];
+    let i = 0;
+    let strippedAny = false;
+    while (i < lines.length) {
+      if (TODO_PLAN_HEADING_RE.test(lines[i].trim())) {
+        i += 1;
+        while (i < lines.length && !lines[i].trim()) {
+          i += 1;
+        }
+        let sawItem = false;
+        while (i < lines.length) {
+          if (TODO_PLAN_ITEM_RE.test(lines[i])) {
+            sawItem = true;
+            i += 1;
+            continue;
+          }
+          if (!lines[i].trim()) {
+            let j = i;
+            while (j < lines.length && !lines[j].trim()) {
+              j += 1;
+            }
+            if (j < lines.length && TODO_PLAN_ITEM_RE.test(lines[j])) {
+              i = j;
+              continue;
+            }
+          }
+          break;
+        }
+        if (sawItem) {
+          strippedAny = true;
+        }
+        continue;
+      }
+      out.push(lines[i]);
+      i += 1;
+    }
+    if (!strippedAny) {
+      return value;
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  /**
+   * When the turn already has a visible update_todo plan card, strip the
+   * duplicated text plan from the assistant bubble before render/copy.
+   */
+  function maybeStripTodoPlanText(el, text) {
+    const value = String(text || "");
+    if (!value.trim()) {
+      return value;
+    }
+    const turn =
+      (el && el.closest && el.closest(".chat-turn")) ||
+      (typeof currentChatTurnEl !== "undefined" &&
+      currentChatTurnEl &&
+      typeof messagesEl !== "undefined" &&
+      messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null);
+    const hasTodoCard = Boolean(
+      turn && turn.querySelector && turn.querySelector(".agent-step-todo")
+    );
+    if (!hasTodoCard) {
+      return value;
+    }
+    return stripTodoDuplicatedPlanText(value);
+  }
+
   /** Однострочный Markdown для короткого описания агента. */
   function renderPreviewMarkdown(text) {
     const raw = String(text || "");

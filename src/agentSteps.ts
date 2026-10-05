@@ -76,6 +76,10 @@ export interface ToolStepMetrics {
   errorOut?: string;
   /** editor: true, когда файл был создан, а не изменён. */
   created?: boolean;
+  /** http_request: URL / метод запроса и код ответа. */
+  httpUrl?: string;
+  httpMethod?: string;
+  httpStatus?: number;
 }
 
 let stepSeq = 0;

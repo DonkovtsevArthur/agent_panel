@@ -296,6 +296,15 @@
         return t("toolHumanScreenshot", String(args.url || "").trim());
       case "open_external":
         return t("toolHumanOpen", String(args.url || "").trim());
+      case "http_request": {
+        const method = String(args.method || "GET").toUpperCase();
+        const statusSuffix =
+          typeof m.httpStatus === "number" ? ` · ${m.httpStatus}` : "";
+        return (
+          t("toolHumanHttp", `${method} ${String(args.url || "").trim()}`.trim()) +
+          statusSuffix
+        );
+      }
       case "browser_navigate":
         return t("toolHumanBrowserNav", String(args.url || "").trim());
       case "browser_snapshot":
@@ -441,6 +450,9 @@
     }
     if (n === "run_commands") {
       return "run";
+    }
+    if (n === "http_request") {
+      return "fetch";
     }
     if (n === "fetch_web_content" || n === "fetch_url") {
       return "fetch";
@@ -1664,7 +1676,15 @@
     // Always start collapsed; user can expand via the toggle. Summary still
     // updates with the current step while the run is live.
     const group = createToolGroup();
-    ensureChatTurn().appendChild(group);
+    const turnEl = ensureChatTurn();
+    // Новая лента — ВЫШЕ карточки рассуждений: карточка должна идти после
+    // строки «выполняю/выполнено», а не над ней.
+    const textCard = findTurnTextStep(turnEl);
+    if (textCard) {
+      turnEl.insertBefore(group, textCard);
+    } else {
+      turnEl.appendChild(group);
+    }
     keepStatusAtEnd();
     return group;
   }
@@ -1720,6 +1740,8 @@
         return "edit";
       case "run_commands":
         return "terminal";
+      case "http_request":
+        return "http";
       case "search_codebase":
         return "search";
       case "fetch_web_content":
@@ -1754,11 +1776,34 @@
     }
   }
 
+  /** Direct-child reasoning/text card of the turn scope (не из вложенных ходов). */
+  function findTurnTextStep(turnScope) {
+    for (const card of turnScope.querySelectorAll(".agent-step-text-outside")) {
+      if (card.parentElement === turnScope) {
+        return card;
+      }
+    }
+    return null;
+  }
+
+  /** Карточка рассуждений идёт ПОСЛЕ строки «выполняю…/выполнено · …». */
+  function positionTextStepAfterTimeline(turnScope, el) {
+    const group = turnScope.querySelector(".tool-group.agent-timeline");
+    if (!group) {
+      return;
+    }
+    const after = group.nextSibling;
+    if (el !== after) {
+      turnScope.insertBefore(el, after);
+    }
+  }
+
   /**
    * Intermediate assistant text (a completed text block from an earlier
-   * model round of this turn). Rendered OUTSIDE the collapsed tool group as a
-   * visible note card — the model often answers mid-turn («описание выше»)
-   * and the user must see that text without expanding «выполнено».
+   * model round of this turn). ONE card per turn: each new portion replaces
+   * the previous content instead of stacking another paragraph, and the card
+   * stays after the collapsed «выполняю/выполнено» timeline line — right
+   * before the answer, not above the steps.
    */
   function upsertTextBlockStep(step) {
     const raw = String(step.text || "").trim();
@@ -1769,21 +1814,13 @@
       currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
         ? currentChatTurnEl
         : messagesEl;
-    const stepId = String(step.stepId || "");
-    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
-    let el = turnScope.querySelector(stepSel);
+    let el = findTurnTextStep(turnScope);
     if (!el) {
       el = document.createElement("div");
       el.className = "msg tool agent-step agent-step-text-outside";
-      el.dataset.stepId = stepId;
-      // Place above the active/sealed tool group so «описание выше» is findable.
-      const group = turnScope.querySelector(".tool-group.agent-timeline");
-      if (group) {
-        turnScope.insertBefore(el, group);
-      } else {
-        turnScope.appendChild(el);
-      }
+      turnScope.appendChild(el);
     }
+    el.dataset.stepId = String(step.stepId || "");
     el.dataset.stepKind = "text";
     el.dataset.status = "done";
     el.classList.add("agent-step-text");
@@ -1794,6 +1831,7 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
+    positionTextStepAfterTimeline(turnScope, el);
     keepStatusAtEnd();
     scrollToBottom();
     return el;
@@ -2217,28 +2255,8 @@
       if (todoEl !== after) {
         turnScope.insertBefore(todoEl, after);
       }
-      harborSyncTodoTop(todoEl, user);
     } else if (turnScope.firstChild !== todoEl) {
       turnScope.insertBefore(todoEl, turnScope.firstChild);
-      todoEl.style.removeProperty("--harbor-todo-top");
-    }
-  }
-
-  /**
-   * Set --harbor-todo-top = user bubble height so the sticky todo card pins
-   * directly below the (opaque, higher z-index) user message. A
-   * ResizeObserver keeps the variable in sync when the bubble reflows.
-   */
-  function harborSyncTodoTop(todoEl, userEl) {
-    if (!todoEl || !userEl) return;
-    const setTop = () => {
-      const h = userEl.offsetHeight || 0;
-      todoEl.style.setProperty("--harbor-todo-top", h + "px");
-    };
-    setTop();
-    if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(setTop);
-      ro.observe(userEl);
     }
   }
 

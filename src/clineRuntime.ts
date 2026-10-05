@@ -102,6 +102,7 @@ import { buildSpecialMentionsPrompt } from "./mentions";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
 import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
+import { createHttpTool, HTTP_REQUEST_TOOL } from "./httpTool";
 import { withTodoStepEmitter } from "./todoStepContext";
 import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import {
@@ -518,6 +519,9 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
             plannerModelId
           );
           const verifyEdits = createVerifyEditsTool(bundle.createTool);
+          const httpRequest = createHttpTool(bundle.createTool, {
+            allowedHosts: getConfig().http.allowedHosts,
+          });
           return {
             ...input,
             config: {
@@ -528,6 +532,7 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
                 ...priorExtra,
                 ...(inspectImages ? [inspectImages] : []),
                 verifyEdits,
+                httpRequest,
                 ...mcp.tools,
               ],
               // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
@@ -1543,6 +1548,26 @@ function parseToolMetrics(
     return undefined;
   }
 
+  if (name === HTTP_REQUEST_TOOL) {
+    const rows = asToolResultRows(output);
+    let httpStatus: number | undefined;
+    for (const r of rows) {
+      const text = typeof r.result === "string" ? r.result : "";
+      const m = text.match(/^HTTP (\d{3})\b/m);
+      if (m) {
+        httpStatus = Number(m[1]);
+        break;
+      }
+    }
+    const url = typeof inputObj.url === "string" ? inputObj.url.trim() : "";
+    const method = String(inputObj.method || "GET").trim().toUpperCase();
+    return {
+      ...(url ? { httpUrl: url } : {}),
+      ...(method ? { httpMethod: method } : {}),
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+    };
+  }
+
   if (name === "editor") {
     const filePath = pathFromToolInput(inputObj);
     // create vs replace: editor creates when there is no old_text and no insert_line.
@@ -2124,7 +2149,8 @@ export async function runClineAgentTurn(options: {
   timing.start("inline");
   const inlinePromise = buildInlinedAttachmentsPrompt(
     options.userText,
-    options.attachments
+    options.attachments,
+    options.storageUri
   );
 
   timing.start("mentions");
@@ -2999,9 +3025,13 @@ export async function runClineAgentTurn(options: {
           maxParallelToolCalls,
           // Harbor plan card (update_todo) — Agent/Plan only.
           // verify_edits is always on: read-only diagnostics after writes.
+          // http_request verifies local/dev APIs after edits (host allowlist).
           extraTools: [
             ...(enableTodoTool ? [createTodoTool(bundle.createTool)] : []),
             createVerifyEditsTool(bundle.createTool),
+            createHttpTool(bundle.createTool, {
+              allowedHosts: getConfig().http.allowedHosts,
+            }),
           ],
           // TLS: pass Harbor fetch so corporate self-signed proxies work when
           // Advanced → Validate TLS is off (default).

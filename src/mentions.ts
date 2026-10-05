@@ -1,12 +1,18 @@
 /**
  * Special `@`-mentions in the composer prompt: `@problems`, `@terminal`,
- * `@url <https://…>` (or bare `@https://…`). Unlike file `@path` mentions
- * (attachments.ts), these inject live IDE snapshots / fetched page content
- * into the Cline user turn.
+ * `@url <https://…>` (or bare `@https://…`), `@db`. Unlike file `@path`
+ * mentions (attachments.ts), these inject live IDE snapshots / fetched page
+ * content / DB schema files into the Cline user turn.
  */
 import * as vscode from "vscode";
 import { buildTerminalSnapshotMessage } from "./terminalContext";
 import { harborFetch } from "./tlsPolicy";
+import { getConfig } from "./config";
+import {
+  buildDbSchemaMessage,
+  collectDbSchemaFiles,
+  normalizeDbSchemaGlobs,
+} from "./dbSchemaContext";
 
 const PROBLEMS_MAX_ITEMS = 40;
 const PROBLEMS_MESSAGE_CHARS = 200;
@@ -17,6 +23,7 @@ const MAX_URLS = 3;
 export interface SpecialMentions {
   problems: boolean;
   terminal: boolean;
+  db: boolean;
   urls: string[];
 }
 
@@ -42,6 +49,9 @@ export function extractSpecialMentions(text: string): SpecialMentions {
   return {
     problems: /@(problems|diagnostics)\b/i.test(raw),
     terminal: /@(terminal|run)\b/i.test(raw),
+    // `(?:^|[^@\w])` + `(?![\w.:@])` keep "@db" from firing inside
+    // emails/hostnames (a@db.corp, user@db).
+    db: /(?:^|[^@\w])@(?:db|schema|database)\b(?![\w.:@])/i.test(raw),
     urls,
   };
 }
@@ -228,6 +238,21 @@ export async function buildSpecialMentionsPrompt(
       }
     } catch {
       /* headless / no terminal API */
+    }
+  }
+
+  if (mentions.db) {
+    try {
+      const roots = (vscode.workspace.workspaceFolders || []).map(
+        (folder) => folder.uri.fsPath
+      );
+      const globs = normalizeDbSchemaGlobs(getConfig().db.schemaGlobs);
+      const files = await collectDbSchemaFiles(roots, globs);
+      parts.push(buildDbSchemaMessage(files));
+    } catch {
+      parts.push(
+        "DB schema (@db): unavailable in this host (no workspace file access)."
+      );
     }
   }
 

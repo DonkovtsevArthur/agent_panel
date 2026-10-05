@@ -22,6 +22,7 @@
   const state = host.getState() || {
     selectedModel: null,
     draftPrompt: "",
+    draftPromptByChat: {},
     modelByChat: {},
     modeByChat: {},
     reasonByChat: {},
@@ -29,6 +30,9 @@
   };
   if (typeof state.draftPrompt !== "string") {
     state.draftPrompt = "";
+  }
+  if (!state.draftPromptByChat || typeof state.draftPromptByChat !== "object") {
+    state.draftPromptByChat = {};
   }
   if (!state.modelByChat || typeof state.modelByChat !== "object") {
     state.modelByChat = {};
@@ -59,6 +63,8 @@
       showAgentsList: "Show agents",
       hideAgentsList: "Hide agents",
       closeSettings: "Close settings",
+      toggleFullscreen: "Full window",
+      exitFullscreen: "Exit full window",
       saved: "Saved",
       providers: "Providers",
       providersNote:
@@ -444,6 +450,7 @@
       toolHumanSearch: (query) => (query ? `search ${query}` : "search"),
       toolHumanRun: (cmd) => (cmd ? `run ${cmd}` : "run"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanHttp: (s) => (s ? `HTTP ${s}` : "HTTP request"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
         url ? `Screenshot ${url}` : "Screenshot URL",
@@ -537,6 +544,8 @@
       showAgentsList: "Показать агентов",
       hideAgentsList: "Скрыть агентов",
       closeSettings: "Закрыть настройки",
+      toggleFullscreen: "Полный экран",
+      exitFullscreen: "Выйти из полного экрана",
       saved: "Сохранено",
       providers: "Провайдеры",
       providersNote:
@@ -936,6 +945,7 @@
       toolHumanSearch: (query) => (query ? `поиск ${query}` : "поиск"),
       toolHumanRun: (cmd) => (cmd ? `команда ${cmd}` : "команда"),
       toolHumanFetch: (url) => (url ? `Fetch ${url}` : "Fetch URL"),
+      toolHumanHttp: (s) => (s ? `HTTP-запрос ${s}` : "HTTP-запрос"),
       toolHumanOpen: (url) => (url ? `Open ${url}` : "Open URL"),
       toolHumanScreenshot: (url) =>
         url ? `Screenshot ${url}` : "Screenshot URL",
@@ -4467,6 +4477,14 @@
         icon: "terminal",
       },
       {
+        special: "db",
+        name: "@db",
+        hint: UI_LANG === "ru"
+          ? "Схема БД из репозитория (Prisma, миграции)"
+          : "DB schema from the repo (Prisma, migrations)",
+        icon: "database",
+      },
+      {
         special: "url",
         name: "@url",
         hint: UI_LANG === "ru"
@@ -5068,11 +5086,24 @@
     host.setState(state);
   }
 
+  /** Per-chat черновики композера; без chatId — общий state.draftPrompt. */
+  function draftPromptSlots() {
+    if (!state.draftPromptByChat || typeof state.draftPromptByChat !== "object") {
+      state.draftPromptByChat = {};
+    }
+    return state.draftPromptByChat;
+  }
+
   function persistDraftPrompt() {
     if (!promptEl) {
       return;
     }
-    state.draftPrompt = promptEl.value || "";
+    const value = promptEl.value || "";
+    if (activeChatId) {
+      draftPromptSlots()[activeChatId] = value;
+    } else {
+      state.draftPrompt = value;
+    }
     persistUiState();
   }
 
@@ -5100,14 +5131,51 @@
     if (!promptEl || UI_SURFACE !== "panel") {
       return;
     }
-    const draft = typeof state.draftPrompt === "string" ? state.draftPrompt : "";
+    let draft = "";
+    if (activeChatId) {
+      const own = draftPromptSlots()[activeChatId];
+      draft = typeof own === "string" ? own : "";
+    } else if (typeof state.draftPrompt === "string") {
+      draft = state.draftPrompt;
+    }
     if (draft && !promptEl.value) {
       promptEl.value = draft;
     }
     autoResizePrompt();
   }
 
+  /**
+   * Подставить черновик открываемого чата при смене активного чата.
+   * adoptCurrent — старт webview (chatId ещё не был известен): непустой
+   * текст в композере (restore/ввод до первого showChat) закрепляем за
+   * первым показанным чатом, чтобы он не «переезжал» в другие чаты.
+   */
+  function applyDraftPromptForChat(chatId, options) {
+    if (!promptEl || UI_SURFACE !== "panel") {
+      return;
+    }
+    const slots = draftPromptSlots();
+    const own = chatId ? slots[chatId] : "";
+    let draft = typeof own === "string" ? own : "";
+    if (
+      !draft &&
+      options &&
+      options.adoptCurrent &&
+      promptEl.value &&
+      chatId
+    ) {
+      draft = promptEl.value;
+      slots[chatId] = draft;
+      persistUiState();
+    }
+    promptEl.value = draft;
+    autoResizePrompt();
+  }
+
   function clearDraftPrompt() {
+    if (activeChatId) {
+      delete draftPromptSlots()[activeChatId];
+    }
     state.draftPrompt = "";
     persistUiState();
   }
@@ -6781,6 +6849,15 @@
         return t("toolHumanScreenshot", String(args.url || "").trim());
       case "open_external":
         return t("toolHumanOpen", String(args.url || "").trim());
+      case "http_request": {
+        const method = String(args.method || "GET").toUpperCase();
+        const statusSuffix =
+          typeof m.httpStatus === "number" ? ` · ${m.httpStatus}` : "";
+        return (
+          t("toolHumanHttp", `${method} ${String(args.url || "").trim()}`.trim()) +
+          statusSuffix
+        );
+      }
       case "browser_navigate":
         return t("toolHumanBrowserNav", String(args.url || "").trim());
       case "browser_snapshot":
@@ -6926,6 +7003,9 @@
     }
     if (n === "run_commands") {
       return "run";
+    }
+    if (n === "http_request") {
+      return "fetch";
     }
     if (n === "fetch_web_content" || n === "fetch_url") {
       return "fetch";
@@ -8149,7 +8229,15 @@
     // Always start collapsed; user can expand via the toggle. Summary still
     // updates with the current step while the run is live.
     const group = createToolGroup();
-    ensureChatTurn().appendChild(group);
+    const turnEl = ensureChatTurn();
+    // Новая лента — ВЫШЕ карточки рассуждений: карточка должна идти после
+    // строки «выполняю/выполнено», а не над ней.
+    const textCard = findTurnTextStep(turnEl);
+    if (textCard) {
+      turnEl.insertBefore(group, textCard);
+    } else {
+      turnEl.appendChild(group);
+    }
     keepStatusAtEnd();
     return group;
   }
@@ -8205,6 +8293,8 @@
         return "edit";
       case "run_commands":
         return "terminal";
+      case "http_request":
+        return "http";
       case "search_codebase":
         return "search";
       case "fetch_web_content":
@@ -8239,11 +8329,34 @@
     }
   }
 
+  /** Direct-child reasoning/text card of the turn scope (не из вложенных ходов). */
+  function findTurnTextStep(turnScope) {
+    for (const card of turnScope.querySelectorAll(".agent-step-text-outside")) {
+      if (card.parentElement === turnScope) {
+        return card;
+      }
+    }
+    return null;
+  }
+
+  /** Карточка рассуждений идёт ПОСЛЕ строки «выполняю…/выполнено · …». */
+  function positionTextStepAfterTimeline(turnScope, el) {
+    const group = turnScope.querySelector(".tool-group.agent-timeline");
+    if (!group) {
+      return;
+    }
+    const after = group.nextSibling;
+    if (el !== after) {
+      turnScope.insertBefore(el, after);
+    }
+  }
+
   /**
    * Intermediate assistant text (a completed text block from an earlier
-   * model round of this turn). Rendered OUTSIDE the collapsed tool group as a
-   * visible note card — the model often answers mid-turn («описание выше»)
-   * and the user must see that text without expanding «выполнено».
+   * model round of this turn). ONE card per turn: each new portion replaces
+   * the previous content instead of stacking another paragraph, and the card
+   * stays after the collapsed «выполняю/выполнено» timeline line — right
+   * before the answer, not above the steps.
    */
   function upsertTextBlockStep(step) {
     const raw = String(step.text || "").trim();
@@ -8254,21 +8367,13 @@
       currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
         ? currentChatTurnEl
         : messagesEl;
-    const stepId = String(step.stepId || "");
-    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
-    let el = turnScope.querySelector(stepSel);
+    let el = findTurnTextStep(turnScope);
     if (!el) {
       el = document.createElement("div");
       el.className = "msg tool agent-step agent-step-text-outside";
-      el.dataset.stepId = stepId;
-      // Place above the active/sealed tool group so «описание выше» is findable.
-      const group = turnScope.querySelector(".tool-group.agent-timeline");
-      if (group) {
-        turnScope.insertBefore(el, group);
-      } else {
-        turnScope.appendChild(el);
-      }
+      turnScope.appendChild(el);
     }
+    el.dataset.stepId = String(step.stepId || "");
     el.dataset.stepKind = "text";
     el.dataset.status = "done";
     el.classList.add("agent-step-text");
@@ -8279,6 +8384,7 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
+    positionTextStepAfterTimeline(turnScope, el);
     keepStatusAtEnd();
     scrollToBottom();
     return el;
@@ -8702,28 +8808,8 @@
       if (todoEl !== after) {
         turnScope.insertBefore(todoEl, after);
       }
-      harborSyncTodoTop(todoEl, user);
     } else if (turnScope.firstChild !== todoEl) {
       turnScope.insertBefore(todoEl, turnScope.firstChild);
-      todoEl.style.removeProperty("--harbor-todo-top");
-    }
-  }
-
-  /**
-   * Set --harbor-todo-top = user bubble height so the sticky todo card pins
-   * directly below the (opaque, higher z-index) user message. A
-   * ResizeObserver keeps the variable in sync when the bubble reflows.
-   */
-  function harborSyncTodoTop(todoEl, userEl) {
-    if (!todoEl || !userEl) return;
-    const setTop = () => {
-      const h = userEl.offsetHeight || 0;
-      todoEl.style.setProperty("--harbor-todo-top", h + "px");
-    };
-    setTop();
-    if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(setTop);
-      ro.observe(userEl);
     }
   }
 
@@ -14885,6 +14971,98 @@
     )}</div>`;
   }
 
+  /**
+   * Plan-heading + list blocks that duplicate the visible update_todo card.
+   * Matched only outside <proposed_plan> tags (those stay the Build card).
+   */
+  const TODO_PLAN_HEADING_RE =
+    /^(?:#{1,6}[ \t]*)?(?:План(?:\s+(?:работ|реализации|действий|изменений|выполнения))?|Plan(?:\s+(?:of\s+work|of\s+action|implementation|changes|execution))?|Implementation\s+plan|Что\s+(?:я\s+)?буду\s+делать|What\s+(?:I\s+)?(?:will|'ll)\s+do|Действия|Actions|Шаги|Steps)\s*:?\s*$/i;
+
+  const TODO_PLAN_ITEM_RE = /^[ \t]*(?:\d+[.)]|[-*+•])\s+\S/;
+
+  /**
+   * Drop «План работ:» / «Implementation plan:» heading + step list from the
+   * assistant text when the turn already shows a plan checklist card — the
+   * text plan is a duplicate. Leaves non-plan narrative intact. No-op when
+   * <proposed_plan> tags are present (Build card path owns that text).
+   */
+  function stripTodoDuplicatedPlanText(text) {
+    const value = String(text || "");
+    if (!value.trim()) {
+      return "";
+    }
+    if (/(?:<proposed_plan>|&lt;proposed_plan&gt;)/i.test(value)) {
+      return value;
+    }
+    const lines = value.split(/\r?\n/);
+    const out = [];
+    let i = 0;
+    let strippedAny = false;
+    while (i < lines.length) {
+      if (TODO_PLAN_HEADING_RE.test(lines[i].trim())) {
+        i += 1;
+        while (i < lines.length && !lines[i].trim()) {
+          i += 1;
+        }
+        let sawItem = false;
+        while (i < lines.length) {
+          if (TODO_PLAN_ITEM_RE.test(lines[i])) {
+            sawItem = true;
+            i += 1;
+            continue;
+          }
+          if (!lines[i].trim()) {
+            let j = i;
+            while (j < lines.length && !lines[j].trim()) {
+              j += 1;
+            }
+            if (j < lines.length && TODO_PLAN_ITEM_RE.test(lines[j])) {
+              i = j;
+              continue;
+            }
+          }
+          break;
+        }
+        if (sawItem) {
+          strippedAny = true;
+        }
+        continue;
+      }
+      out.push(lines[i]);
+      i += 1;
+    }
+    if (!strippedAny) {
+      return value;
+    }
+    return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  /**
+   * When the turn already has a visible update_todo plan card, strip the
+   * duplicated text plan from the assistant bubble before render/copy.
+   */
+  function maybeStripTodoPlanText(el, text) {
+    const value = String(text || "");
+    if (!value.trim()) {
+      return value;
+    }
+    const turn =
+      (el && el.closest && el.closest(".chat-turn")) ||
+      (typeof currentChatTurnEl !== "undefined" &&
+      currentChatTurnEl &&
+      typeof messagesEl !== "undefined" &&
+      messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null);
+    const hasTodoCard = Boolean(
+      turn && turn.querySelector && turn.querySelector(".agent-step-todo")
+    );
+    if (!hasTodoCard) {
+      return value;
+    }
+    return stripTodoDuplicatedPlanText(value);
+  }
+
   /** Однострочный Markdown для короткого описания агента. */
   function renderPreviewMarkdown(text) {
     const raw = String(text || "");
@@ -14931,7 +15109,12 @@
 
 
   function setMessageContent(el, role, text) {
-    const raw = text || "";
+    let raw = text || "";
+    // Assistant bubble: drop a text plan that duplicates the visible
+    // update_todo checklist card (same turn). Keeps dataset.raw clean for copy.
+    if (role === "assistant" || role === "error") {
+      raw = maybeStripTodoPlanText(el, raw);
+    }
     el.dataset.raw = raw;
     let body = el.querySelector(".msg-body");
     if (!body) {
@@ -15259,6 +15442,32 @@
         item.step,
         item.detail
       );
+      // History redraw: thinking-only / text-only turns carry the full-run
+      // duration on the assistant message (no tool step to stamp). Paint it
+      // on the sealed timeline so «выполнено» is never missing the time.
+      const msgRunMs =
+        typeof item.runDurationMs === "number" && item.runDurationMs > 0
+          ? item.runDurationMs
+          : 0;
+      const stepRunMs =
+        item.step &&
+        typeof item.step.runDurationMs === "number" &&
+        item.step.runDurationMs > 0
+          ? item.step.runDurationMs
+          : 0;
+      const runMs = msgRunMs > 0 ? msgRunMs : stepRunMs;
+      if (runMs > 0) {
+        const ttft =
+          (typeof item.ttftMs === "number" && item.ttftMs > 0
+            ? item.ttftMs
+            : 0) ||
+          (item.step &&
+          typeof item.step.ttftMs === "number" &&
+          item.step.ttftMs > 0
+            ? item.step.ttftMs
+            : 0);
+        applyRunDurationToTimeline(runMs, ttft || undefined);
+      }
     }
     restoreAgentStatus();
     syncComposerScmFromCache();
@@ -19087,6 +19296,12 @@
         break;
       case "showChat": {
         const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
+        const prevChatId = activeChatId;
+        if (chatChanged) {
+          // Сохранить черновик покидаемого чата до смены activeChatId:
+          // текст мог меняться программно (slash/mention) без persist.
+          persistDraftPrompt();
+        }
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
@@ -19095,6 +19310,9 @@
           // Только при смене chatId: тот же чат repost-ится и после
           // attachmentsAdded (превью только что добавленных вложений).
           clearPendingAttachments();
+          // Черновик принадлежит чату: подставить черновик открываемого
+          // чата вместо оставшегося текста предыдущего.
+          applyDraftPromptForChat(msg.chatId, { adoptCurrent: !prevChatId });
         }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel, true);

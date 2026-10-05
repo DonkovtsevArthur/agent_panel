@@ -442,6 +442,7 @@ export function harborTodoRulesForLanguage(lang: UiLanguage): string {
       "# update_todo — карточка плана",
       "Только для многошаговой работы (2+ шага). Короткий вопрос или одно действие — НЕ вызывай update_todo.",
       "Для многошаговой работы: первый вызов — полный список (все 'pending', первый 'in_progress'); далее — обновлённый полный список после каждого шага (вызов заменяет карточку).",
+      "Если план уже в карточке update_todo — НЕ дублируй его текстом в сообщении (никаких «План работ:» / «План реализации:» + нумерованный или маркированный список шагов). В тексте — только статус, уточнения и результат.",
       "Финал — все шаги 'done'. Из spawn_agent не вызывать.",
     ].join("\n");
   }
@@ -449,6 +450,7 @@ export function harborTodoRulesForLanguage(lang: UiLanguage): string {
     "# update_todo — plan card",
     "Multi-step work only (2+ steps). Short question or a single action — do NOT call update_todo.",
     "For multi-step work: first call is the full step list (all 'pending', first 'in_progress'); then the full updated list after each step (each call replaces the card).",
+    "If the plan is already in the update_todo card — do NOT repeat it as text in the message (no \"Plan of work:\" / \"Implementation plan:\" + numbered or bulleted step list). Message text is status, clarifications, and results only.",
     "Finale — every step 'done'. Never call it from spawned sub-agents.",
   ].join("\n");
 }

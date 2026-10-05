@@ -89,6 +89,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.searchChat", () => {
       void provider.openChatSearch();
     }),
+    vscode.commands.registerCommand("agentPanel.toggleFullscreen", () => {
+      provider.toggleFullscreenChat();
+    }),
     vscode.commands.registerCommand("agentPanel.clearChat", () => {
       provider.newChat();
     }),

@@ -128,14 +128,19 @@ body {
   min-height: 0;
 }
 
+:root {
+  /* Reading/composer column — keeps full-window chat from stretching edge to edge. */
+  --chat-max-width: 760px;
+}
+
 #messages {
   flex: 1;
   overflow-y: auto;
-  /* padding-top: 0 — иначе sticky user-сообщения оставляют щель и сквозь неё виден скролл */
-  padding: 0 16px 20px 12px;
+  padding: 0 16px 20px;
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
+  align-items: center;
   /* safe flex-end: прижимает сообщения к низу, когда чат короткий,
      но при переполнении откатывается к start — иначе flex-end «unsafe»
      прячет верхние сообщения за пределами scrollable-области и скролл
@@ -143,6 +148,13 @@ body {
   justify-content: safe flex-end;
   gap: 14px;
   min-height: 0;
+}
+
+#messages > * {
+  width: 100%;
+  max-width: var(--chat-max-width);
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .chat-turn {
@@ -193,18 +205,6 @@ body {
   max-width: 100%;
   width: auto;
   margin-right: 0;
-  position: sticky;
-  top: 0;
-  z-index: 6;
-  background: var(--harbor-chat-bg);
-  padding-top: 4px;
-  padding-bottom: 2px;
-  /* перекрывает субпиксельный просвет при sticky */
-  box-shadow: 0 -2px 0 1px var(--harbor-chat-bg);
-}
-
-.chat-turn:first-child .msg-wrap.msg-wrap-user {
-  padding-top: 8px;
 }
 
 .msg-wrap .msg.user {
@@ -1519,13 +1519,6 @@ body.vscode-dark .md-pre .syntax-property {
   border-radius: 4px;
   background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
-  /* Прилипает к верху при скролле. top задаётся через CSS-переменную
-     --harbor-todo-top, которая равна высоте user-пузыря (выставляется из JS
-     через ResizeObserver). Если переменной нет (нет user-сообщения) —
-     карточка прилипает к top:0. */
-  position: sticky;
-  top: var(--harbor-todo-top, 0px);
-  z-index: 5;
 }
 
 /* The plan card's header icon must NOT spin — only the in_progress step item
@@ -2410,6 +2403,16 @@ body.vscode-dark .md-pre .syntax-property {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.composer-wrap > * {
+  width: 100%;
+  max-width: var(--chat-max-width);
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .message-queue {
@@ -4085,7 +4088,8 @@ html[data-surface="settings"] .settings-layout {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px 8px;
+  /* Centered reading column: equal side gutters when the window is wide. */
+  padding: 6px max(10px, calc((100% - var(--chat-max-width)) / 2)) 8px;
   flex-shrink: 0;
 }
 
@@ -4103,7 +4107,7 @@ html[data-surface="settings"] .settings-layout {
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 4px;
-  padding: 4px 12px 0;
+  padding: 4px max(12px, calc((100% - var(--chat-max-width)) / 2 + 12px)) 0;
   flex-shrink: 0;
   overflow-x: auto;
   background-image: linear-gradient(

@@ -18,6 +18,7 @@ const TOOL_GROUP_BY_NAME: Record<string, ToolApprovalGroup> = {
   update_todo: "plan",
   inspect_images: "plan",
   fetch_web_content: "web",
+  http_request: "web",
   editor: "edits",
   apply_patch: "edits",
   run_commands: "commands",

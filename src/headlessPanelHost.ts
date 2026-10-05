@@ -528,6 +528,10 @@ export class HeadlessPanelHost {
         this.postSkillsList();
         this.post({ type: "showSettings" });
         return { ok: true };
+      case "toggleFullscreen":
+        // JetBrains maximizes the tool window host-side; VS Code handles this
+        // in agentPanelProvider. Keep as no-op so sidecar does not error.
+        return { ok: true };
       case "closeSettings":
         return { ok: true };
       case "figmaRefreshStatus":
@@ -2529,9 +2533,10 @@ export class HeadlessPanelHost {
       // chatRuns, so any postToRun after that guard silently drops the
       // stamp. The webview's upsertAgentStep is idempotent on stepId —
       // reposting the full event is safe.
-      const runDurationMs = lastGroupStep
-        ? Date.now() - runStartedAt
-        : 0;
+      // Always stamp (VS Code parity): thinking-only / text-only turns have
+      // no tool step, but the sealed timeline still shows «выполнено» and
+      // must carry the wall-clock time.
+      const runDurationMs = Date.now() - runStartedAt;
       if (lastGroupStep) {
         postToRun({
           type: "step",

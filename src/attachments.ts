@@ -570,31 +570,25 @@ function truncateText(text: string, max = MAX_TEXT_CHARS): string {
 
 async function fileTextExcerpt(
   attachment: MessageAttachment,
-  maxChars = MAX_TEXT_CHARS
+  maxChars = MAX_TEXT_CHARS,
+  storageUri?: vscode.Uri
 ): Promise<string | undefined> {
-  if (!attachment.path) {
-    return undefined;
-  }
+  const label = attachment.path || attachment.name;
   if (!isProbablyTextFile(attachment.name, attachment.mime)) {
-    return `Файл (бинарный или неизвестный тип): ${attachment.path}`;
+    return `Файл (бинарный или неизвестный тип): ${label}`;
   }
-  const rawPath = String(attachment.path);
-  const abs = path.isAbsolute(rawPath);
-  if (!abs && !vscode.workspace.workspaceFolders?.length) {
-    return undefined;
-  }
+  // path (workspace/absolute) → storageKey (persisted upload) → dataBase64 (wire).
+  // Uploads from drag&drop / picker live in extension storage and must still
+  // reach the model as text — the same path images take via userImages.
   try {
-    const fsPath = abs
-      ? rawPath
-      : vscode.Uri.joinPath(
-          vscode.workspace.workspaceFolders![0].uri,
-          rawPath
-        ).fsPath;
-    const raw = await fs.readFile(fsPath, "utf8");
-    return truncateText(raw, maxChars);
+    const bytes = await readAttachmentBytes(attachment, storageUri);
+    if (!bytes) {
+      return undefined;
+    }
+    return truncateText(bytes.toString("utf8"), maxChars);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
-    return `Не удалось прочитать ${attachment.path}: ${text}`;
+    return `Не удалось прочитать ${label}: ${text}`;
   }
 }
 
@@ -605,7 +599,8 @@ async function fileTextExcerpt(
  */
 export async function buildInlinedAttachmentsPrompt(
   userText: string,
-  attachments: MessageAttachment[] | undefined
+  attachments: MessageAttachment[] | undefined,
+  storageUri?: vscode.Uri
 ): Promise<{ text: string; paths: string[] }> {
   const mentionList = await attachmentsFromMentions(userText, attachments);
   const list = [...(attachments || []), ...mentionList].filter(
@@ -629,12 +624,12 @@ export async function buildInlinedAttachmentsPrompt(
       continue;
     }
     const cap = Math.min(TURN_INLINE_FILE_CHARS, remaining);
-    const excerpt = await fileTextExcerpt(att, cap);
+    const excerpt = await fileTextExcerpt(att, cap, storageUri);
     if (excerpt && excerpt.startsWith("Файл (бинарный")) {
       chunks.push(`Прикреплён файл: ${label} (${att.mime || "binary"})`);
       continue;
     }
-    if (excerpt) {
+    if (excerpt !== undefined) {
       used += excerpt.length;
       chunks.push(
         `Прикреплённый файл \`${label}\`:\n\`\`\`\n${excerpt}\n\`\`\``
@@ -771,10 +766,10 @@ export async function buildUserApiContent(
     }
 
     const label = att.path || att.name;
-    const excerpt = await fileTextExcerpt(att);
+    const excerpt = await fileTextExcerpt(att, MAX_TEXT_CHARS, storageUri);
     if (excerpt && excerpt.startsWith("Файл (бинарный")) {
       textChunks.push(`Прикреплён файл: ${label} (${att.mime || "binary"})`);
-    } else if (excerpt) {
+    } else if (excerpt !== undefined) {
       textChunks.push(
         `Прикреплённый файл \`${label}\`:\n\`\`\`\n${excerpt}\n\`\`\``
       );

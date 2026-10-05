@@ -203,6 +203,12 @@
         break;
       case "showChat": {
         const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
+        const prevChatId = activeChatId;
+        if (chatChanged) {
+          // Сохранить черновик покидаемого чата до смены activeChatId:
+          // текст мог меняться программно (slash/mention) без persist.
+          persistDraftPrompt();
+        }
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
@@ -211,6 +217,9 @@
           // Только при смене chatId: тот же чат repost-ится и после
           // attachmentsAdded (превью только что добавленных вложений).
           clearPendingAttachments();
+          // Черновик принадлежит чату: подставить черновик открываемого
+          // чата вместо оставшегося текста предыдущего.
+          applyDraftPromptForChat(msg.chatId, { adoptCurrent: !prevChatId });
         }
         if (msg.models) {
           fillModels(msg.models, msg.selectedModel, true);
