@@ -3,7 +3,7 @@
  * vscode-free so unit tests can import without the VS Code module.
  */
 
-export type McpPresetId = "playwright" | "github";
+export type McpPresetId = "playwright" | "chrome-devtools" | "github";
 
 export interface McpPresetDef {
   id: McpPresetId;
@@ -32,9 +32,20 @@ export const MCP_PRESETS: readonly McpPresetDef[] = [
     command: "npx",
     args: ["-y", "@playwright/mcp@latest", "--headless"],
     noteEn:
-      "Interactive browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. Harbor also has builtin browser_* tools.",
+      "Browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. To drive your own Chrome/Edge with its logins, install the “Playwright Extension” and replace --headless with --extension.",
     noteRu:
-      "Интерактивный браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. В Harbor также есть builtin browser_* tools.",
+      "Браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. Чтобы работать в вашем Chrome/Edge с вашими логинами, установите «Playwright Extension» и замените --headless на --extension.",
+  },
+  {
+    id: "chrome-devtools",
+    name: "Chrome DevTools",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "chrome-devtools-mcp@latest"],
+    noteEn:
+      "Chrome DevTools MCP: console, network, performance, screenshots, clicks. Needs Node.js / npx. To attach to your open Chrome (144+), enable chrome://inspect/#remote-debugging and add --autoConnect.",
+    noteRu:
+      "Chrome DevTools MCP: консоль, сеть, производительность, скриншоты, клики. Нужен Node.js / npx. Чтобы подключиться к открытому Chrome (144+), включите chrome://inspect/#remote-debugging и добавьте --autoConnect.",
   },
   {
     id: "github",

@@ -1063,6 +1063,250 @@
   });
 
 
+  // ── Composer input safety check ─────────────────────────────────────────
+  // Runs before a prompt leaves the composer (send and queue). Three kinds of
+  // findings: secrets (keys/tokens/passwords → offer masking), prompt-injection
+  // markers in pasted text (incl. invisible Unicode → offer stripping), and
+  // destructive shell/SQL commands (warning only). The user can always send
+  // as is; the acknowledgement is bound to the exact outgoing text.
+
+  const COMPOSER_SECRET_RULES = [
+    { label: "OpenAI/Anthropic key", re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g },
+    { label: "GitHub token", re: /\bgh[pousr]_[A-Za-z0-9]{20,}/g },
+    { label: "GitHub token", re: /\bgithub_pat_[A-Za-z0-9_]{20,}/g },
+    { label: "GitLab token", re: /\bglpat-[A-Za-z0-9_-]{20,}/g },
+    { label: "Slack token", re: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g },
+    { label: "AWS access key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+    { label: "Google API key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+    { label: "Stripe key", re: /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/g },
+    { label: "JWT", re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+    {
+      label: "Private key",
+      re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    },
+    { label: "Credentials in URL", re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:([^\s@/]{3,})@/gi, group: 1 },
+    {
+      label: "Password / token",
+      re: /\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret(?:[_-]?key)?|password|passwd|pwd|token)\s*[:=]\s*["']?)([^\s"']{6,})/gi,
+      group: 2,
+    },
+  ];
+
+  const COMPOSER_INJECTION_RULES = [
+    /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|rules|messages|prompts?)/i,
+    /(?:игнорируй|забудь|отмени)\s+(?:все\s+)?(?:предыдущие|прошлые|системные|вышеуказанные)\s+(?:инструкции|правила|указания)/i,
+    /<\/?\s*(?:system|assistant|instructions?|im_start|im_end)\s*>/i,
+    /<\|(?:im_start|im_end|system|endoftext)\|>/i,
+    /\byou\s+are\s+now\s+(?:in\s+)?(?:developer|dan|jailbreak|unrestricted)\b/i,
+  ];
+
+  // Zero-width / word-joiner / BOM, bidi overrides & isolates, Unicode tag
+  // characters (U+E0000–E007F). ZWJ (U+200D) is left alone — emoji use it.
+  const COMPOSER_INVISIBLE_RE = /[\u200B\u200C\u2060\uFEFF\u202A-\u202E\u2066-\u2069]|\uDB40[\uDC00-\uDC7F]/g;
+
+  const COMPOSER_DANGER_RULES = [
+    { label: "rm -rf", re: /\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+(?:\/|~|\*|\$HOME|\.\s*$|\.\/?\s)/im },
+    { label: "git push --force", re: /\bgit\s+push\b[^\n]*\s(?:--force\b|-f\b|--force-with-lease\b)/i },
+    { label: "git reset --hard", re: /\bgit\s+reset\s+--hard\b/i },
+    { label: "git clean -fd", re: /\bgit\s+clean\s+-[a-z]*f[a-z]*d|\bgit\s+clean\s+-[a-z]*d[a-z]*f/i },
+    { label: "curl | sh", re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/i },
+    { label: "mkfs / dd", re: /\bmkfs(?:\.\w+)?\s|\bdd\s+[^\n]*\bof=\/dev\//i },
+    { label: "chmod -R 777", re: /\bchmod\s+-R\s+0?777\b/i },
+    { label: "DROP / TRUNCATE", re: /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i },
+    { label: "fork bomb", re: /:\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:/ },
+  ];
+
+  /** Acknowledged outgoing text — sending it again skips the check once. */
+  let composerRiskAckText = null;
+  let composerRiskNoticeEl = null;
+
+  function composerSecretMatches(text) {
+    const found = [];
+    for (const rule of COMPOSER_SECRET_RULES) {
+      rule.re.lastIndex = 0;
+      if (rule.re.test(text)) {
+        found.push(rule.label);
+      }
+      rule.re.lastIndex = 0;
+    }
+    return Array.from(new Set(found));
+  }
+
+  function maskComposerSecrets(text) {
+    let out = String(text || "");
+    for (const rule of COMPOSER_SECRET_RULES) {
+      rule.re.lastIndex = 0;
+      out = out.replace(rule.re, (match, ...groups) => {
+        if (rule.group) {
+          const secret = groups[rule.group - 1];
+          return typeof secret === "string" && secret
+            ? match.slice(0, match.lastIndexOf(secret)) + "<redacted>" + match.slice(match.lastIndexOf(secret) + secret.length)
+            : match;
+        }
+        return "<redacted>";
+      });
+      rule.re.lastIndex = 0;
+    }
+    return out;
+  }
+
+  function stripComposerInvisible(text) {
+    return String(text || "").replace(COMPOSER_INVISIBLE_RE, "");
+  }
+
+  function scanComposerInputRisks(text) {
+    const value = String(text || "");
+    const invisible = (value.match(COMPOSER_INVISIBLE_RE) || []).length;
+    const result = {
+      secrets: composerSecretMatches(value),
+      injection: COMPOSER_INJECTION_RULES.some((re) => re.test(value)),
+      invisible,
+      danger: Array.from(new Set(COMPOSER_DANGER_RULES.filter((r) => r.re.test(value)).map((r) => r.label))),
+    };
+    result.any = Boolean(
+      result.secrets.length || result.injection || result.invisible || result.danger.length,
+    );
+    return result;
+  }
+
+  function hideComposerRiskNotice() {
+    if (composerRiskNoticeEl) {
+      composerRiskNoticeEl.hidden = true;
+      composerRiskNoticeEl.replaceChildren();
+    }
+  }
+
+  function ensureComposerRiskNotice() {
+    if (composerRiskNoticeEl && composerRiskNoticeEl.isConnected) {
+      return composerRiskNoticeEl;
+    }
+    const wrap = composerWrapEl || (composerEl && composerEl.parentElement);
+    if (!wrap) {
+      return null;
+    }
+    const el = document.createElement("div");
+    el.id = "composerRiskNotice";
+    el.className = "composer-risk-notice";
+    el.setAttribute("role", "alert");
+    el.hidden = true;
+    wrap.insertBefore(el, composerEl && composerEl.parentElement === wrap ? composerEl : wrap.firstChild);
+    composerRiskNoticeEl = el;
+    return el;
+  }
+
+  function composerRiskButton(icon, label, onClick, primary) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = primary ? "composer-risk-btn primary" : "composer-risk-btn";
+    btn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+      `<span>${escapeHtml(label)}</span>`;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    });
+    return btn;
+  }
+
+  function applyComposerRiskFix(transform) {
+    const next = transform(promptEl.value || "");
+    if (next !== promptEl.value) {
+      promptEl.value = next;
+      autoResizePrompt();
+      updateSendButton();
+    }
+    composerRiskAckText = null;
+    sendPrompt();
+  }
+
+  function showComposerRiskNotice(risks, text) {
+    const el = ensureComposerRiskNotice();
+    if (!el) {
+      return false;
+    }
+    el.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "composer-risk-title";
+    title.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">shield</span>` +
+      `<span>${escapeHtml(t("inputRiskTitle"))}</span>`;
+    el.appendChild(title);
+    const list = document.createElement("ul");
+    list.className = "composer-risk-list";
+    const addItem = (line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      list.appendChild(li);
+    };
+    if (risks.secrets.length) {
+      addItem(t("inputRiskSecrets", risks.secrets.join(", ")));
+    }
+    if (risks.injection) {
+      addItem(t("inputRiskInjection"));
+    }
+    if (risks.invisible) {
+      addItem(t("inputRiskInvisible", risks.invisible));
+    }
+    if (risks.danger.length) {
+      addItem(t("inputRiskDanger", risks.danger.join(", ")));
+    }
+    el.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "composer-risk-actions";
+    const rawInput = promptEl.value || "";
+    if (risks.secrets.length && composerSecretMatches(rawInput).length) {
+      actions.appendChild(
+        composerRiskButton("visibility_off", t("inputRiskMask"), () => applyComposerRiskFix(maskComposerSecrets), true),
+      );
+    }
+    if (risks.invisible && COMPOSER_INVISIBLE_RE.test(rawInput)) {
+      actions.appendChild(
+        composerRiskButton("format_clear", t("inputRiskStrip"), () => applyComposerRiskFix(stripComposerInvisible), true),
+      );
+    }
+    COMPOSER_INVISIBLE_RE.lastIndex = 0;
+    actions.appendChild(
+      composerRiskButton("send", t("inputRiskSendAnyway"), () => {
+        composerRiskAckText = text;
+        sendPrompt();
+      }),
+    );
+    actions.appendChild(
+      composerRiskButton("close", t("inputRiskCancel"), () => {
+        hideComposerRiskNotice();
+        focusPrompt();
+      }),
+    );
+    el.appendChild(actions);
+    el.hidden = false;
+    return true;
+  }
+
+  /** True when the text may be sent now; otherwise shows the warning notice. */
+  function composerInputPassesSafetyCheck(text) {
+    if (composerRiskAckText !== null && composerRiskAckText === text) {
+      composerRiskAckText = null;
+      hideComposerRiskNotice();
+      return true;
+    }
+    composerRiskAckText = null;
+    const risks = scanComposerInputRisks(text);
+    if (!risks.any) {
+      hideComposerRiskNotice();
+      return true;
+    }
+    // No place to render the notice — never block sending silently.
+    return !showComposerRiskNotice(risks, text);
+  }
+
+  promptEl.addEventListener("input", () => {
+    if (composerRiskNoticeEl && !composerRiskNoticeEl.hidden) {
+      composerRiskAckText = null;
+      hideComposerRiskNotice();
+    }
+  });
+
   function sendPrompt() {
     const rawInput = promptEl.value || "";
     const command = parseSlashCommand(rawInput);
@@ -1088,6 +1332,9 @@
     const text = buildMessageWithSelections(buildMessageWithMentions(typed));
     const attachments = pendingAttachments.slice();
     if (!text && !attachments.length) {
+      return;
+    }
+    if (!composerInputPassesSafetyCheck(text)) {
       return;
     }
     if (busy) {

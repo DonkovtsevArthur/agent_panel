@@ -104,22 +104,6 @@
       validateTls: "Validate TLS certificate",
       supportsVision: "Supports images (vision)",
       agentBehavior: "Agent behavior",
-      browserAgent: "Browser agent",
-      browserAgentTitle: "Browser agent",
-      browserAgentNote: "Multi-step tasks in your Chrome or Edge.",
-      autoglmEnabled: "Enable browser agent",
-      autoglmEnabledNote:
-        "The browser_task tool. Needs AutoGLM CLI and the extension.",
-      autoglmBrowser: "Browser",
-      autoglmBrowserHint: "Install the AutoGLM extension and enable it.",
-      autoglmAutoApprove: "Auto-approve sensitive actions",
-      autoglmAutoApproveNote:
-        "No prompt for sensitive steps. Login and captcha still need you.",
-      autoglmConnection: "Connection",
-      autoglmBinaryPath: "CLI path",
-      autoglmBinaryPathPlaceholder: "autoglm on PATH, or full path",
-      autoglmBinaryPathHint:
-        "Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Advanced",
       commitMessages: "Commit messages",
       commitMessagesNote: "Generate SCM commit messages from the diff. Pick at least one model below.",
@@ -192,8 +176,11 @@
       mcpPresetsLabel: "Quick add",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetChromeDevtools: "Chrome DevTools",
       mcpPresetPlaywrightNote:
-        "Interactive browser via Playwright MCP. Needs Node.js / npx. Harbor also has builtin browser_* tools.",
+        "Browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. To drive your own Chrome/Edge with its logins, install the “Playwright Extension” and replace --headless with --extension.",
+      mcpPresetChromeDevtoolsNote:
+        "Chrome DevTools MCP: console, network, performance, screenshots, clicks. Needs Node.js / npx. To attach to your open Chrome (144+), enable chrome://inspect/#remote-debugging and add --autoConnect.",
       mcpPresetGithubNote:
         "GitHub remote MCP. Paste a Personal Access Token into Bearer token, then Save & Connect.",
       mcpPresetAlready: (name) => `«${name}» is already in the list — open settings on the card to edit.`,
@@ -514,6 +501,15 @@
       modePlaceholder: (label) => `${label}... (@ for file)`,
       failedReadFile: "Failed to read file",
       slashModeSwitched: (label) => `Mode: ${label}`,
+      inputRiskTitle: "Check before sending",
+      inputRiskSecrets: (kinds) => `Looks like a secret: ${kinds}. It would be sent to the model provider.`,
+      inputRiskInjection: "The text contains instruction-override markers (prompt injection) — typical for pasted content.",
+      inputRiskInvisible: (n) => `Hidden Unicode characters: ${n} (zero-width / bidi / tag characters).`,
+      inputRiskDanger: (kinds) => `Destructive command: ${kinds}. The agent may actually run it.`,
+      inputRiskMask: "Mask secrets",
+      inputRiskStrip: "Remove hidden characters",
+      inputRiskSendAnyway: "Send as is",
+      inputRiskCancel: "Cancel",
       slashInitDefault:
         "Inspect this repository and create or update AGENTS.md at the workspace root. Start from what exists: if AGENTS.md or similar agent docs (CLAUDE.md, .cursor/rules) are already present, read them first and update in place — keep valid hand-written sections, fix only what is stale or missing; do not overwrite useful content. Explore briefly and with purpose — a few tool rounds, not the whole tree: manifests (package.json and similar), README, top-level folder layout, docs/, build/test/CI configs, and 2–3 key entry-point files. Write AGENTS.md as a dense orientation guide for a coding agent: what the project is (1–2 lines); an area → where table (entry points, main folders, key files); exact build/run/test commands taken from configs; non-obvious architecture/runtime notes; conventions and hard constraints, especially what the agent must NOT do; gotchas and the best next steps. Every line must be specific and non-obvious — no generic advice, no restating the README. Match the language of the existing docs (or the user's language if none). Use write_file or search_replace, then briefly confirm in chat what you wrote.",
       slashInitWithTarget: (target) =>
@@ -585,22 +581,6 @@
       validateTls: "Проверять TLS-сертификат",
       supportsVision: "Поддержка изображений (vision)",
       agentBehavior: "Поведение агента",
-      browserAgent: "Браузерный агент",
-      browserAgentTitle: "Браузерный агент",
-      browserAgentNote: "Многошаговые задачи в вашем Chrome или Edge.",
-      autoglmEnabled: "Включить браузерный агент",
-      autoglmEnabledNote:
-        "Инструмент browser_task. Нужны CLI AutoGLM и расширение.",
-      autoglmBrowser: "Браузер",
-      autoglmBrowserHint: "Установите расширение AutoGLM и включите его.",
-      autoglmAutoApprove: "Автоподтверждение чувствительных действий",
-      autoglmAutoApproveNote:
-        "Без запроса на чувствительные шаги. Логин и капча — вручную.",
-      autoglmConnection: "Подключение",
-      autoglmBinaryPath: "Путь к CLI",
-      autoglmBinaryPathPlaceholder: "autoglm в PATH или полный путь",
-      autoglmBinaryPathHint:
-        "Пусто — берётся из PATH. При сохранении пишется ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
       commitMessagesNote: "Генерация сообщений коммита в SCM по diff. Выберите хотя бы одну модель ниже.",
@@ -675,8 +655,11 @@
       mcpPresetsLabel: "Быстро добавить",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetChromeDevtools: "Chrome DevTools",
       mcpPresetPlaywrightNote:
-        "Интерактивный браузер через Playwright MCP. Нужен Node.js / npx. В Harbor также есть builtin browser_* tools.",
+        "Браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. Чтобы работать в вашем Chrome/Edge с вашими логинами, установите «Playwright Extension» и замените --headless на --extension.",
+      mcpPresetChromeDevtoolsNote:
+        "Chrome DevTools MCP: консоль, сеть, производительность, скриншоты, клики. Нужен Node.js / npx. Чтобы подключиться к открытому Chrome (144+), включите chrome://inspect/#remote-debugging и добавьте --autoConnect.",
       mcpPresetGithubNote:
         "Удалённый GitHub MCP. Вставьте Personal Access Token в Bearer token, затем Save & Connect.",
       mcpPresetAlready: (name) =>
@@ -1022,6 +1005,15 @@
       modePlaceholder: (label) => `${label}… (@ — файл)`,
       failedReadFile: "Не удалось прочитать файл",
       slashModeSwitched: (label) => `Режим: ${label}`,
+      inputRiskTitle: "Проверьте перед отправкой",
+      inputRiskSecrets: (kinds) => `Похоже на секрет: ${kinds}. Он уйдёт провайдеру модели.`,
+      inputRiskInjection: "В тексте есть попытка переопределить инструкции (prompt injection) — типично для вставленного текста.",
+      inputRiskInvisible: (n) => `Скрытые Unicode-символы: ${n} (zero-width / bidi / tag).`,
+      inputRiskDanger: (kinds) => `Разрушительная команда: ${kinds}. Агент может её реально выполнить.`,
+      inputRiskMask: "Замаскировать секреты",
+      inputRiskStrip: "Убрать скрытые символы",
+      inputRiskSendAnyway: "Отправить как есть",
+      inputRiskCancel: "Отмена",
       slashInitDefault:
         "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Начни с существующего: если AGENTS.md или похожие файлы для агентов (CLAUDE.md, .cursor/rules) уже есть — сначала прочитай их и обновляй на месте, сохраняя полезные рукописные разделы; чини только устаревшее или отсутствующее, не затирай полезное. Исследуй коротко и по делу — несколько раундов инструментов, не всё дерево: манифесты (package.json и подобные), README, структуру папок верхнего уровня, docs/, конфиги сборки/тестов/CI и 2–3 ключевых entry point. Запиши AGENTS.md как плотный ориентир для кодинг-агента: что за проект (1–2 строки); таблицу «область → где искать» (entry points, основные папки, ключевые файлы); точные команды сборки/запуска/тестов из конфигов; неочевидные заметки про архитектуру/рантайм; соглашения и жёсткие ограничения — особенно что агенту делать НЕЛЬЗЯ; подводные камни и с чего лучше продолжать. Каждая строка — конкретная и неочевидная: без общих слов и пересказа README. Пиши на языке существующих доков (или на языке пользователя, если их нет). Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
       slashInitWithTarget: (target) =>

@@ -257,8 +257,9 @@ function identifierIndices(text: string, symbol: string): number[] {
   return out;
 }
 
+/** Keyword right before the name: `function foo`, `const foo`, `def foo`, … */
 const DECLARATION_HINT =
-  /\b(function|class|interface|type|enum|const|let|var|def|fun|val|struct|trait|impl|func|module|namespace|export)\b/;
+  /\b(function\s*\*?|class|interface|type|enum|const|let|var|def|fun|val|struct|trait|func|module|namespace|object)\s+$/;
 
 /**
  * Pick the 1-based line/column of `symbol` in a file's lines.

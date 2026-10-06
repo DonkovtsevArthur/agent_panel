@@ -8,7 +8,6 @@
       "commit",
       "mcp",
       "skills",
-      "browser",
       "agent",
       "advanced",
     ];

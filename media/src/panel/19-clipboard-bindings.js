@@ -602,7 +602,7 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsFontSize, #settingsAutoglmBinaryPath"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsFontSize"
         )
       ) {
         if (target.closest("#settingsSystemPrompt")) {
@@ -624,7 +624,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
@@ -716,6 +716,11 @@
   if (mcpPresetPlaywright) {
     mcpPresetPlaywright.addEventListener("click", () => {
       openMcpPreset("playwright");
+    });
+  }
+  if (mcpPresetChromeDevtools) {
+    mcpPresetChromeDevtools.addEventListener("click", () => {
+      openMcpPreset("chrome-devtools");
     });
   }
   if (mcpPresetGithub) {

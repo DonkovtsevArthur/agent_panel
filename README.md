@@ -11,7 +11,7 @@
 - **Панель в sidebar** — несколько агентов (чатов), архив, поиск, ветки диалога
 - **Агент по проекту** — поиск по коду, правки файлов, команды в терминале, `@file`, выделение из редактора, вложения
 - **MCP** — Figma и свои MCP-серверы (stdio / HTTP), в том числе быстрые пресеты
-- **Браузер** — headless-проверка страниц и опциональный Browser agent в реальном Chrome/Edge
+- **Браузер** — через MCP-пресеты Playwright и Chrome DevTools (headless или ваш Chrome)
 
 ## Возможности
 
@@ -28,7 +28,6 @@
 - **Карточка diff review** с переходом в Source Control
 - **Генерация commit message** в Source Control (по вашему API); промпт и язык — для всех workspace или для текущего
 - **Figma** — Connect (OAuth) или Personal Access Token в Settings → MCP Servers; агент читает дизайн по ссылке figma.com
-- **Browser agent** — многошаговые задачи в вашем Chrome/Edge (Settings → Browser agent)
 - **Ветки ответов** без потери основной нити диалога
 - **Поиск** по сообщениям чата
 - Сессии хранятся **локально для каждого workspace**
@@ -72,7 +71,6 @@
 - `agentPanel.figma.enabled` — включить Figma MCP; подключение — Settings → MCP Servers
 - `agentPanel.mcp.servers` — свои MCP-серверы (stdio / HTTP); UI: Settings → MCP Servers → +
 - `agentPanel.selectionHints.enabled` — CodeLens «Добавить в чат» над выделением в редакторе
-- `agentPanel.autoglm.*` — Browser agent (вкл., браузер, auto-approve, путь к бинарнику)
 
 Старые `agentPanel.baseUrl` / `agentPanel.apiKey` тоже работают, но предпочтительнее `providers`.
 
@@ -126,7 +124,7 @@ Marketplace and UI name: **Harbor Agents**.
 - **Sidebar agent panel** — multiple agents (chats), archive, search, conversation branches
 - **Project agent** — codebase search, file edits, terminal commands, `@file`, editor selection, attachments
 - **MCP** — Figma and your own MCP servers (stdio / HTTP), including quick presets
-- **Browser** — headless page checks and an optional Browser agent in real Chrome/Edge
+- **Browser** — via Playwright and Chrome DevTools MCP presets (headless or your own Chrome)
 
 ### Features
 
@@ -143,7 +141,6 @@ Marketplace and UI name: **Harbor Agents**.
 - **Diff review** card with jump to Source Control
 - **Generate commit messages** in Source Control via your API; prompt and language can be saved for all workspaces or the current one
 - **Figma** — Connect (OAuth) or Personal Access Token in Settings → MCP Servers; the agent reads designs from figma.com links
-- **Browser agent** — multi-step tasks in your Chrome/Edge (Settings → Browser agent)
 - **Branches** without losing the main thread
 - **Search** within the chat
 - Sessions stored **locally per workspace**
@@ -187,7 +184,6 @@ Tip: select code → **Harbor Agents: Add Selection to Chat** (`Cmd+Shift+L` / `
 - `agentPanel.figma.enabled` — enable Figma MCP; connect via Settings → MCP Servers
 - `agentPanel.mcp.servers` — custom MCP servers (stdio / HTTP); UI: Settings → MCP Servers → +
 - `agentPanel.selectionHints.enabled` — floating Add to Chat above editor selections
-- `agentPanel.autoglm.*` — Browser agent (enable, browser, auto-approve, binary path)
 
 Legacy `agentPanel.baseUrl` / `agentPanel.apiKey` still work; prefer `providers`.
 

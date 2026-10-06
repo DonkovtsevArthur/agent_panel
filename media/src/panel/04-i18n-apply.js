@@ -155,8 +155,6 @@
     setText("settingsCommitScopeHint", "commitScopeHint");
     setText("settingsMcpTitle", "mcpServers");
     setText("settingsSkillsTitle", "skillsSection");
-    setText("settingsBrowserTitle", "browserAgentTitle");
-    setText("settingsAutoglmConnectionTitle", "autoglmConnection");
     setText("settingsAgentTitle", "agentBehavior");
     setText("settingsExecutionTitle", "agentExecution");
     setText("settingsInterfaceTitle", "agentInterface");
@@ -462,21 +460,6 @@
     setText("skillsRefreshLabel", "skillsRefresh");
     setText("skillsFoldersTitle", "skillsFoldersTitle");
     setText("skillsFoldersDisabledHint", "skillsFoldersDisabledHint");
-    const settingsBrowserNote = document.getElementById("settingsBrowserNote");
-    if (settingsBrowserNote) {
-      settingsBrowserNote.textContent = t("browserAgentNote");
-    }
-    setText("settingsAutoglmEnabledLabel", "autoglmEnabled");
-    setText("settingsAutoglmEnabledNote", "autoglmEnabledNote");
-    setText("settingsAutoglmAutoApproveLabel", "autoglmAutoApprove");
-    setText("settingsAutoglmAutoApproveNote", "autoglmAutoApproveNote");
-    setText("settingsAutoglmBrowserLabel", "autoglmBrowser");
-    setText("settingsAutoglmBrowserHint", "autoglmBrowserHint");
-    setText("settingsAutoglmBinaryPathLabel", "autoglmBinaryPath");
-    setText("settingsAutoglmBinaryPathHint", "autoglmBinaryPathHint");
-    if (settingsAutoglmBinaryPath) {
-      settingsAutoglmBinaryPath.placeholder = t("autoglmBinaryPathPlaceholder");
-    }
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
     if (mcpSearchInput) {
       mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
@@ -488,6 +471,10 @@
     if (mcpPresetPlaywright) {
       const label = mcpPresetPlaywright.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetPlaywright");
+    }
+    if (mcpPresetChromeDevtools) {
+      const label = mcpPresetChromeDevtools.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetChromeDevtools");
     }
     if (mcpPresetGithub) {
       const label = mcpPresetGithub.querySelector(".mcp-preset-btn-label");

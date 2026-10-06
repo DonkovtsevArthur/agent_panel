@@ -161,10 +161,6 @@ class HeadlessConfiguration {
     "commitMessage.scope": ["commitMessageScope"],
     "visionRouting.preferredModelIds": ["visionRoutingPreferredModelIds"],
     "visionRouting.preferredModelId": ["visionRoutingPreferredModelId"],
-    "autoglm.enabled": ["autoglmEnabled"],
-    "autoglm.browser": ["autoglmBrowser"],
-    "autoglm.autoApprove": ["autoglmAutoApprove"],
-    "autoglm.binaryPath": ["autoglmBinaryPath"],
     "figma.enabled": ["figmaEnabled"],
     "soundNotifications.enabled": ["soundNotificationsEnabled"],
     "subagents.enabled": ["subagentsEnabled"],
@@ -183,7 +179,7 @@ class HeadlessConfiguration {
     "selectionHints.enabled": ["selectionHintsEnabled"],
   };
 
-  /** autoglm.browser → autoglmBrowser */
+  /** figma.enabled → figmaEnabled */
   private static dottedToCamel(key: string): string {
     const parts = key.split(".");
     if (parts.length < 2) {

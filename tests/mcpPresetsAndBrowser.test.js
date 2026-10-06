@@ -7,8 +7,16 @@ const {
   mcpPresetToModalPrefill,
 } = require("../out/mcp/presets.js");
 
-test("MCP_PRESETS includes Playwright stdio and GitHub http", () => {
-  assert.equal(MCP_PRESETS.length, 2);
+test("MCP_PRESETS includes Playwright, Chrome DevTools (stdio) and GitHub (http)", () => {
+  assert.deepEqual(
+    MCP_PRESETS.map((p) => p.id),
+    ["playwright", "chrome-devtools", "github"]
+  );
+  const cd = getMcpPreset("chrome-devtools");
+  assert.equal(cd.transport, "stdio");
+  assert.equal(cd.command, "npx");
+  assert.ok(cd.args.includes("chrome-devtools-mcp@latest"));
+
   const pw = getMcpPreset("playwright");
   assert.ok(pw);
   assert.equal(pw.transport, "stdio");

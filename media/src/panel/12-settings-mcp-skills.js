@@ -373,6 +373,17 @@
       noteKey: "mcpPresetPlaywrightNote",
       matchIds: ["playwright", "playwright-browser"],
     },
+    "chrome-devtools": {
+      name: "Chrome DevTools",
+      transport: "stdio",
+      command: "npx",
+      argsText: "-y chrome-devtools-mcp@latest",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetChromeDevtoolsNote",
+      matchIds: ["chrome-devtools", "chrome-devtools-mcp"],
+    },
     github: {
       name: "GitHub",
       transport: "http",

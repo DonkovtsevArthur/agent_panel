@@ -115,7 +115,7 @@ test("subagents: bundled Cline ships spawn_agent with Harbor extraTools patch", 
   // Harbor patch: children get host extraTools (MCP, Figma) concatenated.
   assert.match(
     bundle,
-    /Array\.isArray\(\w+\.extraTools\) \? \w+\.extraTools : \[\]/,
+    /Array\.isArray\(\w+\.extraTools\)\s*\?\s*\w+\.extraTools\s*:\s*\[\]/,
     "spawn-tool extraTools patch missing — rebuild after vendor/cline update?"
   );
 });

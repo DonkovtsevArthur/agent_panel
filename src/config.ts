@@ -354,13 +354,6 @@ export interface AgentPanelConfig {
   figma: {
     enabled: boolean;
   };
-  /** AutoGLM real-browser agent (browser_task tool). */
-  autoglm: {
-    enabled: boolean;
-    binaryPath: string;
-    browser: "chrome" | "edge";
-    autoApprove: boolean;
-  };
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -804,17 +797,6 @@ export function getConfig(): AgentPanelConfig {
     figma: {
       enabled: cfg.get<boolean>("figma.enabled") === true,
     },
-    autoglm: (() => {
-      const browserRaw = String(cfg.get<string>("autoglm.browser") || "chrome")
-        .trim()
-        .toLowerCase();
-      return {
-        enabled: cfg.get<boolean>("autoglm.enabled") === true,
-        binaryPath: String(cfg.get<string>("autoglm.binaryPath") || "").trim(),
-        browser: browserRaw === "edge" ? ("edge" as const) : ("chrome" as const),
-        autoApprove: cfg.get<boolean>("autoglm.autoApprove") === true,
-      };
-    })(),
   };
 }
 

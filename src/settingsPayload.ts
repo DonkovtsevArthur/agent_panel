@@ -46,10 +46,6 @@ export type HarborSettingsPayloadCore = {
   /** Ordered preferred vision models for under-the-hood image describe. */
   visionRoutingPreferredModelIds: string[];
   figmaEnabled: boolean;
-  autoglmEnabled: boolean;
-  autoglmBinaryPath: string;
-  autoglmBrowser: string;
-  autoglmAutoApprove: boolean;
 };
 
 function modelRow(
@@ -131,9 +127,5 @@ export function buildHarborSettingsPayloadCore(
     commitMessageScope: config.commitMessage.scope,
     visionRoutingPreferredModelIds: config.visionRouting.preferredModelIds,
     figmaEnabled: config.figma.enabled,
-    autoglmEnabled: config.autoglm.enabled,
-    autoglmBinaryPath: config.autoglm.binaryPath,
-    autoglmBrowser: config.autoglm.browser,
-    autoglmAutoApprove: config.autoglm.autoApprove,
   };
 }

@@ -164,10 +164,6 @@
           <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
           <span class="settings-nav-label" data-i18n-nav="skillsSection">Skills</span>
         </button>
-        <button type="button" class="settings-nav-item" data-settings-cat="browser">
-          <span class="material-symbols-outlined" aria-hidden="true">web</span>
-          <span class="settings-nav-label" data-i18n-nav="browserAgent">Browser agent</span>
-        </button>
         <button type="button" class="settings-nav-item" data-settings-cat="agent">
           <span class="material-symbols-outlined" aria-hidden="true">psychology</span>
           <span class="settings-nav-label" data-i18n-nav="agentBehavior">Agent behavior</span>
@@ -301,6 +297,10 @@
                 <span class="material-symbols-outlined" aria-hidden="true">web</span>
                 <span class="mcp-preset-btn-label">Playwright</span>
               </button>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="chrome-devtools" id="mcpPresetChromeDevtools">
+                <span class="material-symbols-outlined" aria-hidden="true">bug_report</span>
+                <span class="mcp-preset-btn-label">Chrome DevTools</span>
+              </button>
               <button type="button" class="text-btn mcp-preset-btn" data-preset="github" id="mcpPresetGithub">
                 <span class="material-symbols-outlined" aria-hidden="true">hub</span>
                 <span class="mcp-preset-btn-label">GitHub</span>
@@ -332,47 +332,6 @@
           </div>
           <div id="skillsFoldersList" class="skills-folders-list"></div>
           <p class="skills-folders-hint" id="skillsFoldersDisabledHint">A disabled folder is not sent to the model.</p>
-        </section>
-
-        <section class="settings-panel" data-settings-panel="browser" hidden>
-          <h3 class="settings-section-title" id="settingsBrowserTitle">Browser agent</h3>
-          <p class="settings-section-note" id="settingsBrowserNote">Multi-step tasks in your Chrome or Edge.</p>
-          <div class="settings-card">
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsAutoglmEnabledLabel">Enable browser agent</span>
-                <span class="settings-toggle-hint" id="settingsAutoglmEnabledNote">The browser_task tool. Needs AutoGLM CLI and the extension.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsAutoglmEnabled" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
-            </label>
-            <label class="settings-toggle-row">
-              <span class="settings-toggle-text">
-                <span class="settings-toggle-title" id="settingsAutoglmAutoApproveLabel">Auto-approve sensitive actions</span>
-                <span class="settings-toggle-hint" id="settingsAutoglmAutoApproveNote">No prompt for sensitive steps. Login and captcha still need you.</span>
-              </span>
-              <span class="mcp-switch">
-                <input id="settingsAutoglmAutoApprove" type="checkbox" />
-                <span class="mcp-switch-track"></span>
-              </span>
-            </label>
-          </div>
-          <h4 class="settings-section-title settings-group-title" id="settingsAutoglmConnectionTitle">Connection</h4>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsAutoglmBrowserLabel">Browser</span>
-            <select id="settingsAutoglmBrowser" class="settings-input">
-              <option value="chrome">Chrome</option>
-              <option value="edge">Edge</option>
-            </select>
-            <span class="settings-field-hint" id="settingsAutoglmBrowserHint">Install the AutoGLM extension and enable it.</span>
-          </label>
-          <label class="settings-field">
-            <span class="settings-label" id="settingsAutoglmBinaryPathLabel">CLI path</span>
-            <input id="settingsAutoglmBinaryPath" class="settings-input" type="text" autocomplete="off" placeholder="autoglm on PATH, or full path" />
-            <span class="settings-field-hint" id="settingsAutoglmBinaryPathHint">Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json</span>
-          </label>
         </section>
 
         <section class="settings-panel" data-settings-panel="agent" hidden>

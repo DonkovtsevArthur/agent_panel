@@ -191,19 +191,6 @@
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
     }
-    if (settingsAutoglmEnabled) {
-      settingsAutoglmEnabled.checked = settings.autoglmEnabled === true;
-    }
-    if (settingsAutoglmBrowser) {
-      settingsAutoglmBrowser.value =
-        settings.autoglmBrowser === "edge" ? "edge" : "chrome";
-    }
-    if (settingsAutoglmAutoApprove) {
-      settingsAutoglmAutoApprove.checked = settings.autoglmAutoApprove === true;
-    }
-    if (settingsAutoglmBinaryPath) {
-      settingsAutoglmBinaryPath.value = settings.autoglmBinaryPath || "";
-    }
     closeModelEditModal();
     closeProviderEditModal();
     ingestProviderConnStatuses(settings.providerConnStatuses);
@@ -344,20 +331,6 @@
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
-      autoglmEnabled: settingsAutoglmEnabled
-        ? settingsAutoglmEnabled.checked
-        : false,
-      autoglmBrowser: settingsAutoglmBrowser
-        ? settingsAutoglmBrowser.value === "edge"
-          ? "edge"
-          : "chrome"
-        : "chrome",
-      autoglmAutoApprove: settingsAutoglmAutoApprove
-        ? settingsAutoglmAutoApprove.checked
-        : false,
-      autoglmBinaryPath: settingsAutoglmBinaryPath
-        ? settingsAutoglmBinaryPath.value.trim()
-        : "",
       modes: collectCustomModesForSave(),
     };
   }

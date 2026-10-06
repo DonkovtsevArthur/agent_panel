@@ -220,18 +220,6 @@
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
   );
-  const settingsAutoglmEnabled = document.getElementById(
-    "settingsAutoglmEnabled"
-  );
-  const settingsAutoglmBrowser = document.getElementById(
-    "settingsAutoglmBrowser"
-  );
-  const settingsAutoglmAutoApprove = document.getElementById(
-    "settingsAutoglmAutoApprove"
-  );
-  const settingsAutoglmBinaryPath = document.getElementById(
-    "settingsAutoglmBinaryPath"
-  );
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsSystemPromptToggle = document.getElementById(
     "settingsSystemPromptToggle"
@@ -334,6 +322,9 @@
   const mcpPresetsNote = document.getElementById("mcpPresetsNote");
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
+  const mcpPresetChromeDevtools = document.getElementById(
+    "mcpPresetChromeDevtools"
+  );
   const mcpConfiguredTitle = document.getElementById("mcpConfiguredTitle");
   const mcpConfiguredCount = document.getElementById("mcpConfiguredCount");
   const mcpServersList = document.getElementById("mcpServersList");

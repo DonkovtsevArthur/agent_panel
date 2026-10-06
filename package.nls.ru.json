@@ -88,9 +88,5 @@
   "config.commitMessage.language.enum.ru": "Русский",
   "config.figma.hostAutoStart.description": "Запускать локальный Harbor Figma host (127.0.0.1:17891) в фоне при старте VS Code. Нужен только для плагина Harbor Figma.",
   "config.figma.enabled.description": "Включить Figma MCP в Harbor Agents (подключение в Settings панели → MCP Servers)",
-  "config.autoglm.enabled.description": "Включить browser_task (AutoGLM) для многошаговых задач в Chrome/Edge пользователя. Нужны CLI AutoGLM и расширение браузера.",
-  "config.autoglm.binaryPath.description": "Опциональный путь к бинарнику autoglm. Пусто = PATH, затем ~/.agents/skills/autoglm-browser-agent/dist/autoglm-browser-service.",
-  "config.autoglm.browser.description": "Браузер для задач AutoGLM (chrome или edge)",
-  "config.autoglm.autoApprove.description": "Автоподтверждение чувствительных действий AutoGLM (логин/капча всё равно вручную)",
   "config.mcp.servers.description": "Свои MCP-серверы (stdio или HTTP). Управление в Harbor Agents → Settings → MCP Servers."
 }

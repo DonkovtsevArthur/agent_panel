@@ -104,22 +104,6 @@
       validateTls: "Validate TLS certificate",
       supportsVision: "Supports images (vision)",
       agentBehavior: "Agent behavior",
-      browserAgent: "Browser agent",
-      browserAgentTitle: "Browser agent",
-      browserAgentNote: "Multi-step tasks in your Chrome or Edge.",
-      autoglmEnabled: "Enable browser agent",
-      autoglmEnabledNote:
-        "The browser_task tool. Needs AutoGLM CLI and the extension.",
-      autoglmBrowser: "Browser",
-      autoglmBrowserHint: "Install the AutoGLM extension and enable it.",
-      autoglmAutoApprove: "Auto-approve sensitive actions",
-      autoglmAutoApproveNote:
-        "No prompt for sensitive steps. Login and captcha still need you.",
-      autoglmConnection: "Connection",
-      autoglmBinaryPath: "CLI path",
-      autoglmBinaryPathPlaceholder: "autoglm on PATH, or full path",
-      autoglmBinaryPathHint:
-        "Empty — taken from PATH. Saving writes ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Advanced",
       commitMessages: "Commit messages",
       commitMessagesNote: "Generate SCM commit messages from the diff. Pick at least one model below.",
@@ -192,8 +176,11 @@
       mcpPresetsLabel: "Quick add",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetChromeDevtools: "Chrome DevTools",
       mcpPresetPlaywrightNote:
-        "Interactive browser via Playwright MCP. Needs Node.js / npx. Harbor also has builtin browser_* tools.",
+        "Browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. To drive your own Chrome/Edge with its logins, install the “Playwright Extension” and replace --headless with --extension.",
+      mcpPresetChromeDevtoolsNote:
+        "Chrome DevTools MCP: console, network, performance, screenshots, clicks. Needs Node.js / npx. To attach to your open Chrome (144+), enable chrome://inspect/#remote-debugging and add --autoConnect.",
       mcpPresetGithubNote:
         "GitHub remote MCP. Paste a Personal Access Token into Bearer token, then Save & Connect.",
       mcpPresetAlready: (name) => `«${name}» is already in the list — open settings on the card to edit.`,
@@ -514,6 +501,15 @@
       modePlaceholder: (label) => `${label}... (@ for file)`,
       failedReadFile: "Failed to read file",
       slashModeSwitched: (label) => `Mode: ${label}`,
+      inputRiskTitle: "Check before sending",
+      inputRiskSecrets: (kinds) => `Looks like a secret: ${kinds}. It would be sent to the model provider.`,
+      inputRiskInjection: "The text contains instruction-override markers (prompt injection) — typical for pasted content.",
+      inputRiskInvisible: (n) => `Hidden Unicode characters: ${n} (zero-width / bidi / tag characters).`,
+      inputRiskDanger: (kinds) => `Destructive command: ${kinds}. The agent may actually run it.`,
+      inputRiskMask: "Mask secrets",
+      inputRiskStrip: "Remove hidden characters",
+      inputRiskSendAnyway: "Send as is",
+      inputRiskCancel: "Cancel",
       slashInitDefault:
         "Inspect this repository and create or update AGENTS.md at the workspace root. Start from what exists: if AGENTS.md or similar agent docs (CLAUDE.md, .cursor/rules) are already present, read them first and update in place — keep valid hand-written sections, fix only what is stale or missing; do not overwrite useful content. Explore briefly and with purpose — a few tool rounds, not the whole tree: manifests (package.json and similar), README, top-level folder layout, docs/, build/test/CI configs, and 2–3 key entry-point files. Write AGENTS.md as a dense orientation guide for a coding agent: what the project is (1–2 lines); an area → where table (entry points, main folders, key files); exact build/run/test commands taken from configs; non-obvious architecture/runtime notes; conventions and hard constraints, especially what the agent must NOT do; gotchas and the best next steps. Every line must be specific and non-obvious — no generic advice, no restating the README. Match the language of the existing docs (or the user's language if none). Use write_file or search_replace, then briefly confirm in chat what you wrote.",
       slashInitWithTarget: (target) =>
@@ -585,22 +581,6 @@
       validateTls: "Проверять TLS-сертификат",
       supportsVision: "Поддержка изображений (vision)",
       agentBehavior: "Поведение агента",
-      browserAgent: "Браузерный агент",
-      browserAgentTitle: "Браузерный агент",
-      browserAgentNote: "Многошаговые задачи в вашем Chrome или Edge.",
-      autoglmEnabled: "Включить браузерный агент",
-      autoglmEnabledNote:
-        "Инструмент browser_task. Нужны CLI AutoGLM и расширение.",
-      autoglmBrowser: "Браузер",
-      autoglmBrowserHint: "Установите расширение AutoGLM и включите его.",
-      autoglmAutoApprove: "Автоподтверждение чувствительных действий",
-      autoglmAutoApproveNote:
-        "Без запроса на чувствительные шаги. Логин и капча — вручную.",
-      autoglmConnection: "Подключение",
-      autoglmBinaryPath: "Путь к CLI",
-      autoglmBinaryPathPlaceholder: "autoglm в PATH или полный путь",
-      autoglmBinaryPathHint:
-        "Пусто — берётся из PATH. При сохранении пишется ~/.openclaw-autoclaw/config.json",
       advancedSettings: "Доп. настройки",
       commitMessages: "Сообщения коммитов",
       commitMessagesNote: "Генерация сообщений коммита в SCM по diff. Выберите хотя бы одну модель ниже.",
@@ -675,8 +655,11 @@
       mcpPresetsLabel: "Быстро добавить",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetChromeDevtools: "Chrome DevTools",
       mcpPresetPlaywrightNote:
-        "Интерактивный браузер через Playwright MCP. Нужен Node.js / npx. В Harbor также есть builtin browser_* tools.",
+        "Браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. Чтобы работать в вашем Chrome/Edge с вашими логинами, установите «Playwright Extension» и замените --headless на --extension.",
+      mcpPresetChromeDevtoolsNote:
+        "Chrome DevTools MCP: консоль, сеть, производительность, скриншоты, клики. Нужен Node.js / npx. Чтобы подключиться к открытому Chrome (144+), включите chrome://inspect/#remote-debugging и добавьте --autoConnect.",
       mcpPresetGithubNote:
         "Удалённый GitHub MCP. Вставьте Personal Access Token в Bearer token, затем Save & Connect.",
       mcpPresetAlready: (name) =>
@@ -1022,6 +1005,15 @@
       modePlaceholder: (label) => `${label}… (@ — файл)`,
       failedReadFile: "Не удалось прочитать файл",
       slashModeSwitched: (label) => `Режим: ${label}`,
+      inputRiskTitle: "Проверьте перед отправкой",
+      inputRiskSecrets: (kinds) => `Похоже на секрет: ${kinds}. Он уйдёт провайдеру модели.`,
+      inputRiskInjection: "В тексте есть попытка переопределить инструкции (prompt injection) — типично для вставленного текста.",
+      inputRiskInvisible: (n) => `Скрытые Unicode-символы: ${n} (zero-width / bidi / tag).`,
+      inputRiskDanger: (kinds) => `Разрушительная команда: ${kinds}. Агент может её реально выполнить.`,
+      inputRiskMask: "Замаскировать секреты",
+      inputRiskStrip: "Убрать скрытые символы",
+      inputRiskSendAnyway: "Отправить как есть",
+      inputRiskCancel: "Отмена",
       slashInitDefault:
         "Изучи этот репозиторий и создай или обнови файл AGENTS.md в корне workspace. Начни с существующего: если AGENTS.md или похожие файлы для агентов (CLAUDE.md, .cursor/rules) уже есть — сначала прочитай их и обновляй на месте, сохраняя полезные рукописные разделы; чини только устаревшее или отсутствующее, не затирай полезное. Исследуй коротко и по делу — несколько раундов инструментов, не всё дерево: манифесты (package.json и подобные), README, структуру папок верхнего уровня, docs/, конфиги сборки/тестов/CI и 2–3 ключевых entry point. Запиши AGENTS.md как плотный ориентир для кодинг-агента: что за проект (1–2 строки); таблицу «область → где искать» (entry points, основные папки, ключевые файлы); точные команды сборки/запуска/тестов из конфигов; неочевидные заметки про архитектуру/рантайм; соглашения и жёсткие ограничения — особенно что агенту делать НЕЛЬЗЯ; подводные камни и с чего лучше продолжать. Каждая строка — конкретная и неочевидная: без общих слов и пересказа README. Пиши на языке существующих доков (или на языке пользователя, если их нет). Используй write_file или search_replace, затем коротко подтверди в чате, что именно записал.",
       slashInitWithTarget: (target) =>
@@ -1317,18 +1309,6 @@
   const settingsSelectionHintsEnabled = document.getElementById(
     "settingsSelectionHintsEnabled"
   );
-  const settingsAutoglmEnabled = document.getElementById(
-    "settingsAutoglmEnabled"
-  );
-  const settingsAutoglmBrowser = document.getElementById(
-    "settingsAutoglmBrowser"
-  );
-  const settingsAutoglmAutoApprove = document.getElementById(
-    "settingsAutoglmAutoApprove"
-  );
-  const settingsAutoglmBinaryPath = document.getElementById(
-    "settingsAutoglmBinaryPath"
-  );
   const settingsSystemPrompt = document.getElementById("settingsSystemPrompt");
   const settingsSystemPromptToggle = document.getElementById(
     "settingsSystemPromptToggle"
@@ -1431,6 +1411,9 @@
   const mcpPresetsNote = document.getElementById("mcpPresetsNote");
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
+  const mcpPresetChromeDevtools = document.getElementById(
+    "mcpPresetChromeDevtools"
+  );
   const mcpConfiguredTitle = document.getElementById("mcpConfiguredTitle");
   const mcpConfiguredCount = document.getElementById("mcpConfiguredCount");
   const mcpServersList = document.getElementById("mcpServersList");
@@ -1797,8 +1780,6 @@
     setText("settingsCommitScopeHint", "commitScopeHint");
     setText("settingsMcpTitle", "mcpServers");
     setText("settingsSkillsTitle", "skillsSection");
-    setText("settingsBrowserTitle", "browserAgentTitle");
-    setText("settingsAutoglmConnectionTitle", "autoglmConnection");
     setText("settingsAgentTitle", "agentBehavior");
     setText("settingsExecutionTitle", "agentExecution");
     setText("settingsInterfaceTitle", "agentInterface");
@@ -2104,21 +2085,6 @@
     setText("skillsRefreshLabel", "skillsRefresh");
     setText("skillsFoldersTitle", "skillsFoldersTitle");
     setText("skillsFoldersDisabledHint", "skillsFoldersDisabledHint");
-    const settingsBrowserNote = document.getElementById("settingsBrowserNote");
-    if (settingsBrowserNote) {
-      settingsBrowserNote.textContent = t("browserAgentNote");
-    }
-    setText("settingsAutoglmEnabledLabel", "autoglmEnabled");
-    setText("settingsAutoglmEnabledNote", "autoglmEnabledNote");
-    setText("settingsAutoglmAutoApproveLabel", "autoglmAutoApprove");
-    setText("settingsAutoglmAutoApproveNote", "autoglmAutoApproveNote");
-    setText("settingsAutoglmBrowserLabel", "autoglmBrowser");
-    setText("settingsAutoglmBrowserHint", "autoglmBrowserHint");
-    setText("settingsAutoglmBinaryPathLabel", "autoglmBinaryPath");
-    setText("settingsAutoglmBinaryPathHint", "autoglmBinaryPathHint");
-    if (settingsAutoglmBinaryPath) {
-      settingsAutoglmBinaryPath.placeholder = t("autoglmBinaryPathPlaceholder");
-    }
     if (mcpConfiguredTitle) mcpConfiguredTitle.textContent = t("mcpConfigured");
     if (mcpSearchInput) {
       mcpSearchInput.placeholder = t("mcpSearchPlaceholder");
@@ -2130,6 +2096,10 @@
     if (mcpPresetPlaywright) {
       const label = mcpPresetPlaywright.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetPlaywright");
+    }
+    if (mcpPresetChromeDevtools) {
+      const label = mcpPresetChromeDevtools.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetChromeDevtools");
     }
     if (mcpPresetGithub) {
       const label = mcpPresetGithub.querySelector(".mcp-preset-btn-label");
@@ -9118,7 +9088,6 @@
       "commit",
       "mcp",
       "skills",
-      "browser",
       "agent",
       "advanced",
     ];
@@ -12152,6 +12121,17 @@
       noteKey: "mcpPresetPlaywrightNote",
       matchIds: ["playwright", "playwright-browser"],
     },
+    "chrome-devtools": {
+      name: "Chrome DevTools",
+      transport: "stdio",
+      command: "npx",
+      argsText: "-y chrome-devtools-mcp@latest",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetChromeDevtoolsNote",
+      matchIds: ["chrome-devtools", "chrome-devtools-mcp"],
+    },
     github: {
       name: "GitHub",
       transport: "http",
@@ -12441,19 +12421,6 @@
       settingsSelectionHintsEnabled.checked =
         settings.selectionHintsEnabled !== false;
     }
-    if (settingsAutoglmEnabled) {
-      settingsAutoglmEnabled.checked = settings.autoglmEnabled === true;
-    }
-    if (settingsAutoglmBrowser) {
-      settingsAutoglmBrowser.value =
-        settings.autoglmBrowser === "edge" ? "edge" : "chrome";
-    }
-    if (settingsAutoglmAutoApprove) {
-      settingsAutoglmAutoApprove.checked = settings.autoglmAutoApprove === true;
-    }
-    if (settingsAutoglmBinaryPath) {
-      settingsAutoglmBinaryPath.value = settings.autoglmBinaryPath || "";
-    }
     closeModelEditModal();
     closeProviderEditModal();
     ingestProviderConnStatuses(settings.providerConnStatuses);
@@ -12594,20 +12561,6 @@
       selectionHintsEnabled: settingsSelectionHintsEnabled
         ? settingsSelectionHintsEnabled.checked
         : true,
-      autoglmEnabled: settingsAutoglmEnabled
-        ? settingsAutoglmEnabled.checked
-        : false,
-      autoglmBrowser: settingsAutoglmBrowser
-        ? settingsAutoglmBrowser.value === "edge"
-          ? "edge"
-          : "chrome"
-        : "chrome",
-      autoglmAutoApprove: settingsAutoglmAutoApprove
-        ? settingsAutoglmAutoApprove.checked
-        : false,
-      autoglmBinaryPath: settingsAutoglmBinaryPath
-        ? settingsAutoglmBinaryPath.value.trim()
-        : "",
       modes: collectCustomModesForSave(),
     };
   }
@@ -16559,6 +16512,250 @@
   });
 
 
+  // ── Composer input safety check ─────────────────────────────────────────
+  // Runs before a prompt leaves the composer (send and queue). Three kinds of
+  // findings: secrets (keys/tokens/passwords → offer masking), prompt-injection
+  // markers in pasted text (incl. invisible Unicode → offer stripping), and
+  // destructive shell/SQL commands (warning only). The user can always send
+  // as is; the acknowledgement is bound to the exact outgoing text.
+
+  const COMPOSER_SECRET_RULES = [
+    { label: "OpenAI/Anthropic key", re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g },
+    { label: "GitHub token", re: /\bgh[pousr]_[A-Za-z0-9]{20,}/g },
+    { label: "GitHub token", re: /\bgithub_pat_[A-Za-z0-9_]{20,}/g },
+    { label: "GitLab token", re: /\bglpat-[A-Za-z0-9_-]{20,}/g },
+    { label: "Slack token", re: /\bxox[abprs]-[A-Za-z0-9-]{10,}/g },
+    { label: "AWS access key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+    { label: "Google API key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+    { label: "Stripe key", re: /\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}/g },
+    { label: "JWT", re: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+    {
+      label: "Private key",
+      re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    },
+    { label: "Credentials in URL", re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:([^\s@/]{3,})@/gi, group: 1 },
+    {
+      label: "Password / token",
+      re: /\b((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret(?:[_-]?key)?|password|passwd|pwd|token)\s*[:=]\s*["']?)([^\s"']{6,})/gi,
+      group: 2,
+    },
+  ];
+
+  const COMPOSER_INJECTION_RULES = [
+    /\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|earlier|system)\s+(?:instructions|rules|messages|prompts?)/i,
+    /(?:игнорируй|забудь|отмени)\s+(?:все\s+)?(?:предыдущие|прошлые|системные|вышеуказанные)\s+(?:инструкции|правила|указания)/i,
+    /<\/?\s*(?:system|assistant|instructions?|im_start|im_end)\s*>/i,
+    /<\|(?:im_start|im_end|system|endoftext)\|>/i,
+    /\byou\s+are\s+now\s+(?:in\s+)?(?:developer|dan|jailbreak|unrestricted)\b/i,
+  ];
+
+  // Zero-width / word-joiner / BOM, bidi overrides & isolates, Unicode tag
+  // characters (U+E0000–E007F). ZWJ (U+200D) is left alone — emoji use it.
+  const COMPOSER_INVISIBLE_RE = /[\u200B\u200C\u2060\uFEFF\u202A-\u202E\u2066-\u2069]|\uDB40[\uDC00-\uDC7F]/g;
+
+  const COMPOSER_DANGER_RULES = [
+    { label: "rm -rf", re: /\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\s+(?:\/|~|\*|\$HOME|\.\s*$|\.\/?\s)/im },
+    { label: "git push --force", re: /\bgit\s+push\b[^\n]*\s(?:--force\b|-f\b|--force-with-lease\b)/i },
+    { label: "git reset --hard", re: /\bgit\s+reset\s+--hard\b/i },
+    { label: "git clean -fd", re: /\bgit\s+clean\s+-[a-z]*f[a-z]*d|\bgit\s+clean\s+-[a-z]*d[a-z]*f/i },
+    { label: "curl | sh", re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/i },
+    { label: "mkfs / dd", re: /\bmkfs(?:\.\w+)?\s|\bdd\s+[^\n]*\bof=\/dev\//i },
+    { label: "chmod -R 777", re: /\bchmod\s+-R\s+0?777\b/i },
+    { label: "DROP / TRUNCATE", re: /\b(?:DROP\s+(?:TABLE|DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i },
+    { label: "fork bomb", re: /:\(\)\s*\{\s*:\|:&\s*\}\s*;\s*:/ },
+  ];
+
+  /** Acknowledged outgoing text — sending it again skips the check once. */
+  let composerRiskAckText = null;
+  let composerRiskNoticeEl = null;
+
+  function composerSecretMatches(text) {
+    const found = [];
+    for (const rule of COMPOSER_SECRET_RULES) {
+      rule.re.lastIndex = 0;
+      if (rule.re.test(text)) {
+        found.push(rule.label);
+      }
+      rule.re.lastIndex = 0;
+    }
+    return Array.from(new Set(found));
+  }
+
+  function maskComposerSecrets(text) {
+    let out = String(text || "");
+    for (const rule of COMPOSER_SECRET_RULES) {
+      rule.re.lastIndex = 0;
+      out = out.replace(rule.re, (match, ...groups) => {
+        if (rule.group) {
+          const secret = groups[rule.group - 1];
+          return typeof secret === "string" && secret
+            ? match.slice(0, match.lastIndexOf(secret)) + "<redacted>" + match.slice(match.lastIndexOf(secret) + secret.length)
+            : match;
+        }
+        return "<redacted>";
+      });
+      rule.re.lastIndex = 0;
+    }
+    return out;
+  }
+
+  function stripComposerInvisible(text) {
+    return String(text || "").replace(COMPOSER_INVISIBLE_RE, "");
+  }
+
+  function scanComposerInputRisks(text) {
+    const value = String(text || "");
+    const invisible = (value.match(COMPOSER_INVISIBLE_RE) || []).length;
+    const result = {
+      secrets: composerSecretMatches(value),
+      injection: COMPOSER_INJECTION_RULES.some((re) => re.test(value)),
+      invisible,
+      danger: Array.from(new Set(COMPOSER_DANGER_RULES.filter((r) => r.re.test(value)).map((r) => r.label))),
+    };
+    result.any = Boolean(
+      result.secrets.length || result.injection || result.invisible || result.danger.length,
+    );
+    return result;
+  }
+
+  function hideComposerRiskNotice() {
+    if (composerRiskNoticeEl) {
+      composerRiskNoticeEl.hidden = true;
+      composerRiskNoticeEl.replaceChildren();
+    }
+  }
+
+  function ensureComposerRiskNotice() {
+    if (composerRiskNoticeEl && composerRiskNoticeEl.isConnected) {
+      return composerRiskNoticeEl;
+    }
+    const wrap = composerWrapEl || (composerEl && composerEl.parentElement);
+    if (!wrap) {
+      return null;
+    }
+    const el = document.createElement("div");
+    el.id = "composerRiskNotice";
+    el.className = "composer-risk-notice";
+    el.setAttribute("role", "alert");
+    el.hidden = true;
+    wrap.insertBefore(el, composerEl && composerEl.parentElement === wrap ? composerEl : wrap.firstChild);
+    composerRiskNoticeEl = el;
+    return el;
+  }
+
+  function composerRiskButton(icon, label, onClick, primary) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = primary ? "composer-risk-btn primary" : "composer-risk-btn";
+    btn.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+      `<span>${escapeHtml(label)}</span>`;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    });
+    return btn;
+  }
+
+  function applyComposerRiskFix(transform) {
+    const next = transform(promptEl.value || "");
+    if (next !== promptEl.value) {
+      promptEl.value = next;
+      autoResizePrompt();
+      updateSendButton();
+    }
+    composerRiskAckText = null;
+    sendPrompt();
+  }
+
+  function showComposerRiskNotice(risks, text) {
+    const el = ensureComposerRiskNotice();
+    if (!el) {
+      return false;
+    }
+    el.replaceChildren();
+    const title = document.createElement("div");
+    title.className = "composer-risk-title";
+    title.innerHTML =
+      `<span class="material-symbols-outlined" aria-hidden="true">shield</span>` +
+      `<span>${escapeHtml(t("inputRiskTitle"))}</span>`;
+    el.appendChild(title);
+    const list = document.createElement("ul");
+    list.className = "composer-risk-list";
+    const addItem = (line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      list.appendChild(li);
+    };
+    if (risks.secrets.length) {
+      addItem(t("inputRiskSecrets", risks.secrets.join(", ")));
+    }
+    if (risks.injection) {
+      addItem(t("inputRiskInjection"));
+    }
+    if (risks.invisible) {
+      addItem(t("inputRiskInvisible", risks.invisible));
+    }
+    if (risks.danger.length) {
+      addItem(t("inputRiskDanger", risks.danger.join(", ")));
+    }
+    el.appendChild(list);
+    const actions = document.createElement("div");
+    actions.className = "composer-risk-actions";
+    const rawInput = promptEl.value || "";
+    if (risks.secrets.length && composerSecretMatches(rawInput).length) {
+      actions.appendChild(
+        composerRiskButton("visibility_off", t("inputRiskMask"), () => applyComposerRiskFix(maskComposerSecrets), true),
+      );
+    }
+    if (risks.invisible && COMPOSER_INVISIBLE_RE.test(rawInput)) {
+      actions.appendChild(
+        composerRiskButton("format_clear", t("inputRiskStrip"), () => applyComposerRiskFix(stripComposerInvisible), true),
+      );
+    }
+    COMPOSER_INVISIBLE_RE.lastIndex = 0;
+    actions.appendChild(
+      composerRiskButton("send", t("inputRiskSendAnyway"), () => {
+        composerRiskAckText = text;
+        sendPrompt();
+      }),
+    );
+    actions.appendChild(
+      composerRiskButton("close", t("inputRiskCancel"), () => {
+        hideComposerRiskNotice();
+        focusPrompt();
+      }),
+    );
+    el.appendChild(actions);
+    el.hidden = false;
+    return true;
+  }
+
+  /** True when the text may be sent now; otherwise shows the warning notice. */
+  function composerInputPassesSafetyCheck(text) {
+    if (composerRiskAckText !== null && composerRiskAckText === text) {
+      composerRiskAckText = null;
+      hideComposerRiskNotice();
+      return true;
+    }
+    composerRiskAckText = null;
+    const risks = scanComposerInputRisks(text);
+    if (!risks.any) {
+      hideComposerRiskNotice();
+      return true;
+    }
+    // No place to render the notice — never block sending silently.
+    return !showComposerRiskNotice(risks, text);
+  }
+
+  promptEl.addEventListener("input", () => {
+    if (composerRiskNoticeEl && !composerRiskNoticeEl.hidden) {
+      composerRiskAckText = null;
+      hideComposerRiskNotice();
+    }
+  });
+
   function sendPrompt() {
     const rawInput = promptEl.value || "";
     const command = parseSlashCommand(rawInput);
@@ -16584,6 +16781,9 @@
     const text = buildMessageWithSelections(buildMessageWithMentions(typed));
     const attachments = pendingAttachments.slice();
     if (!text && !attachments.length) {
+      return;
+    }
+    if (!composerInputPassesSafetyCheck(text)) {
       return;
     }
     if (busy) {
@@ -17567,7 +17767,7 @@
       }
       if (
         target.closest(
-          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsFontSize, #settingsAutoglmBinaryPath"
+          "#settingsSystemPrompt, #settingsCommitPrompt, #settingsFontSize"
         )
       ) {
         if (target.closest("#settingsSystemPrompt")) {
@@ -17589,7 +17789,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList, #settingsAutoglmEnabled, #settingsAutoglmBrowser, #settingsAutoglmAutoApprove"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
@@ -17681,6 +17881,11 @@
   if (mcpPresetPlaywright) {
     mcpPresetPlaywright.addEventListener("click", () => {
       openMcpPreset("playwright");
+    });
+  }
+  if (mcpPresetChromeDevtools) {
+    mcpPresetChromeDevtools.addEventListener("click", () => {
+      openMcpPreset("chrome-devtools");
     });
   }
   if (mcpPresetGithub) {
