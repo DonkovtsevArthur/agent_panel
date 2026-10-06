@@ -2,6 +2,15 @@
 
 История изменений **Harbor Agents** (Гавань агентов). Вкладка **Changelog** на странице расширения в Marketplace.
 
+## [2.9.29] — 2026-10-06
+
+- **Композер:** проверка безопасности перед отправкой (и постановкой в очередь) — над полем ввода появляется плашка, если в тексте найдены:
+  - секреты (ключи OpenAI/Anthropic, GitHub/GitLab/Slack/Stripe/Google/AWS, JWT, приватные PEM-ключи, пароль в URL, `password=` / `token:`) — кнопка «Замаскировать секреты» заменяет значение на `<redacted>`;
+  - prompt injection («ignore previous instructions», `<system>`, `<|im_start|>`) и скрытые Unicode-символы (zero-width / bidi / tag) — кнопка «Убрать скрытые символы»;
+  - разрушительные команды (`rm -rf`, `git push --force`, `git reset --hard`, `curl | sh`, `DROP TABLE` и др.) — только предупреждение.
+  
+  «Отправить как есть» разрешает отправку только этого текста; работает в VS Code и WebStorm (общий webview)
+
 ## [2.9.27] — 2026-10-06
 
 - **Браузер:** удалён Browser agent (AutoGLM, `agentPanel.autoglm.*`) — инструмент `browser_task` не был подключён к рантайму Cline после миграции, настройка ничего не делала
