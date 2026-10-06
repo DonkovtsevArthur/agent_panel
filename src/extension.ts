@@ -15,7 +15,7 @@ import {
 import { getConfig } from "./config";
 import { resolveUiLanguage } from "./i18n";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
-import { ensureFigmaHostInBackground } from "./figmaHostEnsure";
+import { registerFigmaHostAutoStart } from "./figmaHostEnsure";
 import { seedDefaultHarborSkills } from "./harborSkills";
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
   } catch {
     /* ignore seed failures — skills remain optional */
   }
-  ensureFigmaHostInBackground(context.extensionPath);
+  registerFigmaHostAutoStart(context);
   const mcpManager = initMcpManager(context);
 
   // Create the HarborCore facade — session persistence, settings, workspace,

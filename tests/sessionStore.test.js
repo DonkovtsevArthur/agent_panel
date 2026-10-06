@@ -299,12 +299,17 @@ test("list summaries remove markdown and prefer prompt after selection fences", 
   );
 });
 
-test("formatListTime localizes yesterday and dates", () => {
+test("formatListTime localizes relative times and dates", () => {
   const now = Date.now();
   const yesterday = now - 24 * 60 * 60 * 1000;
+  assert.equal(formatListTime(now, "en"), "now");
+  assert.equal(formatListTime(now, "ru"), "сейчас");
+  assert.equal(formatListTime(now - 5 * 60_000, "en"), "5m");
+  assert.equal(formatListTime(now - 5 * 60_000, "ru"), "5 мин");
   assert.equal(formatListTime(yesterday, "en"), "yesterday");
   assert.equal(formatListTime(yesterday, "ru"), "вчера");
-  assert.match(formatListTime(now, "ru"), /^\d{2}:\d{2}$/);
+  assert.equal(formatListTime(now - 3 * 86_400_000, "en"), "3d");
+  assert.doesNotMatch(formatListTime(now - 30 * 86_400_000, "en"), /^\d+d$/);
 });
 
 test("deleteAllArchivedAgentsFromStore removes only archived agents", () => {

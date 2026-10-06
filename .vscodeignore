@@ -6,6 +6,8 @@
 .github/**
 src/**
 scripts/**
+# Spawned at runtime by src/figmaHostEnsure.ts (agentPanel.figma.hostAutoStart)
+!scripts/figma-host-ensure.js
 .gitignore
 tsconfig.json
 **/*.ts
@@ -18,6 +20,9 @@ out/sidecarMain.js
 out/sidecarMain.js.map
 out/vscodeHeadlessStub.js
 out/vscodeHeadlessStub.js.map
+# Figma host source — already bundled into out/figmaSidecar.js
+out/figmaSidecarMain.js
+out/figmaSidecarMain.js.map
 media/*preview*
 media/harbor-icon*
 media/icon-marketplace.svg

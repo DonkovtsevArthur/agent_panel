@@ -14,6 +14,7 @@ npm run figma:host:install      # macOS LaunchAgent — background, KeepAlive
 Then open the plugin as usual. Health: `http://127.0.0.1:17891/v1/health`.
 
 Dev without LaunchAgent: `npm run figma:host:ensure` (starts detached if down).  
+From the installed VS Code extension: enable `agentPanel.figma.hostAutoStart` — the host is then started in the background on VS Code startup (off by default).  
 Uninstall: `npm run figma:host:uninstall`.
 
 Env: `HARBOR_FIGMA_PORT`, `HARBOR_FIGMA_HOME` (default `~/.harbor/figma`).

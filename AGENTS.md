@@ -37,6 +37,7 @@ Marketplace / UI name: **Harbor Agents** · Russian: **Гавань агенто
 | JetBrains / WebStorm plugin | `jetbrains/` — JCEF Tool Window + Kotlin host; see `docs/jetbrains-port.md` |
 | Figma plugin (designer host) | `figma/` — Agent/Ask/Plan + selection + canvas tools; turns via local Cline host (`npm run figma:host` → `out/figmaSidecar.js`); see `docs/figma-plugin.md` |
 | VS Code in-process core | `src/harborCoreInProcess.ts` (no sidecar process) |
+| Project memory (self-learning) | `src/projectMemory.ts` — extraTool `remember` (add / forget, approval group `edits`) writes one-line facts to `<workspace>/.harbor/memory.md` (≤50 facts, ≤300 chars, dedupe, secrets / instruction-override rejected, no silent eviction). Injected into the turn context on non-slim turns (priority 2, newest facts win a 4k-char cap). Cross-chat recurring tool failures: `src/learnedErrors.ts` `recordWorkspaceToolFailure` → `~/.harbor/workspaces/<name>-<hash>/learned-errors.json` (outside the repo, 30-day TTL); failures seen ≥3 times in ≥2 chats appear as a "Recurring tool failures" block that tells the model to save the fix via `remember`. |
 | Unit tests | `tests/*.test.js` (Node test runner against `out/`) |
 
 ## Commands agents should know

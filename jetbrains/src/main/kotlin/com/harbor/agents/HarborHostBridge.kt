@@ -146,6 +146,10 @@ class HarborHostBridge(
             sidecar.request("webview.handle", obj) { _ -> }
           }
         }
+        "host.ideRequest" -> {
+          // code_nav / rename_symbol from the sidecar → PSI (HarborCodeNav).
+          HarborCodeNav.handleAsync(project, sidecar, params)
+        }
         "vfs.refresh" -> {
           val paths = params?.getAsJsonArray("paths")?.mapNotNull { it.asString } ?: emptyList()
           vfsRefresh.refresh(paths)

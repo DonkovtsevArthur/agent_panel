@@ -18,7 +18,11 @@ import {
   formatEnclosingSymbolMessage,
 } from "./editorSymbols";
 import { loadWorkspaceRules } from "./workspaceRules";
-import { buildLearnedErrorsMessage } from "./learnedErrors";
+import {
+  buildLearnedErrorsMessage,
+  buildRecurringFailuresMessage,
+} from "./learnedErrors";
+import { buildProjectMemoryMessage } from "./projectMemory";
 
 const DIAGNOSTIC_MAX_ITEMS = 20;
 const DIAGNOSTIC_MESSAGE_CHARS = 180;
@@ -374,6 +378,26 @@ export async function buildTurnContextBlock(options: {
     const learnedErrors = buildLearnedErrorsMessage(options.chatId);
     if (learnedErrors.trim()) {
       blocks.push({ text: learnedErrors.trim(), priority: 2 });
+    }
+  }
+
+  // --- Priority 2: project memory + recurring failures (first turn only;
+  // follow-ups already carry them in the session history) ---
+  if (!options.slim) {
+    try {
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
+      if (root) {
+        const memory = buildProjectMemoryMessage(root);
+        if (memory.trim()) {
+          blocks.push({ text: memory.trim(), priority: 2 });
+        }
+        const recurring = buildRecurringFailuresMessage(root);
+        if (recurring.trim()) {
+          blocks.push({ text: recurring.trim(), priority: 3 });
+        }
+      }
+    } catch {
+      /* no workspace / unreadable memory */
     }
   }
 

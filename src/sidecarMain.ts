@@ -50,6 +50,12 @@ import {
   waitForToolApprovalResult,
 } from "./toolApproval";
 import { seedDefaultHarborSkills } from "./harborSkills";
+import {
+  createHostRpcCodeNavBackend,
+  resolveIdeResponse,
+  setCodeNavHostBackend,
+  type IdeResponse,
+} from "./codeNav";
 
 function writeNotification(method: string, params: unknown): void {
   process.stdout.write(
@@ -206,6 +212,10 @@ function main(): void {
     });
     return waitForToolApprovalResult(requestId);
   });
+  // code_nav / rename_symbol: ask the Kotlin host (PSI) instead of the
+  // headless vscode stub, whose executeCommand is a no-op. Host answers with
+  // the `ide.response` method (see HarborCodeNav.kt).
+  setCodeNavHostBackend(createHostRpcCodeNavBackend(writeNotification));
   // Before Cline/undici touch the network — honor Advanced → Validate TLS.
   applyHarborTlsPolicy(rejectUnauthorizedFromSettings(settings));
 
@@ -285,6 +295,9 @@ function main(): void {
         reasoningEffort: p.reasoningEffort,
         attachments: p.attachments,
       });
+    }
+    if (method === "ide.response") {
+      return resolveIdeResponse((params || {}) as IdeResponse);
     }
     if (method === "turn.abort") {
       return panel.handleWebviewMessage({ type: "stop" });

@@ -86,6 +86,7 @@
   "config.commitMessage.language.enum.auto": "Follow plugin UI language",
   "config.commitMessage.language.enum.en": "English",
   "config.commitMessage.language.enum.ru": "Russian",
+  "config.figma.hostAutoStart.description": "Start the local Harbor Figma host (127.0.0.1:17891) in the background when VS Code starts. Needed only for the Harbor Figma plugin.",
   "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
   "config.autoglm.enabled.description": "Enable browser_task (AutoGLM) for multi-step work in the user's Chrome/Edge. Requires AutoGLM CLI and browser extension.",
   "config.autoglm.binaryPath.description": "Optional path to the autoglm binary. Empty = PATH, then ~/.agents/skills/autoglm-browser-agent/dist/autoglm-browser-service.",

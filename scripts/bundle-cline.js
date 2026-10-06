@@ -36,6 +36,11 @@ esbuild
     outfile: "out/clineBundle.js",
     external: ["vscode"],
     sourcemap: true,
+    // Whitespace + syntax only: identifiers stay intact so the post-build
+    // createAnthropicProviderModule patch below still matches, and class /
+    // function names in errors and stack traces stay readable.
+    minifyWhitespace: true,
+    minifySyntax: true,
     logLevel: "info",
     banner: {
       js: [
@@ -147,7 +152,10 @@ function __harborCreateProxyFetch(underlyingFetch) {
       fs.writeFileSync(bundlePath, code);
       console.log("  ✓ Applied Anthropic proxy fetch patch");
     } else {
-      console.log("  ⚠ Could not find createAnthropicProviderModule to patch");
+      // Fail the build: without this patch Anthropic-compatible proxies break
+      // silently at runtime.
+      console.error("  ✗ Could not find createAnthropicProviderModule to patch");
+      process.exit(1);
     }
   })
   .catch(() => process.exit(1));

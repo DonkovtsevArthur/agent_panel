@@ -704,6 +704,11 @@
 					"default": false,
 					"description": "%config.figma.enabled.description%"
 				},
+				"agentPanel.figma.hostAutoStart": {
+					"type": "boolean",
+					"default": false,
+					"description": "%config.figma.hostAutoStart.description%"
+				},
 				"agentPanel.autoglm.enabled": {
 					"type": "boolean",
 					"default": false,
@@ -786,7 +791,8 @@
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
+		"clean": "node scripts/clean-out.js",
+		"compile": "node scripts/clean-out.js && tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
 		"build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
 		"build:sidecar": "npm run compile",
 		"build:figma": "node scripts/build-figma.js",

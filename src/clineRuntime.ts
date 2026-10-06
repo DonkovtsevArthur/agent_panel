@@ -110,7 +110,19 @@ import {
   createVerifyEditsTool,
   noteTurnEditedPath,
 } from "./verifyEditsTool";
-import { recordToolFailure, clearToolFailures } from "./learnedErrors";
+import {
+  recordToolFailure,
+  clearToolFailures,
+  recordWorkspaceToolFailure,
+} from "./learnedErrors";
+import { createRememberTool } from "./projectMemory";
+import {
+  createCodeNavTool,
+  createRenameSymbolTool,
+  getCodeNavHostBackend,
+  type CodeNavBackend,
+} from "./codeNav";
+import { createVscodeCodeNavBackend } from "./codeNavVscode";
 import {
   harborClineToolPolicies,
   harborToolApprovalsFingerprint,
@@ -533,6 +545,12 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
                 ...(inspectImages ? [inspectImages] : []),
                 verifyEdits,
                 httpRequest,
+                createRememberTool(bundle.createTool, memoryWorkspaceRoot),
+                ...harborCodeNavTools(
+                  bundle.createTool,
+                  String(input.config.cwd || ""),
+                  mode !== "plan"
+                ),
                 ...mcp.tools,
               ],
               // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
@@ -575,6 +593,51 @@ function workspaceCwd(): string {
   return (
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd()
   );
+}
+
+/** Root for project memory / learned errors — empty without an open folder. */
+function memoryWorkspaceRoot(): string {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
+}
+
+let vscodeCodeNavBackend: CodeNavBackend | undefined;
+
+/**
+ * IDE code intelligence for `code_nav` / `rename_symbol`: the JetBrains
+ * sidecar installs a reverse-RPC backend (Kotlin PSI); VS Code uses its own
+ * `vscode.execute*Provider` commands.
+ */
+function harborCodeNavBackend(): CodeNavBackend {
+  const host = getCodeNavHostBackend();
+  if (host) {
+    return host;
+  }
+  vscodeCodeNavBackend = vscodeCodeNavBackend || createVscodeCodeNavBackend();
+  return vscodeCodeNavBackend;
+}
+
+/**
+ * `code_nav` in every mode (read-only); `rename_symbol` only in act — it
+ * writes files, so Plan/Ask (Cline `plan`) never get it.
+ */
+function harborCodeNavTools(
+  createTool: Parameters<typeof createCodeNavTool>[0],
+  workspaceRoot: string,
+  allowRename: boolean
+): unknown[] {
+  const options = {
+    workspaceRoot: workspaceRoot || memoryWorkspaceRoot() || process.cwd(),
+    getBackend: harborCodeNavBackend,
+    onFilesChanged: (paths: string[]) => {
+      for (const p of paths) {
+        noteTurnEditedPath(p);
+      }
+    },
+  };
+  return [
+    createCodeNavTool(createTool, options),
+    ...(allowRename ? [createRenameSymbolTool(createTool, options)] : []),
+  ];
 }
 
 /**
@@ -2501,11 +2564,14 @@ export async function runClineAgentTurn(options: {
           const metrics = parseToolMetrics(name, event.output, input);
           // Record failures for learned-errors context on the next turn.
           if (failed && errMsg && chatId) {
-            recordToolFailure(chatId, {
+            const failure = {
               toolName: name,
               error: errMsg.slice(0, 200),
               path: pathFromToolInput(input),
-            });
+            };
+            recordToolFailure(chatId, failure);
+            // Cross-chat stats (~/.harbor/workspaces/…) → recurring-failures block.
+            recordWorkspaceToolFailure(memoryWorkspaceRoot(), chatId, failure);
           }
           if (name === TODO_TOOL) {
             // Plan card is rendered from the execute-side event; on failure
@@ -3032,6 +3098,11 @@ export async function runClineAgentTurn(options: {
             createHttpTool(bundle.createTool, {
               allowedHosts: getConfig().http.allowedHosts,
             }),
+            // Project memory (.harbor/memory.md) — durable facts across chats.
+            createRememberTool(bundle.createTool, memoryWorkspaceRoot),
+            // IDE code intelligence (definition/references/hover/symbols);
+            // rename_symbol only in act.
+            ...harborCodeNavTools(bundle.createTool, cwd, clineMode !== "plan"),
           ],
           // TLS: pass Harbor fetch so corporate self-signed proxies work when
           // Advanced → Validate TLS is off (default).

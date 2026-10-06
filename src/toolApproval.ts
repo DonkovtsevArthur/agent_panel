@@ -15,12 +15,17 @@ const TOOL_GROUP_BY_NAME: Record<string, ToolApprovalGroup> = {
   search_codebase: "reads",
   skills: "reads",
   verify_edits: "reads",
+  code_nav: "reads",
+  // Writes .harbor/memory.md — follows the edits group, so with manual
+  // approval the user reviews every fact before it is saved.
+  remember: "edits",
   update_todo: "plan",
   inspect_images: "plan",
   fetch_web_content: "web",
   http_request: "web",
   editor: "edits",
   apply_patch: "edits",
+  rename_symbol: "edits",
   run_commands: "commands",
   spawn_agent: "subagents",
 };

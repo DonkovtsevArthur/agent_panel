@@ -10,6 +10,8 @@ esbuild
     outfile: "out/mcpBundle.js",
     external: ["vscode"],
     sourcemap: true,
+    minifyWhitespace: true,
+    minifySyntax: true,
     logLevel: "info",
   })
   .catch(() => process.exit(1));
