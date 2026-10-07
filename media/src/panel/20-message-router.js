@@ -187,6 +187,11 @@
         mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
         renderMcpServersList();
         break;
+      case "mcpNotice":
+        if (msg.text) {
+          showCopyToast(String(msg.text));
+        }
+        break;
       case "skillsList":
         skillsCache = {
           enabled: msg.enabled !== false,
@@ -201,6 +206,19 @@
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
+      case "promptSuggestion":
+        if (msg.chatId && msg.chatId === activeChatId) {
+          setPromptSuggestion(msg.chatId, msg.text);
+        }
+        host.postMessage({
+          type: "promptSuggestionDebug",
+          text:
+            `received chat=${msg.chatId} active=${activeChatId} busy=${busy} ` +
+            `enabled=${promptSuggestionsEnabled} valueLen=${String(promptEl.value || "").length} ` +
+            `attachments=${pendingAttachments.length} visible=${promptSuggestionVisible()} ` +
+            `placeholder=${JSON.stringify(promptEl.placeholder)}`,
+        });
+        break;
       case "showChat": {
         const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
         const prevChatId = activeChatId;
@@ -208,6 +226,7 @@
           // Сохранить черновик покидаемого чата до смены activeChatId:
           // текст мог меняться программно (slash/mention) без persist.
           persistDraftPrompt();
+          clearPromptSuggestion();
         }
         if (msg.chatId) {
           activeChatId = msg.chatId;

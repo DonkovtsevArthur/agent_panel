@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.1.27"
+version = "2.1.34"
 
 repositories {
     mavenCentral()

@@ -142,6 +142,18 @@ import {
   type ChatSearchScope,
 } from "./sessionStore";
 import { maybeGenerateChatTitle } from "./chatTitle";
+import { maybeGeneratePromptSuggestion } from "./promptSuggestion";
+
+let promptSuggestionChannel: vscode.OutputChannel | undefined;
+/** Temporary diagnostics: Output → «Harbor Prompt Suggestions». */
+function promptSuggestionLog(line: string): void {
+  promptSuggestionChannel ??= vscode.window.createOutputChannel(
+    "Harbor Prompt Suggestions"
+  );
+  promptSuggestionChannel.appendLine(
+    `${new Date().toLocaleTimeString()} ${line}`
+  );
+}
 
 type SettingsPayload = {
   providers: Array<{
@@ -178,6 +190,7 @@ type SettingsPayload = {
   subagentsEnabled?: boolean;
   parallelToolCallsEnabled?: boolean;
   autoCompactEnabled?: boolean;
+  promptSuggestionsEnabled?: boolean;
   toolsAutoApprove?: boolean;
   /** Per-group overrides; only explicit true/false are sent. */
   toolsApprovals?: Record<string, boolean>;
@@ -1377,6 +1390,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     return this.writeStoreOnly();
   }
 
+  /** Ghost-text guess of the user's next message; webview drops it when stale. */
+  private schedulePromptSuggestion(chatId: string): void {
+    const id = String(chatId || "").trim();
+    const chat = id ? this.store.chats[id] : undefined;
+    if (!chat) {
+      return;
+    }
+    const modelId = chat.selectedModel || this.selectedModel;
+    const log = (line: string) => promptSuggestionLog(`[${id}] ${line}`);
+    log(`scheduled, model ${modelId}`);
+    void maybeGeneratePromptSuggestion(id, chat.uiMessages || [], {
+      modelId,
+      onDebug: log,
+    }).then((text) => {
+      if (!text) {
+        return;
+      }
+      if (this.chatRuns.has(id)) {
+        log("dropped: a new run already started in this chat");
+        return;
+      }
+      log(`posted to webview: ${JSON.stringify(text)}`);
+      this.postChat({ type: "promptSuggestion", chatId: id, text });
+    });
+  }
+
   private scheduleChatTitle(chatId: string): void {
     const id = String(chatId || "").trim();
     if (!id) {
@@ -2450,6 +2489,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private async onMessage(message: WebviewToHost): Promise<void> {
     switch (message.type) {
+      case "promptSuggestionDebug" as WebviewToHost["type"]:
+        promptSuggestionLog(
+          `webview: ${String((message as { text?: unknown }).text || "")}`
+        );
+        return;
       case "ready":
         if (message.surface === "settings") {
           this.postSettings();
@@ -4352,6 +4396,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         runSucceeded = true;
         this.postRunFinished(runChatId, "success");
         this.scheduleChatTitle(runChatId);
+        this.schedulePromptSuggestion(runChatId);
       }
     } catch (error) {
       const owned = this.isChatRunOwned(runChatId, runRef);
@@ -5554,6 +5599,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     cwd?: string;
     url?: string;
     bearerToken?: string;
+    jiraToken?: string;
     enabled?: boolean;
     connect?: boolean;
   }): Promise<void> {
@@ -5572,13 +5618,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         cwd: raw.cwd,
         url: raw.url,
         bearerToken: raw.bearerToken,
+        jiraToken: raw.jiraToken,
         enabled: raw.enabled,
         connect: raw.connect !== false,
       });
       this.postMcpServersList();
       if (status.state === "connected") {
         void vscode.window.showInformationMessage(
-          `MCP «${status.name}» connected (${status.toolCount} tools).`
+          `MCP «${status.name}» connected (${status.toolCount} tools).` +
+            (status.notice ? ` ${status.notice}` : "")
         );
       } else if (status.state === "error") {
         void vscode.window.showWarningMessage(
@@ -5907,6 +5955,11 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update(
       "autoCompact.enabled",
       raw.autoCompactEnabled !== false,
+      target
+    );
+    await cfg.update(
+      "promptSuggestions.enabled",
+      raw.promptSuggestionsEnabled !== false,
       target
     );
     await cfg.update(
@@ -6585,6 +6638,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <span class="material-symbols-outlined" aria-hidden="true">hub</span>
                 <span class="mcp-preset-btn-label">GitHub</span>
               </button>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="jira" id="mcpPresetJira">
+                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+                <span class="mcp-preset-btn-label">Jira</span>
+              </button>
             </div>
             <p class="mcp-presets-note" id="mcpPresetsNote" hidden></p>
             <div class="mcp-section-head">
@@ -6657,6 +6714,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               </span>
               <span class="mcp-switch">
                 <input id="settingsAutoCompactEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsPromptSuggestionsLabel">Prompt suggestions</span>
+                <span class="settings-toggle-hint" id="settingsPromptSuggestionsNote">Suggest your next message in the empty composer. Tab accepts.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsPromptSuggestionsEnabled" type="checkbox" />
                 <span class="mcp-switch-track"></span>
               </span>
             </label>
@@ -7029,7 +7096,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <span class="settings-label" id="mcpCustomNameLabel">Name</span>
             <input id="mcpCustomName" class="settings-input" type="text" placeholder="My MCP server" />
           </label>
-          <label class="settings-field">
+          <div id="mcpCustomJiraFields" hidden>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomJiraUrlLabel">Jira URL</span>
+              <input id="mcpCustomJiraUrl" class="settings-input" type="text" placeholder="https://jira.company.ru" />
+            </label>
+            <label class="settings-field" id="mcpCustomJiraTokenRow">
+              <span class="settings-label" id="mcpCustomJiraTokenLabel">Jira Personal Access Token</span>
+              <input id="mcpCustomJiraToken" class="settings-input" type="password" autocomplete="off" placeholder="" />
+            </label>
+            <button type="button" class="text-btn" id="mcpCustomJiraAdvancedBtn">Advanced</button>
+          </div>
+          <label class="settings-field" id="mcpCustomTransportRow">
             <span class="settings-label" id="mcpCustomTransportLabel">Transport</span>
             <select id="mcpCustomTransport" class="settings-input">
               <option value="stdio">stdio (command)</option>

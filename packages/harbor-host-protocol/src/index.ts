@@ -264,6 +264,7 @@ export type HostToWebview =
   | { type: "modelsUpdated"; [key: string]: unknown }
   | { type: "modesUpdated"; [key: string]: unknown }
   | { type: "mcpServers"; [key: string]: unknown }
+  | { type: "mcpNotice"; text: string }
   | { type: "skillsList"; [key: string]: unknown }
   | { type: "figmaStatus"; [key: string]: unknown }
   | { type: "figmaNeedsConnect"; [key: string]: unknown }
@@ -279,6 +280,7 @@ export type HostToWebview =
   | { type: "regenerateState"; [key: string]: unknown }
   | { type: "scmButtons"; [key: string]: unknown }
   | { type: "agentRenamed"; [key: string]: unknown }
+  | { type: "promptSuggestion"; chatId: string; text: string }
   | { type: "livePlanForBuild"; [key: string]: unknown }
   | { type: "insertComposerText"; text: string }
   | { type: "insertComposerSelection"; [key: string]: unknown }

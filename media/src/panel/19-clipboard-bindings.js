@@ -624,7 +624,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsPromptSuggestionsEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
@@ -728,6 +728,11 @@
       openMcpPreset("github");
     });
   }
+  if (mcpPresetJira) {
+    mcpPresetJira.addEventListener("click", () => {
+      openMcpPreset("jira");
+    });
+  }
   if (mcpServersList) {
     mcpServersList.addEventListener("click", (event) => {
       const editBtn = event.target.closest(".mcp-edit-btn");
@@ -797,6 +802,17 @@
     mcpCustomTransport.addEventListener("change", () =>
       syncMcpCustomTransportFields()
     );
+  }
+  for (const el of [mcpCustomCommand, mcpCustomArgs, mcpCustomEnv]) {
+    if (el) {
+      el.addEventListener("input", () => syncMcpCustomTransportFields());
+    }
+  }
+  if (mcpCustomJiraAdvancedBtn) {
+    mcpCustomJiraAdvancedBtn.addEventListener("click", () => {
+      mcpJiraAdvancedOpen = !mcpJiraAdvancedOpen;
+      syncMcpCustomTransportFields();
+    });
   }
   if (mcpCustomEditModal) {
     mcpCustomEditModal.addEventListener("click", (event) => {
@@ -2090,6 +2106,17 @@
       return;
     }
     if (event.key === " " && tryCommitComposerMention(promptEl)) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      acceptPromptSuggestion()
+    ) {
       event.preventDefault();
       return;
     }

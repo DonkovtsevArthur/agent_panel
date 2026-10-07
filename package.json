@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.9.29",
+	"version": "2.9.37",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -515,6 +515,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "%config.autoCompact.enabled.description%"
+				},
+				"agentPanel.promptSuggestions.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.promptSuggestions.enabled.description%"
 				},
 				"agentPanel.sessions.idleEvictMinutes": {
 					"type": "number",

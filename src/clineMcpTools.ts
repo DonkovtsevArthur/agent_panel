@@ -14,6 +14,7 @@ import {
   qualifyToolName,
   FIGMA_SERVER_ID,
 } from "./mcp/figma";
+import { shrinkMcpToolResult } from "./mcp/largeResult";
 import { splitMcpToolResult } from "./mcp/resultFormat";
 import {
   parseQualifiedToolName,
@@ -104,6 +105,8 @@ export async function loadHarborMcpToolsForCline(options: {
   plannerModelId?: string;
   /** When true (Plan + Figma URL), append anti-drift hint. */
   figmaUrlInTurn?: boolean;
+  /** Workspace root — large MCP results are saved under its Harbor state dir. */
+  cwd?: string;
 }): Promise<{ tools: unknown[]; toolNames: string[]; systemHint: string }> {
   const mcp = getMcpManager();
   if (!mcp) {
@@ -172,7 +175,13 @@ export async function loadHarborMcpToolsForCline(options: {
         argsJson = "{}";
       }
 
-      const raw = await mcp.callToolRaw(qualified, argsJson);
+      // Cline middle-truncates long tool results; minify JSON and spill the
+      // rest to a file the model can read in parts (src/mcp/largeResult.ts).
+      const raw = shrinkMcpToolResult(
+        await mcp.callToolRaw(qualified, argsJson),
+        qualified,
+        options.cwd
+      );
 
       if (plannerSupportsVision || !mcpContentHasImages(raw)) {
         return normalizeMcpResultForCline(raw);

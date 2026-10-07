@@ -27,6 +27,18 @@ import {
   formatFigmaRemoteError,
   looksLikeCatalogBlockedError,
 } from "./httpClient";
+import {
+  detectJiraTokenSourceEnv,
+  isJiraMcpServer,
+  JIRA_TLS_HINT_EN,
+  JIRA_TOKEN_ENV,
+  JIRA_URL_ENV,
+  looksLikeTlsError,
+  splitSecretEnv,
+  writeJiraAgentFiles,
+} from "./jiraAgentRules";
+import { prepareJiraConnection, type JiraPreflightResult } from "./jiraConnect";
+import { createJiraNativeClient, JIRA_NATIVE_COMMAND } from "./jiraNative";
 import { VsCodeFigmaOAuthProvider } from "./oauthProvider";
 import {
   deleteServerSecrets,
@@ -52,6 +64,10 @@ const SECRET_PAT = "agentPanel.figma.pat";
 const GLOBAL_MODE_KEY = "agentPanel.figma.transportMode";
 const GLOBAL_SHOW_PAT_KEY = "agentPanel.figma.showPatFallback";
 const CUSTOM_CONNECT_TIMEOUT_MS = 15_000;
+/** One-time switch of preset `uvx mcp-atlassian` Jira servers to built-in. */
+const JIRA_NATIVE_MIGRATED_KEY = "agentPanel.jira.nativeMigrated";
+/** First `uvx mcp-atlassian` run downloads the package — allow more time. */
+const JIRA_CONNECT_TIMEOUT_MS = 120_000;
 const CUSTOM_LIST_TOOLS_TIMEOUT_MS = 15_000;
 const CUSTOM_RETRY_BASE_MS = 5_000;
 const CUSTOM_RETRY_MAX_MS = 60_000;
@@ -71,6 +87,17 @@ interface ServerRuntime {
   connectPromise?: Promise<McpServerRuntimeStatus>;
   failureCount: number;
   nextRetryAt: number;
+  /** Last successful Jira pre-flight (CA bundle / host pin facts). */
+  jira?: JiraPreflightResult;
+}
+
+function jiraCheckFailedNotice(detail: string): string {
+  const base =
+    `Jira MCP started, but the token check failed — Jira rule not written. ${detail}`.slice(
+      0,
+      400
+    );
+  return looksLikeTlsError(detail) ? `${base} ${JIRA_TLS_HINT_EN}` : base;
 }
 
 function withTimeout<T>(
@@ -145,8 +172,63 @@ export class McpManager {
     );
   }
 
+  /** Jira server ids that have a PAT in SecretStorage (for the edit form). */
+  private jiraTokenIds = new Set<string>();
+
+  /**
+   * Move secret env values of Jira servers out of settings.json into
+   * SecretStorage (older saves / tokens typed under an unknown key), and
+   * refresh which servers have a saved PAT.
+   */
+  private async migrateJiraSecretEnv(): Promise<void> {
+    let changed = false;
+    const next: McpServerConfig[] = [];
+    const tokenIds = new Set<string>();
+    const migrateNative = !this.context.globalState.get<boolean>(JIRA_NATIVE_MIGRATED_KEY);
+    for (const original of this.customConfigs) {
+      let cfg = original;
+      if (!isJiraMcpServer(cfg)) {
+        next.push(cfg);
+        continue;
+      }
+      // Preset `uvx mcp-atlassian` → built-in REST client (once; a user who
+      // switches back under "Advanced" keeps mcp-atlassian).
+      if (
+        migrateNative &&
+        /(^|[\\/])uvx(\.exe)?$/i.test(cfg.command || "") &&
+        (cfg.args || []).join(" ").trim() === "mcp-atlassian"
+      ) {
+        cfg = { ...cfg, command: JIRA_NATIVE_COMMAND, args: [] };
+        changed = true;
+      }
+      const split = splitSecretEnv(cfg.env);
+      let secretEnv = await getServerSecretEnv(this.context.secrets, cfg.id);
+      if (Object.keys(split.secretEnv).length) {
+        secretEnv = { ...secretEnv, ...split.secretEnv };
+        await setServerSecretEnv(this.context.secrets, cfg.id, secretEnv);
+        next.push({ ...cfg, env: split.env });
+        changed = true;
+      } else {
+        next.push(cfg);
+      }
+      if (secretEnv[JIRA_TOKEN_ENV]) {
+        tokenIds.add(cfg.id);
+      }
+    }
+    this.jiraTokenIds = tokenIds;
+    if (migrateNative) {
+      await this.context.globalState.update(JIRA_NATIVE_MIGRATED_KEY, true);
+    }
+    if (changed) {
+      this.customConfigs = next;
+      await writeMcpServerConfigs(next);
+    }
+    this.notifyList();
+  }
+
   reloadCustomConfigs(): void {
     this.customConfigs = readMcpServerConfigs();
+    void this.migrateJiraSecretEnv();
     for (const cfg of this.customConfigs) {
       if (!this.customRuntimes.has(cfg.id)) {
         this.customRuntimes.set(cfg.id, {
@@ -208,6 +290,9 @@ export class McpManager {
         url: cfg.url,
         transport: cfg.transport,
         detail: formatTransportDetail(cfg),
+        ...(isJiraMcpServer(cfg)
+          ? { hasSecretToken: this.jiraTokenIds.has(cfg.id) }
+          : {}),
       };
     });
     return [figma, ...customs];
@@ -665,6 +750,8 @@ export class McpManager {
     cwd?: string;
     url?: string;
     bearerToken?: string;
+    /** Jira PAT from the dedicated form field; empty keeps the saved one. */
+    jiraToken?: string;
     enabled?: boolean;
     connect?: boolean;
   }): Promise<McpServerRuntimeStatus> {
@@ -679,6 +766,28 @@ export class McpManager {
       id = slugifyMcpServerId(`${name}-${Date.now().toString(36)}`);
     }
     const existing = this.customConfigs.find((c) => c.id === id);
+    const isJira = isJiraMcpServer(options);
+    let env = options.env;
+    let secretEnv = options.secretEnv;
+    if (isJira) {
+      // Jira PAT goes to SecretStorage, never into settings / AGENTS.md.
+      const split = splitSecretEnv(options.env);
+      env = split.env;
+      const jiraToken = String(options.jiraToken || "").trim();
+      if (jiraToken) {
+        split.secretEnv[JIRA_TOKEN_ENV] = jiraToken;
+      }
+      if (Object.keys(split.secretEnv).length) {
+        secretEnv = {
+          ...(await getServerSecretEnv(this.context.secrets, id)),
+          ...(options.secretEnv || {}),
+          ...split.secretEnv,
+        };
+      }
+      if (secretEnv?.[JIRA_TOKEN_ENV]) {
+        this.jiraTokenIds.add(id);
+      }
+    }
     const raw: Record<string, unknown> = {
       id,
       name,
@@ -686,7 +795,7 @@ export class McpManager {
       transport: options.transport,
       command: options.command,
       args: options.args,
-      env: options.env,
+      env,
       cwd: options.cwd,
       url: options.url,
     };
@@ -705,8 +814,8 @@ export class McpManager {
     await writeMcpServerConfigs(next);
     this.customConfigs = next;
 
-    if (options.secretEnv) {
-      await setServerSecretEnv(this.context.secrets, id, options.secretEnv);
+    if (secretEnv) {
+      await setServerSecretEnv(this.context.secrets, id, secretEnv);
     }
     if (options.bearerToken !== undefined) {
       await setServerBearerToken(
@@ -739,9 +848,83 @@ export class McpManager {
     } else {
       this.notifyList();
     }
-    return (
-      this.customRuntimes.get(id)?.status || this.makeDisconnectedStatus(cfg)
+    const status =
+      this.customRuntimes.get(id)?.status || this.makeDisconnectedStatus(cfg);
+    if (isJira && status.state === "connected") {
+      return { ...status, notice: await this.writeJiraAgentRules(id, cfg) };
+    }
+    if (isJira && looksLikeTlsError(status.message || "")) {
+      return { ...status, notice: JIRA_TLS_HINT_EN };
+    }
+    return status;
+  }
+
+  /**
+   * After the user connects Jira: check that the PAT actually reads issues,
+   * then record how to connect in AGENTS.md + MCP configs for other agent
+   * tools. Returns a short user-facing notice.
+   */
+  private async writeJiraAgentRules(
+    id: string,
+    cfg: McpServerConfig
+  ): Promise<string> {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const url = String(cfg.env?.[JIRA_URL_ENV] || "").trim();
+    if (!root || !url) {
+      return "Jira connected; AGENTS.md rule not written (no workspace folder or JIRA_URL).";
+    }
+    const rt = this.customRuntimes.get(id);
+    const hasSearch = rt?.tools.some(
+      (t) => t.function.name === qualifyMcpToolName(id, "jira_search")
     );
+    let verifiedHow = "MCP tools listed";
+    if (rt?.client && hasSearch) {
+      try {
+        const res = await withTimeout(
+          rt.client.callTool({
+            name: "jira_search",
+            arguments: {
+              jql: "ORDER BY created DESC",
+              fields: "summary",
+              limit: 1,
+            },
+          }),
+          CUSTOM_LIST_TOOLS_TIMEOUT_MS,
+          "Checking Jira access"
+        );
+        if (res.isError) {
+          return jiraCheckFailedNotice(splitMcpToolResult(res).text);
+        }
+        verifiedHow =
+          cfg.command === JIRA_NATIVE_COMMAND
+            ? "jira_search via Harbor built-in Jira"
+            : "jira_search via mcp-atlassian";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return jiraCheckFailedNotice(message);
+      }
+    }
+    const secretEnv = await getServerSecretEnv(this.context.secrets, id);
+    const result = writeJiraAgentFiles(root, {
+      url,
+      // Other agent tools have no built-in Jira — give them mcp-atlassian.
+      command: cfg.command === JIRA_NATIVE_COMMAND ? "uvx" : cfg.command || "uvx",
+      args: cfg.command === JIRA_NATIVE_COMMAND ? ["mcp-atlassian"] : cfg.args || [],
+      env: cfg.env || {},
+      secretKeys: Object.keys(secretEnv),
+      tokenSourceEnv: detectJiraTokenSourceEnv(process.env),
+      corporateCa: Boolean(rt?.jira?.corporateCa),
+      hostOverride: rt?.jira?.hostOverride,
+      verifiedAt: new Date().toISOString().slice(0, 10),
+      verifiedHow,
+    });
+    const parts = [`Jira rule written: ${result.written.join(", ") || "—"}.`];
+    if (result.skipped.length) {
+      parts.push(
+        `Skipped: ${result.skipped.map((s) => `${s.file} (${s.reason})`).join(", ")}.`
+      );
+    }
+    return parts.join(" ");
   }
 
   async deleteCustomServer(id: string): Promise<void> {
@@ -853,15 +1036,48 @@ export class McpManager {
       await this.closeCustomClient(id);
       const bearerToken = await getServerBearerToken(this.context.secrets, id);
       const secretEnv = await getServerSecretEnv(this.context.secrets, id);
-      client = await withTimeout(
-        connectCustomMcpServer({
-          config: cfg,
-          bearerToken,
-          secretEnv,
-        }),
-        CUSTOM_CONNECT_TIMEOUT_MS,
-        `Connecting MCP server "${cfg.name}"`
-      );
+      let connectConfig = cfg;
+      const isJira = isJiraMcpServer(cfg);
+      const isJiraNative = isJira && cfg.command === JIRA_NATIVE_COMMAND;
+      if (isJira) {
+        // URL + token is all the user gives: resolve uvx, corporate CA and
+        // VPN-only DNS here, as runtime env (never persisted).
+        rt.status = { ...rt.status, message: "Checking Jira access…" };
+        this.notifyList();
+        const prep = await prepareJiraConnection({
+          url: String(cfg.env?.[JIRA_URL_ENV] || ""),
+          token: String(secretEnv[JIRA_TOKEN_ENV] || ""),
+          command: cfg.command || "uvx",
+          userEnv: cfg.env,
+          launcher: !isJiraNative,
+        });
+        if (!prep.ok) {
+          throw new Error(prep.error || "Jira check failed");
+        }
+        rt.jira = prep;
+        connectConfig = {
+          ...cfg,
+          command: prep.command || cfg.command,
+          env: { ...(cfg.env || {}), ...prep.env },
+        };
+      }
+      client = isJiraNative
+        ? // Built-in REST tools: no child process, no Python / uv.
+          (createJiraNativeClient({
+            baseUrl: String(cfg.env?.[JIRA_URL_ENV] || ""),
+            token: String(secretEnv[JIRA_TOKEN_ENV] || ""),
+            ca: rt.jira?.ca || [],
+            pinIp: rt.jira?.pinIp,
+          }) as unknown as Client)
+        : await withTimeout(
+            connectCustomMcpServer({
+              config: connectConfig,
+              bearerToken,
+              secretEnv,
+            }),
+            isJira ? JIRA_CONNECT_TIMEOUT_MS : CUSTOM_CONNECT_TIMEOUT_MS,
+            `Connecting MCP server "${cfg.name}"`
+          );
       const listed = await withTimeout(
         client.listTools(),
         CUSTOM_LIST_TOOLS_TIMEOUT_MS,
@@ -890,7 +1106,7 @@ export class McpManager {
         transport: cfg.transport,
         state: "connected",
         toolCount: tools.length,
-        message: "Connected",
+        message: rt.jira?.user ? `Connected as ${rt.jira.user}` : "Connected",
         detail: formatTransportDetail(cfg),
       };
       this.notifyList();

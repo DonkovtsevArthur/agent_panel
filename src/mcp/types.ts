@@ -40,6 +40,10 @@ export interface McpServerRuntimeStatus {
   env?: Record<string, string>;
   cwd?: string;
   url?: string;
+  /** One-off note from the last upsert (e.g. Jira AGENTS.md rule written). */
+  notice?: string;
+  /** Jira server: a PAT is saved in SecretStorage (edit form shows it as set). */
+  hasSecretToken?: boolean;
 }
 
 export function slugifyMcpServerId(name: string): string {
@@ -79,11 +83,18 @@ export function parseQualifiedToolName(
 
 const WRITEISH_TOOL_RE =
   /^(use_|create_|generate_|add_|update_|delete_|write_|send_|remove_|edit_)/i;
+/**
+ * Service-prefixed tools (`jira_create_issue`, `github_add_comment`) — the
+ * verb follows the prefix, so the plain regex above missed them and Plan/Ask
+ * could still create / change issues.
+ */
+const PREFIXED_WRITEISH_TOOL_RE =
+  /^(jira|confluence|github|gitlab|bitbucket|linear|notion|slack|youtrack)_(use|create|generate|add|update|delete|write|send|remove|edit|transition|assign|link|move|batch|upload|set|close|merge|approve|reopen)_?/i;
 
 export function isMcpReadonlyTool(qualifiedName: string): boolean {
   const parsed = parseQualifiedToolName(qualifiedName);
   const name = parsed?.toolName || qualifiedName;
-  return !WRITEISH_TOOL_RE.test(name);
+  return !WRITEISH_TOOL_RE.test(name) && !PREFIXED_WRITEISH_TOOL_RE.test(name);
 }
 
 /**
@@ -102,6 +113,9 @@ export function isAllowedMcpInReadonlyMode(qualifiedName: string): boolean {
 export function formatTransportDetail(cfg: McpServerConfig): string {
   if (cfg.transport === "http") {
     return `http · ${cfg.url || ""}`;
+  }
+  if (cfg.command === "harbor-jira") {
+    return `built-in · Jira REST API · ${cfg.env?.JIRA_URL || ""}`.trim();
   }
   const args = (cfg.args || []).join(" ");
   return `stdio · ${cfg.command || ""}${args ? ` ${args}` : ""}`.trim();

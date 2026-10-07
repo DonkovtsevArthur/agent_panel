@@ -33,6 +33,7 @@ import {
   harborFigmaUnavailableNoteForLanguage,
   harborFullPathRulesForLanguage,
   harborModelIdentityRulesForLanguage,
+  harborReasoningLanguageRulesForLanguage,
   harborEvidenceRulesForLanguage,
   harborOutputTokenRulesForLanguage,
   harborVerifyRulesForLanguage,
@@ -518,6 +519,7 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
             readonlyOnly: mode === "plan",
             plannerModelId,
             figmaUrlInTurn: messageHasFigmaUrl(turnPrompt),
+            cwd: workspaceCwd(),
           });
           const basePrompt = String(input.config.systemPrompt || "");
           const systemPrompt = [basePrompt, mcp.systemHint]
@@ -2105,6 +2107,8 @@ export async function runClineAgentTurn(options: {
     // Truthful self-identification: the UI-selected model id, ahead of any
     // model names quoted by workspace AGENTS.md / rules docs.
     harborModelIdentityRulesForLanguage(options.model, uiLang),
+    // Thinking cards follow the plugin UI language (Settings → language).
+    harborReasoningLanguageRulesForLanguage(uiLang),
     // File paths in replies stay clickable: full paths, no `...` abbreviations.
     harborFullPathRulesForLanguage(uiLang),
     // Read batching: fewer model round trips on multi-file exploration.

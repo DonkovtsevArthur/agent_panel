@@ -153,6 +153,13 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    promptSuggestionsEnabled = settings.promptSuggestionsEnabled !== false;
+    if (settingsPromptSuggestionsEnabled) {
+      settingsPromptSuggestionsEnabled.checked = promptSuggestionsEnabled;
+    }
+    if (!promptSuggestionsEnabled) {
+      clearPromptSuggestion();
+    }
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
@@ -297,6 +304,9 @@
         : true,
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
+        : true,
+      promptSuggestionsEnabled: settingsPromptSuggestionsEnabled
+        ? settingsPromptSuggestionsEnabled.checked
         : true,
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked

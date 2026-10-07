@@ -169,6 +169,14 @@
       mcpCustomCwd: "Working directory (optional)",
       mcpCustomUrl: "URL",
       mcpCustomToken: "Bearer token (optional)",
+      mcpJiraTokenLabel: "Jira Personal Access Token",
+      mcpJiraUrlLabel: "Jira URL",
+      mcpJiraAdvancedShow: "Advanced settings",
+      mcpJiraAdvancedHide: "Hide advanced settings",
+      mcpJiraUrlRequired: "Enter the Jira URL.",
+      mcpJiraTokenRequired: "Paste the Jira Personal Access Token.",
+      mcpJiraTokenSaved: "Saved — leave empty to keep, paste a new one to replace",
+      mcpJiraTokenEmpty: "Paste the PAT (Jira profile → Personal Access Tokens)",
       mcpCustomSave: "Save & Connect",
       mcpNameRequired: "Enter a server name.",
       mcpCommandRequired: "Enter a command for stdio.",
@@ -176,7 +184,10 @@
       mcpPresetsLabel: "Quick add",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetJira: "Jira",
       mcpPresetChromeDevtools: "Chrome DevTools",
+      mcpPresetJiraNote:
+        "Enter the Jira URL and a Personal Access Token — Harbor connects to Jira itself (built-in tools, nothing to install), trusts the corporate certificate and finds the internal address via the VPN. After a successful check it writes a Jira section to AGENTS.md and token-free MCP configs for other agent tools.",
       mcpPresetPlaywrightNote:
         "Browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. To drive your own Chrome/Edge with its logins, install the “Playwright Extension” and replace --headless with --extension.",
       mcpPresetChromeDevtoolsNote:
@@ -227,6 +238,9 @@
         "Independent tools from one response run together.",
       autoCompact: "Auto compact",
       autoCompactNote: "Compress the chat near the model window limit.",
+      promptSuggestions: "Prompt suggestions",
+      promptSuggestionsNote:
+        "Suggest your next message in the empty composer. Tab accepts.",
       toolsAutoApprove: "Auto-approve tools",
       toolsAutoApproveNote: "No prompt. Off — ask every time.",
       approvalReads: "Reads",
@@ -648,6 +662,14 @@
       mcpCustomCwd: "Рабочая папка (опционально)",
       mcpCustomUrl: "URL",
       mcpCustomToken: "Bearer token (опционально)",
+      mcpJiraTokenLabel: "Jira Personal Access Token",
+      mcpJiraUrlLabel: "Адрес Jira",
+      mcpJiraAdvancedShow: "Дополнительно",
+      mcpJiraAdvancedHide: "Скрыть дополнительное",
+      mcpJiraUrlRequired: "Укажите адрес Jira.",
+      mcpJiraTokenRequired: "Вставьте Personal Access Token Jira.",
+      mcpJiraTokenSaved: "Сохранён — оставьте пустым или вставьте новый, чтобы заменить",
+      mcpJiraTokenEmpty: "Вставьте PAT (профиль Jira → Personal Access Tokens)",
       mcpCustomSave: "Сохранить и подключить",
       mcpNameRequired: "Укажите имя сервера.",
       mcpCommandRequired: "Укажите команду для stdio.",
@@ -655,7 +677,10 @@
       mcpPresetsLabel: "Быстро добавить",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetJira: "Jira",
       mcpPresetChromeDevtools: "Chrome DevTools",
+      mcpPresetJiraNote:
+        "Укажите адрес Jira и Personal Access Token — Harbor подключается к Jira сам (встроенные инструменты, ничего устанавливать не нужно), доверяет корпоративному сертификату и находит внутренний адрес через VPN. После успешной проверки запишет раздел Jira в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
       mcpPresetPlaywrightNote:
         "Браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. Чтобы работать в вашем Chrome/Edge с вашими логинами, установите «Playwright Extension» и замените --headless на --extension.",
       mcpPresetChromeDevtoolsNote:
@@ -707,6 +732,9 @@
         "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
       autoCompactNote: "Сжимать диалог у лимита окна модели.",
+      promptSuggestions: "Подсказки ввода",
+      promptSuggestionsNote:
+        "Предлагать следующее сообщение в пустом поле. Tab — принять.",
       toolsAutoApprove: "Автоподтверждение tools",
       toolsAutoApproveNote: "Без запроса. Выкл. — спрашивать каждый раз.",
       approvalReads: "Чтение",

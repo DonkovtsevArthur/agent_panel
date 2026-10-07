@@ -2,7 +2,7 @@ import { displayAttachmentName } from "./attachments";
 import { getConfig, getEnabledModels, resolveModelEndpoint } from "./config";
 import { resolveUiLanguage } from "./i18n";
 import { selectUtilityModel } from "./modelRouting";
-import { getOpenAICompatibleClient } from "./openaiClient";
+import { getOpenAICompatibleClient, type ChatCompletionRequest } from "./openaiClient";
 import {
   applyAgentName,
   applyBranchTabTitle,
@@ -280,12 +280,22 @@ function completionText(content: unknown): string {
     .join("");
 }
 
-async function completeUtilityTitle(
+/**
+ * One short chat completion: `modelId` when given (e.g. the chat's selected
+ * model), else the lightweight utility model, falling back to the chat model.
+ * Returns raw text; "" when no model is configured. Throws on transport
+ * errors — callers decide how to degrade.
+ */
+export async function completeUtilityText(
   prompts: { system: string; user: string },
   options: {
     fallbackModelId?: string;
     chatModelId?: string;
     signal?: AbortSignal;
+    /** Exact model to call; skips utility-model selection. */
+    modelId?: string;
+    maxTokens?: number;
+    temperature?: number;
   }
 ): Promise<string> {
   const enabled = getEnabledModels().filter((m) => {
@@ -296,6 +306,7 @@ async function completeUtilityTitle(
     options.fallbackModelId || options.chatModelId || ""
   ).trim();
   const modelId =
+    String(options.modelId || "").trim() ||
     selectUtilityModel(enabled, { fallbackModelId: fallback })?.modelId ||
     fallback;
   if (!modelId) {
@@ -310,19 +321,52 @@ async function completeUtilityTitle(
     rejectUnauthorized: config.rejectUnauthorized,
     caBundlePath: config.caBundlePath,
   });
-  const result = await client.chatCompletions(
-    {
-      model: modelId,
-      messages: [
-        { role: "system", content: prompts.system },
-        { role: "user", content: prompts.user },
-      ],
-      temperature: 0.2,
-      max_tokens: 48,
-    },
-    options.signal
+  const requestBody: ChatCompletionRequest = {
+    model: modelId,
+    messages: [
+      { role: "system", content: prompts.system },
+      { role: "user", content: prompts.user },
+    ],
+    temperature: options.temperature ?? 0.2,
+    max_tokens: options.maxTokens ?? 48,
+  };
+  // Short label/one-liner: thinking off so the small token budget goes to the
+  // answer. Sent regardless of the capability flag — always-thinking models
+  // (e.g. mimo-v2.5) otherwise spend all of max_tokens on reasoning_content
+  // and return empty content. Gateways that reject the field get one plain retry.
+  try {
+    const result = await client.chatCompletions(
+      { ...requestBody, reasoning_effort: "none" },
+      options.signal
+    );
+    return completionText(result.message.content);
+  } catch (error) {
+    if (options.signal?.aborted) {
+      throw error;
+    }
+  }
+  const result = await client.chatCompletions(requestBody, options.signal);
+  return completionText(result.message.content);
+}
+
+async function completeUtilityTitle(
+  prompts: { system: string; user: string },
+  options: {
+    fallbackModelId?: string;
+    chatModelId?: string;
+    signal?: AbortSignal;
+  }
+): Promise<string> {
+  // Same model as the chat: a separate utility endpoint may be offline.
+  const modelId = String(
+    options.chatModelId || options.fallbackModelId || ""
+  ).trim();
+  if (!modelId) {
+    return "";
+  }
+  return cleanChatTitle(
+    await completeUtilityText(prompts, { ...options, modelId })
   );
-  return cleanChatTitle(completionText(result.message.content));
 }
 
 /**

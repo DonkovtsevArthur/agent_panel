@@ -3,6 +3,7 @@
  * Scans only Harbor roots + user-configured extra directories —
  * never auto-scans `.agents` / `.cline` / `.cursor` skill trees.
  */
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -278,10 +279,78 @@ function skillHasSkillMd(skillDir: string): boolean {
   }
 }
 
+/** Records which bundled skills Harbor seeded and the content hash it wrote. */
+const SEED_MANIFEST = ".harbor-bundled.json";
+
+type SeedManifest = { skills: Record<string, string> };
+
+function readSeedManifest(destRoot: string): SeedManifest {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(destRoot, SEED_MANIFEST), "utf8")
+    );
+    if (raw && typeof raw.skills === "object" && raw.skills) {
+      return { skills: { ...raw.skills } };
+    }
+  } catch {
+    /* missing / corrupt — start fresh */
+  }
+  return { skills: {} };
+}
+
+function writeSeedManifest(destRoot: string, manifest: SeedManifest): void {
+  try {
+    fs.writeFileSync(
+      path.join(destRoot, SEED_MANIFEST),
+      JSON.stringify(manifest, null, 2) + "\n",
+      "utf8"
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Stable sha256 over relative paths + contents of a skill folder (dotfiles skipped). */
+export function hashSkillDir(dir: string): string | undefined {
+  const files: string[] = [];
+  const walk = (rel: string): void => {
+    const abs = path.join(dir, rel);
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      if (e.name.startsWith(".")) {
+        continue;
+      }
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        walk(childRel);
+      } else if (e.isFile()) {
+        files.push(childRel);
+      }
+    }
+  };
+  try {
+    walk("");
+    files.sort();
+    const h = crypto.createHash("sha256");
+    for (const rel of files) {
+      h.update(rel);
+      h.update("\0");
+      h.update(fs.readFileSync(path.join(dir, rel)));
+      h.update("\0");
+    }
+    return h.digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Copy packaged default skills into `~/.harbor/skills` on install / activate.
- * Never overwrites an existing skill folder or symlink (user wins).
- * Returns names that were newly added.
+ * A manifest (`.harbor-bundled.json`) remembers the hash Harbor wrote for each skill:
+ * - missing and never seeded → copy;
+ * - seeded, untouched by the user, bundle changed → replace with the new version;
+ * - user edited it, deleted it, or it is a symlink → leave alone (user wins);
+ * - pre-manifest copy identical to the bundle → adopt into the manifest.
+ * Returns names that were newly added or updated.
  */
 export function seedDefaultHarborSkills(extensionPath?: string): string[] {
   const bundled = resolveBundledSkillsDir(extensionPath);
@@ -295,13 +364,16 @@ export function seedDefaultHarborSkills(extensionPath?: string): string[] {
     return [];
   }
 
-  const added: string[] = [];
+  const changed: string[] = [];
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(bundled, { withFileTypes: true });
   } catch {
     return [];
   }
+
+  const manifest = readSeedManifest(destRoot);
+  let manifestDirty = false;
 
   for (const entry of entries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) {
@@ -315,23 +387,69 @@ export function seedDefaultHarborSkills(extensionPath?: string): string[] {
     if (!skillHasSkillMd(src)) {
       continue;
     }
+    const srcHash = hashSkillDir(src);
+    if (!srcHash) {
+      continue;
+    }
+    const seededHash = manifest.skills[name];
     const dest = path.join(destRoot, name);
+    let destStat: fs.Stats | undefined;
     try {
-      if (fs.lstatSync(dest)) {
-        // Exists (dir, file, or symlink) — leave user content alone.
+      destStat = fs.lstatSync(dest);
+    } catch {
+      destStat = undefined;
+    }
+
+    if (!destStat) {
+      if (seededHash) {
+        // Seeded earlier and the user removed it — respect the deletion.
         continue;
       }
-    } catch {
-      /* missing — copy */
+      try {
+        fs.cpSync(src, dest, { recursive: true });
+        manifest.skills[name] = srcHash;
+        manifestDirty = true;
+        changed.push(name);
+      } catch {
+        /* ignore individual failures */
+      }
+      continue;
+    }
+
+    if (!destStat.isDirectory()) {
+      // File or symlink — user-managed.
+      continue;
+    }
+    const destHash = hashSkillDir(dest);
+    if (!destHash) {
+      continue;
+    }
+    if (!seededHash) {
+      if (destHash === srcHash) {
+        manifest.skills[name] = srcHash;
+        manifestDirty = true;
+      }
+      continue;
+    }
+    if (destHash !== seededHash || srcHash === seededHash) {
+      // User edited the seeded copy, or nothing new to ship.
+      continue;
     }
     try {
+      fs.rmSync(dest, { recursive: true, force: true });
       fs.cpSync(src, dest, { recursive: true });
-      added.push(name);
+      manifest.skills[name] = srcHash;
+      manifestDirty = true;
+      changed.push(name);
     } catch {
       /* ignore individual failures */
     }
   }
-  return added;
+
+  if (manifestDirty) {
+    writeSeedManifest(destRoot, manifest);
+  }
+  return changed;
 }
 
 function sourceForDir(

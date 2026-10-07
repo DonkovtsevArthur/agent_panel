@@ -106,7 +106,7 @@
     if (chatSearchResults) {
       chatSearchResults.setAttribute("aria-label", t("searchResults"));
     }
-    promptEl.placeholder = t("taskPlaceholder");
+    setPromptBasePlaceholder(t("taskPlaceholder"));
     composerPlusBtn.title = composerPlusBtn.setAttribute("aria-label", t("add")) || t("add");
     composerPlusMenu.querySelectorAll(".composer-plus-item").forEach((item) => {
       const action = item.getAttribute("data-action");
@@ -350,6 +350,18 @@
     if (settingsAutoCompactNote) {
       settingsAutoCompactNote.textContent = t("autoCompactNote");
     }
+    const settingsPromptSuggestionsLabel = document.getElementById(
+      "settingsPromptSuggestionsLabel"
+    );
+    if (settingsPromptSuggestionsLabel) {
+      settingsPromptSuggestionsLabel.textContent = t("promptSuggestions");
+    }
+    const settingsPromptSuggestionsNote = document.getElementById(
+      "settingsPromptSuggestionsNote"
+    );
+    if (settingsPromptSuggestionsNote) {
+      settingsPromptSuggestionsNote.textContent = t("promptSuggestionsNote");
+    }
     const settingsToolsAutoApproveLabel = document.getElementById(
       "settingsToolsAutoApproveLabel"
     );
@@ -479,6 +491,10 @@
     if (mcpPresetGithub) {
       const label = mcpPresetGithub.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetGithub");
+    }
+    if (mcpPresetJira) {
+      const label = mcpPresetJira.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetJira");
     }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {

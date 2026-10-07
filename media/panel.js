@@ -169,6 +169,14 @@
       mcpCustomCwd: "Working directory (optional)",
       mcpCustomUrl: "URL",
       mcpCustomToken: "Bearer token (optional)",
+      mcpJiraTokenLabel: "Jira Personal Access Token",
+      mcpJiraUrlLabel: "Jira URL",
+      mcpJiraAdvancedShow: "Advanced settings",
+      mcpJiraAdvancedHide: "Hide advanced settings",
+      mcpJiraUrlRequired: "Enter the Jira URL.",
+      mcpJiraTokenRequired: "Paste the Jira Personal Access Token.",
+      mcpJiraTokenSaved: "Saved — leave empty to keep, paste a new one to replace",
+      mcpJiraTokenEmpty: "Paste the PAT (Jira profile → Personal Access Tokens)",
       mcpCustomSave: "Save & Connect",
       mcpNameRequired: "Enter a server name.",
       mcpCommandRequired: "Enter a command for stdio.",
@@ -176,7 +184,10 @@
       mcpPresetsLabel: "Quick add",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetJira: "Jira",
       mcpPresetChromeDevtools: "Chrome DevTools",
+      mcpPresetJiraNote:
+        "Enter the Jira URL and a Personal Access Token — Harbor connects to Jira itself (built-in tools, nothing to install), trusts the corporate certificate and finds the internal address via the VPN. After a successful check it writes a Jira section to AGENTS.md and token-free MCP configs for other agent tools.",
       mcpPresetPlaywrightNote:
         "Browser via Playwright MCP (navigate, snapshot, click). Needs Node.js / npx. To drive your own Chrome/Edge with its logins, install the “Playwright Extension” and replace --headless with --extension.",
       mcpPresetChromeDevtoolsNote:
@@ -227,6 +238,9 @@
         "Independent tools from one response run together.",
       autoCompact: "Auto compact",
       autoCompactNote: "Compress the chat near the model window limit.",
+      promptSuggestions: "Prompt suggestions",
+      promptSuggestionsNote:
+        "Suggest your next message in the empty composer. Tab accepts.",
       toolsAutoApprove: "Auto-approve tools",
       toolsAutoApproveNote: "No prompt. Off — ask every time.",
       approvalReads: "Reads",
@@ -648,6 +662,14 @@
       mcpCustomCwd: "Рабочая папка (опционально)",
       mcpCustomUrl: "URL",
       mcpCustomToken: "Bearer token (опционально)",
+      mcpJiraTokenLabel: "Jira Personal Access Token",
+      mcpJiraUrlLabel: "Адрес Jira",
+      mcpJiraAdvancedShow: "Дополнительно",
+      mcpJiraAdvancedHide: "Скрыть дополнительное",
+      mcpJiraUrlRequired: "Укажите адрес Jira.",
+      mcpJiraTokenRequired: "Вставьте Personal Access Token Jira.",
+      mcpJiraTokenSaved: "Сохранён — оставьте пустым или вставьте новый, чтобы заменить",
+      mcpJiraTokenEmpty: "Вставьте PAT (профиль Jira → Personal Access Tokens)",
       mcpCustomSave: "Сохранить и подключить",
       mcpNameRequired: "Укажите имя сервера.",
       mcpCommandRequired: "Укажите команду для stdio.",
@@ -655,7 +677,10 @@
       mcpPresetsLabel: "Быстро добавить",
       mcpPresetPlaywright: "Playwright",
       mcpPresetGithub: "GitHub",
+      mcpPresetJira: "Jira",
       mcpPresetChromeDevtools: "Chrome DevTools",
+      mcpPresetJiraNote:
+        "Укажите адрес Jira и Personal Access Token — Harbor подключается к Jira сам (встроенные инструменты, ничего устанавливать не нужно), доверяет корпоративному сертификату и находит внутренний адрес через VPN. После успешной проверки запишет раздел Jira в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
       mcpPresetPlaywrightNote:
         "Браузер через Playwright MCP (navigate, snapshot, click). Нужен Node.js / npx. Чтобы работать в вашем Chrome/Edge с вашими логинами, установите «Playwright Extension» и замените --headless на --extension.",
       mcpPresetChromeDevtoolsNote:
@@ -707,6 +732,9 @@
         "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
       autoCompactNote: "Сжимать диалог у лимита окна модели.",
+      promptSuggestions: "Подсказки ввода",
+      promptSuggestionsNote:
+        "Предлагать следующее сообщение в пустом поле. Tab — принять.",
       toolsAutoApprove: "Автоподтверждение tools",
       toolsAutoApproveNote: "Без запроса. Выкл. — спрашивать каждый раз.",
       approvalReads: "Чтение",
@@ -1288,6 +1316,9 @@
   const settingsAutoCompactEnabled = document.getElementById(
     "settingsAutoCompactEnabled"
   );
+  const settingsPromptSuggestionsEnabled = document.getElementById(
+    "settingsPromptSuggestionsEnabled"
+  );
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
@@ -1411,6 +1442,7 @@
   const mcpPresetsNote = document.getElementById("mcpPresetsNote");
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
+  const mcpPresetJira = document.getElementById("mcpPresetJira");
   const mcpPresetChromeDevtools = document.getElementById(
     "mcpPresetChromeDevtools"
   );
@@ -1443,6 +1475,17 @@
   const mcpCustomCwd = document.getElementById("mcpCustomCwd");
   const mcpCustomUrl = document.getElementById("mcpCustomUrl");
   const mcpCustomToken = document.getElementById("mcpCustomToken");
+  const mcpCustomJiraFields = document.getElementById("mcpCustomJiraFields");
+  const mcpCustomJiraUrl = document.getElementById("mcpCustomJiraUrl");
+  const mcpCustomJiraUrlLabel = document.getElementById("mcpCustomJiraUrlLabel");
+  const mcpCustomJiraAdvancedBtn = document.getElementById(
+    "mcpCustomJiraAdvancedBtn"
+  );
+  const mcpCustomTransportRow = document.getElementById("mcpCustomTransportRow");
+  const mcpCustomJiraToken = document.getElementById("mcpCustomJiraToken");
+  const mcpCustomJiraTokenLabel = document.getElementById(
+    "mcpCustomJiraTokenLabel"
+  );
   const mcpCustomNameLabel = document.getElementById("mcpCustomNameLabel");
   const mcpCustomTransportLabel = document.getElementById(
     "mcpCustomTransportLabel"
@@ -1506,6 +1549,11 @@
   let archiveAgentsData = [];
   let activeAgentId = "";
   let activeChatId = "";
+  /** Ghost-text next-message guess from the host: `{ chatId, text }` or null. */
+  let promptSuggestion = null;
+  /** Mode placeholder shown when no suggestion is active. */
+  let promptBasePlaceholder = "";
+  let promptSuggestionsEnabled = true;
   let chatBranches = [];
   let renamingAgentId = null;
   let settingsModels = [];
@@ -1731,7 +1779,7 @@
     if (chatSearchResults) {
       chatSearchResults.setAttribute("aria-label", t("searchResults"));
     }
-    promptEl.placeholder = t("taskPlaceholder");
+    setPromptBasePlaceholder(t("taskPlaceholder"));
     composerPlusBtn.title = composerPlusBtn.setAttribute("aria-label", t("add")) || t("add");
     composerPlusMenu.querySelectorAll(".composer-plus-item").forEach((item) => {
       const action = item.getAttribute("data-action");
@@ -1975,6 +2023,18 @@
     if (settingsAutoCompactNote) {
       settingsAutoCompactNote.textContent = t("autoCompactNote");
     }
+    const settingsPromptSuggestionsLabel = document.getElementById(
+      "settingsPromptSuggestionsLabel"
+    );
+    if (settingsPromptSuggestionsLabel) {
+      settingsPromptSuggestionsLabel.textContent = t("promptSuggestions");
+    }
+    const settingsPromptSuggestionsNote = document.getElementById(
+      "settingsPromptSuggestionsNote"
+    );
+    if (settingsPromptSuggestionsNote) {
+      settingsPromptSuggestionsNote.textContent = t("promptSuggestionsNote");
+    }
     const settingsToolsAutoApproveLabel = document.getElementById(
       "settingsToolsAutoApproveLabel"
     );
@@ -2104,6 +2164,10 @@
     if (mcpPresetGithub) {
       const label = mcpPresetGithub.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetGithub");
+    }
+    if (mcpPresetJira) {
+      const label = mcpPresetJira.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetJira");
     }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {
@@ -2789,6 +2853,66 @@
     } finally {
       drainingQueue = false;
     }
+  }
+
+  /** Suggestion is shown only in an empty, idle composer of its own chat. */
+  function promptSuggestionVisible() {
+    return Boolean(
+      promptSuggestionsEnabled &&
+        promptSuggestion &&
+        promptSuggestion.text &&
+        promptSuggestion.chatId === activeChatId &&
+        !busy &&
+        promptEl &&
+        !String(promptEl.value || "") &&
+        !pendingAttachments.length
+    );
+  }
+
+  function refreshPromptSuggestion() {
+    if (!promptEl) {
+      return;
+    }
+    const visible = promptSuggestionVisible();
+    const next = visible
+      ? `${promptSuggestion.text}   ⇥ Tab`
+      : promptBasePlaceholder || promptEl.placeholder;
+    if (promptEl.placeholder !== next) {
+      promptEl.placeholder = next;
+    }
+  }
+
+  function setPromptBasePlaceholder(text) {
+    promptBasePlaceholder = String(text || "");
+    refreshPromptSuggestion();
+  }
+
+  function setPromptSuggestion(chatId, text) {
+    const value = String(text || "").trim();
+    promptSuggestion = chatId && value ? { chatId, text: value } : null;
+    refreshPromptSuggestion();
+  }
+
+  function clearPromptSuggestion() {
+    if (!promptSuggestion) {
+      return;
+    }
+    promptSuggestion = null;
+    refreshPromptSuggestion();
+  }
+
+  /** Tab in an empty composer: put the suggestion in as editable text. */
+  function acceptPromptSuggestion() {
+    if (!promptSuggestionVisible()) {
+      return false;
+    }
+    const text = promptSuggestion.text;
+    promptSuggestion = null;
+    promptEl.value = text;
+    promptEl.setSelectionRange(text.length, text.length);
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+    refreshPromptSuggestion();
+    return true;
   }
 
   function updateSendButton() {
@@ -11987,13 +12111,55 @@
     }
   }
 
+  function isMcpCustomJiraForm() {
+    const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    if (isHttp) {
+      return false;
+    }
+    const cmd = `${mcpCustomCommand ? mcpCustomCommand.value : ""} ${
+      mcpCustomArgs ? mcpCustomArgs.value : ""
+    }`;
+    const env = mcpCustomEnv ? mcpCustomEnv.value : "";
+    return (
+      /mcp-atlassian|harbor-jira/i.test(cmd) || /^\s*JIRA_URL\s*=/m.test(env)
+    );
+  }
+
+  /** Jira form: only URL + token; command/env stay under "Advanced". */
+  let mcpJiraAdvancedOpen = false;
+
+  function jiraUrlFromEnvText(envText) {
+    const m = /^\s*JIRA_URL\s*=\s*(.*)$/m.exec(String(envText || ""));
+    return m ? m[1].trim() : "";
+  }
+
+  function mergeJiraUrlIntoEnvText(envText, url) {
+    const rest = String(envText || "")
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*JIRA_URL\s*=/.test(line));
+    return [`JIRA_URL=${url}`, ...rest].join("\n").replace(/\n+$/, "");
+  }
+
   function syncMcpCustomTransportFields() {
     const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    const isJira = isMcpCustomJiraForm();
+    const hideAdvanced = isJira && !mcpJiraAdvancedOpen;
     if (mcpCustomStdioFields) {
-      mcpCustomStdioFields.hidden = Boolean(isHttp);
+      mcpCustomStdioFields.hidden = Boolean(isHttp) || hideAdvanced;
     }
     if (mcpCustomHttpFields) {
       mcpCustomHttpFields.hidden = !isHttp;
+    }
+    if (mcpCustomTransportRow) {
+      mcpCustomTransportRow.hidden = hideAdvanced;
+    }
+    if (mcpCustomJiraFields) {
+      mcpCustomJiraFields.hidden = !isJira;
+    }
+    if (mcpCustomJiraAdvancedBtn) {
+      mcpCustomJiraAdvancedBtn.textContent = mcpJiraAdvancedOpen
+        ? t("mcpJiraAdvancedHide")
+        : t("mcpJiraAdvancedShow");
     }
   }
 
@@ -12048,6 +12214,24 @@
     }
     if (mcpCustomToken) {
       mcpCustomToken.value = "";
+    }
+    mcpJiraAdvancedOpen = false;
+    if (mcpCustomJiraUrl) {
+      mcpCustomJiraUrl.value = jiraUrlFromEnvText(
+        mcpCustomEnv ? mcpCustomEnv.value : ""
+      );
+    }
+    if (mcpCustomJiraUrlLabel) {
+      mcpCustomJiraUrlLabel.textContent = t("mcpJiraUrlLabel");
+    }
+    if (mcpCustomJiraToken) {
+      mcpCustomJiraToken.value = "";
+      mcpCustomJiraToken.placeholder = existing?.hasSecretToken
+        ? t("mcpJiraTokenSaved")
+        : t("mcpJiraTokenEmpty");
+    }
+    if (mcpCustomJiraTokenLabel) {
+      mcpCustomJiraTokenLabel.textContent = t("mcpJiraTokenLabel");
     }
     if (existing) {
       if (mcpCustomTransport) {
@@ -12143,6 +12327,17 @@
       noteKey: "mcpPresetGithubNote",
       matchIds: ["github"],
     },
+    jira: {
+      name: "Jira",
+      transport: "stdio",
+      command: "harbor-jira",
+      argsText: "",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetJiraNote",
+      matchIds: ["jira", "mcp-atlassian", "atlassian"],
+    },
   };
 
   function openMcpPreset(presetId) {
@@ -12192,6 +12387,24 @@
       showCopyToast(t("mcpNameRequired"));
       return;
     }
+    const isJira = isMcpCustomJiraForm();
+    if (isJira) {
+      const jiraUrl = mcpCustomJiraUrl ? mcpCustomJiraUrl.value.trim() : "";
+      if (!jiraUrl) {
+        showCopyToast(t("mcpJiraUrlRequired"));
+        return;
+      }
+      const editingId = mcpCustomEditId ? mcpCustomEditId.value.trim() : "";
+      const existing = (mcpServersCache || []).find((s) => s.id === editingId);
+      const token = mcpCustomJiraToken ? mcpCustomJiraToken.value.trim() : "";
+      if (!token && !existing?.hasSecretToken) {
+        showCopyToast(t("mcpJiraTokenRequired"));
+        return;
+      }
+      if (mcpCustomEnv) {
+        mcpCustomEnv.value = mergeJiraUrlIntoEnvText(mcpCustomEnv.value, jiraUrl);
+      }
+    }
     const transport =
       mcpCustomTransport && mcpCustomTransport.value === "http"
         ? "http"
@@ -12221,6 +12434,7 @@
         cwd: mcpCustomCwd ? mcpCustomCwd.value.trim() : "",
         url: mcpCustomUrl ? mcpCustomUrl.value.trim() : "",
         bearerToken: mcpCustomToken ? mcpCustomToken.value : "",
+        jiraToken: mcpCustomJiraToken && isJira ? mcpCustomJiraToken.value : "",
         enabled: true,
         connect: true,
       },
@@ -12383,6 +12597,13 @@
       settingsAutoCompactEnabled.checked =
         settings.autoCompactEnabled !== false;
     }
+    promptSuggestionsEnabled = settings.promptSuggestionsEnabled !== false;
+    if (settingsPromptSuggestionsEnabled) {
+      settingsPromptSuggestionsEnabled.checked = promptSuggestionsEnabled;
+    }
+    if (!promptSuggestionsEnabled) {
+      clearPromptSuggestion();
+    }
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
@@ -12527,6 +12748,9 @@
         : true,
       autoCompactEnabled: settingsAutoCompactEnabled
         ? settingsAutoCompactEnabled.checked
+        : true,
+      promptSuggestionsEnabled: settingsPromptSuggestionsEnabled
+        ? settingsPromptSuggestionsEnabled.checked
         : true,
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked
@@ -15807,8 +16031,7 @@
       placeModelMenu(modePicker, modeMenu, chatScreen);
     }
     if (promptEl) {
-      promptEl.placeholder =
-        meta.placeholder || t("taskPlaceholder");
+      setPromptBasePlaceholder(meta.placeholder || t("taskPlaceholder"));
     }
     if (close) {
       closeModeMenu();
@@ -16088,6 +16311,9 @@
    */
   function setBusy(nextBusy, opts) {
     busy = nextBusy;
+    if (nextBusy) {
+      clearPromptSuggestion();
+    }
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
     promptEl.disabled = false;
@@ -17789,7 +18015,7 @@
       }
       if (
         target.closest(
-          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
+          "#settingsRejectUnauthorized, #settingsSoundNotificationsEnabled, #settingsSubagentsEnabled, #settingsParallelToolCallsEnabled, #settingsAutoCompactEnabled, #settingsPromptSuggestionsEnabled, #settingsToolsAutoApprove, #settingsApprovalReads, #settingsApprovalWeb, #settingsApprovalEdits, #settingsApprovalCommands, #settingsApprovalMcp, #settingsApprovalSubagents, #settingsApprovalPlan, #settingsCheckpointsEnabled, #settingsSelectionHintsEnabled, #settingsCommitScope, #settingsCommitLanguage, #settingsCommitModelList, #settingsVisionModelList"
         )
       ) {
         if (target.closest("#settingsCommitModelList")) {
@@ -17893,6 +18119,11 @@
       openMcpPreset("github");
     });
   }
+  if (mcpPresetJira) {
+    mcpPresetJira.addEventListener("click", () => {
+      openMcpPreset("jira");
+    });
+  }
   if (mcpServersList) {
     mcpServersList.addEventListener("click", (event) => {
       const editBtn = event.target.closest(".mcp-edit-btn");
@@ -17962,6 +18193,17 @@
     mcpCustomTransport.addEventListener("change", () =>
       syncMcpCustomTransportFields()
     );
+  }
+  for (const el of [mcpCustomCommand, mcpCustomArgs, mcpCustomEnv]) {
+    if (el) {
+      el.addEventListener("input", () => syncMcpCustomTransportFields());
+    }
+  }
+  if (mcpCustomJiraAdvancedBtn) {
+    mcpCustomJiraAdvancedBtn.addEventListener("click", () => {
+      mcpJiraAdvancedOpen = !mcpJiraAdvancedOpen;
+      syncMcpCustomTransportFields();
+    });
   }
   if (mcpCustomEditModal) {
     mcpCustomEditModal.addEventListener("click", (event) => {
@@ -19258,6 +19500,17 @@
       event.preventDefault();
       return;
     }
+    if (
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      acceptPromptSuggestion()
+    ) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendPrompt();
@@ -19515,6 +19768,11 @@
         mcpServersCache = Array.isArray(msg.servers) ? msg.servers : [];
         renderMcpServersList();
         break;
+      case "mcpNotice":
+        if (msg.text) {
+          showCopyToast(String(msg.text));
+        }
+        break;
       case "skillsList":
         skillsCache = {
           enabled: msg.enabled !== false,
@@ -19529,6 +19787,19 @@
       case "figmaNeedsConnect":
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
+      case "promptSuggestion":
+        if (msg.chatId && msg.chatId === activeChatId) {
+          setPromptSuggestion(msg.chatId, msg.text);
+        }
+        host.postMessage({
+          type: "promptSuggestionDebug",
+          text:
+            `received chat=${msg.chatId} active=${activeChatId} busy=${busy} ` +
+            `enabled=${promptSuggestionsEnabled} valueLen=${String(promptEl.value || "").length} ` +
+            `attachments=${pendingAttachments.length} visible=${promptSuggestionVisible()} ` +
+            `placeholder=${JSON.stringify(promptEl.placeholder)}`,
+        });
+        break;
       case "showChat": {
         const chatChanged = Boolean(msg.chatId) && msg.chatId !== activeChatId;
         const prevChatId = activeChatId;
@@ -19536,6 +19807,7 @@
           // Сохранить черновик покидаемого чата до смены activeChatId:
           // текст мог меняться программно (slash/mention) без persist.
           persistDraftPrompt();
+          clearPromptSuggestion();
         }
         if (msg.chatId) {
           activeChatId = msg.chatId;

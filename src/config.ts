@@ -256,6 +256,13 @@ export interface AgentPanelConfig {
     enabled: boolean;
   };
   /**
+   * After each successful turn, ask the utility model for the user's likely
+   * next message and show it as ghost text in the empty composer (Tab accepts).
+   */
+  promptSuggestions: {
+    enabled: boolean;
+  };
+  /**
    * Emit Anthropic-style prompt-cache markers (`cache_control`) on chat turns
    * for OpenAI-compatible upstreams that accept them (LiteLLM/OpenRouter with
    * Claude/Qwen upstreams, Anthropic-compatible endpoints). Off by default:
@@ -666,6 +673,9 @@ export function getConfig(): AgentPanelConfig {
     },
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
+    },
+    promptSuggestions: {
+      enabled: cfg.get<boolean>("promptSuggestions.enabled") !== false,
     },
     promptCache: {
       enabled: cfg.get<boolean>("promptCache.enabled") === true,

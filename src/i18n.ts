@@ -74,6 +74,28 @@ export function harborModelIdentityRulesForLanguage(
 }
 
 /**
+ * Always-on: reasoning models (GLM, Qwen, DeepSeek, Claude thinking…) tend to
+ * think in English/Chinese because the Cline base prompt is English, so the
+ * thinking cards in the panel come out in a different language than the UI.
+ * A system-prompt instruction is a strong hint, not a guarantee — some models
+ * ignore it for hidden reasoning.
+ */
+export function harborReasoningLanguageRulesForLanguage(
+  lang: UiLanguage
+): string {
+  if (lang === "ru") {
+    return [
+      "# Язык рассуждений",
+      "Свои внутренние рассуждения (thinking / reasoning) веди на русском — тем же языком, что и ответ пользователю. Идентификаторы кода, пути, команды и цитаты из файлов оставляй как есть.",
+    ].join("\n");
+  }
+  return [
+    "# Reasoning language",
+    "Write your internal reasoning (thinking / reasoning) in English — the same language as your reply to the user. Keep code identifiers, paths, commands and file quotes as-is.",
+  ].join("\n");
+}
+
+/**
  * Always-on: chat models sometimes shorten the middle of a file path with a
  * literal `...`/`…` segment. Harbor renders paths in replies as clickable file
  * links — an abbreviated path cannot be opened (hosts do resolve the suffix,

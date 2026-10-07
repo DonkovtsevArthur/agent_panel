@@ -239,13 +239,55 @@
     }
   }
 
+  function isMcpCustomJiraForm() {
+    const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    if (isHttp) {
+      return false;
+    }
+    const cmd = `${mcpCustomCommand ? mcpCustomCommand.value : ""} ${
+      mcpCustomArgs ? mcpCustomArgs.value : ""
+    }`;
+    const env = mcpCustomEnv ? mcpCustomEnv.value : "";
+    return (
+      /mcp-atlassian|harbor-jira/i.test(cmd) || /^\s*JIRA_URL\s*=/m.test(env)
+    );
+  }
+
+  /** Jira form: only URL + token; command/env stay under "Advanced". */
+  let mcpJiraAdvancedOpen = false;
+
+  function jiraUrlFromEnvText(envText) {
+    const m = /^\s*JIRA_URL\s*=\s*(.*)$/m.exec(String(envText || ""));
+    return m ? m[1].trim() : "";
+  }
+
+  function mergeJiraUrlIntoEnvText(envText, url) {
+    const rest = String(envText || "")
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*JIRA_URL\s*=/.test(line));
+    return [`JIRA_URL=${url}`, ...rest].join("\n").replace(/\n+$/, "");
+  }
+
   function syncMcpCustomTransportFields() {
     const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
+    const isJira = isMcpCustomJiraForm();
+    const hideAdvanced = isJira && !mcpJiraAdvancedOpen;
     if (mcpCustomStdioFields) {
-      mcpCustomStdioFields.hidden = Boolean(isHttp);
+      mcpCustomStdioFields.hidden = Boolean(isHttp) || hideAdvanced;
     }
     if (mcpCustomHttpFields) {
       mcpCustomHttpFields.hidden = !isHttp;
+    }
+    if (mcpCustomTransportRow) {
+      mcpCustomTransportRow.hidden = hideAdvanced;
+    }
+    if (mcpCustomJiraFields) {
+      mcpCustomJiraFields.hidden = !isJira;
+    }
+    if (mcpCustomJiraAdvancedBtn) {
+      mcpCustomJiraAdvancedBtn.textContent = mcpJiraAdvancedOpen
+        ? t("mcpJiraAdvancedHide")
+        : t("mcpJiraAdvancedShow");
     }
   }
 
@@ -300,6 +342,24 @@
     }
     if (mcpCustomToken) {
       mcpCustomToken.value = "";
+    }
+    mcpJiraAdvancedOpen = false;
+    if (mcpCustomJiraUrl) {
+      mcpCustomJiraUrl.value = jiraUrlFromEnvText(
+        mcpCustomEnv ? mcpCustomEnv.value : ""
+      );
+    }
+    if (mcpCustomJiraUrlLabel) {
+      mcpCustomJiraUrlLabel.textContent = t("mcpJiraUrlLabel");
+    }
+    if (mcpCustomJiraToken) {
+      mcpCustomJiraToken.value = "";
+      mcpCustomJiraToken.placeholder = existing?.hasSecretToken
+        ? t("mcpJiraTokenSaved")
+        : t("mcpJiraTokenEmpty");
+    }
+    if (mcpCustomJiraTokenLabel) {
+      mcpCustomJiraTokenLabel.textContent = t("mcpJiraTokenLabel");
     }
     if (existing) {
       if (mcpCustomTransport) {
@@ -395,6 +455,17 @@
       noteKey: "mcpPresetGithubNote",
       matchIds: ["github"],
     },
+    jira: {
+      name: "Jira",
+      transport: "stdio",
+      command: "harbor-jira",
+      argsText: "",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetJiraNote",
+      matchIds: ["jira", "mcp-atlassian", "atlassian"],
+    },
   };
 
   function openMcpPreset(presetId) {
@@ -444,6 +515,24 @@
       showCopyToast(t("mcpNameRequired"));
       return;
     }
+    const isJira = isMcpCustomJiraForm();
+    if (isJira) {
+      const jiraUrl = mcpCustomJiraUrl ? mcpCustomJiraUrl.value.trim() : "";
+      if (!jiraUrl) {
+        showCopyToast(t("mcpJiraUrlRequired"));
+        return;
+      }
+      const editingId = mcpCustomEditId ? mcpCustomEditId.value.trim() : "";
+      const existing = (mcpServersCache || []).find((s) => s.id === editingId);
+      const token = mcpCustomJiraToken ? mcpCustomJiraToken.value.trim() : "";
+      if (!token && !existing?.hasSecretToken) {
+        showCopyToast(t("mcpJiraTokenRequired"));
+        return;
+      }
+      if (mcpCustomEnv) {
+        mcpCustomEnv.value = mergeJiraUrlIntoEnvText(mcpCustomEnv.value, jiraUrl);
+      }
+    }
     const transport =
       mcpCustomTransport && mcpCustomTransport.value === "http"
         ? "http"
@@ -473,6 +562,7 @@
         cwd: mcpCustomCwd ? mcpCustomCwd.value.trim() : "",
         url: mcpCustomUrl ? mcpCustomUrl.value.trim() : "",
         bearerToken: mcpCustomToken ? mcpCustomToken.value : "",
+        jiraToken: mcpCustomJiraToken && isJira ? mcpCustomJiraToken.value : "",
         enabled: true,
         connect: true,
       },

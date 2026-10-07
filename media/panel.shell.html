@@ -305,6 +305,10 @@
                 <span class="material-symbols-outlined" aria-hidden="true">hub</span>
                 <span class="mcp-preset-btn-label">GitHub</span>
               </button>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="jira" id="mcpPresetJira">
+                <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+                <span class="mcp-preset-btn-label">Jira</span>
+              </button>
             </div>
             <p class="mcp-presets-note" id="mcpPresetsNote" hidden></p>
             <div class="mcp-section-head">
@@ -377,6 +381,16 @@
               </span>
               <span class="mcp-switch">
                 <input id="settingsAutoCompactEnabled" type="checkbox" />
+                <span class="mcp-switch-track"></span>
+              </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsPromptSuggestionsLabel">Prompt suggestions</span>
+                <span class="settings-toggle-hint" id="settingsPromptSuggestionsNote">Suggest your next message in the empty composer. Tab accepts.</span>
+              </span>
+              <span class="mcp-switch">
+                <input id="settingsPromptSuggestionsEnabled" type="checkbox" />
                 <span class="mcp-switch-track"></span>
               </span>
             </label>
@@ -749,7 +763,18 @@
             <span class="settings-label" id="mcpCustomNameLabel">Name</span>
             <input id="mcpCustomName" class="settings-input" type="text" placeholder="My MCP server" />
           </label>
-          <label class="settings-field">
+          <div id="mcpCustomJiraFields" hidden>
+            <label class="settings-field">
+              <span class="settings-label" id="mcpCustomJiraUrlLabel">Jira URL</span>
+              <input id="mcpCustomJiraUrl" class="settings-input" type="text" placeholder="https://jira.company.ru" />
+            </label>
+            <label class="settings-field" id="mcpCustomJiraTokenRow">
+              <span class="settings-label" id="mcpCustomJiraTokenLabel">Jira Personal Access Token</span>
+              <input id="mcpCustomJiraToken" class="settings-input" type="password" autocomplete="off" placeholder="" />
+            </label>
+            <button type="button" class="text-btn" id="mcpCustomJiraAdvancedBtn">Advanced</button>
+          </div>
+          <label class="settings-field" id="mcpCustomTransportRow">
             <span class="settings-label" id="mcpCustomTransportLabel">Transport</span>
             <select id="mcpCustomTransport" class="settings-input">
               <option value="stdio">stdio (command)</option>

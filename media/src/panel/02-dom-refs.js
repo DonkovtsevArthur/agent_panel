@@ -199,6 +199,9 @@
   const settingsAutoCompactEnabled = document.getElementById(
     "settingsAutoCompactEnabled"
   );
+  const settingsPromptSuggestionsEnabled = document.getElementById(
+    "settingsPromptSuggestionsEnabled"
+  );
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
@@ -322,6 +325,7 @@
   const mcpPresetsNote = document.getElementById("mcpPresetsNote");
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
+  const mcpPresetJira = document.getElementById("mcpPresetJira");
   const mcpPresetChromeDevtools = document.getElementById(
     "mcpPresetChromeDevtools"
   );
@@ -354,6 +358,17 @@
   const mcpCustomCwd = document.getElementById("mcpCustomCwd");
   const mcpCustomUrl = document.getElementById("mcpCustomUrl");
   const mcpCustomToken = document.getElementById("mcpCustomToken");
+  const mcpCustomJiraFields = document.getElementById("mcpCustomJiraFields");
+  const mcpCustomJiraUrl = document.getElementById("mcpCustomJiraUrl");
+  const mcpCustomJiraUrlLabel = document.getElementById("mcpCustomJiraUrlLabel");
+  const mcpCustomJiraAdvancedBtn = document.getElementById(
+    "mcpCustomJiraAdvancedBtn"
+  );
+  const mcpCustomTransportRow = document.getElementById("mcpCustomTransportRow");
+  const mcpCustomJiraToken = document.getElementById("mcpCustomJiraToken");
+  const mcpCustomJiraTokenLabel = document.getElementById(
+    "mcpCustomJiraTokenLabel"
+  );
   const mcpCustomNameLabel = document.getElementById("mcpCustomNameLabel");
   const mcpCustomTransportLabel = document.getElementById(
     "mcpCustomTransportLabel"
@@ -417,6 +432,11 @@
   let archiveAgentsData = [];
   let activeAgentId = "";
   let activeChatId = "";
+  /** Ghost-text next-message guess from the host: `{ chatId, text }` or null. */
+  let promptSuggestion = null;
+  /** Mode placeholder shown when no suggestion is active. */
+  let promptBasePlaceholder = "";
+  let promptSuggestionsEnabled = true;
   let chatBranches = [];
   let renamingAgentId = null;
   let settingsModels = [];

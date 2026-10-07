@@ -3,7 +3,7 @@
  * vscode-free so unit tests can import without the VS Code module.
  */
 
-export type McpPresetId = "playwright" | "chrome-devtools" | "github";
+export type McpPresetId = "playwright" | "chrome-devtools" | "github" | "jira";
 
 export interface McpPresetDef {
   id: McpPresetId;
@@ -57,6 +57,19 @@ export const MCP_PRESETS: readonly McpPresetDef[] = [
       "GitHub remote MCP. Paste a Personal Access Token (repo / issues / PRs scopes) into Bearer token, then Save & Connect.",
     noteRu:
       "Удалённый GitHub MCP. Вставьте Personal Access Token (scopes: repo / issues / PRs) в Bearer token, затем Save & Connect.",
+  },
+  {
+    id: "jira",
+    name: "Jira",
+    transport: "stdio",
+    // Built-in REST client (src/mcp/jiraNative.ts) — no Python / uv.
+    command: "harbor-jira",
+    args: [],
+    envHint: { JIRA_URL: "" },
+    noteEn:
+      "Jira Server / Data Center, built-in tools (no Python / uv). Enter the Jira URL and a Personal Access Token. After a verified connection Harbor writes a Jira section to AGENTS.md and token-free MCP configs for other agent tools.",
+    noteRu:
+      "Jira Server / Data Center, встроенные инструменты (без Python / uv). Укажите адрес Jira и Personal Access Token. После проверки подключения Harbor запишет раздел Jira в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
   },
 ];
 

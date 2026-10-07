@@ -56,6 +56,7 @@ import {
   touchChat,
 } from "./sessionStore";
 import { maybeGenerateChatTitle } from "./chatTitle";
+import { maybeGeneratePromptSuggestion } from "./promptSuggestion";
 import {
   getOpenAICompatibleClient,
   type ChatMessage,
@@ -249,6 +250,24 @@ export class HeadlessPanelHost {
       });
     }
     return out;
+  }
+
+  /** Ghost-text guess of the user's next message; webview drops it when stale. */
+  private schedulePromptSuggestion(chatId: string): void {
+    const id = String(chatId || "").trim();
+    const chat = id ? this.store.chats[id] : undefined;
+    if (!chat) {
+      return;
+    }
+    const modelId = chat.selectedModel || this.selectedModel;
+    void maybeGeneratePromptSuggestion(id, chat.uiMessages || [], {
+      modelId,
+    }).then((text) => {
+      if (!text || this.chatRuns.has(id)) {
+        return;
+      }
+      this.post({ type: "promptSuggestion", chatId: id, text });
+    });
   }
 
   private scheduleChatTitle(chatId: string): void {
@@ -2624,6 +2643,7 @@ export class HeadlessPanelHost {
       this.setRunStateForChat(runChatId, "success");
       postToRun({ type: "runFinished", outcome: "success" });
       this.scheduleChatTitle(runChatId);
+      this.schedulePromptSuggestion(runChatId);
       this.scheduleScmRefresh([500, 1500]);
       return { ok: true };
     } catch (err) {
@@ -2966,10 +2986,15 @@ export class HeadlessPanelHost {
         url: typeof raw.url === "string" ? raw.url : undefined,
         bearerToken:
           typeof raw.bearerToken === "string" ? raw.bearerToken : undefined,
+        jiraToken:
+          typeof raw.jiraToken === "string" ? raw.jiraToken : undefined,
         enabled: raw.enabled !== false,
         connect: raw.connect !== false,
       });
       this.postMcpServersList();
+      if (status.notice) {
+        this.post({ type: "mcpNotice", text: status.notice });
+      }
       return { ok: status.state === "connected", status };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

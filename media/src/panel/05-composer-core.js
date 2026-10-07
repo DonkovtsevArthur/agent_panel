@@ -406,6 +406,66 @@
     }
   }
 
+  /** Suggestion is shown only in an empty, idle composer of its own chat. */
+  function promptSuggestionVisible() {
+    return Boolean(
+      promptSuggestionsEnabled &&
+        promptSuggestion &&
+        promptSuggestion.text &&
+        promptSuggestion.chatId === activeChatId &&
+        !busy &&
+        promptEl &&
+        !String(promptEl.value || "") &&
+        !pendingAttachments.length
+    );
+  }
+
+  function refreshPromptSuggestion() {
+    if (!promptEl) {
+      return;
+    }
+    const visible = promptSuggestionVisible();
+    const next = visible
+      ? `${promptSuggestion.text}   ⇥ Tab`
+      : promptBasePlaceholder || promptEl.placeholder;
+    if (promptEl.placeholder !== next) {
+      promptEl.placeholder = next;
+    }
+  }
+
+  function setPromptBasePlaceholder(text) {
+    promptBasePlaceholder = String(text || "");
+    refreshPromptSuggestion();
+  }
+
+  function setPromptSuggestion(chatId, text) {
+    const value = String(text || "").trim();
+    promptSuggestion = chatId && value ? { chatId, text: value } : null;
+    refreshPromptSuggestion();
+  }
+
+  function clearPromptSuggestion() {
+    if (!promptSuggestion) {
+      return;
+    }
+    promptSuggestion = null;
+    refreshPromptSuggestion();
+  }
+
+  /** Tab in an empty composer: put the suggestion in as editable text. */
+  function acceptPromptSuggestion() {
+    if (!promptSuggestionVisible()) {
+      return false;
+    }
+    const text = promptSuggestion.text;
+    promptSuggestion = null;
+    promptEl.value = text;
+    promptEl.setSelectionRange(text.length, text.length);
+    promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+    refreshPromptSuggestion();
+    return true;
+  }
+
   function updateSendButton() {
     if (!sendBtn) {
       return;

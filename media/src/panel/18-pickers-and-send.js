@@ -358,8 +358,7 @@
       placeModelMenu(modePicker, modeMenu, chatScreen);
     }
     if (promptEl) {
-      promptEl.placeholder =
-        meta.placeholder || t("taskPlaceholder");
+      setPromptBasePlaceholder(meta.placeholder || t("taskPlaceholder"));
     }
     if (close) {
       closeModeMenu();
@@ -639,6 +638,9 @@
    */
   function setBusy(nextBusy, opts) {
     busy = nextBusy;
+    if (nextBusy) {
+      clearPromptSuggestion();
+    }
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
     promptEl.disabled = false;

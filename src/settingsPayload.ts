@@ -28,6 +28,7 @@ export type HarborSettingsPayloadCore = {
   subagentsEnabled: boolean;
   parallelToolCallsEnabled: boolean;
   autoCompactEnabled: boolean;
+  promptSuggestionsEnabled: boolean;
   toolsAutoApprove: boolean;
   toolsApprovals: AgentPanelConfig["tools"]["approvals"];
   turnContextFollowUps: AgentPanelConfig["turnContext"]["followUps"];
@@ -110,6 +111,7 @@ export function buildHarborSettingsPayloadCore(
     subagentsEnabled: config.subagents.enabled,
     parallelToolCallsEnabled: config.parallelToolCalls.enabled,
     autoCompactEnabled: config.autoCompact.enabled,
+    promptSuggestionsEnabled: config.promptSuggestions.enabled,
     toolsAutoApprove: config.tools.autoApprove,
     toolsApprovals: config.tools.approvals,
     turnContextFollowUps: config.turnContext.followUps,
