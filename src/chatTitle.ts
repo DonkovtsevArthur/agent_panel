@@ -332,17 +332,26 @@ export async function completeUtilityText(
   };
   // Short label/one-liner: thinking off so the small token budget goes to the
   // answer. Sent regardless of the capability flag — always-thinking models
-  // (e.g. mimo-v2.5) otherwise spend all of max_tokens on reasoning_content
-  // and return empty content. Gateways that reject the field get one plain retry.
-  try {
-    const result = await client.chatCompletions(
-      { ...requestBody, reasoning_effort: "none" },
-      options.signal
-    );
-    return completionText(result.message.content);
-  } catch (error) {
-    if (options.signal?.aborted) {
-      throw error;
+  // otherwise spend all of max_tokens on reasoning_content and return empty
+  // content. `reasoning_effort` covers OpenAI-style gateways (mimo-v2.5);
+  // vLLM DeepSeek/Qwen ignore it and need `chat_template_kwargs`. A gateway
+  // that rejects a field falls through to the next, plainer attempt.
+  const attempts: ChatCompletionRequest[] = [
+    {
+      ...requestBody,
+      reasoning_effort: "none",
+      chat_template_kwargs: { thinking: false, enable_thinking: false },
+    },
+    { ...requestBody, reasoning_effort: "none" },
+  ];
+  for (const attempt of attempts) {
+    try {
+      const result = await client.chatCompletions(attempt, options.signal);
+      return completionText(result.message.content);
+    } catch (error) {
+      if (options.signal?.aborted) {
+        throw error;
+      }
     }
   }
   const result = await client.chatCompletions(requestBody, options.signal);

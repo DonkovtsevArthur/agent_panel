@@ -776,6 +776,9 @@ export class OpenAICompatibleClient {
     if (body.reasoning_effort) {
       apiBody.reasoning_effort = body.reasoning_effort;
     }
+    if (body.chat_template_kwargs) {
+      apiBody.chat_template_kwargs = body.chat_template_kwargs;
+    }
     return apiBody;
   }
 
@@ -907,6 +910,9 @@ export class OpenAICompatibleClient {
     }
     if (body.reasoning_effort) {
       requestBody.reasoning_effort = body.reasoning_effort;
+    }
+    if (body.chat_template_kwargs) {
+      requestBody.chat_template_kwargs = body.chat_template_kwargs;
     }
 
     const payload = JSON.stringify(requestBody);

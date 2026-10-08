@@ -112,4 +112,10 @@ export interface ChatCompletionRequest {
   minimum_output_tokens?: number;
   /** OpenAI-style reasoning effort (Claude 3.5+/4 via gateway). */
   reasoning_effort?: string;
+  /**
+   * vLLM / SGLang chat-template switches (e.g. `{ thinking: false }` for
+   * DeepSeek, `{ enable_thinking: false }` for Qwen). Those servers ignore
+   * `reasoning_effort`; sent only by short utility calls.
+   */
+  chat_template_kwargs?: Record<string, unknown>;
 }
