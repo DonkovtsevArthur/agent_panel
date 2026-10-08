@@ -245,11 +245,201 @@ function jiraDateTime(input: unknown): string | undefined {
   );
 }
 
+/** Jira duration ("1h 30m", "45m", "1d", "2700s") → seconds (1d = 8h, 1w = 5d). */
+export function parseJiraDuration(input: unknown): number {
+  const text = String(input ?? "").trim().toLowerCase();
+  if (/^\d+$/.test(text)) {
+    return Number(text) * 60; // bare number = minutes
+  }
+  const units: Record<string, number> = { w: 5 * 8 * 3600, d: 8 * 3600, h: 3600, m: 60, s: 1 };
+  let total = 0;
+  let matched = "";
+  for (const m of text.matchAll(/(\d+(?:[.,]\d+)?)\s*([wdhms])/g)) {
+    total += Number(m[1].replace(",", ".")) * units[m[2]];
+    matched += m[0];
+  }
+  if (!total || matched.replace(/\s/g, "") !== text.replace(/\s/g, "")) {
+    throw new Error(`invalid duration "${String(input)}" — use e.g. "45m", "1h 30m", "1d"`);
+  }
+  return Math.round(total);
+}
+
+// —— Tempo Timesheets (Server / DC) ——
+
+const TEMPO_MISSING =
+  "Tempo Timesheets REST API is not available on this Jira (plugin not installed or no access).";
+
+async function tempoRequest(
+  conn: JiraConn,
+  method: string,
+  apiPath: string,
+  options: { query?: Query; body?: unknown } = {}
+): Promise<unknown> {
+  try {
+    return await jiraRequest(conn, method, apiPath, options);
+  } catch (error) {
+    if (error instanceof JiraApiError && error.status === 404 && method === "GET") {
+      throw new Error(`${TEMPO_MISSING} ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+async function tempoAttributes(conn: JiraConn, cache: Caches): Promise<Obj[]> {
+  cache.tempoAttributes ??= tempoRequest(conn, "GET", "/rest/tempo-core/1/work-attribute").then((r) =>
+    arr(r).map(obj)
+  );
+  return cache.tempoAttributes;
+}
+
+function tempoOptions(attr: Obj): Obj[] {
+  return arr(attr.staticListValues)
+    .map(obj)
+    .filter((o) => o.removed !== true);
+}
+
+function tempoTypeOf(attr: Obj): string {
+  return String(obj(attr.type).value || attr.type || "");
+}
+
+function shapeTempoAccount(a: unknown): Obj {
+  const x = obj(a);
+  return {
+    id: x.id,
+    key: x.key,
+    name: x.name,
+    status: x.status,
+    global: x.global,
+    customer: named(x.customer) ?? null,
+    category: named(x.category) ?? null,
+    lead: user(x.lead),
+  };
+}
+
+/**
+ * Tempo Accounts. With a project: only accounts linked to it (what Tempo
+ * allows on that project's worklogs) + global ones; tries the project
+ * endpoint first, then account links.
+ */
+async function tempoAccounts(conn: JiraConn, projectKey?: string): Promise<Obj[]> {
+  if (!projectKey) {
+    return arr(await tempoRequest(conn, "GET", "/rest/tempo-accounts/1/account")).map(obj);
+  }
+  const project = obj(await jiraRequest(conn, "GET", `/rest/api/2/project/${encodeURIComponent(projectKey)}`));
+  const projectId = String(project.id || "");
+  let linked: Obj[] = [];
+  try {
+    linked = arr(await jiraRequest(conn, "GET", `/rest/tempo-accounts/1/account/project/${projectId}`)).map(obj);
+  } catch (error) {
+    if (!(error instanceof JiraApiError && error.status === 404)) {
+      throw error;
+    }
+    const links = arr(
+      await tempoRequest(conn, "GET", `/rest/tempo-accounts/1/link/project/${projectId}`)
+    ).map(obj);
+    const all = arr(await tempoRequest(conn, "GET", "/rest/tempo-accounts/1/account")).map(obj);
+    const ids = new Set(links.map((l) => String(l.accountId ?? obj(l.account).id)));
+    linked = all.filter((a) => ids.has(String(a.id)) || a.global === true);
+  }
+  return linked;
+}
+
+/**
+ * Attribute (by key / name / id) + value (option label or code for static
+ * lists) → Tempo `attributes` entry. Never guesses: unknown options error
+ * with the allowed list.
+ */
+async function resolveTempoAttribute(
+  conn: JiraConn,
+  cache: Caches,
+  keyOrName: string,
+  value: unknown,
+  projectKey?: string
+): Promise<[string, Obj]> {
+  const attrs = await tempoAttributes(conn, cache);
+  const k = keyOrName.trim().toLowerCase();
+  const attr = attrs.find(
+    (a) =>
+      String(a.key || "").toLowerCase() === k ||
+      String(a.name || "").toLowerCase() === k ||
+      String(a.id) === keyOrName.trim()
+  );
+  if (!attr) {
+    throw new Error(
+      `Tempo attribute "${keyOrName}" not found. Available: ${attrs.map((a) => `${a.name} (${a.key})`).join(", ") || "none"}`
+    );
+  }
+  const key = String(attr.key);
+  const options = tempoOptions(attr);
+  let stored = value === null || value === undefined ? "" : String(value).trim();
+  if (tempoTypeOf(attr).toUpperCase() === "ACCOUNT" && stored) {
+    // Values live in Tempo Accounts; the worklog stores the account key.
+    let accounts = await tempoAccounts(conn, projectKey);
+    if (!accounts.length && projectKey) {
+      accounts = await tempoAccounts(conn);
+    }
+    const lower = stored.toLowerCase();
+    const open = accounts.filter(
+      (a) => !["CLOSED", "ARCHIVED"].includes(String(a.status || "OPEN").toUpperCase())
+    );
+    const acc =
+      open.find((a) => String(a.key).toLowerCase() === lower) ||
+      open.find((a) => String(a.name).toLowerCase() === lower) ||
+      open.find((a) => String(a.id) === stored);
+    if (!acc) {
+      throw new Error(
+        `"${stored}" is not an account allowed for "${attr.name}"${projectKey ? ` in ${projectKey}` : ""}. Allowed: ${open
+          .slice(0, 60)
+          .map((a) => `${a.name} (key ${a.key})`)
+          .join("; ") || "none"}`
+      );
+    }
+    return [key, { name: attr.name, workAttributeId: attr.id, value: String(acc.key) }];
+  }
+  if (options.length && stored) {
+    const lower = stored.toLowerCase();
+    const opt =
+      options.find((o) => String(o.value).toLowerCase() === lower) ||
+      options.find((o) => String(o.name).toLowerCase() === lower);
+    if (!opt) {
+      throw new Error(
+        `"${stored}" is not an allowed value of "${attr.name}". Allowed: ${options
+          .map((o) => `${o.name} (value ${o.value})`)
+          .join("; ")}`
+      );
+    }
+    stored = String(opt.value);
+  }
+  return [key, { name: attr.name, workAttributeId: attr.id, value: stored }];
+}
+
+function shapeTempoWorklog(w: unknown): Obj {
+  const x = obj(w);
+  const issue = obj(x.issue);
+  return {
+    tempo_worklog_id: x.tempoWorklogId ?? x.id,
+    jira_worklog_id: x.jiraWorklogId,
+    issue: issue.key ?? x.originTaskId,
+    worker: x.worker,
+    started: x.started,
+    time_spent: x.timeSpent,
+    time_spent_seconds: x.timeSpentSeconds,
+    comment: x.comment,
+    attributes: Object.fromEntries(
+      Object.entries(obj(x.attributes)).map(([key, a]) => [
+        `${String(obj(a).name || key)} (${key})`,
+        obj(a).value,
+      ])
+    ),
+  };
+}
+
 // —— per-connection caches ——
 
 interface Caches {
   fields?: Promise<Obj[]>;
   myself?: Promise<Obj>;
+  tempoAttributes?: Promise<Obj[]>;
 }
 
 async function allFields(conn: JiraConn, cache: Caches): Promise<Obj[]> {
@@ -281,6 +471,97 @@ async function resolveUserName(conn: JiraConn, cache: Caches, v: unknown): Promi
   return s;
 }
 
+/** Field id by id or (case-insensitive) display name; error lists close names. */
+async function resolveFieldId(conn: JiraConn, cache: Caches, keyOrName: string): Promise<Obj> {
+  const fields = await allFields(conn, cache);
+  const k = keyOrName.trim();
+  const lower = k.toLowerCase();
+  const hit =
+    fields.find((f) => String(f.id) === k) ||
+    fields.find((f) => String(f.name || "").toLowerCase() === lower);
+  if (hit) {
+    return hit;
+  }
+  const similar = fields
+    .filter((f) => String(f.name || "").toLowerCase().includes(lower) || lower.includes(String(f.name || "").toLowerCase()))
+    .slice(0, 10)
+    .map((f) => `${f.name} (${f.id})`);
+  throw new Error(
+    `Field "${keyOrName}" not found.${similar.length ? ` Similar: ${similar.join(", ")}.` : ""} Use jira_get_edit_fields / jira_get_fields.`
+  );
+}
+
+/**
+ * Plain value → Jira REST shape by field schema, so the model can pass
+ * "High", "ivan", "2026-10-07", 5, ["a","b"], "Parent / Child".
+ * Objects are passed through unchanged; null / "" clears the field.
+ */
+export function convertFieldValue(schemaRaw: unknown, value: unknown): unknown {
+  if (value === null || value === "") {
+    return null;
+  }
+  const sc = obj(schemaRaw);
+  const type = String(sc.type || "");
+  const items = String(sc.items || "");
+  const custom = String(sc.custom || "");
+  const one = (itemType: string, v: unknown): unknown => {
+    if (v && typeof v === "object") {
+      return v;
+    }
+    const sv = String(v).trim();
+    switch (itemType) {
+      case "option":
+        // number → option id, text → option label
+        return typeof v === "number" ? { id: sv } : { value: sv };
+      case "user":
+      case "group":
+      case "version":
+      case "component":
+      case "priority":
+      case "resolution":
+      case "issuetype":
+        return { name: sv };
+      case "project":
+        return { key: sv };
+      case "number":
+        return Number(sv);
+      case "date":
+        return sv.slice(0, 10);
+      case "datetime":
+        return jiraDateTime(sv);
+      default:
+        return v;
+    }
+  };
+  if (custom === "com.pyxis.greenhopper.jira:gh-sprint") {
+    return typeof value === "object" ? value : Number(value);
+  }
+  if (type === "option-with-child") {
+    if (typeof value === "object") {
+      return value;
+    }
+    const [parent, child] = String(value).split(/\s*(?:\/|->|→)\s*/);
+    return child ? { value: parent, child: { value: child } } : { value: parent };
+  }
+  if (type === "array") {
+    const list = Array.isArray(value) ? value : listArg(value);
+    return items === "string" ? list.map(String) : list.map((v) => one(items, v));
+  }
+  if (type === "string" || type === "any") {
+    return typeof value === "object" ? value : String(value);
+  }
+  return one(type, value);
+}
+
+async function buildCustomFields(conn: JiraConn, cache: Caches, raw: unknown): Promise<Obj> {
+  const out: Obj = {};
+  for (const [keyOrName, value] of Object.entries(obj(raw))) {
+    const field = await resolveFieldId(conn, cache, keyOrName);
+    out[String(field.id)] = convertFieldValue(field.schema, value);
+  }
+  return out;
+}
+
 /** Shared create/update field builder. */
 async function buildIssueFields(conn: JiraConn, cache: Caches, args: Obj): Promise<Obj> {
   const fields: Obj = {};
@@ -306,6 +587,7 @@ async function buildIssueFields(conn: JiraConn, cache: Caches, args: Obj): Promi
     }
     fields[id] = String(args.epic_key);
   }
+  Object.assign(fields, await buildCustomFields(conn, cache, args.custom_fields));
   Object.assign(fields, obj(args.fields));
   return fields;
 }
@@ -376,7 +658,7 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
       const key = requireStr(a, "issue_key");
       const r = obj(
         await jiraRequest(conn, "GET", `/rest/api/2/issue/${encodeURIComponent(key)}`, {
-          query: { expand: a.include_history ? "changelog,renderedFields" : undefined },
+          query: { expand: a.include_history ? "names,changelog" : "names" },
         })
       );
       const f = obj(r.fields);
@@ -422,6 +704,21 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
       };
       for (const name of listArg(a.fields)) {
         out[name] = simplifyFieldValue(f[name]);
+      }
+      // Filled custom fields with their display names.
+      const names = obj(r.names);
+      const custom: Obj = {};
+      for (const [id, value] of Object.entries(f)) {
+        if (!id.startsWith("customfield_") || id === epicId) {
+          continue;
+        }
+        if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) {
+          continue;
+        }
+        custom[`${String(names[id] || id)} (${id})`] = simplifyFieldValue(value);
+      }
+      if (Object.keys(custom).length) {
+        out.custom_fields = custom;
       }
       if (a.include_history) {
         out.history = arr(obj(r.changelog).histories)
@@ -542,6 +839,48 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "jira_get_edit_fields",
+    description:
+      "Fields of an issue that can be edited (incl. custom fields): id, name, type, required, allowed values. Use before jira_update_issue custom_fields.",
+    inputSchema: schema(
+      {
+        issue_key: ISSUE_KEY,
+        query: S("string", "Filter by part of the field name or id"),
+        custom_only: S("boolean", "Only custom fields (default false)"),
+      },
+      ["issue_key"]
+    ),
+    run: async (conn, _c, a) => {
+      const key = requireStr(a, "issue_key");
+      const q = String(a.query || "").toLowerCase();
+      const meta = obj(
+        obj(await jiraRequest(conn, "GET", `/rest/api/2/issue/${encodeURIComponent(key)}/editmeta`)).fields
+      );
+      return Object.entries(meta)
+        .filter(([id, fd]) => (!a.custom_only || id.startsWith("customfield_")) && (!q || `${id} ${obj(fd).name}`.toLowerCase().includes(q)))
+        .map(([id, fdRaw]) => {
+          const fd = obj(fdRaw);
+          const sc = obj(fd.schema);
+          const allowed = arr(fd.allowedValues)
+            .slice(0, 60)
+            .map((v) => {
+              const o = obj(v);
+              const children = arr(o.children).map(named).filter(Boolean);
+              const label = named(o) ?? str(o.key);
+              return children.length ? `${label} / [${children.join(", ")}]` : label;
+            })
+            .filter(Boolean);
+          return {
+            id,
+            name: fd.name,
+            type: sc.items ? `${sc.type}<${sc.items}>` : sc.type,
+            required: fd.required,
+            ...(allowed.length ? { allowed } : {}),
+          };
+        });
+    },
+  },
+  {
     name: "jira_get_transitions",
     description: "Available workflow transitions for an issue (id, name, target status).",
     inputSchema: schema({ issue_key: ISSUE_KEY }, ["issue_key"]),
@@ -620,7 +959,8 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
   },
   {
     name: "jira_get_worklogs",
-    description: "Work log entries of an issue (author, time spent, started, comment).",
+    description:
+      "Work log entries of an issue (id, author, time spent, started, comment). To fix an entry use jira_update_worklog, to remove one use jira_delete_worklog — do not add a correcting entry. Tempo attributes (work type / «Вид работ») are not here: use jira_get_tempo_worklogs / jira_update_tempo_worklog.",
     inputSchema: schema({ issue_key: ISSUE_KEY }, ["issue_key"]),
     run: async (conn, _c, a) => {
       const r = obj(
@@ -797,7 +1137,11 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
         due_date: S("string", "YYYY-MM-DD"),
         parent_key: S("string", "Parent issue key (for sub-tasks)"),
         epic_key: S("string", "Epic issue key (sets Epic Link)"),
-        fields: S("object", "Extra raw fields, e.g. {\"customfield_10002\": 3}"),
+        custom_fields: S(
+          "object",
+          "Custom (or any) fields by display NAME or id with plain values; Harbor converts by field type. E.g. {\"Story Points\": 5, \"Команда\": \"Frontend\", \"Срок\": \"2026-10-20\", \"Тестировщик\": \"ivan\", \"Метки клиента\": [\"A\",\"B\"]}. null clears. See jira_get_edit_fields for names and allowed values."
+        ),
+        fields: S("object", "Raw REST fields (already in Jira format), e.g. {\"customfield_10002\": 3}"),
       },
       ["project_key", "issue_type", "summary"]
     ),
@@ -816,7 +1160,7 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
   {
     name: "jira_update_issue",
     description:
-      "Update issue fields. Only passed fields change. labels/components replace the list; use labels_add / labels_remove to edit it.",
+      "Update issue fields, including custom fields (custom_fields by name). Only passed fields change. labels/components replace the list; use labels_add / labels_remove to edit it.",
     inputSchema: schema(
       {
         issue_key: ISSUE_KEY,
@@ -831,7 +1175,11 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
         fix_versions: S("array", "Replace fix versions", { items: { type: "string" } }),
         due_date: S("string", "YYYY-MM-DD, or empty to clear"),
         epic_key: S("string", "Epic issue key (sets Epic Link)"),
-        fields: S("object", "Extra raw fields"),
+        custom_fields: S(
+          "object",
+          "Custom (or any) fields by display NAME or id with plain values; Harbor converts by field type. E.g. {\"Story Points\": 5, \"Команда\": \"Frontend\", \"Срок\": \"2026-10-20\", \"Тестировщик\": \"ivan\", \"Метки клиента\": [\"A\",\"B\"]}. null clears. See jira_get_edit_fields for names and allowed values."
+        ),
+        fields: S("object", "Raw REST fields (already in Jira format)"),
       },
       ["issue_key"]
     ),
@@ -936,7 +1284,8 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
   },
   {
     name: "jira_add_worklog",
-    description: "Log work on an issue (time_spent like '1h 30m', optional started date-time and comment).",
+    description:
+      "Log NEW work on an issue (time_spent like '1h 30m', optional started date-time and comment). To change an existing entry use jira_update_worklog; to remove one use jira_delete_worklog.",
     inputSchema: schema(
       {
         issue_key: ISSUE_KEY,
@@ -958,6 +1307,181 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
         })
       );
       return { ok: true, issue: key, worklog_id: r.id, time_spent: r.timeSpent };
+    },
+  },
+  {
+    name: "jira_update_worklog",
+    description:
+      "Change an existing work log entry (time spent, comment, start). Get worklog_id from jira_get_worklogs. Only passed values change.",
+    inputSchema: schema(
+      {
+        issue_key: ISSUE_KEY,
+        worklog_id: S("string", "Worklog id (from jira_get_worklogs)"),
+        time_spent: S("string", "New Jira duration, e.g. '45m', '1h 30m'"),
+        started: S("string", "New start (ISO date-time)"),
+        comment: S("string", "New work description"),
+      },
+      ["issue_key", "worklog_id"]
+    ),
+    run: async (conn, _c, a) => {
+      const key = requireStr(a, "issue_key");
+      const id = requireStr(a, "worklog_id");
+      const body: Obj = {
+        ...(a.time_spent ? { timeSpent: String(a.time_spent) } : {}),
+        ...(a.comment !== undefined ? { comment: String(a.comment) } : {}),
+        ...(a.started ? { started: jiraDateTime(a.started) } : {}),
+      };
+      if (!Object.keys(body).length) {
+        throw new Error("Nothing to update — pass time_spent, comment or started.");
+      }
+      const r = obj(
+        await jiraRequest(
+          conn,
+          "PUT",
+          `/rest/api/2/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}`,
+          { query: { adjustEstimate: "auto" }, body }
+        )
+      );
+      return { ok: true, issue: key, worklog_id: r.id ?? id, time_spent: r.timeSpent, started: r.started };
+    },
+  },
+  {
+    name: "jira_delete_worklog",
+    description:
+      "Delete a work log entry (remaining estimate is adjusted automatically). Get worklog_id from jira_get_worklogs.",
+    inputSchema: schema(
+      {
+        issue_key: ISSUE_KEY,
+        worklog_id: S("string", "Worklog id (from jira_get_worklogs)"),
+      },
+      ["issue_key", "worklog_id"]
+    ),
+    run: async (conn, _c, a) => {
+      const key = requireStr(a, "issue_key");
+      const id = requireStr(a, "worklog_id");
+      await jiraRequest(
+        conn,
+        "DELETE",
+        `/rest/api/2/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}`,
+        { query: { adjustEstimate: "auto" } }
+      );
+      return { ok: true, issue: key, deleted_worklog_id: id };
+    },
+  },
+  {
+    name: "jira_get_tempo_attributes",
+    description:
+      "Tempo Timesheets work attributes (e.g. «Вид работ» / work type): key, name, type, required and allowed list values (label + code). Use before jira_update_tempo_worklog.",
+    inputSchema: schema({}),
+    run: async (conn, cache) =>
+      (await tempoAttributes(conn, cache)).map((a) => ({
+        id: a.id,
+        key: a.key,
+        name: a.name,
+        type: tempoTypeOf(a),
+        required: a.required,
+        ...(tempoOptions(a).length
+          ? { allowed: tempoOptions(a).map((o) => ({ label: o.name, value: o.value })) }
+          : {}),
+        ...(tempoTypeOf(a).toUpperCase() === "ACCOUNT"
+          ? { values_from: "Tempo Accounts — jira_get_tempo_accounts(project_key); the worklog stores the account key" }
+          : {}),
+      })),
+  },
+  {
+    name: "jira_get_tempo_accounts",
+    description:
+      "Tempo Accounts (values of ACCOUNT-type work attributes such as «Вид работ»): key, name, status, customer, category. With project_key — only accounts linked to that project (allowed on its worklogs). Optional text filter.",
+    inputSchema: schema({
+      project_key: S("string", "Only accounts linked to this project"),
+      query: S("string", "Filter by part of name or key"),
+      include_archived: S("boolean", "Include closed / archived accounts (default false)"),
+    }),
+    run: async (conn, _c, a) => {
+      const q = String(a.query || "").toLowerCase();
+      const accounts = (await tempoAccounts(conn, str(a.project_key)))
+        .filter((x) => a.include_archived || !["CLOSED", "ARCHIVED"].includes(String(x.status || "").toUpperCase()))
+        .filter((x) => !q || `${x.key} ${x.name}`.toLowerCase().includes(q))
+        .map(shapeTempoAccount);
+      return { total: accounts.length, accounts };
+    },
+  },
+  {
+    name: "jira_get_tempo_worklogs",
+    description:
+      "Tempo worklogs of an issue with their Tempo attributes (work type etc.) and Tempo/Jira worklog ids. Optional date range YYYY-MM-DD (default: last 90 days).",
+    inputSchema: schema(
+      {
+        issue_key: ISSUE_KEY,
+        from: S("string", "From date YYYY-MM-DD"),
+        to: S("string", "To date YYYY-MM-DD"),
+      },
+      ["issue_key"]
+    ),
+    run: async (conn, _c, a) => {
+      const day = (d: Date) => d.toISOString().slice(0, 10);
+      const to = str(a.to) || day(new Date());
+      const from = str(a.from) || day(new Date(Date.now() - 90 * 24 * 3600 * 1000));
+      const r = await tempoRequest(conn, "POST", "/rest/tempo-timesheets/4/worklogs/search", {
+        body: { from, to, taskKey: [requireStr(a, "issue_key")] },
+      });
+      return arr(r).map(shapeTempoWorklog);
+    },
+  },
+  {
+    name: "jira_update_tempo_worklog",
+    description:
+      "Change a Tempo worklog: work attributes (by attribute name/key → option label or code, see jira_get_tempo_attributes), time spent, comment, start. worklog_id = Tempo or Jira worklog id (see jira_get_tempo_worklogs). Other values stay as they are.",
+    inputSchema: schema(
+      {
+        worklog_id: S("string", "Tempo worklog id (or Jira worklog id)"),
+        attributes: S(
+          "object",
+          "E.g. {\"Вид работ\": \"Разработка\"} — attribute name/key → allowed label or code; for ACCOUNT attributes an account name or key (see jira_get_tempo_accounts)"
+        ),
+        time_spent: S("string", "New duration, e.g. '45m', '1h 30m'"),
+        comment: S("string", "New work description"),
+        started: S("string", "New start date-time (ISO)"),
+      },
+      ["worklog_id"]
+    ),
+    run: async (conn, cache, a) => {
+      const id = requireStr(a, "worklog_id");
+      const current = obj(
+        await tempoRequest(conn, "GET", `/rest/tempo-timesheets/4/worklogs/${encodeURIComponent(id)}`)
+      );
+      if (!Object.keys(current).length) {
+        throw new Error(`Tempo worklog ${id} not found`);
+      }
+      const attributes: Obj = { ...obj(current.attributes) };
+      const issueKey = String(obj(current.issue).key ?? current.originTaskId ?? "");
+      const projectKey =
+        str(obj(current.issue).projectKey) ??
+        (issueKey.includes("-") ? issueKey.slice(0, issueKey.lastIndexOf("-")) : undefined);
+      for (const [k, v] of Object.entries(obj(a.attributes))) {
+        const [key, entry] = await resolveTempoAttribute(conn, cache, k, v, projectKey);
+        attributes[key] = entry;
+      }
+      const timeSpentSeconds = a.time_spent
+        ? parseJiraDuration(a.time_spent)
+        : Number(current.timeSpentSeconds);
+      const body: Obj = {
+        originTaskId: obj(current.issue).key ?? current.originTaskId,
+        worker: current.worker,
+        started: a.started ? String(jiraDateTime(a.started)).slice(0, 23).replace("T", " ") : current.started,
+        timeSpentSeconds,
+        billableSeconds:
+          a.time_spent || current.billableSeconds === undefined ? timeSpentSeconds : current.billableSeconds,
+        comment: a.comment !== undefined ? String(a.comment) : current.comment,
+        attributes,
+      };
+      const r = await tempoRequest(
+        conn,
+        "PUT",
+        `/rest/tempo-timesheets/4/worklogs/${encodeURIComponent(String(current.tempoWorklogId ?? id))}`,
+        { body }
+      );
+      return { ok: true, worklog: shapeTempoWorklog(Array.isArray(r) ? r[0] : r) };
     },
   },
   {
@@ -1008,6 +1532,9 @@ export const JIRA_NATIVE_WRITE_TOOLS = new Set([
   "jira_assign_issue",
   "jira_link_issues",
   "jira_add_worklog",
+  "jira_update_worklog",
+  "jira_delete_worklog",
+  "jira_update_tempo_worklog",
   "jira_add_issues_to_sprint",
   "jira_move_issues_to_backlog",
 ]);

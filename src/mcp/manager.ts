@@ -316,6 +316,43 @@ export class McpManager {
     );
   }
 
+  /**
+   * Wait (bounded) for enabled custom servers that are still connecting or
+   * were never tried — right after a window reload the first turn otherwise
+   * starts before e.g. the Jira pre-flight finishes and the model is told
+   * "Jira is not connected". Servers in error / retry backoff are not awaited.
+   */
+  async awaitPendingCustomServers(timeoutMs = 20_000): Promise<void> {
+    const pending: Promise<unknown>[] = [];
+    for (const cfg of this.customConfigs) {
+      if (cfg.enabled === false) {
+        continue;
+      }
+      const rt = this.customRuntimes.get(cfg.id);
+      if (rt?.status.state === "connected") {
+        continue;
+      }
+      if (rt?.connectPromise) {
+        pending.push(rt.connectPromise.catch(() => undefined));
+      } else if (!rt || (rt.status.state === "disconnected" && rt.failureCount === 0)) {
+        pending.push(this.connectCustom(cfg.id).catch(() => undefined));
+      }
+    }
+    if (!pending.length) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+
   async listOpenAiTools(readonlyOnly = false): Promise<ChatTool[]> {
     // Snapshot of *currently connected* servers only. Healing is kicked off
     // in the background (custom servers have their own retry backoff); Figma

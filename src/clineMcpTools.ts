@@ -115,6 +115,7 @@ export async function loadHarborMcpToolsForCline(options: {
 
   let chatTools: Awaited<ReturnType<typeof mcp.listOpenAiTools>> = [];
   try {
+    await mcp.awaitPendingCustomServers();
     chatTools = await mcp.listOpenAiTools(options.readonlyOnly);
   } catch {
     chatTools = [];
@@ -305,6 +306,9 @@ export async function harborMcpToolFingerprint(
     return "";
   }
   try {
+    // Same wait as the tool list, so the session is not created without
+    // servers that are still connecting after a reload.
+    await mcp.awaitPendingCustomServers();
     const tools = await mcp.listOpenAiTools(readonlyOnly);
     return tools
       .map((tool) => String(tool.function?.name || "").trim())
