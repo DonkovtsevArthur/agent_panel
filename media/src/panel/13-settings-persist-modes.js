@@ -92,6 +92,7 @@
             typeof m.supportsVision === "boolean"
               ? m.supportsVision
               : guessModelSupportsVision(m.id),
+          requestOptions: cloneRequestOptions(m.requestOptions),
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -261,6 +262,9 @@
         typeof m.supportsVision === "boolean"
           ? m.supportsVision
           : guessModelSupportsVision(m.id);
+      if (m.requestOptions) {
+        row.requestOptions = m.requestOptions;
+      }
       return row;
     });
     const primary =

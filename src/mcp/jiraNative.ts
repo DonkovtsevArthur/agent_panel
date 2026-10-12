@@ -24,7 +24,7 @@ export interface JiraConn {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-class JiraApiError extends Error {
+export class JiraApiError extends Error {
   constructor(
     message: string,
     readonly status: number
@@ -35,7 +35,8 @@ class JiraApiError extends Error {
 
 type Query = Record<string, string | number | boolean | undefined>;
 
-function jiraRequest(
+/** Bearer-PAT REST call with the pre-flight CA / VPN pin (shared with Confluence). */
+export function jiraRequest(
   conn: JiraConn,
   method: string,
   apiPath: string,

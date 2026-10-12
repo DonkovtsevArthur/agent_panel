@@ -82,6 +82,9 @@
         });
         renderMessageQueue();
         break;
+      case "clipboardImageResult":
+        handleHostClipboardImageResult(msg);
+        break;
       case "attachmentsAdded":
         if (pickAttachmentsForEdit) {
           // Picker was opened from the edit-composer "+" — attachments go to

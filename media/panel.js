@@ -171,6 +171,14 @@
       mcpCustomToken: "Bearer token (optional)",
       mcpJiraTokenLabel: "Jira Personal Access Token",
       mcpJiraUrlLabel: "Jira URL",
+      mcpConfluenceUrlLabel: "Confluence URL",
+      mcpConfluenceTokenLabel: "Confluence Personal Access Token",
+      mcpConfluenceUrlRequired: "Enter the Confluence URL.",
+      mcpConfluenceTokenRequired: "Paste the Confluence Personal Access Token.",
+      mcpConfluenceTokenEmpty: "Paste the PAT (Confluence profile → Personal Access Tokens)",
+      mcpPresetConfluence: "Confluence",
+      mcpPresetConfluenceNote:
+        "Enter the Confluence URL and a Personal Access Token — Harbor connects to Confluence itself (built-in tools: search, read pages as Markdown, create / update pages, comments, labels; nothing to install), trusts the corporate certificate and finds the internal address via the VPN. After a successful check it writes a Confluence section to AGENTS.md and token-free MCP configs for other agent tools.",
       mcpJiraAdvancedShow: "Advanced settings",
       mcpJiraAdvancedHide: "Hide advanced settings",
       mcpJiraUrlRequired: "Enter the Jira URL.",
@@ -664,6 +672,14 @@
       mcpCustomToken: "Bearer token (опционально)",
       mcpJiraTokenLabel: "Jira Personal Access Token",
       mcpJiraUrlLabel: "Адрес Jira",
+      mcpConfluenceUrlLabel: "Адрес Confluence",
+      mcpConfluenceTokenLabel: "Confluence Personal Access Token",
+      mcpConfluenceUrlRequired: "Укажите адрес Confluence.",
+      mcpConfluenceTokenRequired: "Вставьте Personal Access Token Confluence.",
+      mcpConfluenceTokenEmpty: "Вставьте PAT (профиль Confluence → Personal Access Tokens)",
+      mcpPresetConfluence: "Confluence",
+      mcpPresetConfluenceNote:
+        "Укажите адрес Confluence и Personal Access Token — Harbor подключается к Confluence сам (встроенные инструменты: поиск, чтение страниц в Markdown, создание и правка страниц, комментарии, метки; ничего устанавливать не нужно), доверяет корпоративному сертификату и находит внутренний адрес через VPN. После успешной проверки запишет раздел Confluence в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
       mcpJiraAdvancedShow: "Дополнительно",
       mcpJiraAdvancedHide: "Скрыть дополнительное",
       mcpJiraUrlRequired: "Укажите адрес Jira.",
@@ -1443,6 +1459,7 @@
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
   const mcpPresetJira = document.getElementById("mcpPresetJira");
+  const mcpPresetConfluence = document.getElementById("mcpPresetConfluence");
   const mcpPresetChromeDevtools = document.getElementById(
     "mcpPresetChromeDevtools"
   );
@@ -2168,6 +2185,10 @@
     if (mcpPresetJira) {
       const label = mcpPresetJira.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetJira");
+    }
+    if (mcpPresetConfluence) {
+      const label = mcpPresetConfluence.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetConfluence");
     }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {
@@ -8492,74 +8513,6 @@
     return el;
   }
 
-  /**
-   * Vision-helper inventory: a visible card outside the collapsed tool group.
-   * The model prompt block is hidden from the user — without this card
-   * answers like «описание выше» point at nothing.
-   */
-  function upsertVisionDescriptionCard(step) {
-    let raw = String(step.text || "").trim();
-    // Tool outputs wrap the inventory in the Harbor helper header — keep
-    // only the "## What is in the image" body for the visible card.
-    const bodyIx = raw.indexOf("## What is in the image");
-    if (bodyIx >= 0) {
-      raw = raw.slice(bodyIx + "## What is in the image".length).trim();
-    }
-    const turnScope =
-      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
-        ? currentChatTurnEl
-        : messagesEl;
-    const stepId = String(step.stepId || "") + ":desc";
-    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
-    let el = turnScope.querySelector(stepSel);
-    if (!raw) {
-      if (el) {
-        el.remove();
-      }
-      return null;
-    }
-    if (!el) {
-      el = document.createElement("div");
-      el.className = "msg tool agent-step agent-step-vision-desc";
-      el.dataset.stepId = stepId;
-      el.dataset.stepKind = "tool";
-      const group = turnScope.querySelector(".tool-group.agent-timeline");
-      if (group) {
-        turnScope.insertBefore(el, group);
-      } else {
-        turnScope.appendChild(el);
-      }
-    }
-    el.dataset.status = "done";
-    const prevOpen = el.dataset.visionOpen === "1";
-    el.dataset.visionOpen = prevOpen ? "1" : "0";
-    el.innerHTML =
-      `<div class="vision-desc-head">` +
-      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">image_search</span>` +
-      `<span class="vision-desc-title"></span>` +
-      `<span class="material-symbols-outlined vision-desc-chevron" aria-hidden="true">${prevOpen ? "expand_less" : "expand_more"}</span>` +
-      `</div>` +
-      `<div class="vision-desc-body" ${prevOpen ? "" : "hidden"}></div>`;
-    const titleEl = el.querySelector(".vision-desc-title");
-    if (titleEl) {
-      titleEl.textContent = t("visionDescTitle");
-    }
-    const bodyEl = el.querySelector(".vision-desc-body");
-    if (bodyEl) {
-      bodyEl.innerHTML = renderInlineMarkdown(raw);
-    }
-    const head = el.querySelector(".vision-desc-head");
-    if (head) {
-      head.onclick = () => {
-        el.dataset.visionOpen = el.dataset.visionOpen === "1" ? "0" : "1";
-        upsertVisionDescriptionCard({ ...step, text: raw });
-      };
-    }
-    keepStatusAtEnd();
-    scrollToBottom();
-    return el;
-  }
-
   function upsertAgentStep(step) {
     if (!step || !step.stepId) {
       return null;
@@ -8819,15 +8772,6 @@
           dur.className = "agent-step-duration";
           dur.textContent = formatRunDuration(toolMs);
           labelEl.appendChild(dur);
-        }
-      }
-      // Vision-helper inventory → visible card above the collapsed timeline.
-      if (step.name === "vision" || step.name === "inspect_images") {
-        const descText =
-          step.text ||
-          String(step.resultPreview || el.dataset.resultPreview || "");
-        if (descText) {
-          upsertVisionDescriptionCard({ ...step, text: descText });
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся
@@ -10592,7 +10536,57 @@
         return true;
       }
     }
+    // opencode: "modalities": {"input": ["text", "image"], "output": [...]}
+    const modalities = raw.modalities;
+    if (modalities && typeof modalities === "object" && !Array.isArray(modalities)) {
+      const input = modalities.input;
+      if (Array.isArray(input)) {
+        return input.some((item) => /image/i.test(String(item)));
+      }
+    }
     return undefined;
+  }
+
+  /** Model `options` (opencode) → extra chat/completions body fields. */
+  const RESERVED_REQUEST_OPTION_KEYS = new Set([
+    "model",
+    "messages",
+    "tools",
+    "tool_choice",
+    "stream",
+    "stream_options",
+  ]);
+
+  function readModelRequestOptions(raw) {
+    const value = pickField(raw, [
+      "requestOptions",
+      "options",
+      "extra_body",
+      "extraBody",
+    ]);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (!key || RESERVED_REQUEST_OPTION_KEYS.has(key) || item === undefined) {
+        continue;
+      }
+      out[key] = item;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  function cloneRequestOptions(options) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      return undefined;
+    }
+    try {
+      const copy = JSON.parse(JSON.stringify(options));
+      return Object.keys(copy).length ? copy : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function pickPositiveIntField(raw, keys) {
@@ -10727,6 +10721,7 @@
       "multimodal",
     ]);
     const visionFromArchitecture = readVisionFromArchitecture(raw);
+    const requestOptions = readModelRequestOptions(raw);
     const providerId = String(
       pickField(raw, [
         "providerId",
@@ -10745,6 +10740,9 @@
     if (limits.maxOutputTokens) {
       model.maxOutputTokens = limits.maxOutputTokens;
     }
+    if (requestOptions) {
+      model.requestOptions = requestOptions;
+    }
     if (
       visionRaw === true ||
       visionRaw === "true" ||
@@ -10753,10 +10751,12 @@
     ) {
       model.supportsVision = true;
     } else if (
-      (visionRaw === false ||
+      ((visionRaw === false ||
         visionRaw === "false" ||
         visionRaw === 0) &&
-      !guessModelSupportsVision(id)
+        !guessModelSupportsVision(id)) ||
+      // Explicit opencode modalities without "image" — text-only model.
+      (visionRaw == null && visionFromArchitecture === false)
     ) {
       model.supportsVision = false;
     }
@@ -10776,6 +10776,7 @@
         typeof model.supportsVision === "boolean"
           ? model.supportsVision
           : guessModelSupportsVision(model.id),
+      requestOptions: cloneRequestOptions(model.requestOptions),
     };
   }
 
@@ -10838,6 +10839,9 @@
               : typeof prev.supportsVision === "boolean"
                 ? prev.supportsVision
                 : guessModelSupportsVision(model.id),
+          requestOptions: cloneRequestOptions(
+            model.requestOptions || prev.requestOptions
+          ),
         });
         updated += 1;
       } else {
@@ -11327,7 +11331,67 @@
       }
     }
 
-    return null;
+    return modelsFromKeyedMap(parsed);
+  }
+
+  /**
+   * opencode-style map keyed by model id:
+   * {"deepseek-v4.1-flash": {"limit": {...}, "options": {...}, "modalities": {...}}}
+   * (also under "provider" → <id> → "models").
+   */
+  function modelsFromKeyedMap(parsed) {
+    const provider = pickField(parsed, ["provider", "providers"]);
+    if (provider && typeof provider === "object" && !Array.isArray(provider)) {
+      const fromProviders = [];
+      for (const entry of Object.values(provider)) {
+        const models =
+          entry && typeof entry === "object" ? pickField(entry, ["models"]) : null;
+        if (models && typeof models === "object" && !Array.isArray(models)) {
+          fromProviders.push(...(modelsFromKeyedMap(models) || []));
+        }
+      }
+      if (fromProviders.length) {
+        return fromProviders;
+      }
+    }
+    const entries = Object.entries(parsed);
+    if (
+      !entries.length ||
+      !entries.every(
+        ([key, value]) =>
+          String(key).trim() &&
+          (value === true ||
+            (value && typeof value === "object" && !Array.isArray(value)))
+      )
+    ) {
+      return null;
+    }
+    return entries.map(([key, value]) => {
+      const body = value && typeof value === "object" ? value : {};
+      const ownId = pickField(body, ["id", "model", "model_id", "modelId"]);
+      return { ...body, id: String(ownId || key).trim() };
+    });
+  }
+
+  /**
+   * Pasted opencode fragments: `["id": {...}]` (map in array brackets) or a
+   * bare `"id": {...}` without the outer braces.
+   */
+  function parseLooseKeyedModels(text) {
+    let inner = text;
+    if (inner.startsWith("[") && inner.endsWith("]")) {
+      inner = inner.slice(1, -1).trim();
+    }
+    inner = inner.replace(/,\s*$/, "");
+    if (!inner.startsWith('"')) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(`{${inner}}`);
+      return parsed && typeof parsed === "object" ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function parseModelsJson(raw) {
@@ -11339,7 +11403,10 @@
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error(t("invalidJson"));
+      parsed = parseLooseKeyedModels(text);
+      if (parsed === undefined) {
+        throw new Error(t("invalidJson"));
+      }
     }
     const items = extractModelsList(parsed);
     if (!items) {
@@ -11406,6 +11473,9 @@
         }
         if (typeof m.supportsVision === "boolean") {
           row.supportsVision = m.supportsVision;
+        }
+        if (m.requestOptions) {
+          row.options = m.requestOptions;
         }
         return row;
       });
@@ -11634,6 +11704,7 @@
           ...next,
           enabled: prev.enabled !== false,
           favorite: prev.favorite === true,
+          requestOptions: cloneRequestOptions(prev.requestOptions),
         };
       } else {
         settingsModels.push(next);
@@ -11655,6 +11726,8 @@
         ...next,
         enabled: prev.enabled !== false,
         favorite: prev.favorite === true,
+        // Manual form has no field for model JSON `options` — keep them.
+        requestOptions: cloneRequestOptions(prev.requestOptions),
       };
     }
     closeModelEditModal();
@@ -12111,33 +12184,56 @@
     }
   }
 
-  function isMcpCustomJiraForm() {
+  /** "jira" | "confluence" | "" — Atlassian server edited in the MCP form. */
+  function mcpCustomAtlassianKind() {
     const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
     if (isHttp) {
-      return false;
+      return "";
     }
     const cmd = `${mcpCustomCommand ? mcpCustomCommand.value : ""} ${
       mcpCustomArgs ? mcpCustomArgs.value : ""
     }`;
     const env = mcpCustomEnv ? mcpCustomEnv.value : "";
-    return (
-      /mcp-atlassian|harbor-jira/i.test(cmd) || /^\s*JIRA_URL\s*=/m.test(env)
-    );
+    if (/harbor-confluence/i.test(cmd)) {
+      return "confluence";
+    }
+    const hasJiraUrl = /^\s*JIRA_URL\s*=/m.test(env);
+    if (/^\s*CONFLUENCE_URL\s*=/m.test(env) && !hasJiraUrl) {
+      return "confluence";
+    }
+    return /mcp-atlassian|harbor-jira/i.test(cmd) || hasJiraUrl ? "jira" : "";
   }
 
-  /** Jira form: only URL + token; command/env stay under "Advanced". */
+  function isMcpCustomJiraForm() {
+    return Boolean(mcpCustomAtlassianKind());
+  }
+
+  /** i18n key for the current Atlassian product ("mcpJira…" / "mcpConfluence…"). */
+  function atlassianKey(suffix) {
+    return mcpCustomAtlassianKind() === "confluence"
+      ? `mcpConfluence${suffix}`
+      : `mcpJira${suffix}`;
+  }
+
+  function atlassianUrlEnv() {
+    return mcpCustomAtlassianKind() === "confluence" ? "CONFLUENCE_URL" : "JIRA_URL";
+  }
+
+  /** Jira / Confluence form: only URL + token; command/env stay under "Advanced". */
   let mcpJiraAdvancedOpen = false;
 
   function jiraUrlFromEnvText(envText) {
-    const m = /^\s*JIRA_URL\s*=\s*(.*)$/m.exec(String(envText || ""));
+    const key = atlassianUrlEnv();
+    const m = new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`, "m").exec(String(envText || ""));
     return m ? m[1].trim() : "";
   }
 
   function mergeJiraUrlIntoEnvText(envText, url) {
+    const key = atlassianUrlEnv();
     const rest = String(envText || "")
       .split(/\r?\n/)
-      .filter((line) => !/^\s*JIRA_URL\s*=/.test(line));
-    return [`JIRA_URL=${url}`, ...rest].join("\n").replace(/\n+$/, "");
+      .filter((line) => !new RegExp(`^\\s*${key}\\s*=`).test(line));
+    return [`${key}=${url}`, ...rest].join("\n").replace(/\n+$/, "");
   }
 
   function syncMcpCustomTransportFields() {
@@ -12160,6 +12256,14 @@
       mcpCustomJiraAdvancedBtn.textContent = mcpJiraAdvancedOpen
         ? t("mcpJiraAdvancedHide")
         : t("mcpJiraAdvancedShow");
+    }
+    if (isJira) {
+      if (mcpCustomJiraUrlLabel) {
+        mcpCustomJiraUrlLabel.textContent = t(atlassianKey("UrlLabel"));
+      }
+      if (mcpCustomJiraTokenLabel) {
+        mcpCustomJiraTokenLabel.textContent = t(atlassianKey("TokenLabel"));
+      }
     }
   }
 
@@ -12222,16 +12326,22 @@
       );
     }
     if (mcpCustomJiraUrlLabel) {
-      mcpCustomJiraUrlLabel.textContent = t("mcpJiraUrlLabel");
+      mcpCustomJiraUrlLabel.textContent = t(atlassianKey("UrlLabel"));
+    }
+    if (mcpCustomJiraUrl) {
+      mcpCustomJiraUrl.placeholder =
+        mcpCustomAtlassianKind() === "confluence"
+          ? "https://confluence.company.ru"
+          : "https://jira.company.ru";
     }
     if (mcpCustomJiraToken) {
       mcpCustomJiraToken.value = "";
       mcpCustomJiraToken.placeholder = existing?.hasSecretToken
         ? t("mcpJiraTokenSaved")
-        : t("mcpJiraTokenEmpty");
+        : t(atlassianKey("TokenEmpty"));
     }
     if (mcpCustomJiraTokenLabel) {
-      mcpCustomJiraTokenLabel.textContent = t("mcpJiraTokenLabel");
+      mcpCustomJiraTokenLabel.textContent = t(atlassianKey("TokenLabel"));
     }
     if (existing) {
       if (mcpCustomTransport) {
@@ -12327,6 +12437,17 @@
       noteKey: "mcpPresetGithubNote",
       matchIds: ["github"],
     },
+    confluence: {
+      name: "Confluence",
+      transport: "stdio",
+      command: "harbor-confluence",
+      argsText: "",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetConfluenceNote",
+      matchIds: ["confluence"],
+    },
     jira: {
       name: "Jira",
       transport: "stdio",
@@ -12391,14 +12512,14 @@
     if (isJira) {
       const jiraUrl = mcpCustomJiraUrl ? mcpCustomJiraUrl.value.trim() : "";
       if (!jiraUrl) {
-        showCopyToast(t("mcpJiraUrlRequired"));
+        showCopyToast(t(atlassianKey("UrlRequired")));
         return;
       }
       const editingId = mcpCustomEditId ? mcpCustomEditId.value.trim() : "";
       const existing = (mcpServersCache || []).find((s) => s.id === editingId);
       const token = mcpCustomJiraToken ? mcpCustomJiraToken.value.trim() : "";
       if (!token && !existing?.hasSecretToken) {
-        showCopyToast(t("mcpJiraTokenRequired"));
+        showCopyToast(t(atlassianKey("TokenRequired")));
         return;
       }
       if (mcpCustomEnv) {
@@ -12536,6 +12657,7 @@
             typeof m.supportsVision === "boolean"
               ? m.supportsVision
               : guessModelSupportsVision(m.id),
+          requestOptions: cloneRequestOptions(m.requestOptions),
         }))
       : [];
     settingsDefaultModelId = settings.defaultModel || "";
@@ -12705,6 +12827,9 @@
         typeof m.supportsVision === "boolean"
           ? m.supportsVision
           : guessModelSupportsVision(m.id);
+      if (m.requestOptions) {
+        row.requestOptions = m.requestOptions;
+      }
       return row;
     });
     const primary =
@@ -17407,15 +17532,17 @@
       files.push(file);
     };
 
+    // Any copied file (Finder / Explorer «Copy») is attached as-is — the host
+    // decides image vs. file by mime / extension (persistIncomingAttachments).
     if (clipboardData?.files?.length) {
       for (const file of Array.from(clipboardData.files)) {
-        if (!file.type || file.type.startsWith("image/")) {
-          push(file);
-        }
+        push(file);
       }
     }
 
-    const items = clipboardData?.items;
+    // Image items only when no real files were copied: a file copied in the
+    // OS file manager may also carry its icon as image/png.
+    const items = files.length ? null : clipboardData?.items;
     if (items) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -17455,22 +17582,57 @@
     }
   }
 
+  // JCEF: Cmd/Ctrl+V keydown and the paste event both ask the host — one
+  // read per gesture, otherwise the same screenshot is attached twice.
+  // The host reads the system clipboard and keeps the bytes for send
+  // (HarborAttachmentStore); images decoded from the paste event are only a
+  // fallback for when the host finds nothing (clipboardImageResult).
+  let lastHostClipboardImageRequestAt = 0;
+  let hostClipboardPasteFallback = null;
+  function requestHostClipboardImage(fallbackFiles) {
+    if (Array.isArray(fallbackFiles) && fallbackFiles.length) {
+      hostClipboardPasteFallback = fallbackFiles;
+    }
+    const now = Date.now();
+    if (now - lastHostClipboardImageRequestAt < 400) {
+      return;
+    }
+    lastHostClipboardImageRequestAt = now;
+    host.postMessage({ type: "requestClipboardImage" });
+  }
+
+  function handleHostClipboardImageResult(msg) {
+    const fallback = hostClipboardPasteFallback;
+    hostClipboardPasteFallback = null;
+    if (msg && msg.found) {
+      return;
+    }
+    if (fallback && fallback.length) {
+      void ingestDroppedFiles(fallback);
+    }
+  }
+
   async function handleChatImagePaste(event) {
     if (!chatScreen || chatScreen.hidden) {
       return;
     }
     let imageFiles = extractClipboardImages(event.clipboardData);
+    if (harborHostAvailable()) {
+      // JCEF / JetBrains: navigator.clipboard.read() sees only the webview
+      // sandbox (or never settles), and webview-decoded bytes do not reach
+      // the sidecar — ask the IDE host to read the system clipboard (copied
+      // files of any type, then image data).
+      if (imageFiles.length) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      requestHostClipboardImage(imageFiles);
+      return;
+    }
     if (!imageFiles.length) {
       imageFiles = await readClipboardImagesFallback();
     }
     if (!imageFiles.length) {
-      // JCEF / JetBrains: clipboard images rarely appear in paste event —
-      // ask the IDE host to read the system clipboard.
-      if (harborHostAvailable()) {
-        event.preventDefault();
-        event.stopPropagation();
-        host.postMessage({ type: "requestClipboardImage" });
-      }
       return;
     }
     event.preventDefault();
@@ -17737,7 +17899,7 @@
       return;
     }
     if (harborHostAvailable()) {
-      host.postMessage({ type: "requestClipboardImage" });
+      requestHostClipboardImage();
     }
   }
 
@@ -17893,10 +18055,12 @@
       if (harborHostAvailable()) {
         // Let native paste run for text; also probe host clipboard for images.
         // Host will no-op if clipboard has no image.
-        setTimeout(() => {
-          host.postMessage({ type: "requestClipboardImage" });
-        }, 0);
+        setTimeout(requestHostClipboardImage, 0);
       }
+      return;
+    }
+    if (harborHostAvailable()) {
+      requestHostClipboardImage();
       return;
     }
     void (async () => {
@@ -17907,10 +18071,6 @@
         if (promptEl && typeof promptEl.focus === "function") {
           promptEl.focus();
         }
-        return;
-      }
-      if (harborHostAvailable()) {
-        host.postMessage({ type: "requestClipboardImage" });
       }
     })();
   });
@@ -18122,6 +18282,11 @@
   if (mcpPresetJira) {
     mcpPresetJira.addEventListener("click", () => {
       openMcpPreset("jira");
+    });
+  }
+  if (mcpPresetConfluence) {
+    mcpPresetConfluence.addEventListener("click", () => {
+      openMcpPreset("confluence");
     });
   }
   if (mcpServersList) {
@@ -19662,6 +19827,9 @@
             typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
         });
         renderMessageQueue();
+        break;
+      case "clipboardImageResult":
+        handleHostClipboardImageResult(msg);
         break;
       case "attachmentsAdded":
         if (pickAttachmentsForEdit) {

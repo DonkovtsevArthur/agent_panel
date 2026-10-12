@@ -474,22 +474,44 @@ class HarborHostBridge(
       }
       "requestClipboardImage" -> {
         ApplicationManager.getApplication().executeOnPooledThread {
-          val attachments = HarborClipboard.readImageAttachments()
+          val attachments = HarborClipboard.readClipboardAttachments()
           if (attachments.isNotEmpty()) {
             HarborAttachmentStore.remember(attachments)
-            ApplicationManager.getApplication().invokeLater {
-              postToWebview(
-                gson.toJson(
-                  mapOf(
-                    "type" to "attachmentsAdded",
-                    "attachments" to attachments,
-                  )
-                ),
-                forceRepaint = true,
-              )
-            }
+            postToWebview(
+              gson.toJson(
+                mapOf(
+                  "type" to "attachmentsAdded",
+                  "attachments" to attachments,
+                )
+              ),
+              forceRepaint = true,
+            )
           }
+          // Webview falls back to images decoded from the paste event when
+          // the host found nothing.
+          postToWebview(
+            gson.toJson(
+              mapOf(
+                "type" to "clipboardImageResult",
+                "found" to attachments.isNotEmpty(),
+              )
+            )
+          )
         }
+      }
+      "attachFiles" -> {
+        // Webview-decoded files (paste / drop without a path). The sidecar has
+        // no handler for this — answer from the host like the VS Code shell.
+        val files = obj.getAsJsonArray("files") ?: return
+        val attachments = files.mapNotNull { el ->
+          if (el.isJsonObject) HarborClipboard.fromWebviewFile(el.asJsonObject) else null
+        }
+        if (attachments.size < files.size()) {
+          log.warn("Harbor attachFiles: ${files.size() - attachments.size} file(s) skipped (no data)")
+        }
+        if (attachments.isEmpty()) return
+        HarborAttachmentStore.remember(attachments)
+        postToWebview(HarborFileDrop.attachmentsJson(attachments), forceRepaint = true)
       }
       "uiRepaint" -> scheduleBrowserRepaint()
       "jcefChrome" -> {
@@ -552,7 +574,7 @@ class HarborHostBridge(
               }
             val file = File(path)
             if (!file.isFile) continue
-            HarborClipboard.encodeFile(file)?.let { attachments.add(it) }
+            HarborClipboard.encodeAnyFile(file)?.let { attachments.add(it) }
             if (attachments.size >= 8) break
           }
           if (attachments.isEmpty()) return@executeOnPooledThread

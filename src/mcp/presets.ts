@@ -3,7 +3,7 @@
  * vscode-free so unit tests can import without the VS Code module.
  */
 
-export type McpPresetId = "playwright" | "chrome-devtools" | "github" | "jira";
+export type McpPresetId = "playwright" | "chrome-devtools" | "github" | "jira" | "confluence";
 
 export interface McpPresetDef {
   id: McpPresetId;
@@ -70,6 +70,19 @@ export const MCP_PRESETS: readonly McpPresetDef[] = [
       "Jira Server / Data Center, built-in tools (no Python / uv). Enter the Jira URL and a Personal Access Token. After a verified connection Harbor writes a Jira section to AGENTS.md and token-free MCP configs for other agent tools.",
     noteRu:
       "Jira Server / Data Center, встроенные инструменты (без Python / uv). Укажите адрес Jira и Personal Access Token. После проверки подключения Harbor запишет раздел Jira в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
+  },
+  {
+    id: "confluence",
+    name: "Confluence",
+    transport: "stdio",
+    // Built-in REST client (src/mcp/confluenceNative.ts) — no Python / uv.
+    command: "harbor-confluence",
+    args: [],
+    envHint: { CONFLUENCE_URL: "" },
+    noteEn:
+      "Confluence Server / Data Center, built-in tools (no Python / uv). Enter the Confluence URL and a Personal Access Token. After a verified connection Harbor writes a Confluence section to AGENTS.md and token-free MCP configs for other agent tools.",
+    noteRu:
+      "Confluence Server / Data Center, встроенные инструменты (без Python / uv). Укажите адрес Confluence и Personal Access Token. После проверки подключения Harbor запишет раздел Confluence в AGENTS.md и MCP-конфиги без токена для других агентских инструментов.",
   },
 ];
 

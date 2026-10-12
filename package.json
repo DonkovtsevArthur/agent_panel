@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.9.43",
+	"version": "2.9.51",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -527,12 +527,6 @@
 					"minimum": 1,
 					"description": "%config.sessions.idleEvictMinutes.description%"
 				},
-				"agentPanel.sessions.inactivityTimeoutMinutes": {
-					"type": "number",
-					"default": 5,
-					"minimum": 1,
-					"description": "%config.sessions.inactivityTimeoutMinutes.description%"
-				},
 				"agentPanel.promptCache.enabled": {
 					"type": "boolean",
 					"default": true,
@@ -713,6 +707,11 @@
 					"type": "boolean",
 					"default": false,
 					"description": "%config.figma.hostAutoStart.description%"
+				},
+				"agentPanel.mcp.agentRules.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.mcp.agentRules.enabled.description%"
 				},
 				"agentPanel.mcp.servers": {
 					"type": "array",

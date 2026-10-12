@@ -326,6 +326,7 @@
   const mcpPresetPlaywright = document.getElementById("mcpPresetPlaywright");
   const mcpPresetGithub = document.getElementById("mcpPresetGithub");
   const mcpPresetJira = document.getElementById("mcpPresetJira");
+  const mcpPresetConfluence = document.getElementById("mcpPresetConfluence");
   const mcpPresetChromeDevtools = document.getElementById(
     "mcpPresetChromeDevtools"
   );

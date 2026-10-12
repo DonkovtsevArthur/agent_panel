@@ -63,6 +63,7 @@ function modelRow(
     favorite: m.favorite === true,
     supportsVision,
     ...(m.reasoningEffort ? { reasoningEffort: m.reasoningEffort } : {}),
+    ...(m.requestOptions ? { requestOptions: m.requestOptions } : {}),
   };
 }
 

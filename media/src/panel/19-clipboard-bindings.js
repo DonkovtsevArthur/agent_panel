@@ -16,15 +16,17 @@
       files.push(file);
     };
 
+    // Any copied file (Finder / Explorer «Copy») is attached as-is — the host
+    // decides image vs. file by mime / extension (persistIncomingAttachments).
     if (clipboardData?.files?.length) {
       for (const file of Array.from(clipboardData.files)) {
-        if (!file.type || file.type.startsWith("image/")) {
-          push(file);
-        }
+        push(file);
       }
     }
 
-    const items = clipboardData?.items;
+    // Image items only when no real files were copied: a file copied in the
+    // OS file manager may also carry its icon as image/png.
+    const items = files.length ? null : clipboardData?.items;
     if (items) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -64,22 +66,57 @@
     }
   }
 
+  // JCEF: Cmd/Ctrl+V keydown and the paste event both ask the host — one
+  // read per gesture, otherwise the same screenshot is attached twice.
+  // The host reads the system clipboard and keeps the bytes for send
+  // (HarborAttachmentStore); images decoded from the paste event are only a
+  // fallback for when the host finds nothing (clipboardImageResult).
+  let lastHostClipboardImageRequestAt = 0;
+  let hostClipboardPasteFallback = null;
+  function requestHostClipboardImage(fallbackFiles) {
+    if (Array.isArray(fallbackFiles) && fallbackFiles.length) {
+      hostClipboardPasteFallback = fallbackFiles;
+    }
+    const now = Date.now();
+    if (now - lastHostClipboardImageRequestAt < 400) {
+      return;
+    }
+    lastHostClipboardImageRequestAt = now;
+    host.postMessage({ type: "requestClipboardImage" });
+  }
+
+  function handleHostClipboardImageResult(msg) {
+    const fallback = hostClipboardPasteFallback;
+    hostClipboardPasteFallback = null;
+    if (msg && msg.found) {
+      return;
+    }
+    if (fallback && fallback.length) {
+      void ingestDroppedFiles(fallback);
+    }
+  }
+
   async function handleChatImagePaste(event) {
     if (!chatScreen || chatScreen.hidden) {
       return;
     }
     let imageFiles = extractClipboardImages(event.clipboardData);
+    if (harborHostAvailable()) {
+      // JCEF / JetBrains: navigator.clipboard.read() sees only the webview
+      // sandbox (or never settles), and webview-decoded bytes do not reach
+      // the sidecar — ask the IDE host to read the system clipboard (copied
+      // files of any type, then image data).
+      if (imageFiles.length) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      requestHostClipboardImage(imageFiles);
+      return;
+    }
     if (!imageFiles.length) {
       imageFiles = await readClipboardImagesFallback();
     }
     if (!imageFiles.length) {
-      // JCEF / JetBrains: clipboard images rarely appear in paste event —
-      // ask the IDE host to read the system clipboard.
-      if (harborHostAvailable()) {
-        event.preventDefault();
-        event.stopPropagation();
-        host.postMessage({ type: "requestClipboardImage" });
-      }
       return;
     }
     event.preventDefault();
@@ -346,7 +383,7 @@
       return;
     }
     if (harborHostAvailable()) {
-      host.postMessage({ type: "requestClipboardImage" });
+      requestHostClipboardImage();
     }
   }
 
@@ -502,10 +539,12 @@
       if (harborHostAvailable()) {
         // Let native paste run for text; also probe host clipboard for images.
         // Host will no-op if clipboard has no image.
-        setTimeout(() => {
-          host.postMessage({ type: "requestClipboardImage" });
-        }, 0);
+        setTimeout(requestHostClipboardImage, 0);
       }
+      return;
+    }
+    if (harborHostAvailable()) {
+      requestHostClipboardImage();
       return;
     }
     void (async () => {
@@ -516,10 +555,6 @@
         if (promptEl && typeof promptEl.focus === "function") {
           promptEl.focus();
         }
-        return;
-      }
-      if (harborHostAvailable()) {
-        host.postMessage({ type: "requestClipboardImage" });
       }
     })();
   });
@@ -731,6 +766,11 @@
   if (mcpPresetJira) {
     mcpPresetJira.addEventListener("click", () => {
       openMcpPreset("jira");
+    });
+  }
+  if (mcpPresetConfluence) {
+    mcpPresetConfluence.addEventListener("click", () => {
+      openMcpPreset("confluence");
     });
   }
   if (mcpServersList) {

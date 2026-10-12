@@ -131,6 +131,12 @@ export interface AgentModel {
    * Если задано — модель считается поддерживающей reasoning в UI селекторе.
    */
   reasoningEffort?: string;
+  /**
+   * Extra fields merged into every chat/completions body for this model
+   * (opencode-style `options`, e.g. `chat_template_kwargs`). From Settings →
+   * model JSON; global like the rest of the model list.
+   */
+  requestOptions?: Record<string, unknown>;
   /** Вычисляется при getEnabledModels — не из Settings. */
   supportsReasoningEffort?: boolean;
   /** Вычисляется при getEnabledModels — default для селектора. */
@@ -319,8 +325,6 @@ export interface AgentPanelConfig {
    */
   sessions: {
     idleEvictMinutes: number;
-    /** Auto-abort a turn after this many minutes of no events from the model/tools. */
-    inactivityTimeoutMinutes: number;
   };
   /**
    * Agent Skills (SKILL.md). Discovery is Harbor-only:
@@ -471,6 +475,48 @@ export function assignMissingProviderIds(
   });
 }
 
+/** Request body keys Harbor / Cline own — a model `options` block must not replace them. */
+const RESERVED_REQUEST_OPTION_KEYS = new Set([
+  "model",
+  "messages",
+  "tools",
+  "tool_choice",
+  "stream",
+  "stream_options",
+]);
+
+/**
+ * Model `requestOptions` as stored in settings: a plain JSON object without
+ * the reserved request keys, ≤8 KB serialized; anything else → undefined.
+ */
+export function normalizeModelRequestOptions(
+  raw: unknown
+): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = String(key || "").trim();
+    if (!k || RESERVED_REQUEST_OPTION_KEYS.has(k) || value === undefined) {
+      continue;
+    }
+    out[k] = value;
+  }
+  if (!Object.keys(out).length) {
+    return undefined;
+  }
+  try {
+    const text = JSON.stringify(out);
+    if (!text || text.length > 8_192) {
+      return undefined;
+    }
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
 function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
   const raw = cfg.get<unknown>("models");
   const list = Array.isArray(raw) ? raw : [];
@@ -487,6 +533,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       favorite?: unknown;
       supportsVision?: unknown;
       reasoningEffort?: unknown;
+      requestOptions?: unknown;
     };
     const id = typeof row.id === "string" ? row.id.trim() : "";
     if (!id) {
@@ -532,6 +579,10 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
       row.reasoningEffort.trim()
     ) {
       model.reasoningEffort = row.reasoningEffort.trim();
+    }
+    const requestOptions = normalizeModelRequestOptions(row.requestOptions);
+    if (requestOptions) {
+      model.requestOptions = requestOptions;
     }
     models.push(model);
   }
@@ -725,12 +776,9 @@ export function getConfig(): AgentPanelConfig {
     },
     sessions: (() => {
       const raw = Number(cfg.get<unknown>("sessions.idleEvictMinutes"));
-      const inactivityRaw = Number(cfg.get<unknown>("sessions.inactivityTimeoutMinutes"));
       return {
         idleEvictMinutes:
           Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 60,
-        inactivityTimeoutMinutes:
-          Number.isFinite(inactivityRaw) && inactivityRaw > 0 ? Math.floor(inactivityRaw) : 5,
       };
     })(),
     skills: (() => {

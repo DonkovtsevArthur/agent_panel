@@ -475,16 +475,31 @@ type ProbeOutcome =
   | { kind: "http"; status: number; body: string; location?: string }
   | { kind: "error"; code: string; message: string };
 
+/** "Who am I" endpoint per product (both answer 401 on a bad PAT). */
+const PROBE_PATH = {
+  jira: "/rest/api/2/myself",
+  confluence: "/rest/api/user/current",
+} as const;
+
+/** Where users create a new PAT, per product. */
+const PAT_PAGE = {
+  jira: "/secure/ViewPersonalAccessTokens.jspa",
+  confluence: "/plugins/personalaccesstokens/usertokens.action",
+} as const;
+
+type Product = keyof typeof PROBE_PATH;
+
 function probeMyself(
   baseUrl: string,
   token: string,
   ca: string | string[],
-  pinIp?: string
+  pinIp?: string,
+  product: Product = "jira"
 ): Promise<ProbeOutcome> {
   return new Promise((resolve) => {
     let url: URL;
     try {
-      url = new URL(`${baseUrl.replace(/\/+$/, "")}/rest/api/2/myself`);
+      url = new URL(`${baseUrl.replace(/\/+$/, "")}${PROBE_PATH[product]}`);
     } catch {
       resolve({ kind: "error", code: "BAD_URL", message: "invalid URL" });
       return;
@@ -555,6 +570,17 @@ function describeFailure(
   host: string,
   o: ProbeOutcome,
   ip?: string,
+  vpnDns?: boolean,
+  product: Product = "jira"
+): string {
+  const text = describeFailureJira(host, o, ip, vpnDns);
+  return product === "confluence" ? text.replace(/Jira/g, "Confluence") : text;
+}
+
+function describeFailureJira(
+  host: string,
+  o: ProbeOutcome,
+  ip?: string,
   vpnDns?: boolean
 ): string {
   if (vpnDns === false && o.kind === "error" && WRONG_SERVER_CODES.has(o.code)) {
@@ -590,7 +616,11 @@ export async function prepareJiraConnection(options: {
   userEnv?: Record<string, string>;
   /** false for the built-in REST client: no uvx / Python env needed. */
   launcher?: boolean;
+  /** Default "jira". */
+  product?: Product;
 }): Promise<JiraPreflightResult> {
+  const product: Product = options.product || "jira";
+  const label = product === "confluence" ? "Confluence" : "Jira";
   const env: Record<string, string> = {};
   const result: JiraPreflightResult = { ok: false, env };
   const base = options.url.trim().replace(/\/+$/, "");
@@ -598,12 +628,12 @@ export async function prepareJiraConnection(options: {
   try {
     host = new URL(base).hostname.toLowerCase();
   } catch {
-    result.error = "Укажите адрес Jira, например https://jira.company.ru / Enter the Jira URL.";
+    result.error = `Укажите адрес ${label}, например https://${product}.company.ru / Enter the ${label} URL.`;
     return result;
   }
   if (!options.token.trim()) {
     result.error =
-      "Вставьте Personal Access Token (профиль Jira → Personal Access Tokens). / Paste a Jira Personal Access Token.";
+      `Вставьте Personal Access Token (профиль ${label} → Personal Access Tokens). / Paste a ${label} Personal Access Token.`;
     return result;
   }
 
@@ -621,7 +651,7 @@ export async function prepareJiraConnection(options: {
     }
   }
 
-  let outcome = await probeMyself(base, options.token, ca);
+  let outcome = await probeMyself(base, options.token, ca, undefined, product);
 
   let pinIp: string | undefined;
   if (!isJiraApiResponse(outcome)) {
@@ -635,7 +665,7 @@ export async function prepareJiraConnection(options: {
     const privateDns = await resolveViaPrivateDns(host, new Set(systemIps));
     const candidates = privateDns.ips;
     for (const ip of candidates) {
-      const pinned = await probeMyself(base, options.token, ca, ip);
+      const pinned = await probeMyself(base, options.token, ca, ip, product);
       if (isJiraApiResponse(pinned)) {
         outcome = pinned;
         pinIp = ip;
@@ -649,18 +679,26 @@ export async function prepareJiraConnection(options: {
         host,
         firstFailure,
         wrongServer ? systemIps[0] : undefined,
-        privateDns.servers > 0
+        privateDns.servers > 0,
+        product
       );
       return result;
     }
   }
 
   if (outcome.kind !== "http") {
-    result.error = describeFailure(host, outcome);
+    result.error = describeFailure(host, outcome, undefined, undefined, product);
     return result;
   }
-  if (outcome.status === 401 || outcome.status === 403) {
-    result.error = `Jira не приняла токен (HTTP ${outcome.status}): он неверный или истёк. Создайте новый: ${base}/secure/ViewPersonalAccessTokens.jspa / Token rejected — create a new PAT.`;
+  // Confluence answers 200 + type "anonymous" when it ignores the token.
+  let anonymous = false;
+  try {
+    anonymous = (JSON.parse(outcome.body) as { type?: string }).type === "anonymous";
+  } catch {
+    anonymous = false;
+  }
+  if (outcome.status === 401 || outcome.status === 403 || anonymous) {
+    result.error = `${label} не приняла токен (HTTP ${outcome.status}${anonymous ? ", anonymous" : ""}): он неверный или истёк. Создайте новый: ${base}${PAT_PAGE[product]} / Token rejected — create a new PAT.`;
     return result;
   }
   // Jira + token are fine — now make sure the MCP launcher exists
@@ -678,8 +716,8 @@ export async function prepareJiraConnection(options: {
   }
 
   try {
-    const me = JSON.parse(outcome.body) as { displayName?: string; name?: string };
-    result.user = me.displayName || me.name;
+    const me = JSON.parse(outcome.body) as { displayName?: string; name?: string; username?: string };
+    result.user = me.displayName || me.name || me.username;
   } catch {
     // fine — 200 is enough
   }
@@ -691,7 +729,8 @@ export async function prepareJiraConnection(options: {
       base,
       options.token,
       [...tls.rootCertificates],
-      pinIp
+      pinIp,
+      product
     );
     result.corporateCa =
       publicOnly.kind === "error" && UNTRUSTED_CODES.has(publicOnly.code);

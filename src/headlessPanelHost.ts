@@ -2069,7 +2069,9 @@ export class HeadlessPanelHost {
     }
     this.post({
       type: "messagesReplaced",
-      uiMessages: this.uiMessages,
+      // Stored attachments carry no bytes — re-add image previews like the
+      // VS Code host, or every image in the chat repaints as a file chip.
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       selectedModel: this.selectedModel,
       canRegenerate: false,
       chatId: this.store.activeChatId,
@@ -2112,7 +2114,9 @@ export class HeadlessPanelHost {
     }
     this.post({
       type: "messagesReplaced",
-      uiMessages: this.uiMessages,
+      // Stored attachments carry no bytes — re-add image previews like the
+      // VS Code host, or every image in the chat repaints as a file chip.
+      uiMessages: await this.enrichUiMessages(this.uiMessages),
       selectedModel: this.selectedModel,
       canRegenerate: false,
       chatId: this.store.activeChatId,

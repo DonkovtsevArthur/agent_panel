@@ -810,7 +810,57 @@
         return true;
       }
     }
+    // opencode: "modalities": {"input": ["text", "image"], "output": [...]}
+    const modalities = raw.modalities;
+    if (modalities && typeof modalities === "object" && !Array.isArray(modalities)) {
+      const input = modalities.input;
+      if (Array.isArray(input)) {
+        return input.some((item) => /image/i.test(String(item)));
+      }
+    }
     return undefined;
+  }
+
+  /** Model `options` (opencode) → extra chat/completions body fields. */
+  const RESERVED_REQUEST_OPTION_KEYS = new Set([
+    "model",
+    "messages",
+    "tools",
+    "tool_choice",
+    "stream",
+    "stream_options",
+  ]);
+
+  function readModelRequestOptions(raw) {
+    const value = pickField(raw, [
+      "requestOptions",
+      "options",
+      "extra_body",
+      "extraBody",
+    ]);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (!key || RESERVED_REQUEST_OPTION_KEYS.has(key) || item === undefined) {
+        continue;
+      }
+      out[key] = item;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  function cloneRequestOptions(options) {
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      return undefined;
+    }
+    try {
+      const copy = JSON.parse(JSON.stringify(options));
+      return Object.keys(copy).length ? copy : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function pickPositiveIntField(raw, keys) {
@@ -945,6 +995,7 @@
       "multimodal",
     ]);
     const visionFromArchitecture = readVisionFromArchitecture(raw);
+    const requestOptions = readModelRequestOptions(raw);
     const providerId = String(
       pickField(raw, [
         "providerId",
@@ -963,6 +1014,9 @@
     if (limits.maxOutputTokens) {
       model.maxOutputTokens = limits.maxOutputTokens;
     }
+    if (requestOptions) {
+      model.requestOptions = requestOptions;
+    }
     if (
       visionRaw === true ||
       visionRaw === "true" ||
@@ -971,10 +1025,12 @@
     ) {
       model.supportsVision = true;
     } else if (
-      (visionRaw === false ||
+      ((visionRaw === false ||
         visionRaw === "false" ||
         visionRaw === 0) &&
-      !guessModelSupportsVision(id)
+        !guessModelSupportsVision(id)) ||
+      // Explicit opencode modalities without "image" — text-only model.
+      (visionRaw == null && visionFromArchitecture === false)
     ) {
       model.supportsVision = false;
     }
@@ -994,6 +1050,7 @@
         typeof model.supportsVision === "boolean"
           ? model.supportsVision
           : guessModelSupportsVision(model.id),
+      requestOptions: cloneRequestOptions(model.requestOptions),
     };
   }
 
@@ -1056,6 +1113,9 @@
               : typeof prev.supportsVision === "boolean"
                 ? prev.supportsVision
                 : guessModelSupportsVision(model.id),
+          requestOptions: cloneRequestOptions(
+            model.requestOptions || prev.requestOptions
+          ),
         });
         updated += 1;
       } else {
@@ -1545,7 +1605,67 @@
       }
     }
 
-    return null;
+    return modelsFromKeyedMap(parsed);
+  }
+
+  /**
+   * opencode-style map keyed by model id:
+   * {"deepseek-v4.1-flash": {"limit": {...}, "options": {...}, "modalities": {...}}}
+   * (also under "provider" → <id> → "models").
+   */
+  function modelsFromKeyedMap(parsed) {
+    const provider = pickField(parsed, ["provider", "providers"]);
+    if (provider && typeof provider === "object" && !Array.isArray(provider)) {
+      const fromProviders = [];
+      for (const entry of Object.values(provider)) {
+        const models =
+          entry && typeof entry === "object" ? pickField(entry, ["models"]) : null;
+        if (models && typeof models === "object" && !Array.isArray(models)) {
+          fromProviders.push(...(modelsFromKeyedMap(models) || []));
+        }
+      }
+      if (fromProviders.length) {
+        return fromProviders;
+      }
+    }
+    const entries = Object.entries(parsed);
+    if (
+      !entries.length ||
+      !entries.every(
+        ([key, value]) =>
+          String(key).trim() &&
+          (value === true ||
+            (value && typeof value === "object" && !Array.isArray(value)))
+      )
+    ) {
+      return null;
+    }
+    return entries.map(([key, value]) => {
+      const body = value && typeof value === "object" ? value : {};
+      const ownId = pickField(body, ["id", "model", "model_id", "modelId"]);
+      return { ...body, id: String(ownId || key).trim() };
+    });
+  }
+
+  /**
+   * Pasted opencode fragments: `["id": {...}]` (map in array brackets) or a
+   * bare `"id": {...}` without the outer braces.
+   */
+  function parseLooseKeyedModels(text) {
+    let inner = text;
+    if (inner.startsWith("[") && inner.endsWith("]")) {
+      inner = inner.slice(1, -1).trim();
+    }
+    inner = inner.replace(/,\s*$/, "");
+    if (!inner.startsWith('"')) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(`{${inner}}`);
+      return parsed && typeof parsed === "object" ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function parseModelsJson(raw) {
@@ -1557,7 +1677,10 @@
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new Error(t("invalidJson"));
+      parsed = parseLooseKeyedModels(text);
+      if (parsed === undefined) {
+        throw new Error(t("invalidJson"));
+      }
     }
     const items = extractModelsList(parsed);
     if (!items) {
@@ -1624,6 +1747,9 @@
         }
         if (typeof m.supportsVision === "boolean") {
           row.supportsVision = m.supportsVision;
+        }
+        if (m.requestOptions) {
+          row.options = m.requestOptions;
         }
         return row;
       });
@@ -1852,6 +1978,7 @@
           ...next,
           enabled: prev.enabled !== false,
           favorite: prev.favorite === true,
+          requestOptions: cloneRequestOptions(prev.requestOptions),
         };
       } else {
         settingsModels.push(next);
@@ -1873,6 +2000,8 @@
         ...next,
         enabled: prev.enabled !== false,
         favorite: prev.favorite === true,
+        // Manual form has no field for model JSON `options` — keep them.
+        requestOptions: cloneRequestOptions(prev.requestOptions),
       };
     }
     closeModelEditModal();

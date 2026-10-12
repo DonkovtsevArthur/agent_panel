@@ -117,6 +117,9 @@ export function formatTransportDetail(cfg: McpServerConfig): string {
   if (cfg.command === "harbor-jira") {
     return `built-in · Jira REST API · ${cfg.env?.JIRA_URL || ""}`.trim();
   }
+  if (cfg.command === "harbor-confluence") {
+    return `built-in · Confluence REST API · ${cfg.env?.CONFLUENCE_URL || ""}`.trim();
+  }
   const args = (cfg.args || []).join(" ");
   return `stdio · ${cfg.command || ""}${args ? ` ${args}` : ""}`.trim();
 }

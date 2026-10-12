@@ -496,6 +496,10 @@
       const label = mcpPresetJira.querySelector(".mcp-preset-btn-label");
       if (label) label.textContent = t("mcpPresetJira");
     }
+    if (mcpPresetConfluence) {
+      const label = mcpPresetConfluence.querySelector(".mcp-preset-btn-label");
+      if (label) label.textContent = t("mcpPresetConfluence");
+    }
     if (mcpEditNote) mcpEditNote.textContent = t("mcpEditNote");
     if (settingsFigmaConnectBtn) {
       settingsFigmaConnectBtn.textContent = t("figmaConnect");

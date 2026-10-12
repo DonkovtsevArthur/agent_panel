@@ -28,16 +28,21 @@ import {
   looksLikeCatalogBlockedError,
 } from "./httpClient";
 import {
+  createConfluenceNativeClient,
+  CONFLUENCE_NATIVE_COMMAND,
+} from "./confluenceNative";
+import {
+  ATLASSIAN_PRODUCTS,
+  atlassianProductOf,
   detectJiraTokenSourceEnv,
-  isJiraMcpServer,
   JIRA_TLS_HINT_EN,
-  JIRA_TOKEN_ENV,
-  JIRA_URL_ENV,
   looksLikeTlsError,
   splitSecretEnv,
   writeJiraAgentFiles,
+  type AtlassianProduct,
 } from "./jiraAgentRules";
 import { prepareJiraConnection, type JiraPreflightResult } from "./jiraConnect";
+import { removeMcpServerRules, writeMcpServerRules } from "./mcpAgentRules";
 import { createJiraNativeClient, JIRA_NATIVE_COMMAND } from "./jiraNative";
 import { VsCodeFigmaOAuthProvider } from "./oauthProvider";
 import {
@@ -89,11 +94,13 @@ interface ServerRuntime {
   nextRetryAt: number;
   /** Last successful Jira pre-flight (CA bundle / host pin facts). */
   jira?: JiraPreflightResult;
+  /** File that got this server's `harbor:mcp:<id>` rule block on the last connect. */
+  agentRulesFile?: string;
 }
 
-function jiraCheckFailedNotice(detail: string): string {
+function jiraCheckFailedNotice(detail: string, label = "Jira"): string {
   const base =
-    `Jira MCP started, but the token check failed — Jira rule not written. ${detail}`.slice(
+    `${label} MCP started, but the token check failed — ${label} rule not written. ${detail}`.slice(
       0,
       400
     );
@@ -187,7 +194,8 @@ export class McpManager {
     const migrateNative = !this.context.globalState.get<boolean>(JIRA_NATIVE_MIGRATED_KEY);
     for (const original of this.customConfigs) {
       let cfg = original;
-      if (!isJiraMcpServer(cfg)) {
+      const product = atlassianProductOf(cfg);
+      if (!product) {
         next.push(cfg);
         continue;
       }
@@ -195,6 +203,7 @@ export class McpManager {
       // switches back under "Advanced" keeps mcp-atlassian).
       if (
         migrateNative &&
+        product === "jira" &&
         /(^|[\\/])uvx(\.exe)?$/i.test(cfg.command || "") &&
         (cfg.args || []).join(" ").trim() === "mcp-atlassian"
       ) {
@@ -211,7 +220,7 @@ export class McpManager {
       } else {
         next.push(cfg);
       }
-      if (secretEnv[JIRA_TOKEN_ENV]) {
+      if (secretEnv[ATLASSIAN_PRODUCTS[product].tokenEnv]) {
         tokenIds.add(cfg.id);
       }
     }
@@ -290,7 +299,7 @@ export class McpManager {
         url: cfg.url,
         transport: cfg.transport,
         detail: formatTransportDetail(cfg),
-        ...(isJiraMcpServer(cfg)
+        ...(atlassianProductOf(cfg)
           ? { hasSecretToken: this.jiraTokenIds.has(cfg.id) }
           : {}),
       };
@@ -803,16 +812,18 @@ export class McpManager {
       id = slugifyMcpServerId(`${name}-${Date.now().toString(36)}`);
     }
     const existing = this.customConfigs.find((c) => c.id === id);
-    const isJira = isJiraMcpServer(options);
+    const product = atlassianProductOf(options);
+    const isJira = Boolean(product);
     let env = options.env;
     let secretEnv = options.secretEnv;
-    if (isJira) {
-      // Jira PAT goes to SecretStorage, never into settings / AGENTS.md.
+    if (product) {
+      // Jira / Confluence PAT goes to SecretStorage, never into settings / AGENTS.md.
+      const tokenEnv = ATLASSIAN_PRODUCTS[product].tokenEnv;
       const split = splitSecretEnv(options.env);
       env = split.env;
       const jiraToken = String(options.jiraToken || "").trim();
       if (jiraToken) {
-        split.secretEnv[JIRA_TOKEN_ENV] = jiraToken;
+        split.secretEnv[tokenEnv] = jiraToken;
       }
       if (Object.keys(split.secretEnv).length) {
         secretEnv = {
@@ -821,7 +832,7 @@ export class McpManager {
           ...split.secretEnv,
         };
       }
-      if (secretEnv?.[JIRA_TOKEN_ENV]) {
+      if (secretEnv?.[tokenEnv]) {
         this.jiraTokenIds.add(id);
       }
     }
@@ -887,13 +898,70 @@ export class McpManager {
     }
     const status =
       this.customRuntimes.get(id)?.status || this.makeDisconnectedStatus(cfg);
-    if (isJira && status.state === "connected") {
-      return { ...status, notice: await this.writeJiraAgentRules(id, cfg) };
+    if (product && status.state === "connected") {
+      return { ...status, notice: await this.writeJiraAgentRules(id, cfg, product) };
     }
     if (isJira && looksLikeTlsError(status.message || "")) {
       return { ...status, notice: JIRA_TLS_HINT_EN };
     }
+    const rulesFile = this.customRuntimes.get(id)?.agentRulesFile;
+    if (status.state === "connected" && rulesFile) {
+      return { ...status, notice: `MCP rule written: ${rulesFile}.` };
+    }
     return status;
+  }
+
+  private agentRulesEnabled(): boolean {
+    return (
+      vscode.workspace
+        .getConfiguration("agentPanel")
+        .get<boolean>("mcp.agentRules.enabled") !== false
+    );
+  }
+
+  /**
+   * Record what a connected custom server is for in the workspace AGENTS.md
+   * (`harbor:mcp:<id>` block). Jira / Confluence have their own verified
+   * block (writeJiraAgentRules). Idempotent: unchanged content is not rewritten.
+   */
+  private writeServerAgentRules(
+    cfg: McpServerConfig,
+    rt: ServerRuntime,
+    tools: { name: string; description?: string }[],
+    instructions: string | undefined
+  ): void {
+    rt.agentRulesFile = undefined;
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root || atlassianProductOf(cfg) || !this.agentRulesEnabled()) {
+      return;
+    }
+    try {
+      const result = writeMcpServerRules(root, {
+        id: cfg.id,
+        name: cfg.name,
+        transport: cfg.transport,
+        command: cfg.command,
+        args: cfg.args,
+        url: cfg.url,
+        instructions,
+        tools,
+      });
+      rt.agentRulesFile = result.file;
+    } catch {
+      // Read-only workspace / permissions — the server still works without the rule.
+    }
+  }
+
+  private removeServerAgentRules(id: string): void {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root || !this.agentRulesEnabled()) {
+      return;
+    }
+    try {
+      removeMcpServerRules(root, id);
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -903,59 +971,62 @@ export class McpManager {
    */
   private async writeJiraAgentRules(
     id: string,
-    cfg: McpServerConfig
+    cfg: McpServerConfig,
+    product: AtlassianProduct = "jira"
   ): Promise<string> {
+    const spec = ATLASSIAN_PRODUCTS[product];
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const url = String(cfg.env?.[JIRA_URL_ENV] || "").trim();
+    const url = String(cfg.env?.[spec.urlEnv] || "").trim();
     if (!root || !url) {
-      return "Jira connected; AGENTS.md rule not written (no workspace folder or JIRA_URL).";
+      return `${spec.label} connected; AGENTS.md rule not written (no workspace folder or ${spec.urlEnv}).`;
     }
+    const native = cfg.command === spec.nativeCommand;
     const rt = this.customRuntimes.get(id);
+    const searchTool = product === "confluence" ? "confluence_search" : "jira_search";
+    const searchArgs =
+      product === "confluence"
+        ? native
+          ? { cql: "type = page ORDER BY lastmodified DESC", limit: 1 }
+          : { query: "type = page", limit: 1 }
+        : { jql: "ORDER BY created DESC", fields: "summary", limit: 1 };
     const hasSearch = rt?.tools.some(
-      (t) => t.function.name === qualifyMcpToolName(id, "jira_search")
+      (t) => t.function.name === qualifyMcpToolName(id, searchTool)
     );
     let verifiedHow = "MCP tools listed";
     if (rt?.client && hasSearch) {
       try {
         const res = await withTimeout(
-          rt.client.callTool({
-            name: "jira_search",
-            arguments: {
-              jql: "ORDER BY created DESC",
-              fields: "summary",
-              limit: 1,
-            },
-          }),
+          rt.client.callTool({ name: searchTool, arguments: searchArgs }),
           CUSTOM_LIST_TOOLS_TIMEOUT_MS,
-          "Checking Jira access"
+          `Checking ${spec.label} access`
         );
         if (res.isError) {
-          return jiraCheckFailedNotice(splitMcpToolResult(res).text);
+          return jiraCheckFailedNotice(splitMcpToolResult(res).text, spec.label);
         }
-        verifiedHow =
-          cfg.command === JIRA_NATIVE_COMMAND
-            ? "jira_search via Harbor built-in Jira"
-            : "jira_search via mcp-atlassian";
+        verifiedHow = native
+          ? `${searchTool} via Harbor built-in ${spec.label}`
+          : `${searchTool} via mcp-atlassian`;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return jiraCheckFailedNotice(message);
+        return jiraCheckFailedNotice(message, spec.label);
       }
     }
     const secretEnv = await getServerSecretEnv(this.context.secrets, id);
     const result = writeJiraAgentFiles(root, {
+      product,
       url,
-      // Other agent tools have no built-in Jira — give them mcp-atlassian.
-      command: cfg.command === JIRA_NATIVE_COMMAND ? "uvx" : cfg.command || "uvx",
-      args: cfg.command === JIRA_NATIVE_COMMAND ? ["mcp-atlassian"] : cfg.args || [],
+      // Other agent tools have no built-in Jira / Confluence — give them mcp-atlassian.
+      command: native ? "uvx" : cfg.command || "uvx",
+      args: native ? ["mcp-atlassian"] : cfg.args || [],
       env: cfg.env || {},
       secretKeys: Object.keys(secretEnv),
-      tokenSourceEnv: detectJiraTokenSourceEnv(process.env),
+      tokenSourceEnv: detectJiraTokenSourceEnv(process.env, product),
       corporateCa: Boolean(rt?.jira?.corporateCa),
       hostOverride: rt?.jira?.hostOverride,
       verifiedAt: new Date().toISOString().slice(0, 10),
       verifiedHow,
     });
-    const parts = [`Jira rule written: ${result.written.join(", ") || "—"}.`];
+    const parts = [`${spec.label} rule written: ${result.written.join(", ") || "—"}.`];
     if (result.skipped.length) {
       parts.push(
         `Skipped: ${result.skipped.map((s) => `${s.file} (${s.reason})`).join(", ")}.`
@@ -971,6 +1042,7 @@ export class McpManager {
     }
     await this.closeCustomClient(id);
     this.customRuntimes.delete(id);
+    this.removeServerAgentRules(id);
     this.customConfigs = this.customConfigs.filter((c) => c.id !== id);
     await writeMcpServerConfigs(this.customConfigs);
     await deleteServerSecrets(this.context.secrets, id);
@@ -997,6 +1069,7 @@ export class McpManager {
     }
     if (!enabled) {
       await this.closeCustomClient(id);
+      this.removeServerAgentRules(id);
       if (rt) {
         rt.status.state = "disconnected";
         rt.status.message = "Disabled";
@@ -1074,22 +1147,25 @@ export class McpManager {
       const bearerToken = await getServerBearerToken(this.context.secrets, id);
       const secretEnv = await getServerSecretEnv(this.context.secrets, id);
       let connectConfig = cfg;
-      const isJira = isJiraMcpServer(cfg);
-      const isJiraNative = isJira && cfg.command === JIRA_NATIVE_COMMAND;
-      if (isJira) {
+      const product = atlassianProductOf(cfg);
+      const spec = product ? ATLASSIAN_PRODUCTS[product] : undefined;
+      const isJira = Boolean(spec);
+      const isJiraNative = Boolean(spec && cfg.command === spec.nativeCommand);
+      if (spec) {
         // URL + token is all the user gives: resolve uvx, corporate CA and
         // VPN-only DNS here, as runtime env (never persisted).
-        rt.status = { ...rt.status, message: "Checking Jira access…" };
+        rt.status = { ...rt.status, message: `Checking ${spec.label} access…` };
         this.notifyList();
         const prep = await prepareJiraConnection({
-          url: String(cfg.env?.[JIRA_URL_ENV] || ""),
-          token: String(secretEnv[JIRA_TOKEN_ENV] || ""),
+          url: String(cfg.env?.[spec.urlEnv] || ""),
+          token: String(secretEnv[spec.tokenEnv] || ""),
           command: cfg.command || "uvx",
           userEnv: cfg.env,
           launcher: !isJiraNative,
+          product: spec.id,
         });
         if (!prep.ok) {
-          throw new Error(prep.error || "Jira check failed");
+          throw new Error(prep.error || `${spec.label} check failed`);
         }
         rt.jira = prep;
         connectConfig = {
@@ -1098,14 +1174,20 @@ export class McpManager {
           env: { ...(cfg.env || {}), ...prep.env },
         };
       }
-      client = isJiraNative
+      const nativeConn =
+        spec && isJiraNative
+          ? {
+              baseUrl: String(cfg.env?.[spec.urlEnv] || ""),
+              token: String(secretEnv[spec.tokenEnv] || ""),
+              ca: rt.jira?.ca || [],
+              pinIp: rt.jira?.pinIp,
+            }
+          : undefined;
+      client = nativeConn
         ? // Built-in REST tools: no child process, no Python / uv.
-          (createJiraNativeClient({
-            baseUrl: String(cfg.env?.[JIRA_URL_ENV] || ""),
-            token: String(secretEnv[JIRA_TOKEN_ENV] || ""),
-            ca: rt.jira?.ca || [],
-            pinIp: rt.jira?.pinIp,
-          }) as unknown as Client)
+          ((cfg.command === CONFLUENCE_NATIVE_COMMAND
+            ? createConfluenceNativeClient(nativeConn)
+            : createJiraNativeClient(nativeConn)) as unknown as Client)
         : await withTimeout(
             connectCustomMcpServer({
               config: connectConfig,
@@ -1135,6 +1217,15 @@ export class McpManager {
       rt.tools = tools;
       rt.failureCount = 0;
       rt.nextRetryAt = 0;
+      this.writeServerAgentRules(
+        cfg,
+        rt,
+        (listed.tools || []).map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+        })),
+        nativeConn ? undefined : client.getInstructions?.()
+      );
       rt.status = {
         id,
         name: cfg.name,

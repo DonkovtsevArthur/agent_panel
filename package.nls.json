@@ -54,7 +54,6 @@
   "config.autoCompact.enabled.description": "Automatically compress conversation context when it approaches the model input limit.",
   "config.promptSuggestions.enabled.description": "After each answer, suggest the likely next message as ghost text in the empty composer (Tab accepts). Uses the model selected in the chat.",
   "config.sessions.idleEvictMinutes.description": "Minutes an agent session may stay idle before it is stopped in the background; the next message in that chat starts a fresh session from saved history. Higher values keep sessions warm (faster first token) at the cost of memory.",
-  "config.sessions.inactivityTimeoutMinutes.description": "Minutes to wait for agent activity before auto-aborting the turn. Counts only silent gaps while waiting on the model — the timer pauses while tools are running (shell, MCP, sub-agents). Prevents indefinite hangs when a provider stalls. Set higher for slow providers.",
   "config.promptCache.enabled.description": "Send Anthropic-style prompt-cache markers (cache_control) on chat requests to OpenAI-compatible providers. Enable only when your endpoint accepts them (LiteLLM/OpenRouter proxying Claude or Qwen, Anthropic-compatible endpoints): cached prompt prefixes become several times cheaper and replies start faster. Strict OpenAI endpoints may reject the marker with a 400 error — keep it off there.",
   "config.tools.autoApprove.description": "Run agent tools without asking. Off — confirm each tool (edit, terminal, MCP) before it runs.",
   "config.db.schemaGlobs.description": "Workspace globs scanned by the @db mention to build the DB schema context (Prisma schema, SQL migrations, changelogs). Empty = built-in defaults.",
@@ -89,5 +88,6 @@
   "config.commitMessage.language.enum.ru": "Russian",
   "config.figma.hostAutoStart.description": "Start the local Harbor Figma host (127.0.0.1:17891) in the background when VS Code starts. Needed only for the Harbor Figma plugin.",
   "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
+  "config.mcp.agentRules.enabled.description": "When a custom MCP server connects, write a block to the workspace AGENTS.md describing what the server is for and how to call its tools (removed when the server is deleted or disabled).",
   "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers."
 }

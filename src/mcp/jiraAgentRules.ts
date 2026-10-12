@@ -1,6 +1,7 @@
 /**
- * Jira (mcp-atlassian) integration helpers: keep the PAT out of settings and,
- * after a verified connection, write a portable "how to reach Jira" rule into
+ * Jira / Confluence (mcp-atlassian) integration helpers: keep the PAT out of
+ * settings and, after a verified connection, write a portable "how to reach
+ * Jira / Confluence" rule into
  * the workspace AGENTS.md plus ready MCP configs for other agent tools
  * (.mcp.json, .cursor/mcp.json, .vscode/mcp.json). Secrets never reach disk —
  * configs reference the token through env vars / VS Code input prompts.
@@ -14,10 +15,64 @@ import * as path from "path";
 export const JIRA_TOKEN_ENV = "JIRA_PERSONAL_TOKEN";
 export const JIRA_URL_ENV = "JIRA_URL";
 export const JIRA_MCP_SERVER_KEY = "jira";
+export const CONFLUENCE_TOKEN_ENV = "CONFLUENCE_PERSONAL_TOKEN";
+export const CONFLUENCE_URL_ENV = "CONFLUENCE_URL";
 
-const SECTION_START = "<!-- harbor:jira:start -->";
-const SECTION_END = "<!-- harbor:jira:end -->";
-const VSCODE_TOKEN_INPUT_ID = "jira-personal-token";
+export type AtlassianProduct = "jira" | "confluence";
+
+/** Per-product names: env vars, rule block markers, MCP config key, examples. */
+export interface AtlassianProductSpec {
+  id: AtlassianProduct;
+  label: string;
+  urlEnv: string;
+  tokenEnv: string;
+  /** Alternative shell var teams use for the PAT. */
+  altTokenEnv: string;
+  sslVerifyEnv: string;
+  /** Pseudo-command of the built-in REST client. */
+  nativeCommand: string;
+  serverKey: string;
+  apiLabel: string;
+  curlExample: (url: string) => string;
+  searchExample: (url: string) => string;
+}
+
+export const ATLASSIAN_PRODUCTS: Record<AtlassianProduct, AtlassianProductSpec> = {
+  jira: {
+    id: "jira",
+    label: "Jira",
+    urlEnv: JIRA_URL_ENV,
+    tokenEnv: JIRA_TOKEN_ENV,
+    altTokenEnv: "JIRA_API_TOKEN",
+    sslVerifyEnv: "JIRA_SSL_VERIFY",
+    nativeCommand: "harbor-jira",
+    serverKey: JIRA_MCP_SERVER_KEY,
+    apiLabel: "Jira Server / Data Center, REST API v2",
+    curlExample: (url) => `${url}/rest/api/2/issue/<KEY>`,
+    searchExample: (url) => `${url}/rest/api/2/search?jql=...`,
+  },
+  confluence: {
+    id: "confluence",
+    label: "Confluence",
+    urlEnv: CONFLUENCE_URL_ENV,
+    tokenEnv: CONFLUENCE_TOKEN_ENV,
+    altTokenEnv: "CONFLUENCE_API_TOKEN",
+    sslVerifyEnv: "CONFLUENCE_SSL_VERIFY",
+    nativeCommand: "harbor-confluence",
+    serverKey: "confluence",
+    apiLabel: "Confluence Server / Data Center, REST API",
+    curlExample: (url) => `${url}/rest/api/content/<PAGE_ID>?expand=body.storage`,
+    searchExample: (url) => `${url}/rest/api/content/search?cql=...`,
+  },
+};
+
+function specOf(info: { product?: AtlassianProduct }): AtlassianProductSpec {
+  return ATLASSIAN_PRODUCTS[info.product || "jira"];
+}
+
+function sectionMarkers(product: AtlassianProduct = "jira"): [string, string] {
+  return [`<!-- harbor:${product}:start -->`, `<!-- harbor:${product}:end -->`];
+}
 
 /**
  * Env keys that are safe to keep in settings and to write into AGENTS.md /
@@ -27,6 +82,9 @@ const VSCODE_TOKEN_INPUT_ID = "jira-personal-token";
 const JIRA_PUBLIC_ENV_KEYS = new Set([
   JIRA_URL_ENV,
   "JIRA_SSL_VERIFY",
+  CONFLUENCE_URL_ENV,
+  "CONFLUENCE_SSL_VERIFY",
+  "CONFLUENCE_SPACES_FILTER",
   "REQUESTS_CA_BUNDLE",
   "SSL_CERT_FILE",
   "HTTP_PROXY",
@@ -39,28 +97,49 @@ const JIRA_PUBLIC_ENV_KEYS = new Set([
   "MCP_VERY_VERBOSE",
 ]);
 
-/** Token keys mcp-atlassian understands; only these go into shared configs. */
-const JIRA_TOKEN_ENV_KEYS = [JIRA_TOKEN_ENV, "JIRA_API_TOKEN"];
 
 export function isSecretEnvKey(key: string): boolean {
   return !JIRA_PUBLIC_ENV_KEYS.has(key.toUpperCase());
 }
 
-/** True for stdio servers that run mcp-atlassian or carry JIRA_URL. */
-export function isJiraMcpServer(options: {
+interface ServerShape {
   transport?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-}): boolean {
+}
+
+/**
+ * Which Atlassian product a stdio server talks to: the built-in
+ * `harbor-jira` / `harbor-confluence`, or mcp-atlassian / *_URL env
+ * (mcp-atlassian with only CONFLUENCE_URL → Confluence).
+ */
+export function atlassianProductOf(options: ServerShape): AtlassianProduct | undefined {
   if (options.transport === "http") {
-    return false;
+    return undefined;
   }
-  const parts = [options.command || "", ...(options.args || [])];
-  if (parts.some((p) => /mcp-atlassian|^harbor-jira$/i.test(p))) {
-    return true;
+  const command = String(options.command || "");
+  if (/^harbor-confluence$/i.test(command)) {
+    return "confluence";
   }
-  return Boolean(options.env && JIRA_URL_ENV in options.env);
+  if (/^harbor-jira$/i.test(command)) {
+    return "jira";
+  }
+  const env = options.env || {};
+  const parts = [command, ...(options.args || [])];
+  const atlassian = parts.some((p) => /mcp-atlassian/i.test(p));
+  if (CONFLUENCE_URL_ENV in env && !(JIRA_URL_ENV in env)) {
+    return "confluence";
+  }
+  if (atlassian || JIRA_URL_ENV in env) {
+    return "jira";
+  }
+  return undefined;
+}
+
+/** True for stdio servers that run mcp-atlassian or carry JIRA_URL. */
+export function isJiraMcpServer(options: ServerShape): boolean {
+  return atlassianProductOf(options) === "jira";
 }
 
 /** Split env into plain (settings) and secret (SecretStorage) parts. */
@@ -83,6 +162,8 @@ export function splitSecretEnv(env: Record<string, string> | undefined): {
 }
 
 export interface JiraAgentRuleInfo {
+  /** Default "jira". */
+  product?: AtlassianProduct;
   url: string;
   command: string;
   args: string[];
@@ -112,19 +193,28 @@ function portableCommand(command: string): string {
 }
 
 function publicEnvEntries(info: JiraAgentRuleInfo): Array<[string, string]> {
+  const spec = specOf(info);
   return Object.entries(info.env).filter(
-    ([k, v]) => k !== JIRA_URL_ENV && !isSecretEnvKey(k) && String(v).trim()
+    ([k, v]) =>
+      k !== spec.urlEnv &&
+      k !== JIRA_URL_ENV &&
+      k !== CONFLUENCE_URL_ENV &&
+      !isSecretEnvKey(k) &&
+      String(v).trim()
   );
 }
 
+/** Token keys mcp-atlassian understands; only these go into shared configs. */
 function secretKeysOf(info: JiraAgentRuleInfo): string[] {
-  const keys = info.secretKeys.filter((k) => JIRA_TOKEN_ENV_KEYS.includes(k));
-  return keys.length ? keys : [JIRA_TOKEN_ENV];
+  const spec = specOf(info);
+  const known = [spec.tokenEnv, spec.altTokenEnv];
+  const keys = info.secretKeys.filter((k) => known.includes(k));
+  return keys.length ? keys : [spec.tokenEnv];
 }
 
 /** Shell env var a secret key is read from on other machines. */
 function sourceEnvOf(info: JiraAgentRuleInfo, key: string): string {
-  return key === JIRA_TOKEN_ENV && info.tokenSourceEnv
+  return key === specOf(info).tokenEnv && info.tokenSourceEnv
     ? info.tokenSourceEnv
     : key;
 }
@@ -141,22 +231,24 @@ function curlTlsFlag(info: JiraAgentRuleInfo): string {
   if (info.corporateCa) {
     return ` --cacert ~/${HARBOR_CA_BUNDLE_REL}`;
   }
-  return /^(false|0|no)$/i.test(String(info.env.JIRA_SSL_VERIFY || "").trim())
+  return /^(false|0|no)$/i.test(String(info.env[specOf(info).sslVerifyEnv] || "").trim())
     ? " -k"
     : "";
 }
 
 /** Pick the env var that holds the PAT in the user's shell, if any. */
 export function detectJiraTokenSourceEnv(
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  product: AtlassianProduct = "jira"
 ): string {
-  if (env[JIRA_TOKEN_ENV]) {
-    return JIRA_TOKEN_ENV;
+  const spec = ATLASSIAN_PRODUCTS[product];
+  if (env[spec.tokenEnv]) {
+    return spec.tokenEnv;
   }
-  if (env.JIRA_API_TOKEN) {
-    return "JIRA_API_TOKEN";
+  if (env[spec.altTokenEnv]) {
+    return spec.altTokenEnv;
   }
-  return JIRA_TOKEN_ENV;
+  return spec.tokenEnv;
 }
 
 /** True when an MCP / Jira error text points at TLS certificate trouble. */
@@ -170,28 +262,30 @@ export const JIRA_TLS_HINT_EN =
   "Looks like a TLS certificate error (corporate CA). Add REQUESTS_CA_BUNDLE=/path/to/corp-ca.pem to the server env (or, as a last resort, JIRA_SSL_VERIFY=false) and reconnect.";
 
 export function buildJiraAgentsSection(info: JiraAgentRuleInfo): string {
+  const spec = specOf(info);
+  const [sectionStart, sectionEnd] = sectionMarkers(spec.id);
   const url = info.url.replace(/\/+$/, "");
   const command = [portableCommand(info.command), ...info.args].join(" ");
   const secretKeys = secretKeysOf(info);
   const tokenVar = sourceEnvOf(info, secretKeys[0]);
   const tls = curlTlsFlag(info);
   const envParts = [
-    `\`${JIRA_URL_ENV}=${url}\``,
+    `\`${spec.urlEnv}=${url}\``,
     ...secretKeys.map((k) => `\`${k}=$${sourceEnvOf(info, k)}\``),
     ...publicEnvEntries(info).map(([k, v]) => `\`${k}=${v}\``),
   ];
   const lines = [
-    SECTION_START,
-    "## Jira — connection (MCP)",
+    sectionStart,
+    `## ${spec.label} — connection (MCP)`,
     "",
-    "_Auto-generated by Harbor Agents after a verified connection. Re-connecting Jira in Harbor rewrites this block._",
+    `_Auto-generated by Harbor Agents after a verified connection. Re-connecting ${spec.label} in Harbor rewrites this block._`,
     "",
-    `- Instance: ${url} (Jira Server / Data Center, REST API v2).`,
+    `- Instance: ${url} (${spec.apiLabel}).`,
     `- Auth: Personal Access Token as HTTP header \`Authorization: Bearer <token>\`. The token is never stored in the repo — read it from the env var \`${tokenVar}\`; never print, log or commit it.`,
     `- MCP server: \`${command}\` with env ${envParts.join(", ")}.`,
-    "- Harbor Agents itself uses its built-in Jira tools (REST API from the IDE, no Python / uv); other tools use the MCP server above.",
+    `- Harbor Agents itself uses its built-in ${spec.label} tools (REST API from the IDE, no Python / uv); other tools use the MCP server above.`,
     "- Ready MCP configs in this repo: `.mcp.json` (Claude Code), `.cursor/mcp.json`, `.vscode/mcp.json` (VS Code / Copilot). They take the token from the environment / an input prompt.",
-    `- Without MCP: \`curl -s${tls} -H "Authorization: Bearer $${tokenVar}" "${url}/rest/api/2/issue/<KEY>"\`, search via \`${url}/rest/api/2/search?jql=...\`. Bearer only — Basic auth is not used.`,
+    `- Without MCP: \`curl -s${tls} -H "Authorization: Bearer $${tokenVar}" "${spec.curlExample(url)}"\`, search via \`${spec.searchExample(url)}\`. Bearer only — Basic auth is not used.`,
     ...(tls
       ? [
           `- TLS: the server uses a corporate CA. Python / Node clients do not read the OS keychain — point \`REQUESTS_CA_BUNDLE\` and \`SSL_CERT_FILE\` (Node: \`NODE_EXTRA_CA_CERTS\`) at a PEM bundle with the corporate root; Harbor exports one to \`~/${HARBOR_CA_BUNDLE_REL}\`.`,
@@ -199,24 +293,29 @@ export function buildJiraAgentsSection(info: JiraAgentRuleInfo): string {
       : []),
     ...(info.hostOverride
       ? [
-          `- Network: Jira is reachable only via VPN. Public DNS returns an external proxy with an expired certificate; the right address comes from the VPN DNS (${info.hostOverride.ip} at verification time). If a client fails with "certificate has expired", the VPN DNS is bypassed — on macOS add \`/etc/resolver/${info.hostOverride.host.split(".").slice(-2).join(".")}\` with the VPN nameservers.`,
+          `- Network: ${spec.label} is reachable only via VPN. Public DNS returns an external proxy with an expired certificate; the right address comes from the VPN DNS (${info.hostOverride.ip} at verification time). If a client fails with "certificate has expired", the VPN DNS is bypassed — on macOS add \`/etc/resolver/${info.hostOverride.host.split(".").slice(-2).join(".")}\` with the VPN nameservers.`,
         ]
       : []),
     `- Verified: ${info.verifiedAt} (${info.verifiedHow}).`,
-    SECTION_END,
+    sectionEnd,
   ];
   return lines.join("\n");
 }
 
-/** Replace the Harbor Jira block, or append it to the end. */
-export function upsertJiraSection(content: string, section: string): string {
-  const start = content.indexOf(SECTION_START);
-  const end = content.indexOf(SECTION_END);
+/** Replace the Harbor Jira / Confluence block, or append it to the end. */
+export function upsertJiraSection(
+  content: string,
+  section: string,
+  product: AtlassianProduct = "jira"
+): string {
+  const [sectionStart, sectionEnd] = sectionMarkers(product);
+  const start = content.indexOf(sectionStart);
+  const end = content.indexOf(sectionEnd);
   if (start >= 0 && end > start) {
     return (
       content.slice(0, start) +
       section +
-      content.slice(end + SECTION_END.length)
+      content.slice(end + sectionEnd.length)
     );
   }
   if (!content.trim()) {
@@ -232,7 +331,7 @@ function serverEnv(
   homeRef?: string
 ): Record<string, string> {
   const env: Record<string, string> = {
-    [JIRA_URL_ENV]: info.url.replace(/\/+$/, ""),
+    [specOf(info).urlEnv]: info.url.replace(/\/+$/, ""),
   };
   if (info.corporateCa && homeRef && !info.env.REQUESTS_CA_BUNDLE) {
     env.REQUESTS_CA_BUNDLE = `${homeRef}/${HARBOR_CA_BUNDLE_REL}`;
@@ -261,7 +360,7 @@ export function mergeClaudeMcpJson(existing: JsonObject, info: JiraAgentRuleInfo
     ...existing,
     mcpServers: {
       ...asObject(existing.mcpServers),
-      [JIRA_MCP_SERVER_KEY]: {
+      [specOf(info).serverKey]: {
         command: portableCommand(info.command),
         args: info.args,
         env: serverEnv(info, (k) => `\${${k}}`, "${HOME}"),
@@ -276,7 +375,7 @@ export function mergeCursorMcpJson(existing: JsonObject, info: JiraAgentRuleInfo
     ...existing,
     mcpServers: {
       ...asObject(existing.mcpServers),
-      [JIRA_MCP_SERVER_KEY]: {
+      [specOf(info).serverKey]: {
         command: portableCommand(info.command),
         args: info.args,
         env: serverEnv(info, (k) => `\${env:${k}}`, "${userHome}"),
@@ -287,11 +386,12 @@ export function mergeCursorMcpJson(existing: JsonObject, info: JiraAgentRuleInfo
 
 /** VS Code `.vscode/mcp.json` — token via a password input prompt. */
 export function mergeVscodeMcpJson(existing: JsonObject, info: JiraAgentRuleInfo): JsonObject {
+  const spec = specOf(info);
   const secretKeys = secretKeysOf(info);
   const inputId = (key: string) =>
-    key === JIRA_TOKEN_ENV
-      ? VSCODE_TOKEN_INPUT_ID
-      : `jira-${key.toLowerCase().replace(/_/g, "-")}`;
+    key === spec.tokenEnv
+      ? `${spec.id}-personal-token`
+      : `${spec.id}-${key.toLowerCase().replace(/_/g, "-")}`;
   const prevInputs = Array.isArray(existing.inputs) ? existing.inputs : [];
   const ourIds = new Set(secretKeys.map(inputId));
   const inputs = [
@@ -299,7 +399,7 @@ export function mergeVscodeMcpJson(existing: JsonObject, info: JiraAgentRuleInfo
     ...secretKeys.map((key) => ({
       type: "promptString",
       id: inputId(key),
-      description: `Jira ${key}`,
+      description: `${spec.label} ${key}`,
       password: true,
     })),
   ];
@@ -308,7 +408,7 @@ export function mergeVscodeMcpJson(existing: JsonObject, info: JiraAgentRuleInfo
     inputs,
     servers: {
       ...asObject(existing.servers),
-      [JIRA_MCP_SERVER_KEY]: {
+      [spec.serverKey]: {
         type: "stdio",
         command: portableCommand(info.command),
         args: info.args,
@@ -360,10 +460,14 @@ function mergeJsonFile(
  */
 export function resolveJiraRuleTarget(
   workspaceRoot: string,
-  agentsContent: string
+  agentsContent: string,
+  product: AtlassianProduct = "jira"
 ): string {
   const root = path.resolve(workspaceRoot);
-  const linkRe = /\]\(\s*(?:\.\/)?([^)\s#]*jira[^)\s#]*\.md)\s*\)/gi;
+  const linkRe = new RegExp(
+    `\\]\\(\\s*(?:\\.\\/)?([^)\\s#]*${product}[^)\\s#]*\\.md)\\s*\\)`,
+    "gi"
+  );
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(agentsContent))) {
     const abs = path.resolve(root, m[1].replace(/^\/+/, ""));
@@ -386,11 +490,11 @@ export function writeJiraAgentFiles(
     const agentsContent = fs.existsSync(agentsPath)
       ? fs.readFileSync(agentsPath, "utf8")
       : "";
-    ruleRel = resolveJiraRuleTarget(workspaceRoot, agentsContent);
+    ruleRel = resolveJiraRuleTarget(workspaceRoot, agentsContent, specOf(info).id);
     const rulePath = path.join(workspaceRoot, ruleRel);
     const current =
       ruleRel === "AGENTS.md" ? agentsContent : fs.readFileSync(rulePath, "utf8");
-    const next = upsertJiraSection(current, buildJiraAgentsSection(info));
+    const next = upsertJiraSection(current, buildJiraAgentsSection(info), specOf(info).id);
     if (next !== current) {
       fs.writeFileSync(rulePath, next, "utf8");
     }

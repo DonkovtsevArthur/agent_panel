@@ -17,6 +17,7 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  normalizeModelRequestOptions,
   clampUiFontSize,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
@@ -176,6 +177,7 @@ type SettingsPayload = {
     supportsReasoningEffort?: boolean;
     reasoningEffort?: string;
     reasoningEffortDefault?: string;
+    requestOptions?: Record<string, unknown>;
   }>;
   language: string;
   fontSize?: number;
@@ -5834,6 +5836,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           favorite?: boolean;
           supportsVision?: boolean;
           reasoningEffort?: string;
+          requestOptions?: Record<string, unknown>;
         } = {
           id,
           providerId,
@@ -5862,6 +5865,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (reasoningEffort) {
           row.reasoningEffort = reasoningEffort;
         }
+        const requestOptions = normalizeModelRequestOptions(m?.requestOptions);
+        if (requestOptions) {
+          row.requestOptions = requestOptions;
+        }
         return row;
       })
       .filter(
@@ -5877,6 +5884,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           favorite?: boolean;
           supportsVision?: boolean;
           reasoningEffort?: string;
+          requestOptions?: Record<string, unknown>;
         } => Boolean(m)
       );
 
@@ -6641,6 +6649,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               <button type="button" class="text-btn mcp-preset-btn" data-preset="jira" id="mcpPresetJira">
                 <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
                 <span class="mcp-preset-btn-label">Jira</span>
+              </button>
+              <button type="button" class="text-btn mcp-preset-btn" data-preset="confluence" id="mcpPresetConfluence">
+                <span class="material-symbols-outlined" aria-hidden="true">menu_book</span>
+                <span class="mcp-preset-btn-label">Confluence</span>
               </button>
             </div>
             <p class="mcp-presets-note" id="mcpPresetsNote" hidden></p>

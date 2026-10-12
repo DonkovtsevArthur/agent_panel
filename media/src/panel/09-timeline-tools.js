@@ -1837,74 +1837,6 @@
     return el;
   }
 
-  /**
-   * Vision-helper inventory: a visible card outside the collapsed tool group.
-   * The model prompt block is hidden from the user — without this card
-   * answers like «описание выше» point at nothing.
-   */
-  function upsertVisionDescriptionCard(step) {
-    let raw = String(step.text || "").trim();
-    // Tool outputs wrap the inventory in the Harbor helper header — keep
-    // only the "## What is in the image" body for the visible card.
-    const bodyIx = raw.indexOf("## What is in the image");
-    if (bodyIx >= 0) {
-      raw = raw.slice(bodyIx + "## What is in the image".length).trim();
-    }
-    const turnScope =
-      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
-        ? currentChatTurnEl
-        : messagesEl;
-    const stepId = String(step.stepId || "") + ":desc";
-    const stepSel = `.agent-step[data-step-id="${stepId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
-    let el = turnScope.querySelector(stepSel);
-    if (!raw) {
-      if (el) {
-        el.remove();
-      }
-      return null;
-    }
-    if (!el) {
-      el = document.createElement("div");
-      el.className = "msg tool agent-step agent-step-vision-desc";
-      el.dataset.stepId = stepId;
-      el.dataset.stepKind = "tool";
-      const group = turnScope.querySelector(".tool-group.agent-timeline");
-      if (group) {
-        turnScope.insertBefore(el, group);
-      } else {
-        turnScope.appendChild(el);
-      }
-    }
-    el.dataset.status = "done";
-    const prevOpen = el.dataset.visionOpen === "1";
-    el.dataset.visionOpen = prevOpen ? "1" : "0";
-    el.innerHTML =
-      `<div class="vision-desc-head">` +
-      `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">image_search</span>` +
-      `<span class="vision-desc-title"></span>` +
-      `<span class="material-symbols-outlined vision-desc-chevron" aria-hidden="true">${prevOpen ? "expand_less" : "expand_more"}</span>` +
-      `</div>` +
-      `<div class="vision-desc-body" ${prevOpen ? "" : "hidden"}></div>`;
-    const titleEl = el.querySelector(".vision-desc-title");
-    if (titleEl) {
-      titleEl.textContent = t("visionDescTitle");
-    }
-    const bodyEl = el.querySelector(".vision-desc-body");
-    if (bodyEl) {
-      bodyEl.innerHTML = renderInlineMarkdown(raw);
-    }
-    const head = el.querySelector(".vision-desc-head");
-    if (head) {
-      head.onclick = () => {
-        el.dataset.visionOpen = el.dataset.visionOpen === "1" ? "0" : "1";
-        upsertVisionDescriptionCard({ ...step, text: raw });
-      };
-    }
-    keepStatusAtEnd();
-    scrollToBottom();
-    return el;
-  }
-
   function upsertAgentStep(step) {
     if (!step || !step.stepId) {
       return null;
@@ -2164,15 +2096,6 @@
           dur.className = "agent-step-duration";
           dur.textContent = formatRunDuration(toolMs);
           labelEl.appendChild(dur);
-        }
-      }
-      // Vision-helper inventory → visible card above the collapsed timeline.
-      if (step.name === "vision" || step.name === "inspect_images") {
-        const descText =
-          step.text ||
-          String(step.resultPreview || el.dataset.resultPreview || "");
-        if (descText) {
-          upsertVisionDescriptionCard({ ...step, text: descText });
         }
       }
       // Комментарий модели («Нашёл версию, правлю…») остаётся

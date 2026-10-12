@@ -239,33 +239,56 @@
     }
   }
 
-  function isMcpCustomJiraForm() {
+  /** "jira" | "confluence" | "" — Atlassian server edited in the MCP form. */
+  function mcpCustomAtlassianKind() {
     const isHttp = mcpCustomTransport && mcpCustomTransport.value === "http";
     if (isHttp) {
-      return false;
+      return "";
     }
     const cmd = `${mcpCustomCommand ? mcpCustomCommand.value : ""} ${
       mcpCustomArgs ? mcpCustomArgs.value : ""
     }`;
     const env = mcpCustomEnv ? mcpCustomEnv.value : "";
-    return (
-      /mcp-atlassian|harbor-jira/i.test(cmd) || /^\s*JIRA_URL\s*=/m.test(env)
-    );
+    if (/harbor-confluence/i.test(cmd)) {
+      return "confluence";
+    }
+    const hasJiraUrl = /^\s*JIRA_URL\s*=/m.test(env);
+    if (/^\s*CONFLUENCE_URL\s*=/m.test(env) && !hasJiraUrl) {
+      return "confluence";
+    }
+    return /mcp-atlassian|harbor-jira/i.test(cmd) || hasJiraUrl ? "jira" : "";
   }
 
-  /** Jira form: only URL + token; command/env stay under "Advanced". */
+  function isMcpCustomJiraForm() {
+    return Boolean(mcpCustomAtlassianKind());
+  }
+
+  /** i18n key for the current Atlassian product ("mcpJira…" / "mcpConfluence…"). */
+  function atlassianKey(suffix) {
+    return mcpCustomAtlassianKind() === "confluence"
+      ? `mcpConfluence${suffix}`
+      : `mcpJira${suffix}`;
+  }
+
+  function atlassianUrlEnv() {
+    return mcpCustomAtlassianKind() === "confluence" ? "CONFLUENCE_URL" : "JIRA_URL";
+  }
+
+  /** Jira / Confluence form: only URL + token; command/env stay under "Advanced". */
   let mcpJiraAdvancedOpen = false;
 
   function jiraUrlFromEnvText(envText) {
-    const m = /^\s*JIRA_URL\s*=\s*(.*)$/m.exec(String(envText || ""));
+    const key = atlassianUrlEnv();
+    const m = new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`, "m").exec(String(envText || ""));
     return m ? m[1].trim() : "";
   }
 
   function mergeJiraUrlIntoEnvText(envText, url) {
+    const key = atlassianUrlEnv();
     const rest = String(envText || "")
       .split(/\r?\n/)
-      .filter((line) => !/^\s*JIRA_URL\s*=/.test(line));
-    return [`JIRA_URL=${url}`, ...rest].join("\n").replace(/\n+$/, "");
+      .filter((line) => !new RegExp(`^\\s*${key}\\s*=`).test(line));
+    return [`${key}=${url}`, ...rest].join("\n").replace(/\n+$/, "");
   }
 
   function syncMcpCustomTransportFields() {
@@ -288,6 +311,14 @@
       mcpCustomJiraAdvancedBtn.textContent = mcpJiraAdvancedOpen
         ? t("mcpJiraAdvancedHide")
         : t("mcpJiraAdvancedShow");
+    }
+    if (isJira) {
+      if (mcpCustomJiraUrlLabel) {
+        mcpCustomJiraUrlLabel.textContent = t(atlassianKey("UrlLabel"));
+      }
+      if (mcpCustomJiraTokenLabel) {
+        mcpCustomJiraTokenLabel.textContent = t(atlassianKey("TokenLabel"));
+      }
     }
   }
 
@@ -350,16 +381,22 @@
       );
     }
     if (mcpCustomJiraUrlLabel) {
-      mcpCustomJiraUrlLabel.textContent = t("mcpJiraUrlLabel");
+      mcpCustomJiraUrlLabel.textContent = t(atlassianKey("UrlLabel"));
+    }
+    if (mcpCustomJiraUrl) {
+      mcpCustomJiraUrl.placeholder =
+        mcpCustomAtlassianKind() === "confluence"
+          ? "https://confluence.company.ru"
+          : "https://jira.company.ru";
     }
     if (mcpCustomJiraToken) {
       mcpCustomJiraToken.value = "";
       mcpCustomJiraToken.placeholder = existing?.hasSecretToken
         ? t("mcpJiraTokenSaved")
-        : t("mcpJiraTokenEmpty");
+        : t(atlassianKey("TokenEmpty"));
     }
     if (mcpCustomJiraTokenLabel) {
-      mcpCustomJiraTokenLabel.textContent = t("mcpJiraTokenLabel");
+      mcpCustomJiraTokenLabel.textContent = t(atlassianKey("TokenLabel"));
     }
     if (existing) {
       if (mcpCustomTransport) {
@@ -455,6 +492,17 @@
       noteKey: "mcpPresetGithubNote",
       matchIds: ["github"],
     },
+    confluence: {
+      name: "Confluence",
+      transport: "stdio",
+      command: "harbor-confluence",
+      argsText: "",
+      envText: "",
+      url: "",
+      needsBearerToken: false,
+      noteKey: "mcpPresetConfluenceNote",
+      matchIds: ["confluence"],
+    },
     jira: {
       name: "Jira",
       transport: "stdio",
@@ -519,14 +567,14 @@
     if (isJira) {
       const jiraUrl = mcpCustomJiraUrl ? mcpCustomJiraUrl.value.trim() : "";
       if (!jiraUrl) {
-        showCopyToast(t("mcpJiraUrlRequired"));
+        showCopyToast(t(atlassianKey("UrlRequired")));
         return;
       }
       const editingId = mcpCustomEditId ? mcpCustomEditId.value.trim() : "";
       const existing = (mcpServersCache || []).find((s) => s.id === editingId);
       const token = mcpCustomJiraToken ? mcpCustomJiraToken.value.trim() : "";
       if (!token && !existing?.hasSecretToken) {
-        showCopyToast(t("mcpJiraTokenRequired"));
+        showCopyToast(t(atlassianKey("TokenRequired")));
         return;
       }
       if (mcpCustomEnv) {

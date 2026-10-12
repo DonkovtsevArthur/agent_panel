@@ -19,7 +19,6 @@ import javax.swing.SwingUtilities
 object HarborFileDrop {
   private val log = Logger.getInstance(HarborFileDrop::class.java)
   private val gson = Gson()
-  private val imageExt = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
 
   fun install(
     component: JComponent,
@@ -61,13 +60,8 @@ object HarborFileDrop {
             val attachments = mutableListOf<Map<String, Any>>()
             for (file in files) {
               if (!file.isFile) continue
-              val ext = file.extension.lowercase()
-              if (ext !in imageExt && !looksLikeImageName(file.name)) {
-                // Still try encode if mime would be image; otherwise skip non-images
-                // for now (composer “+” is images-first; drop of images is the ask).
-                if (ext !in imageExt) continue
-              }
-              HarborClipboard.encodeFile(file)?.let { attachments.add(it) }
+              // Images inline, any other file as a path reference.
+              HarborClipboard.encodeAnyFile(file)?.let { attachments.add(it) }
               if (attachments.size >= 8) break
             }
             dtde.dropComplete(attachments.isNotEmpty())
@@ -84,11 +78,6 @@ object HarborFileDrop {
         }
       }
     return DropTarget(component, DnDConstants.ACTION_COPY, listener, true)
-  }
-
-  private fun looksLikeImageName(name: String): Boolean {
-    val lower = name.lowercase()
-    return imageExt.any { lower.endsWith(".$it") }
   }
 
   private fun hasFiles(transferable: java.awt.datatransfer.Transferable): Boolean {

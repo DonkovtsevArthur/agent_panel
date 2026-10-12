@@ -98,6 +98,7 @@ import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
 import { needsPlanCard, needsVerifyNudge } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
+import { wrapFetchWithModelRequestOptions } from "./modelRequestOptions";
 import { withTurnImages } from "./turnImageInject";
 import { buildSpecialMentionsPrompt } from "./mentions";
 import { describeChatImagesForMainModel } from "./figmaVisionHelper";
@@ -1971,10 +1972,20 @@ function buildHarborProviderConfig(
   };
 } {
   const promptCacheEnabled = Boolean(options?.promptCache);
-  const fetchImpl = wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
-    model: options?.model || modelInfo?.id,
-    baseUrl: options?.baseUrl,
-  });
+  const sessionModelId = String(options?.model || modelInfo?.id || "");
+  // Settings → model JSON `options` (e.g. chat_template_kwargs) on every
+  // chat/completions body; read per request so edits apply without a restart.
+  const fetchImpl = wrapFetchWithModelRequestOptions(
+    wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
+      model: sessionModelId,
+      baseUrl: options?.baseUrl,
+    }),
+    () =>
+      sessionModelId
+        ? getConfig().models.find((m) => m.id === sessionModelId)
+            ?.requestOptions
+        : undefined
+  );
   return {
     providerId: options?.providerId || "openai-compatible",
     fetch: fetchImpl,
@@ -2380,71 +2391,14 @@ export async function runClineAgentTurn(options: {
     );
   };
 
-  // --- Inactivity watchdog: auto-abort if no events arrive for N minutes ---
-  // Paused while tools are in flight so long shell/install/MCP calls do not
-  // trip the hang detector; the timer only guards silent provider stalls.
-  const inactivityMinutes = (() => {
-    const minutes = getConfig().sessions?.inactivityTimeoutMinutes;
-    return Number.isFinite(minutes) && minutes > 0 ? Math.floor(minutes) : 5;
-  })();
-  const inactivityMs = inactivityMinutes * 60_000;
   let harborAbort: HarborAbortInfo | undefined;
-  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
-  let inactivityPausedForTools = false;
-  let activeToolCount = 0;
   let lastEventType = "turn_start";
   let lastEventTime = Date.now();
-  const clearInactivityTimer = (): void => {
-    if (inactivityTimer) {
-      clearTimeout(inactivityTimer);
-      inactivityTimer = undefined;
-    }
-  };
-  const resetInactivityTimer = (): void => {
-    clearInactivityTimer();
-    if (inactivityPausedForTools) {
-      return;
-    }
-    inactivityTimer = setTimeout(() => {
-      const silentSec = Math.round((Date.now() - lastEventTime) / 1000);
-      const diagMsg = `[inactivity-watchdog] lastEvent=${lastEventType} ${silentSec}s ago, timeout=${inactivityMinutes}min`;
-      console.warn(diagMsg);
-      harborAbort = {
-        code: "inactivity-timeout",
-        detail: lastEventType,
-        inactivityMinutes,
-      };
-      const msg = uiLang === "ru"
-        ? `Нет активности ${inactivityMinutes} мин — ход прерван автоматически. Увеличьте «agentPanel.sessions.inactivityTimeoutMinutes» в Settings, если провайдер медленный.`
-        : `No activity for ${inactivityMinutes} min — turn auto-aborted. Increase «agentPanel.sessions.inactivityTimeoutMinutes» in Settings if your provider is slow.`;
-      setClineStatus(msg);
-      void core
-        .abort(sessionId, `inactivity-timeout:${inactivityMinutes}`)
-        .catch(() => {
-          /* ignore */
-        });
-    }, inactivityMs);
-  };
-  const pauseInactivityForTool = (): void => {
-    activeToolCount += 1;
-    inactivityPausedForTools = true;
-    clearInactivityTimer();
-  };
-  const resumeInactivityAfterTool = (): void => {
-    activeToolCount = Math.max(0, activeToolCount - 1);
-    if (activeToolCount === 0) {
-      inactivityPausedForTools = false;
-      lastEventTime = Date.now();
-      resetInactivityTimer();
-    }
-  };
-  resetInactivityTimer();
   let ttftReported = false;
 
   const handleAgentEvent = (event: ClineAgentEvent) => {
     lastEventType = event.type;
     lastEventTime = Date.now();
-    resetInactivityTimer();
     switch (event.type) {
       case "content_start": {
         // First streamed content of the turn = time-to-first-token.
@@ -2487,9 +2441,6 @@ export async function runClineAgentTurn(options: {
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
           timing.toolStart(toolCallId, name);
-          // Long-running tools (shell, MCP, spawn) emit no agent events until
-          // they finish — pause the hang watchdog for the duration.
-          pauseInactivityForTool();
           // A tool call starting here proves earlier text blocks were
           // intermediate (not the finale) — flush them as `text` cards.
           // Before submit_and_exit keep plan-tagged blocks pending (finale).
@@ -2545,7 +2496,6 @@ export async function runClineAgentTurn(options: {
           break;
         }
         if (event.contentType === "tool") {
-          resumeInactivityAfterTool();
           const name = event.toolName || "tool";
           const toolCallId = event.toolCallId || `tool-${stepSeq}`;
           const durationMs = timing.toolEnd(toolCallId);
@@ -2744,22 +2694,10 @@ export async function runClineAgentTurn(options: {
         break;
       }
       case "done": {
-        // Belt-and-suspenders: if a tool never emitted content_end, unstick
-        // the hang watchdog so a later silent stall can still be caught.
-        if (activeToolCount > 0) {
-          activeToolCount = 0;
-          inactivityPausedForTools = false;
-          resetInactivityTimer();
-        }
         setClineStatus(String(event.reason || "completed"));
         break;
       }
       case "error": {
-        if (activeToolCount > 0) {
-          activeToolCount = 0;
-          inactivityPausedForTools = false;
-          resetInactivityTimer();
-        }
         const err = event.error;
         const message =
           typeof err === "string"
@@ -3248,7 +3186,6 @@ export async function runClineAgentTurn(options: {
     }
 
     unsubscribe();
-    clearInactivityTimer();
     options.signal?.removeEventListener("abort", onAbort);
 
     const finishReason = String(result?.finishReason || "");
@@ -3321,7 +3258,6 @@ export async function runClineAgentTurn(options: {
     );
   } catch (error) {
     unsubscribe();
-    clearInactivityTimer();
     options.signal?.removeEventListener("abort", onAbort);
     if (options.signal?.aborted || harborAbort) {
       setClineStatus("aborted");

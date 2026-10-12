@@ -1,16 +1,12 @@
 /**
- * Harbor abort reason codes passed via `AbortController.abort(reason)` or set
- * by the inactivity watchdog. Shown in the finale bubble when a turn ends
- * without (or instead of) assistant text.
+ * Harbor abort reason codes passed via `AbortController.abort(reason)`.
+ * Shown in the finale bubble when a turn ends without (or instead of)
+ * assistant text.
  */
 import type { UiLanguage } from "./i18n";
 
 export type HarborAbortInfo = {
   code: string;
-  /** Extra context (e.g. last Cline event type before inactivity abort). */
-  detail?: string;
-  /** Minutes used by the inactivity watchdog (for the user-facing copy). */
-  inactivityMinutes?: number;
 };
 
 export function reasonFromAbortSignal(
@@ -35,15 +31,6 @@ export function reasonFromAbortSignal(
 }
 
 export function harborAbortInfoFromCode(code: string): HarborAbortInfo {
-  const inactivity = /^inactivity-timeout(?::(\d+))?$/i.exec(code);
-  if (inactivity) {
-    const minutes = Number(inactivity[1]);
-    return {
-      code: "inactivity-timeout",
-      inactivityMinutes:
-        Number.isFinite(minutes) && minutes > 0 ? minutes : undefined,
-    };
-  }
   return { code: code || "unknown" };
 }
 
@@ -53,20 +40,11 @@ export function formatAbortedAssistantText(
   info: HarborAbortInfo | undefined
 ): string {
   const code = String(info?.code || "unknown").trim() || "unknown";
-  const minutes =
-    info?.inactivityMinutes && info.inactivityMinutes > 0
-      ? info.inactivityMinutes
-      : 5;
-  const lastEvent = String(info?.detail || "").trim();
 
   if (lang === "ru") {
     switch (code) {
       case "user-stop":
         return "(остановлено: нажата кнопка Stop)";
-      case "inactivity-timeout": {
-        const after = lastEvent ? ` после «${lastEvent}»` : "";
-        return `(остановлено: нет активности ${minutes} мин${after} — автопрерывание. Таймер не считает время tools; увеличьте agentPanel.sessions.inactivityTimeoutMinutes в Settings)`;
-      }
       case "new-run":
         return "(остановлено: начат новый запрос в этом чате)";
       case "regenerate":
@@ -89,10 +67,6 @@ export function formatAbortedAssistantText(
   switch (code) {
     case "user-stop":
       return "(stopped: Stop button pressed)";
-    case "inactivity-timeout": {
-      const after = lastEvent ? ` after “${lastEvent}”` : "";
-      return `(stopped: no activity for ${minutes} min${after} — auto-aborted. Timer pauses while tools run; increase agentPanel.sessions.inactivityTimeoutMinutes in Settings)`;
-    }
     case "new-run":
       return "(stopped: a new request started in this chat)";
     case "regenerate":

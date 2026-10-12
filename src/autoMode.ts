@@ -35,7 +35,9 @@ export type AutoResolvedModeId = "agent" | "plan" | "ask";
 const PLAN_INTENT_RE = new RegExp(
   [
     // «составь/сделай/предложи (мне) план…», «план реализации/рефакторинга…»
-    "(?:составь|сделай|подготовь|предложи|набросай|нарисуй|сгенерируй)[а-яё]*\\s+(?:мне\\s+)?план",
+    "(?:составь|сделай|подготовь|предложи|набросай|нарисуй|сгенерируй|построй|распиши|опиши)[а-яё]*\\s+(?:мне\\s+)?план",
+    // «сначала (по)строй/посторой план…» — plan-first request, typo-tolerant.
+    "сначала\\s+[а-яё]+(?:й|ь|и)(?:те)?\\s+(?:мне\\s+)?план",
     "план[а-яё]*\\s+(?:реализации|рефакторинга|миграции|работ|действий|изменений|тестирования|переделки)",
     // «как (лучше) реализовать/сделать/добавить…» — how-to-BUILD questions.
     "(?:как|каким\\s+образом)\\s+(?:лучше\\s+|правильнее\\s+|нам\\s+)?(?:реализовать|сделать|построить|организовать|спроектировать|добавить|создать|написать|переписать|рефакторить|мигрировать|протестировать)",
@@ -81,9 +83,16 @@ const EXPLAIN_RE = new RegExp(
   "i"
 );
 
+/** Tracker key like «ASUIP-3215» — a whole task, never a one-liner. */
+const ISSUE_KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
+
+const LIST_JOINER_RE = /(?:\n|;|,| и | and | затем | then | потом )/i;
+
 /**
- * Whether this turn needs a visible plan card (`update_todo`).
- * Skipping it saves a full LLM round-trip on short Q&A and one-liners.
+ * Whether this turn carries the `update_todo` nudge (visible plan card).
+ * Default is yes: the nudge itself tells the model to skip the card for
+ * short work, so the model decides. Only obvious short Q&A and one-liners
+ * skip it here (saves prompt tokens and a needless round-trip).
  */
 export function needsPlanCard(userText: string): boolean {
   const text = String(userText || "")
@@ -95,22 +104,25 @@ export function needsPlanCard(userText: string): boolean {
   if (looksLikePlanImplementRequest(text)) {
     return true;
   }
-  if (PLAN_INTENT_RE.test(text)) {
+  if (PLAN_INTENT_RE.test(text) || ISSUE_KEY_RE.test(text)) {
     return true;
   }
-  if (EXPLAIN_RE.test(text) || /[?？]\s*$/.test(text)) {
+  const hasJoiner = LIST_JOINER_RE.test(text);
+  if (
+    (EXPLAIN_RE.test(text) || /[?？]\s*$/.test(text)) &&
+    text.length < 200 &&
+    !hasJoiner
+  ) {
     return false;
   }
   if (QUESTION_FRAME_RE.test(text) && text.length < 120) {
     return false;
   }
-  if (RU_IMPERATIVE_RE.test(text) || EN_IMPERATIVE_RE.test(text)) {
-    return (
-      text.length >= 60 ||
-      /(?:\n|;|,| и | and | затем | then | потом )/i.test(text)
-    );
+  // One-liner («почини импорт», «давай обновим») — single action, no card.
+  if (text.length < 40 && !hasJoiner) {
+    return false;
   }
-  return text.length >= 100;
+  return true;
 }
 
 /**
