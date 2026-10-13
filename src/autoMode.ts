@@ -89,6 +89,13 @@ const ISSUE_KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
 const LIST_JOINER_RE = /(?:\n|;|,| и | and | затем | then | потом )/i;
 
 /**
+ * «продолжи» / «continue» after a stop or a network error resumes multi-step
+ * work — it is short, but the plan card must still come first.
+ */
+const CONTINUE_RE =
+  /^(?:ну\s+)?(?:давай(?:те)?\s+)?(?:продолж[а-яё]*|дальше|далее|доделай|доделывай|go\s+on|continue|keep\s+going|resume|carry\s+on)(?:\s+(?:работу|задачу|выполнение|дальше|please|working))?[\s.!]*$/i;
+
+/**
  * Whether this turn carries the `update_todo` nudge (visible plan card).
  * Default is yes: the nudge itself tells the model to skip the card for
  * short work, so the model decides. Only obvious short Q&A and one-liners
@@ -105,6 +112,9 @@ export function needsPlanCard(userText: string): boolean {
     return true;
   }
   if (PLAN_INTENT_RE.test(text) || ISSUE_KEY_RE.test(text)) {
+    return true;
+  }
+  if (CONTINUE_RE.test(text)) {
     return true;
   }
   const hasJoiner = LIST_JOINER_RE.test(text);

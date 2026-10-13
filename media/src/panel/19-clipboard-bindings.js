@@ -1,5 +1,6 @@
 
   window.addEventListener("dragend", clearComposerDropState);
+  window.addEventListener("blur", clearComposerDropState);
 
   function extractClipboardImages(clipboardData) {
     const files = [];

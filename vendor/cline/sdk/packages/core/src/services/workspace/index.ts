@@ -6,3 +6,4 @@ export type {
 	MentionEnrichmentResult,
 } from "./mention-enricher";
 export { enrichPromptWithMentions } from "./mention-enricher";
+export { RIPGREP_PATH_ENV, ripgrepCommand } from "./ripgrep";

@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
+import { ripgrepCommand } from "./ripgrep";
 
 const DEFAULT_INDEX_TTL_MS = 15_000;
 const STALE_CACHE_EVICTION_MS = 10 * 60_000;
@@ -82,12 +83,16 @@ function toPosixRelative(cwd: string, absolutePath: string): string {
 
 async function listFilesWithRg(cwd: string): Promise<Set<string>> {
 	const output = await new Promise<string>((resolve, reject) => {
-		const child = spawn("rg", ["--files", "--hidden", "-g", "!.git"], {
-			cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			// Prevent a console window from flashing on Windows.
-			windowsHide: true,
-		});
+		const child = spawn(
+			ripgrepCommand(),
+			["--files", "--hidden", "-g", "!.git"],
+			{
+				cwd,
+				stdio: ["ignore", "pipe", "pipe"],
+				// Prevent a console window from flashing on Windows.
+				windowsHide: true,
+			},
+		);
 
 		let stdout = "";
 		let stderr = "";
@@ -115,6 +120,55 @@ async function listFilesWithRg(cwd: string): Promise<Set<string>> {
 		.map((line) => line.replace(/\\/g, "/"));
 
 	return new Set(files);
+}
+
+/**
+ * Without ripgrep, ask git for the file list so `.gitignore` /
+ * `.git/info/exclude` / global excludes are honored: tracked files plus
+ * untracked files that are not ignored. Paths are relative to `cwd` (also
+ * when `cwd` is a subdirectory of the repo). Rejects outside a git repo or
+ * when git is missing, so the caller falls back to the plain directory walk.
+ */
+async function listFilesWithGit(cwd: string): Promise<Set<string>> {
+	const output = await new Promise<string>((resolve, reject) => {
+		const child = spawn(
+			"git",
+			["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+			{
+				cwd,
+				stdio: ["ignore", "pipe", "pipe"],
+				// Prevent a console window from flashing on Windows.
+				windowsHide: true,
+			},
+		);
+
+		const chunks: Buffer[] = [];
+		let stderr = "";
+
+		child.stdout.on("data", (chunk: Buffer) => {
+			chunks.push(chunk);
+		});
+		child.stderr.on("data", (chunk: Buffer | string) => {
+			stderr += chunk.toString();
+		});
+		child.on("error", reject);
+		child.on("close", (code: number | null) => {
+			if (code === 0) {
+				resolve(Buffer.concat(chunks).toString("utf8"));
+				return;
+			}
+			reject(new Error(stderr || `git ls-files exited with code ${code}`));
+		});
+	});
+
+	const files = new Set<string>();
+	for (const entry of output.split("\0")) {
+		if (!entry) {
+			continue;
+		}
+		files.add(entry.replace(/\\/g, "/"));
+	}
+	return files;
 }
 
 async function walkDir(
@@ -162,6 +216,11 @@ async function listFilesFallback(cwd: string): Promise<Set<string>> {
 async function buildIndex(cwd: string): Promise<Set<string>> {
 	try {
 		return await listFilesWithRg(cwd);
+	} catch {
+		// No usable ripgrep — fall through to git, then the plain walk.
+	}
+	try {
+		return await listFilesWithGit(cwd);
 	} catch {
 		return listFilesFallback(cwd);
 	}

@@ -17473,9 +17473,25 @@
     }
   }
 
+  let composerDropWatchdog = 0;
+
   function clearComposerDropState() {
     composerDragDepth = 0;
+    if (composerDropWatchdog) {
+      clearTimeout(composerDropWatchdog);
+      composerDropWatchdog = 0;
+    }
     setComposerDropActive(false, false);
+  }
+
+  // dragover идёт непрерывно, пока файл над панелью. Если drag отменили
+  // снаружи webview (Esc, отпустили над редактором), ни dragleave, ни dragend
+  // сюда могут не дойти — снимаем подсказку, когда dragover затих.
+  function armComposerDropWatchdog() {
+    if (composerDropWatchdog) {
+      clearTimeout(composerDropWatchdog);
+    }
+    composerDropWatchdog = setTimeout(clearComposerDropState, 400);
   }
 
   // Drop принимаем на весь экран чата; визуально подсвечиваем только composer
@@ -17489,6 +17505,7 @@
       event.stopPropagation();
       composerDragDepth += 1;
       setComposerDropActive(true, true);
+      armComposerDropWatchdog();
     });
     dropRoot.addEventListener("dragover", (event) => {
       if (!isFileDrag(event.dataTransfer)) {
@@ -17500,16 +17517,17 @@
         event.dataTransfer.dropEffect = "copy";
       }
       setComposerDropActive(true, true);
+      armComposerDropWatchdog();
     });
     dropRoot.addEventListener("dragleave", (event) => {
       const related = event.relatedTarget;
       if (related instanceof Node && dropRoot.contains(related)) {
         return;
       }
-      composerDragDepth = Math.max(0, composerDragDepth - 1);
-      if (composerDragDepth === 0) {
-        setComposerDropActive(false, false);
-      }
+      // Ушли за пределы области чата (relatedTarget снаружи или null — курсор
+      // покинул webview). Счётчик глубины тут не годится: dragenter на
+      // дочерних элементах его наращивает, а их dragleave отфильтрован выше.
+      clearComposerDropState();
     });
     dropRoot.addEventListener("drop", (event) => {
       event.preventDefault();
@@ -17529,6 +17547,7 @@
   }
 
   window.addEventListener("dragend", clearComposerDropState);
+  window.addEventListener("blur", clearComposerDropState);
 
   function extractClipboardImages(clipboardData) {
     const files = [];

@@ -17,11 +17,19 @@ import { resolveUiLanguage } from "./i18n";
 import { registerSelectionCodeLens } from "./selectionCodeLens";
 import { registerFigmaHostAutoStart } from "./figmaHostEnsure";
 import { seedDefaultHarborSkills } from "./harborSkills";
+import { applyRipgrepPathForCline } from "./ripgrepPath";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
   applyHarborTlsPolicy();
   setHarborTlsTrustPrompt(handleTlsTrustPrompt);
+  // Cline search_files / file index spawn `rg`; the extension host PATH
+  // usually has none, so point it at VS Code's bundled ripgrep.
+  try {
+    applyRipgrepPathForCline({ appRoot: vscode.env.appRoot });
+  } catch {
+    /* search falls back to git ls-files / directory walk */
+  }
   // Idempotent: copies packaged defaults into ~/.harbor/skills (never overwrites).
   try {
     seedDefaultHarborSkills(context.extensionPath);

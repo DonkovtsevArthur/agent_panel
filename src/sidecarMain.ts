@@ -50,6 +50,7 @@ import {
   waitForToolApprovalResult,
 } from "./toolApproval";
 import { seedDefaultHarborSkills } from "./harborSkills";
+import { applyRipgrepPathForCline } from "./ripgrepPath";
 import {
   createHostRpcCodeNavBackend,
   resolveIdeResponse,
@@ -186,6 +187,14 @@ function main(): void {
   const settingsPath =
     process.env.HARBOR_SETTINGS_PATH || paths.settingsPath;
   const settings = readSettingsFile(settingsPath);
+
+  // Cline search_files / file index spawn `rg`; WebStorm ships none, so use
+  // PATH / package-manager installs / a local VS Code's bundled ripgrep.
+  try {
+    applyRipgrepPathForCline({ probeInstalledVsCode: true });
+  } catch {
+    /* search falls back to git ls-files / directory walk */
+  }
 
   // Same defaults as VS Code activate — package lives next to harborSidecar.js.
   try {

@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentToolContext } from "@cline/shared";
-import { getFileIndex } from "../../../services/workspace";
+import { getFileIndex, ripgrepCommand } from "../../../services/workspace";
 import type { SearchExecutor } from "../types";
 import { MAX_SEARCH_OUTPUT_CHARS } from "./output-limits";
 
@@ -128,7 +128,7 @@ function checkRipgrepAvailable(): Promise<boolean> {
 	}
 
 	return new Promise((resolve) => {
-		const child = spawn("rg", ["--version"], {
+		const child = spawn(ripgrepCommand(), ["--version"], {
 			stdio: ["ignore", "pipe", "pipe"],
 			// Prevent a console window from flashing on Windows.
 			windowsHide: true,
@@ -166,7 +166,7 @@ function searchWithRipgrep(
 ): Promise<SearchMatch[] | null> {
 	return new Promise((resolve) => {
 		const child = spawn(
-			"rg",
+			ripgrepCommand(),
 			["--json", `--context=${contextLines}`, "--max-count=1", "-i", query],
 			{
 				cwd,
