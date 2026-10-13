@@ -66,7 +66,9 @@ import {
   stripAttachmentPayload,
 } from "./attachments";
 import {
-  enabledSkillNames,
+  appendSkillsRuntimeNudge,
+  harborSkillsRulesForLanguage,
+  listHarborSkills,
   resolveSkillDirectories,
 } from "./harborSkills";
 import type {
@@ -356,6 +358,30 @@ type ClineKnownModelInfo = {
   capabilities?: string[];
 };
 
+/** Cline auto-compacts at this share of `maxInputTokens` (COMPACTION_TRIGGER_RATIO). */
+const CLINE_COMPACTION_TRIGGER_RATIO = 0.9;
+
+/**
+ * `maxInputTokens` for Cline's compaction budget. Cline compacts at 90% of it,
+ * which on 1M-window models means never — long chats then re-send hundreds of
+ * thousands of tokens per step and time-to-first-token grows every turn. With
+ * `agentPanel.autoCompact.thresholdTokens` the budget is lowered so compaction
+ * fires at that request size; the model's real `contextWindow` is unchanged.
+ */
+export function harborCompactionInputBudget(
+  contextWindow: number,
+  autoCompact: { enabled: boolean; thresholdTokens: number }
+): number {
+  const threshold = autoCompact.thresholdTokens;
+  if (!autoCompact.enabled || !(threshold > 0)) {
+    return contextWindow;
+  }
+  return Math.min(
+    contextWindow,
+    Math.ceil(threshold / CLINE_COMPACTION_TRIGGER_RATIO)
+  );
+}
+
 /**
  * Build knownModels + maxTokensPerTurn for Cline from Harbor's resolved model
  * capabilities so auto-compact / output caps match the real model, and so the
@@ -421,7 +447,10 @@ function buildClineModelInfo(modelId: string): {
     ...(Number.isFinite(contextWindow) && contextWindow > 0
       ? {
           contextWindow,
-          maxInputTokens: contextWindow,
+          maxInputTokens: harborCompactionInputBudget(
+            contextWindow,
+            config.autoCompact
+          ),
         }
       : {}),
     ...(maxOutputTokens ? { maxTokens: maxOutputTokens } : {}),
@@ -1696,6 +1725,7 @@ function clineSessionFingerprint(parts: {
   spawn: boolean;
   parallel: number;
   compact: boolean;
+  compactAt: number;
   reasoning: string;
   mcp: string;
   approvals: string;
@@ -1710,6 +1740,7 @@ function clineSessionFingerprint(parts: {
     parts.spawn ? "1" : "0",
     String(parts.parallel),
     parts.compact ? "1" : "0",
+    String(parts.compactAt),
     parts.reasoning,
     parts.mcp,
     parts.approvals,
@@ -2113,6 +2144,16 @@ export async function runClineAgentTurn(options: {
     ? harborDefaultRulesForLanguage(uiLang)
     : String(config.systemPrompt || "").trim();
   const modePrompt = String(modeDef.prompt || "").trim();
+  const skillsConfig = config.skills;
+  const hasSkillsFactory =
+    typeof bundle.createUserInstructionConfigService === "function";
+  // Without the factory we cannot pin directories to Harbor roots — keep skills
+  // off rather than falling back to Cline's .agents/.cline auto-scan.
+  const skillsMasterEnabled =
+    skillsConfig.enabled !== false && hasSkillsFactory;
+  const enabledSkills = skillsMasterEnabled
+    ? listHarborSkills(cwd, skillsConfig).filter((s) => !s.disabled)
+    : [];
   const harborRules = [
     customRules,
     // Truthful self-identification: the UI-selected model id, ahead of any
@@ -2135,6 +2176,8 @@ export async function runClineAgentTurn(options: {
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
     // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
     enableTodoTool ? harborTodoRulesForLanguage(uiLang) : "",
+    // Skill catalog with descriptions — the Cline skills tool lists names only.
+    harborSkillsRulesForLanguage(enabledSkills, uiLang),
     resolveModelNeedsVisionHelper(options.model)
       ? harborVisionInspectRulesForLanguage(uiLang)
       : "",
@@ -2258,6 +2301,14 @@ export async function runClineAgentTurn(options: {
     .update(baseSystemPrompt)
     .digest("hex")
     .slice(0, 12);
+  // Timing log: what the request carries before any history (chars, not
+  // tokens — AGENTS.md / rules files are added by Cline on top of this).
+  timing.note("sysChars", baseSystemPrompt.length);
+  timing.note(
+    "mcpTools",
+    mcpFingerprint ? mcpFingerprint.split(",").filter(Boolean).length : 0
+  );
+  timing.note("skills", enabledSkills.length);
   const fingerprint = clineSessionFingerprint({
     mode: String(options.agentMode || "agent").toLowerCase(),
     model: options.model,
@@ -2265,6 +2316,9 @@ export async function runClineAgentTurn(options: {
     spawn: enableSpawnAgent,
     parallel: maxParallelToolCalls,
     compact: enableAutoCompact,
+    // Compaction budget lives in knownModels at core.start — a new threshold
+    // needs a fresh session.
+    compactAt: config.autoCompact.thresholdTokens,
     reasoning: reasoningKey,
     mcp: mcpFingerprint,
     approvals: harborToolApprovalsFingerprint(),
@@ -2630,6 +2684,13 @@ export async function runClineAgentTurn(options: {
         usageCompletionTokens = Number(event.outputTokens ?? 0);
         const cacheRead = Number(event.cacheReadTokens ?? 0);
         const cacheWrite = Number(event.cacheWriteTokens ?? 0);
+        // Timing log: request size + cache hits, first and last call of the turn.
+        if (usagePromptTokens > 0) {
+          timing.note("inTok1", usagePromptTokens, true);
+          timing.note("cacheTok1", cacheRead, true);
+          timing.note("inTokLast", usagePromptTokens);
+          timing.note("cacheTokLast", cacheRead);
+        }
         callbacks.onUsage?.({
           used: usagePromptTokens + usageCompletionTokens,
           promptTokens: usagePromptTokens,
@@ -2899,6 +2960,8 @@ export async function runClineAgentTurn(options: {
     needsVisionHelper && imageBundle.urls.length > 0,
     uiLang
   );
+  // Skills catalog in rules alone rarely triggers a load — remind per turn.
+  userPrompt = appendSkillsRuntimeNudge(userPrompt, enabledSkills, uiLang);
   if (
     !needsVisionHelper &&
     chatSeesImages &&
@@ -2934,17 +2997,8 @@ export async function runClineAgentTurn(options: {
     }
   }
 
-  const skillsConfig = config.skills;
-  const hasSkillsFactory =
-    typeof bundle.createUserInstructionConfigService === "function";
-  // Without the factory we cannot pin directories to Harbor roots — keep skills
-  // off rather than falling back to Cline's .agents/.cline auto-scan.
-  const skillsMasterEnabled =
-    skillsConfig.enabled !== false && hasSkillsFactory;
   const skillDirs = resolveSkillDirectories(cwd, skillsConfig);
-  const skillAllowlist = skillsMasterEnabled
-    ? enabledSkillNames(cwd, skillsConfig)
-    : [];
+  const skillAllowlist = enabledSkills.map((s) => s.name);
   // Keep rules/workflows/plugins; drop skills when master toggle is off so
   // Cline does not register use_skill / scan default .agents/.cline paths.
   const configExtensions = skillsMasterEnabled

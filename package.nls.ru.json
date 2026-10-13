@@ -52,6 +52,7 @@
   "config.subagents.enabled.description": "Разрешить параллельных субагентов (spawn_agent) в Agent, Plan и Ask. Вкл — модель получает правило делегировать независимые части через spawn_agent; выкл — tool недоступен. Дети наследуют режим: в Plan/Ask только исследование, в Agent — и правки.",
   "config.parallelToolCalls.enabled.description": "Выполнять несколько tool calls из одного ответа модели одновременно (чтение, поиск и другие независимые tools).",
   "config.autoCompact.enabled.description": "Автоматически сжимать контекст разговора, когда он приближается к лимиту входа модели.",
+  "config.autoCompact.thresholdTokens.description": "Сжимать диалог, когда запрос достигает этого числа токенов, даже если окно модели больше. Меньше контекст — быстрее первый ответ в длинных чатах. 0 — по окну модели.",
   "config.promptSuggestions.enabled.description": "После каждого ответа подсказывать вероятное следующее сообщение серым текстом в пустом поле ввода (Tab — принять). Использует модель, выбранную в чате.",
   "config.sessions.idleEvictMinutes.description": "Сколько минут сессия агента может простаивать до фоновой остановки; следующее сообщение в этом чате поднимет новую сессию из сохранённой истории. Больше значение — дольше сессии остаются «тёплыми» (быстрее первый токен), но выше расход памяти.",
   "config.promptCache.enabled.description": "Отправлять Anthropic-совместимые кеш-маркеры (cache_control) в запросах чата для OpenAI-compatible провайдеров. Включайте, только если ваш эндпоинт их принимает (LiteLLM/OpenRouter с апстримом Claude или Qwen, Anthropic-совместимые эндпоинты): кэшированный префикс промпта в разы дешевле, ответ начинается быстрее. Строгие OpenAI-эндпоинты могут отклонить маркер ошибкой 400 — там не включайте.",
@@ -88,6 +89,7 @@
   "config.commitMessage.language.enum.ru": "Русский",
   "config.figma.hostAutoStart.description": "Запускать локальный Harbor Figma host (127.0.0.1:17891) в фоне при старте VS Code. Нужен только для плагина Harbor Figma.",
   "config.figma.enabled.description": "Включить Figma MCP в Harbor Agents (подключение в Settings панели → MCP Servers)",
+  "config.mcp.atlassianToolsOnDemand.description": "Встроенные Jira / Confluence: передавать модели только самые частые инструменты, остальные — через jira_read / jira_write (confluence_read / confluence_write). Примерно вдвое меньше токенов на инструменты в каждом запросе.",
   "config.mcp.agentRules.enabled.description": "При подключении своего MCP-сервера записывать в AGENTS.md воркспейса блок о том, для чего он нужен и как вызывать его инструменты (блок удаляется при удалении или отключении сервера).",
   "config.mcp.servers.description": "Свои MCP-серверы (stdio или HTTP). Управление в Harbor Agents → Settings → MCP Servers."
 }

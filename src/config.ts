@@ -260,6 +260,12 @@ export interface AgentPanelConfig {
    */
   autoCompact: {
     enabled: boolean;
+    /**
+     * Compact once the request reaches this many tokens (0 = the model's own
+     * input budget). Keeps long chats on 1M-window models from re-sending
+     * hundreds of thousands of tokens per step.
+     */
+    thresholdTokens: number;
   };
   /**
    * After each successful turn, ask the utility model for the user's likely
@@ -724,6 +730,10 @@ export function getConfig(): AgentPanelConfig {
     },
     autoCompact: {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
+      thresholdTokens: Math.max(
+        0,
+        Math.floor(Number(cfg.get<number>("autoCompact.thresholdTokens") ?? 120000) || 0)
+      ),
     },
     promptSuggestions: {
       enabled: cfg.get<boolean>("promptSuggestions.enabled") !== false,

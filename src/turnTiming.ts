@@ -9,6 +9,7 @@ export class TurnTiming {
 	private readonly phases = new Map<string, number>();
 	private readonly toolStarts = new Map<string, { name: string; t0: number }>();
 	private readonly tools: Array<{ name: string; ms: number }> = [];
+	private readonly notes = new Map<string, number>();
 
 	/** Begin a named phase; the first start wins (ttft-style single-shot marks). */
 	start(label: string): void {
@@ -47,6 +48,17 @@ export class TurnTiming {
 		return ms;
 	}
 
+	/**
+	 * Attach a number to the summary (prompt size, tokens). `once` keeps the
+	 * first value (first API call of the turn); otherwise the latest wins.
+	 */
+	note(label: string, value: number, once = false): void {
+		if (!Number.isFinite(value) || (once && this.notes.has(label))) {
+			return;
+		}
+		this.notes.set(label, Math.round(value));
+	}
+
 	/** Settled phase duration (ms), or undefined if not ended yet. */
 	phaseMs(label: string): number | undefined {
 		return this.phases.get(label);
@@ -55,6 +67,9 @@ export class TurnTiming {
 	summary(): string {
 		const parts = [...this.phases.entries()].map(([k, v]) => `${k}=${v}ms`);
 		parts.push(`total=${Math.round(performance.now() - this.turnStart)}ms`);
+		for (const [k, v] of this.notes) {
+			parts.push(`${k}=${v}`);
+		}
 		return parts.join(" ");
 	}
 

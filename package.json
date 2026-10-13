@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.9.51",
+	"version": "2.9.56",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -516,6 +516,12 @@
 					"default": true,
 					"description": "%config.autoCompact.enabled.description%"
 				},
+				"agentPanel.autoCompact.thresholdTokens": {
+					"type": "number",
+					"default": 120000,
+					"minimum": 0,
+					"description": "%config.autoCompact.thresholdTokens.description%"
+				},
 				"agentPanel.promptSuggestions.enabled": {
 					"type": "boolean",
 					"default": true,
@@ -712,6 +718,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "%config.mcp.agentRules.enabled.description%"
+				},
+				"agentPanel.mcp.atlassianToolsOnDemand": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.mcp.atlassianToolsOnDemand.description%"
 				},
 				"agentPanel.mcp.servers": {
 					"type": "array",

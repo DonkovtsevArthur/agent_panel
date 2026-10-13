@@ -30,7 +30,14 @@ import {
 import {
   createConfluenceNativeClient,
   CONFLUENCE_NATIVE_COMMAND,
+  CONFLUENCE_NATIVE_TOOLS,
+  CONFLUENCE_NATIVE_WRITE_TOOLS,
 } from "./confluenceNative";
+import {
+  compactAtlassianToolDefs,
+  resolveAtlassianDispatch,
+  type AtlassianToolDef,
+} from "./atlassianCompact";
 import {
   ATLASSIAN_PRODUCTS,
   atlassianProductOf,
@@ -43,7 +50,12 @@ import {
 } from "./jiraAgentRules";
 import { prepareJiraConnection, type JiraPreflightResult } from "./jiraConnect";
 import { removeMcpServerRules, writeMcpServerRules } from "./mcpAgentRules";
-import { createJiraNativeClient, JIRA_NATIVE_COMMAND } from "./jiraNative";
+import {
+  createJiraNativeClient,
+  JIRA_NATIVE_COMMAND,
+  JIRA_NATIVE_TOOLS,
+  JIRA_NATIVE_WRITE_TOOLS,
+} from "./jiraNative";
 import { VsCodeFigmaOAuthProvider } from "./oauthProvider";
 import {
   deleteServerSecrets,
@@ -133,6 +145,50 @@ function truncateToolText(text: string): string {
   return text.length > 120_000
     ? `${text.slice(0, 120_000)}\n\n[truncated]`
     : text;
+}
+
+/** Static tool definitions of a built-in Jira / Confluence server. */
+function nativeAtlassianTools(
+  cfg: McpServerConfig
+):
+  | { prefix: string; defs: AtlassianToolDef[]; writes: ReadonlySet<string> }
+  | undefined {
+  if (!isNativeAtlassianConfig(cfg)) {
+    return undefined;
+  }
+  return cfg.command === CONFLUENCE_NATIVE_COMMAND
+    ? {
+        prefix: "confluence",
+        defs: CONFLUENCE_NATIVE_TOOLS,
+        writes: CONFLUENCE_NATIVE_WRITE_TOOLS,
+      }
+    : { prefix: "jira", defs: JIRA_NATIVE_TOOLS, writes: JIRA_NATIVE_WRITE_TOOLS };
+}
+
+function atlassianChatTools(
+  serverId: string,
+  native: { prefix: string; defs: AtlassianToolDef[]; writes: ReadonlySet<string> },
+  onDemand: boolean
+): ChatTool[] {
+  const defs = onDemand
+    ? compactAtlassianToolDefs(native.prefix, native.defs, native.writes)
+    : native.defs;
+  return defs.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: qualifyMcpToolName(serverId, tool.name),
+      description: tool.description,
+      parameters: tool.inputSchema as Record<string, unknown>,
+    },
+  }));
+}
+
+/** Built-in Jira / Confluence (in-process REST client, static tool list). */
+function isNativeAtlassianConfig(cfg: McpServerConfig): boolean {
+  const product = atlassianProductOf(cfg);
+  return Boolean(
+    product && cfg.command === ATLASSIAN_PRODUCTS[product].nativeCommand
+  );
 }
 
 export class McpManager {
@@ -341,6 +397,17 @@ export class McpManager {
       if (rt?.status.state === "connected") {
         continue;
       }
+      if (isNativeAtlassianConfig(cfg)) {
+        // Static tool list (listOpenAiTools) — start the pre-flight in the
+        // background instead of holding the turn for it (3–15s after reload).
+        if (
+          !rt?.connectPromise &&
+          (!rt || (rt.status.state === "disconnected" && rt.failureCount === 0))
+        ) {
+          void this.connectCustom(cfg.id).catch(() => undefined);
+        }
+        continue;
+      }
       if (rt?.connectPromise) {
         pending.push(rt.connectPromise.catch(() => undefined));
       } else if (!rt || (rt.status.state === "disconnected" && rt.failureCount === 0)) {
@@ -379,16 +446,60 @@ export class McpManager {
               !shouldHideLegacyFigmaDataTool(t.function.name, figmaCatalog)
           )
         : []),
-      ...[...this.customRuntimes.values()]
+      ...[...this.customRuntimes.entries()]
         .filter(
-          (rt) => rt.status.enabled && rt.status.state === "connected"
+          ([, rt]) => rt.status.enabled && rt.status.state === "connected"
         )
-        .flatMap((rt) => rt.tools),
+        .flatMap(([id, rt]) => {
+          const cfg = this.customConfigs.find((c) => c.id === id);
+          const native = cfg ? nativeAtlassianTools(cfg) : undefined;
+          return native && this.atlassianToolsOnDemand()
+            ? atlassianChatTools(id, native, true)
+            : rt.tools;
+        }),
+      ...this.nativeToolsWhileConnecting(),
     ];
     if (!readonlyOnly) {
       return tools;
     }
     return tools.filter((t) => isMcpReadonlyTool(t.function.name));
+  }
+
+  /**
+   * Built-in Jira / Confluence tools are static, so list them while the
+   * pre-flight (token probe, CA export, VPN DNS) is still running — the turn
+   * does not wait for it and the session tool set (fingerprint) stays the same
+   * once it connects. A call made before then waits in callToolRaw →
+   * connectCustom. Servers in error / backoff are left out, as before.
+   */
+  private nativeToolsWhileConnecting(): ChatTool[] {
+    const out: ChatTool[] = [];
+    for (const cfg of this.customConfigs) {
+      if (cfg.enabled === false || !isNativeAtlassianConfig(cfg)) {
+        continue;
+      }
+      const rt = this.customRuntimes.get(cfg.id);
+      const state = rt?.status.state;
+      if (state === "connected" || state === "error" || (rt?.failureCount ?? 0) > 0) {
+        continue;
+      }
+      const native = nativeAtlassianTools(cfg);
+      if (native) {
+        out.push(
+          ...atlassianChatTools(cfg.id, native, this.atlassianToolsOnDemand())
+        );
+      }
+    }
+    return out;
+  }
+
+  /** `agentPanel.mcp.atlassianToolsOnDemand` (default on) — see atlassianCompact.ts. */
+  private atlassianToolsOnDemand(): boolean {
+    return (
+      vscode.workspace
+        .getConfiguration("agentPanel")
+        .get<boolean>("mcp.atlassianToolsOnDemand") !== false
+    );
   }
 
   buildSystemHint(toolNames: string[]): string {
@@ -489,6 +600,27 @@ export class McpManager {
       await this.connectCustom(parsed.serverId);
     }
     const client = this.customRuntimes.get(parsed.serverId)?.client;
+    // Built-in Jira / Confluence on demand: `<product>_read` / `_write`
+    // dispatchers run the inner tool (or return its schema).
+    const nativeCfg = this.customConfigs.find((c) => c.id === parsed.serverId);
+    const native = nativeCfg ? nativeAtlassianTools(nativeCfg) : undefined;
+    let toolName = parsed.toolName;
+    if (native) {
+      const dispatch = resolveAtlassianDispatch(
+        native.prefix,
+        parsed.toolName,
+        args,
+        native.defs,
+        native.writes
+      );
+      if (dispatch.kind === "result") {
+        return { content: [{ type: "text", text: dispatch.text }] };
+      }
+      if (dispatch.kind === "call") {
+        toolName = dispatch.tool;
+        args = dispatch.args;
+      }
+    }
     if (!client) {
       return {
         content: [
@@ -501,7 +633,7 @@ export class McpManager {
         ],
       };
     }
-    return this.invokeClientToolRaw(client, parsed.toolName, args);
+    return this.invokeClientToolRaw(client, toolName, args);
   }
 
   private async invokeClientToolRaw(

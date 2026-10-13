@@ -6810,8 +6810,15 @@
             args.command = cmdPartial[1].replace(/\\"/g, '"');
           }
         }
+        // run_commands also accepts a single string: {"commands":"…"}.
+        if (!cmdMatch && !args.command) {
+          const cmdsStr = rawArgs.match(/"commands"\s*:\s*"((?:\\.|[^"\\])*)/);
+          if (cmdsStr) {
+            args.commands = cmdsStr[1].replace(/\\"/g, '"');
+          }
+        }
         // Also try "commands" array for run_commands with truncated JSON.
-        if (!cmdMatch) {
+        if (!cmdMatch && typeof args.commands !== "string") {
           const cmdsMatch = rawArgs.match(
             /"commands"\s*:\s*\[((?:[^\]]{0,200}))/
           );
@@ -6952,6 +6959,12 @@
         let cmd = "";
         if (Array.isArray(args.commands) && args.commands.length) {
           cmd = args.commands.map(formatCmdEntry).join(" && ");
+        } else if (args.commands && typeof args.commands === "object") {
+          cmd = formatCmdEntry(args.commands);
+        } else if (typeof args.commands === "string") {
+          cmd = args.commands;
+        } else if (Array.isArray(args) && args.length) {
+          cmd = args.map(formatCmdEntry).join(" && ");
         } else if (typeof args.command === "string") {
           cmd = args.command;
         } else if (typeof args.cmd === "string") {

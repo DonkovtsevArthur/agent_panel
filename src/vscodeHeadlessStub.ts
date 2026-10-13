@@ -166,6 +166,7 @@ class HeadlessConfiguration {
     "subagents.enabled": ["subagentsEnabled"],
     "parallelToolCalls.enabled": ["parallelToolCallsEnabled"],
     "autoCompact.enabled": ["autoCompactEnabled"],
+    "autoCompact.thresholdTokens": ["autoCompactThresholdTokens"],
     "promptSuggestions.enabled": ["promptSuggestionsEnabled"],
     "tools.autoApprove": ["toolsAutoApprove"],
     "tools.approvals": ["toolsApprovals"],

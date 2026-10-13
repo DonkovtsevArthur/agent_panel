@@ -66,14 +66,22 @@ function parseSkillFrontmatter(content: string): {
   }
   const block = match[1];
   const out: { name?: string; description?: string } = {};
-  for (const line of block.split(/\r?\n/)) {
-    const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+  const lines = block.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!m) {
       continue;
     }
     const key = m[1].toLowerCase();
     let value = m[2].trim();
-    if (
+    // YAML block scalar (`>-`, `|`, …): join the indented lines that follow.
+    if (/^[>|][+-]?$/.test(value)) {
+      const parts: string[] = [];
+      while (i + 1 < lines.length && /^(\s+\S|\s*$)/.test(lines[i + 1])) {
+        parts.push(lines[++i].trim());
+      }
+      value = parts.filter(Boolean).join(value.startsWith("|") ? "\n" : " ");
+    } else if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
@@ -551,6 +559,67 @@ export function enabledSkillNames(
   return listHarborSkills(cwd, config)
     .filter((s) => !s.disabled)
     .map((s) => s.name);
+}
+
+/** Per-skill description cap and list cap for the rules catalog. */
+const SKILL_RULES_DESCRIPTION_MAX = 240;
+const SKILL_RULES_MAX_SKILLS = 40;
+
+/**
+ * Skill catalog for the Harbor rules slot. Cline's `skills` tool description
+ * lists names only, so without this block models never see *when* to load a
+ * skill and almost never pick one on their own.
+ */
+export function harborSkillsRulesForLanguage(
+  skills: ReadonlyArray<Pick<HarborSkillInfo, "name" | "description">>,
+  lang: "en" | "ru"
+): string {
+  const lines = skills.slice(0, SKILL_RULES_MAX_SKILLS).map((s) => {
+    let desc = String(s.description || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (desc.length > SKILL_RULES_DESCRIPTION_MAX) {
+      desc = `${desc.slice(0, SKILL_RULES_DESCRIPTION_MAX - 1).trimEnd()}…`;
+    }
+    return desc ? `- ${s.name} — ${desc}` : `- ${s.name}`;
+  });
+  if (!lines.length) {
+    return "";
+  }
+  if (lang === "ru") {
+    return [
+      "# Скиллы",
+      "Скилл — готовая инструкция под тип задачи. Если запрос подходит под описание скилла ниже, сначала вызови tool `skills` с его именем (`skill: \"<имя>\"`) и следуй загруженной инструкции. Подходят несколько — загрузи их по мере надобности. Не подходит ни один — работай без скиллов. Не упоминай скилл, не вызвав его.",
+      ...lines,
+    ].join("\n");
+  }
+  return [
+    "# Skills",
+    "A skill is a ready-made playbook for a kind of task. When the request matches a skill description below, first call the `skills` tool with its name (`skill: \"<name>\"`) and follow the loaded instructions. Several match — load each when you reach that part. None match — work without skills. Never mention a skill without invoking it.",
+    ...lines,
+  ].join("\n");
+}
+
+/**
+ * Turn-local skills reminder appended to the runtime user prompt. Models
+ * follow the Cline base prompt's "gather context first" over the rules-slot
+ * catalog, so the rules alone rarely trigger a skill load.
+ */
+export function appendSkillsRuntimeNudge(
+  userText: string,
+  skills: ReadonlyArray<Pick<HarborSkillInfo, "name">>,
+  lang: "en" | "ru"
+): string {
+  const base = String(userText || "").trim();
+  const names = skills.slice(0, SKILL_RULES_MAX_SKILLS).map((s) => s.name);
+  if (!names.length) {
+    return base;
+  }
+  const nudge =
+    lang === "ru"
+      ? `[Harbor] Скиллы: ${names.join(", ")}. До первого инструмента сверь запрос с описаниями в «# Скиллы»; если скилл подходит (в т.ч. к текущему шагу — план, отладка, ревью, проверка перед «готово»), сначала вызови \`skills\` с его именем.`
+      : `[Harbor] Skills: ${names.join(", ")}. Before your first tool call, match the request against the "# Skills" descriptions; if one fits (including the current step — plan, debugging, review, checking before "done"), call \`skills\` with its name first.`;
+  return base ? `${base}\n\n${nudge}` : nudge;
 }
 
 export function buildSkillsListPayload(

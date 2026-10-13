@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: Root cause before any fix. Load for bugs without a clear error (wrong result, nothing happens, works in one place but not another), flaky or intermittent failures, regressions ("it used to work"), performance problems, or when a fix attempt has already failed. For a concrete error, stack trace, or log, start with debug-from-logs.
+description: Root cause before any fix. Load for bugs without a clear error (wrong result, regression «раньше работало», flaky / intermittent, slow) or after a failed fix attempt. Concrete error / stack trace → debug-from-logs.
 ---
 
 # Systematic debugging
