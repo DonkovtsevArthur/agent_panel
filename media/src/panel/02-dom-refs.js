@@ -433,8 +433,10 @@
   let archiveAgentsData = [];
   let activeAgentId = "";
   let activeChatId = "";
-  /** Ghost-text next-message guess from the host: `{ chatId, text }` or null. */
-  let promptSuggestion = null;
+  /** Ghost-text next-message guesses from the host, one per chat: chatId → text. */
+  const promptSuggestions = new Map();
+  /** Chats already asked for a fresh suggestion; reset when the chat runs again. */
+  const promptSuggestionRequested = new Set();
   /** Mode placeholder shown when no suggestion is active. */
   let promptBasePlaceholder = "";
   let promptSuggestionsEnabled = true;

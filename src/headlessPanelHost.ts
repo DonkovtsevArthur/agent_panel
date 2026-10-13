@@ -443,6 +443,13 @@ export class HeadlessPanelHost {
       case "newChat":
       case "newAgent":
         return this.onNewAgent();
+      case "requestPromptSuggestion": {
+        const id = String(msg.chatId || "").trim();
+        if (id && !this.chatRuns.has(id)) {
+          this.schedulePromptSuggestion(id);
+        }
+        return undefined;
+      }
       case "openAgent":
         return this.onOpenAgent(String(msg.agentId || ""));
       case "renameAgent":

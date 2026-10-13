@@ -406,13 +406,15 @@
     }
   }
 
+  function activePromptSuggestionText() {
+    return (activeChatId && promptSuggestions.get(activeChatId)) || "";
+  }
+
   /** Suggestion is shown only in an empty, idle composer of its own chat. */
   function promptSuggestionVisible() {
     return Boolean(
       promptSuggestionsEnabled &&
-        promptSuggestion &&
-        promptSuggestion.text &&
-        promptSuggestion.chatId === activeChatId &&
+        activePromptSuggestionText() &&
         !busy &&
         promptEl &&
         !String(promptEl.value || "") &&
@@ -426,7 +428,7 @@
     }
     const visible = promptSuggestionVisible();
     const next = visible
-      ? `${promptSuggestion.text}   ⇥ Tab`
+      ? `${activePromptSuggestionText()}   ⇥ Tab`
       : promptBasePlaceholder || promptEl.placeholder;
     if (promptEl.placeholder !== next) {
       promptEl.placeholder = next;
@@ -439,16 +441,44 @@
   }
 
   function setPromptSuggestion(chatId, text) {
+    if (!chatId) {
+      return;
+    }
     const value = String(text || "").trim();
-    promptSuggestion = chatId && value ? { chatId, text: value } : null;
+    if (value) {
+      promptSuggestions.set(chatId, value);
+    } else {
+      promptSuggestions.delete(chatId);
+    }
     refreshPromptSuggestion();
   }
 
-  function clearPromptSuggestion() {
-    if (!promptSuggestion) {
+  /**
+   * Opened chat has no suggestion (e.g. it was lost on reload): ask the host
+   * for a fresh one once per chat until the next turn there.
+   */
+  function requestPromptSuggestionIfMissing() {
+    const chatId = activeChatId;
+    if (
+      !chatId ||
+      !promptSuggestionsEnabled ||
+      busy ||
+      promptSuggestions.has(chatId) ||
+      promptSuggestionRequested.has(chatId)
+    ) {
       return;
     }
-    promptSuggestion = null;
+    promptSuggestionRequested.add(chatId);
+    host.postMessage({ type: "requestPromptSuggestion", chatId });
+  }
+
+  /** Drop one chat's suggestion (default: the active chat); `null` drops all. */
+  function clearPromptSuggestion(chatId) {
+    if (chatId === null) {
+      promptSuggestions.clear();
+    } else {
+      promptSuggestions.delete(chatId === undefined ? activeChatId : chatId);
+    }
     refreshPromptSuggestion();
   }
 
@@ -457,8 +487,8 @@
     if (!promptSuggestionVisible()) {
       return false;
     }
-    const text = promptSuggestion.text;
-    promptSuggestion = null;
+    const text = activePromptSuggestionText();
+    promptSuggestions.delete(activeChatId);
     promptEl.value = text;
     promptEl.setSelectionRange(text.length, text.length);
     promptEl.dispatchEvent(new Event("input", { bubbles: true }));

@@ -640,6 +640,7 @@
     busy = nextBusy;
     if (nextBusy) {
       clearPromptSuggestion();
+      promptSuggestionRequested.delete(activeChatId);
     }
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
@@ -1708,15 +1709,14 @@
       setComposerDropActive(true, true);
       armComposerDropWatchdog();
     });
-    dropRoot.addEventListener("dragleave", (event) => {
-      const related = event.relatedTarget;
-      if (related instanceof Node && dropRoot.contains(related)) {
-        return;
+    dropRoot.addEventListener("dragleave", () => {
+      // dragenter приходит на каждый дочерний элемент раньше dragleave
+      // предыдущего, поэтому пары считаем по всем событиям без фильтра:
+      // 0 — курсор вышел из области чата.
+      composerDragDepth = Math.max(0, composerDragDepth - 1);
+      if (composerDragDepth === 0) {
+        clearComposerDropState();
       }
-      // Ушли за пределы области чата (relatedTarget снаружи или null — курсор
-      // покинул webview). Счётчик глубины тут не годится: dragenter на
-      // дочерних элементах его наращивает, а их dragleave отфильтрован выше.
-      clearComposerDropState();
     });
     dropRoot.addEventListener("drop", (event) => {
       event.preventDefault();

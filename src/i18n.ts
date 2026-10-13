@@ -429,13 +429,13 @@ export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
   if (lang === "ru") {
     return [
       "[Harbor] Tool update_todo доступен — только для многошаговой работы.",
-      "Если шагов 2+ — СНАЧАЛА update_todo (полный список, первый 'in_progress'), затем сразу выполняй.",
+      "Если шагов 2+ — СНАЧАЛА update_todo (полный список, первый 'in_progress'), затем сразу выполняй; update_todo можно отдать в том же ответе вместе с первым действием, отдельный ход под план не нужен.",
       "Короткий вопрос / одно действие — без update_todo, просто ответь или сделай.",
     ].join(" ");
   }
   return [
     "[Harbor] Tool update_todo is available — multi-step work only.",
-    "If 2+ steps — call update_todo FIRST (full list, first 'in_progress'), then execute immediately.",
+    "If 2+ steps — call update_todo FIRST (full list, first 'in_progress'), then execute immediately; update_todo may go in the same response as the first action, no separate turn just for the plan.",
     "Short question / single action — skip update_todo; answer or just do it.",
   ].join(" ");
 }

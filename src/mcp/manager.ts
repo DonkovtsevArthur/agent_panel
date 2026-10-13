@@ -50,6 +50,7 @@ import {
 } from "./jiraAgentRules";
 import { prepareJiraConnection, type JiraPreflightResult } from "./jiraConnect";
 import { removeMcpServerRules, writeMcpServerRules } from "./mcpAgentRules";
+import { compactMcpServerTools, resolveMcpDispatch } from "./toolsOnDemand";
 import {
   createJiraNativeClient,
   JIRA_NATIVE_COMMAND,
@@ -437,14 +438,13 @@ export class McpManager {
     // connects lazily via ensureFigmaConnected on turns that reference a
     // Figma URL, plus explicit activation / Settings paths.
     void this.healCustomServers();
-    const figmaCatalog = this.figmaTools.map((t) => t.function.name);
+    const onDemand = this.mcpToolsOnDemand();
+    const serverTools = (id: string, list: ChatTool[]): ChatTool[] =>
+      onDemand ? compactMcpServerTools(id, list) : list;
     const tools = [
       ...(this.figmaStatus.enabled !== false &&
       this.figmaStatus.state === "connected"
-        ? this.figmaTools.filter(
-            (t) =>
-              !shouldHideLegacyFigmaDataTool(t.function.name, figmaCatalog)
-          )
+        ? serverTools(FIGMA_SERVER_ID, this.visibleFigmaTools())
         : []),
       ...[...this.customRuntimes.entries()]
         .filter(
@@ -453,9 +453,12 @@ export class McpManager {
         .flatMap(([id, rt]) => {
           const cfg = this.customConfigs.find((c) => c.id === id);
           const native = cfg ? nativeAtlassianTools(cfg) : undefined;
-          return native && this.atlassianToolsOnDemand()
-            ? atlassianChatTools(id, native, true)
-            : rt.tools;
+          if (native) {
+            return this.atlassianToolsOnDemand()
+              ? atlassianChatTools(id, native, true)
+              : rt.tools;
+          }
+          return serverTools(id, rt.tools);
         }),
       ...this.nativeToolsWhileConnecting(),
     ];
@@ -491,6 +494,23 @@ export class McpManager {
       }
     }
     return out;
+  }
+
+  /** Figma tools without the legacy data tool hidden next to Dev Mode tools. */
+  private visibleFigmaTools(): ChatTool[] {
+    const figmaCatalog = this.figmaTools.map((t) => t.function.name);
+    return this.figmaTools.filter(
+      (t) => !shouldHideLegacyFigmaDataTool(t.function.name, figmaCatalog)
+    );
+  }
+
+  /** `agentPanel.mcp.toolsOnDemand` (default on) — Figma / custom servers, see toolsOnDemand.ts. */
+  private mcpToolsOnDemand(): boolean {
+    return (
+      vscode.workspace
+        .getConfiguration("agentPanel")
+        .get<boolean>("mcp.toolsOnDemand") !== false
+    );
   }
 
   /** `agentPanel.mcp.atlassianToolsOnDemand` (default on) — see atlassianCompact.ts. */
@@ -566,14 +586,32 @@ export class McpManager {
     }
 
     if (parsed.serverId === FIGMA_SERVER_ID) {
+      if (!this.figmaClient || this.figmaStatus.state !== "connected") {
+        await this.tryQuietReconnect();
+      }
+      // Tools on demand: `figma_read` / `figma_write` run the inner tool, so
+      // the legacy-tool guard and arg patching below see its real name.
+      let figmaToolName = parsed.toolName;
+      if (this.mcpToolsOnDemand()) {
+        const dispatch = resolveMcpDispatch(
+          FIGMA_SERVER_ID,
+          parsed.toolName,
+          args,
+          this.visibleFigmaTools()
+        );
+        if (dispatch.kind === "result") {
+          return { content: [{ type: "text", text: dispatch.text }] };
+        }
+        if (dispatch.kind === "call") {
+          figmaToolName = dispatch.tool;
+          args = dispatch.args;
+        }
+      }
       const figmaCatalog = this.figmaTools.map((t) => t.function.name);
-      if (shouldHideLegacyFigmaDataTool(parsed.toolName, figmaCatalog)) {
+      if (shouldHideLegacyFigmaDataTool(figmaToolName, figmaCatalog)) {
         return {
           content: [{ type: "text", text: LEGACY_FIGMA_DATA_BLOCKED_JSON }],
         };
-      }
-      if (!this.figmaClient || this.figmaStatus.state !== "connected") {
-        await this.tryQuietReconnect();
       }
       if (!this.figmaClient) {
         return {
@@ -590,8 +628,8 @@ export class McpManager {
       }
       return this.invokeClientToolRaw(
         this.figmaClient,
-        parsed.toolName,
-        prepareFigmaToolArgs(parsed.toolName, args)
+        figmaToolName,
+        prepareFigmaToolArgs(figmaToolName, args)
       );
     }
 
@@ -612,6 +650,21 @@ export class McpManager {
         args,
         native.defs,
         native.writes
+      );
+      if (dispatch.kind === "result") {
+        return { content: [{ type: "text", text: dispatch.text }] };
+      }
+      if (dispatch.kind === "call") {
+        toolName = dispatch.tool;
+        args = dispatch.args;
+      }
+    } else if (this.mcpToolsOnDemand()) {
+      // Any other server: `<server>_read` / `_write` dispatchers.
+      const dispatch = resolveMcpDispatch(
+        parsed.serverId,
+        parsed.toolName,
+        args,
+        this.customRuntimes.get(parsed.serverId)?.tools || []
       );
       if (dispatch.kind === "result") {
         return { content: [{ type: "text", text: dispatch.text }] };

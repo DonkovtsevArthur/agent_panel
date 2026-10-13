@@ -58,7 +58,8 @@ function paramList(schema: Record<string, unknown>): string {
   return props.map((p) => (required.has(p) ? `${p}*` : p)).join(", ");
 }
 
-function catalogLine(def: AtlassianToolDef): string {
+/** One catalog row: `- name(params) — first sentence`. Shared with toolsOnDemand.ts. */
+export function catalogLine(def: AtlassianToolDef): string {
   return `- ${def.name}(${paramList(def.inputSchema)}) — ${firstSentence(def.description)}`;
 }
 

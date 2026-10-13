@@ -1618,6 +1618,124 @@ body.vscode-dark .md-pre .syntax-property {
   overflow-wrap: anywhere;
 }
 
+/* Plan dock above the composer (mirrors the running plan card). */
+.agent-step.agent-step-todo.is-docked {
+  display: none;
+}
+
+.todo-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.todo-dock[hidden] {
+  display: none;
+}
+
+/* Small pill: list icon + done/total. */
+.todo-dock-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
+  color: var(--vscode-foreground);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+.todo-dock-head:hover,
+.todo-dock.is-open .todo-dock-head {
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 60%, transparent);
+}
+
+.todo-dock-head .todo-plan-chevron {
+  margin-left: 0;
+  font-size: 14px;
+}
+
+.todo-dock-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.todo-dock-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.todo-dock-head {
+  flex-shrink: 0;
+}
+
+.todo-dock-current {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--vscode-descriptionForeground, #888);
+}
+
+.todo-dock-current-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  animation: agent-step-spin 0.9s linear infinite;
+}
+
+.todo-dock-current-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Opened plan above the pill. */
+.todo-dock-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: var(--vscode-editorWidget-background, var(--harbor-chat-bg));
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.todo-dock-panel[hidden] {
+  display: none;
+}
+
+.todo-dock-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-dock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
 .reasoning-group {
   display: flex;
   flex-direction: column;

@@ -2,6 +2,25 @@
   window.addEventListener("dragend", clearComposerDropState);
   window.addEventListener("blur", clearComposerDropState);
 
+  // VS Code (webview pre/index.html) слушает dragenter на window: если файловый
+  // drag не отменён страницей, он ставит iframe pointer-events: none до конца
+  // своего drag — панель больше не получает ни dragleave, ни drop, подсказка
+  // залипает, а следующие файлы не принимаются. Отменяем файловые drag на
+  // capture-фазе для всего webview, не только для области чата.
+  const preventFileDragDefault = (event) => {
+    if (isFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+    }
+  };
+  window.addEventListener("dragenter", preventFileDragDefault, true);
+  window.addEventListener("dragover", preventFileDragDefault, true);
+  // Drop мимо области чата (другой экран, край панели) — не открывать файл
+  // в webview и снять подсказку.
+  window.addEventListener("drop", (event) => {
+    event.preventDefault();
+    clearComposerDropState();
+  });
+
   function extractClipboardImages(clipboardData) {
     const files = [];
     const seen = new Set();

@@ -241,6 +241,7 @@ type WebviewToHost =
   | { type: "stop" }
   | { type: "toggleFullscreen" }
   | { type: "newChat" }
+  | { type: "requestPromptSuggestion"; chatId: string }
   | { type: "newAgent" }
   | { type: "openAgent"; agentId: string }
   | { type: "showAgents" }
@@ -2587,6 +2588,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "newChat":
         this.newChat();
         break;
+      case "requestPromptSuggestion": {
+        const id = String(message.chatId || "").trim();
+        if (id && !this.chatRuns.has(id)) {
+          this.schedulePromptSuggestion(id);
+        }
+        break;
+      }
       case "newAgent":
         await this.createAgent();
         break;
@@ -3380,8 +3388,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async openWorkspaceFile(relativePath: string): Promise<void> {
-    const uri = this.resolveWorkspaceUri(relativePath);
-    if (!uri) {
+    if (this.resolveWorkspaceUris(relativePath).length === 0) {
       return;
     }
     // Old panel builds glued sentence punctuation into the link path
@@ -3443,16 +3450,15 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private async resolveExistingFileUri(
     relativePath: string
   ): Promise<vscode.Uri | undefined> {
-    const uri = this.resolveWorkspaceUri(relativePath);
-    if (!uri) {
-      return undefined;
+    for (const uri of this.resolveWorkspaceUris(relativePath)) {
+      try {
+        await vscode.workspace.fs.stat(uri);
+        return uri;
+      } catch {
+        // try the next candidate
+      }
     }
-    try {
-      await vscode.workspace.fs.stat(uri);
-      return uri;
-    } catch {
-      return undefined;
-    }
+    return undefined;
   }
 
   /**
@@ -3646,20 +3652,35 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await this.openWorkspaceFile(relativePath);
   }
 
-  private resolveWorkspaceUri(relativePath: string): vscode.Uri | undefined {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) {
-      return undefined;
+  /**
+   * Candidate URIs for a panel link path: absolute paths (`/Users/…`,
+   * `C:\…`, `file://…`) as-is, relative paths against every workspace folder
+   * (multi-root: the first one that exists wins in `resolveExistingFileUri`).
+   */
+  private resolveWorkspaceUris(relativePath: string): vscode.Uri[] {
+    const raw = relativePath.trim();
+    if (!raw) {
+      return [];
     }
-    const normalized = relativePath
-      .trim()
+    if (/^file:\/\//i.test(raw)) {
+      try {
+        return [vscode.Uri.parse(raw, true)];
+      } catch {
+        return [];
+      }
+    }
+    if (path.isAbsolute(raw) || /^[a-zA-Z]:[\\/]/.test(raw)) {
+      return [vscode.Uri.file(raw)];
+    }
+    const normalized = raw
       .replace(/^\.\//, "")
-      .replace(/^\/+/, "")
       .replace(/\\/g, "/");
     if (!normalized) {
-      return undefined;
+      return [];
     }
-    return vscode.Uri.joinPath(folder.uri, ...normalized.split("/"));
+    return (vscode.workspace.workspaceFolders ?? []).map((folder) =>
+      vscode.Uri.joinPath(folder.uri, ...normalized.split("/"))
+    );
   }
 
   private async handleSend(

@@ -159,7 +159,7 @@
       settingsPromptSuggestionsEnabled.checked = promptSuggestionsEnabled;
     }
     if (!promptSuggestionsEnabled) {
-      clearPromptSuggestion();
+      clearPromptSuggestion(null);
     }
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;

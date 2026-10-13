@@ -2,7 +2,7 @@
 	"name": "vscode-agent-panel",
 	"displayName": "%displayName%",
 	"description": "%description%",
-	"version": "2.9.58",
+	"version": "2.9.64",
 	"publisher": "DonkovtsevArthur",
 	"license": "MIT",
 	"repository": {
@@ -723,6 +723,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "%config.mcp.atlassianToolsOnDemand.description%"
+				},
+				"agentPanel.mcp.toolsOnDemand": {
+					"type": "boolean",
+					"default": true,
+					"description": "%config.mcp.toolsOnDemand.description%"
 				},
 				"agentPanel.mcp.servers": {
 					"type": "array",

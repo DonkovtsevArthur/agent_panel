@@ -1741,6 +1741,11 @@
     if (status === "error") {
       return "error";
     }
+    // Running: spinner glyph (the row icon spins via agent-step-spin) — a
+    // rotating type icon (account_tree, terminal, …) looks broken.
+    if (status === "running") {
+      return "progress_activity";
+    }
     // Type icon stays after done — option C rows, not checkmarks.
     const toolName = canonicalToolName(name);
     switch (toolName) {
@@ -2199,6 +2204,9 @@
   /** update_todo plan card: «План · 1/4» header + collapsible step list. */
   function renderTodoStep(el, step) {
     const steps = Array.isArray(step.steps) ? step.steps : [];
+    // The composer plan dock (syncTodoDock) reads the steps from here — the
+    // card DOM may be a collapsed chip without rows.
+    el.__harborTodoSteps = steps;
     const prevOpen = el.dataset.todoOpen === "1";
     const open = prevOpen;
     const failed = String(step.status || "") === "error";
@@ -2483,3 +2491,192 @@
     return el;
   }
 
+  // ── Plan dock above the composer ─────────────────────────────────────────
+  // The running plan card of the active chat is mirrored into a one-line bar
+  // right above the composer («План 3/7 · current step»), click → full list.
+  // While the dock shows it, the inline card is hidden (no duplicate); when
+  // the turn ends the dock goes away and the card stays in the history.
+  // Driven by a MutationObserver on the timeline, so every path (update_todo,
+  // Stop, turn end, chat switch, history restore) keeps it in sync.
+  let todoDockEl = null;
+  let todoDockOpen = false;
+  let todoDockedCard = null;
+  let todoDockSyncQueued = false;
+
+  function ensureTodoDock() {
+    if (todoDockEl) {
+      return todoDockEl;
+    }
+    if (!composerEl || !composerEl.parentNode) {
+      return null;
+    }
+    todoDockEl = document.createElement("div");
+    todoDockEl.id = "todoDock";
+    todoDockEl.className = "todo-dock";
+    todoDockEl.hidden = true;
+    composerEl.parentNode.insertBefore(todoDockEl, composerEl);
+    todoDockEl.addEventListener("click", (event) => {
+      if (!event.target.closest(".todo-dock-head")) {
+        return;
+      }
+      todoDockOpen = !todoDockOpen;
+      syncTodoDock();
+    });
+    return todoDockEl;
+  }
+
+  /** Running plan card of the last turn in the visible chat, if any. */
+  function findDockableTodoCard() {
+    const turns = messagesEl.querySelectorAll(".chat-turn");
+    const lastTurn = turns.length ? turns[turns.length - 1] : null;
+    const scope = lastTurn || messagesEl;
+    const cards = scope.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    const card = cards.length ? cards[cards.length - 1] : null;
+    if (!card || card.dataset.cancelled === "1") {
+      return null;
+    }
+    const steps = Array.isArray(card.__harborTodoSteps)
+      ? card.__harborTodoSteps
+      : [];
+    return steps.length ? { card, steps } : null;
+  }
+
+  function hideTodoDock() {
+    if (todoDockedCard) {
+      todoDockedCard.classList.remove("is-docked");
+      todoDockedCard = null;
+    }
+    if (todoDockEl) {
+      todoDockEl.hidden = true;
+      todoDockEl.innerHTML = "";
+    }
+  }
+
+  function syncTodoDock() {
+    const dock = ensureTodoDock();
+    if (!dock) {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found) {
+      hideTodoDock();
+      return;
+    }
+    const { card, steps } = found;
+    if (todoDockedCard && todoDockedCard !== card) {
+      todoDockedCard.classList.remove("is-docked");
+    }
+    todoDockedCard = card;
+    card.classList.add("is-docked");
+
+    let doneCount = 0;
+    let current = null;
+    for (const item of steps) {
+      const status = String(item.status || "");
+      if (status === "done") {
+        doneCount += 1;
+      } else if (!current && status === "in_progress") {
+        current = item;
+      }
+    }
+    if (!current) {
+      current = steps.find((item) => String(item.status || "") !== "done") || null;
+    }
+
+    const list = document.createElement("div");
+    list.className = "todo-dock-list";
+    list.hidden = !todoDockOpen;
+    for (const item of steps) {
+      const status = String(item.status || "pending");
+      const row = document.createElement("div");
+      row.className = "todo-plan-item";
+      row.dataset.todoStatus = status;
+      const icon =
+        status === "done"
+          ? "check"
+          : status === "in_progress"
+            ? "progress_activity"
+            : "schedule";
+      row.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-item-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="todo-plan-item-title"></span>`;
+      row.querySelector(".todo-plan-item-title").textContent = String(
+        item.title || ""
+      );
+      list.appendChild(row);
+    }
+
+    // Collapsed: a small pill (icon + counter, current step in the tooltip).
+    // Click → the full plan opens above it.
+    const currentTitle = current ? String(current.title || "") : "";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "todo-dock-head";
+    head.setAttribute("aria-expanded", todoDockOpen ? "true" : "false");
+    head.title = currentTitle
+      ? `${t("todoPlanTitle")}: ${currentTitle}`
+      : t("todoPlanTitle");
+    head.innerHTML =
+      `<span class="material-symbols-outlined todo-dock-icon" aria-hidden="true">checklist</span>` +
+      `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${todoDockOpen ? "expand_more" : "expand_less"}</span>`;
+    head.querySelector(".todo-plan-counter").textContent = `${doneCount}/${steps.length}`;
+
+    const panel = document.createElement("div");
+    panel.className = "todo-dock-panel";
+    panel.hidden = !todoDockOpen;
+    const panelTitle = document.createElement("div");
+    panelTitle.className = "todo-dock-panel-title";
+    panelTitle.innerHTML =
+      `<span class="todo-plan-title"></span><span class="todo-plan-counter"></span>`;
+    panelTitle.querySelector(".todo-plan-title").textContent = t("todoPlanTitle");
+    panelTitle.querySelector(".todo-plan-counter").textContent = `${doneCount}/${steps.length}`;
+    list.hidden = false;
+    panel.appendChild(panelTitle);
+    panel.appendChild(list);
+
+    // What the model is doing right now — next to the pill.
+    const row = document.createElement("div");
+    row.className = "todo-dock-row";
+    row.appendChild(head);
+    if (currentTitle) {
+      const currentEl = document.createElement("span");
+      currentEl.className = "todo-dock-current";
+      currentEl.title = currentTitle;
+      currentEl.innerHTML =
+        `<span class="material-symbols-outlined todo-dock-current-icon" aria-hidden="true">progress_activity</span>` +
+        `<span class="todo-dock-current-text"></span>`;
+      currentEl.querySelector(".todo-dock-current-text").textContent = currentTitle;
+      row.appendChild(currentEl);
+    }
+
+    dock.innerHTML = "";
+    // Panel above the pill: the pill stays next to the composer and the
+    // opened plan grows upward.
+    dock.appendChild(panel);
+    dock.appendChild(row);
+    dock.classList.toggle("is-open", todoDockOpen);
+    dock.hidden = false;
+  }
+
+  function queueTodoDockSync() {
+    if (todoDockSyncQueued) {
+      return;
+    }
+    todoDockSyncQueued = true;
+    requestAnimationFrame(() => {
+      todoDockSyncQueued = false;
+      syncTodoDock();
+    });
+  }
+
+  if (typeof MutationObserver !== "undefined" && messagesEl) {
+    new MutationObserver(queueTodoDockSync).observe(messagesEl, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-status", "data-cancelled"],
+    });
+  }

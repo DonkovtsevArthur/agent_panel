@@ -123,6 +123,8 @@ export type WebviewToHost =
     }
   | { type: "stop" }
   | { type: "newChat" }
+  /** Composer opened a chat with no ghost-text suggestion: ask for a fresh one. */
+  | { type: "requestPromptSuggestion"; chatId: string }
   | { type: "newAgent" }
   | { type: "openAgent"; agentId: string }
   | { type: "showAgents" }

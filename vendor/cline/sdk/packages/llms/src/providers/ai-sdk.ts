@@ -827,6 +827,9 @@ export function normalizeUsage(
 			) ||
 			getNestedUsageValue(usage, "prompt_tokens_details", "cached_tokens") ||
 			getNestedUsageValue(rawUsage, "prompt_tokens_details", "cached_tokens") ||
+			// DeepSeek-style OpenAI-compatible upstreams report prefix-cache hits
+			// as top-level `prompt_cache_hit_tokens` (Harbor patch).
+			getUsageValue(rawUsage, "prompt_cache_hit_tokens") ||
 			getUsageValue(rawUsage, "cachedContentTokenCount") ||
 			getUsageValue(
 				providerUsage ?? {},

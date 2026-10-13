@@ -90,6 +90,7 @@
   "config.figma.hostAutoStart.description": "Start the local Harbor Figma host (127.0.0.1:17891) in the background when VS Code starts. Needed only for the Harbor Figma plugin.",
   "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
   "config.mcp.atlassianToolsOnDemand.description": "Built-in Jira / Confluence: send only the most used tools to the model; the rest are reached through jira_read / jira_write (confluence_read / confluence_write). About half the tool tokens in every request.",
+  "config.mcp.toolsOnDemand.description": "Figma and custom MCP servers with 9+ tools: send only the most used tools to the model; the rest are reached through <server>_read / <server>_write with a short catalog (full schema on describe). Fewer tool tokens in every request.",
   "config.mcp.agentRules.enabled.description": "When a custom MCP server connects, write a block to the workspace AGENTS.md describing what the server is for and how to call its tools (removed when the server is deleted or disabled).",
   "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers."
 }

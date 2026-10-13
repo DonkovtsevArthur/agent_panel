@@ -210,7 +210,9 @@
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
       case "promptSuggestion":
-        if (msg.chatId && msg.chatId === activeChatId) {
+        // Keep suggestions for background chats too: each chat shows its own
+        // when the user switches back to it.
+        if (msg.chatId) {
           setPromptSuggestion(msg.chatId, msg.text);
         }
         host.postMessage({
@@ -229,12 +231,13 @@
           // Сохранить черновик покидаемого чата до смены activeChatId:
           // текст мог меняться программно (slash/mention) без persist.
           persistDraftPrompt();
-          clearPromptSuggestion();
         }
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
         if (chatChanged) {
+          // Show the opened chat's own suggestion (kept per chat).
+          refreshPromptSuggestion();
           // Не тянуть черновые вложения из предыдущего чата в новый.
           // Только при смене chatId: тот же чат repost-ится и после
           // attachmentsAdded (превью только что добавленных вложений).
@@ -300,6 +303,9 @@
           runStartedAt:
             typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
         });
+        if (chatChanged) {
+          requestPromptSuggestionIfMissing();
+        }
         renderMessageQueue();
         {
           const highlight =

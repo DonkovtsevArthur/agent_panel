@@ -91,10 +91,17 @@ const WRITEISH_TOOL_RE =
 const PREFIXED_WRITEISH_TOOL_RE =
   /^(jira|confluence|github|gitlab|bitbucket|linear|notion|slack|youtrack)_(use|create|generate|add|update|delete|write|send|remove|edit|transition|assign|link|move|batch|upload|set|close|merge|approve|reopen)_?/i;
 
+/** `<server>_write` dispatcher of tools on demand (src/mcp/toolsOnDemand.ts). */
+const WRITE_DISPATCHER_RE = /_write$/i;
+
 export function isMcpReadonlyTool(qualifiedName: string): boolean {
   const parsed = parseQualifiedToolName(qualifiedName);
   const name = parsed?.toolName || qualifiedName;
-  return !WRITEISH_TOOL_RE.test(name) && !PREFIXED_WRITEISH_TOOL_RE.test(name);
+  return (
+    !WRITEISH_TOOL_RE.test(name) &&
+    !PREFIXED_WRITEISH_TOOL_RE.test(name) &&
+    !WRITE_DISPATCHER_RE.test(name)
+  );
 }
 
 /**

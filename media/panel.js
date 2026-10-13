@@ -1566,8 +1566,10 @@
   let archiveAgentsData = [];
   let activeAgentId = "";
   let activeChatId = "";
-  /** Ghost-text next-message guess from the host: `{ chatId, text }` or null. */
-  let promptSuggestion = null;
+  /** Ghost-text next-message guesses from the host, one per chat: chatId → text. */
+  const promptSuggestions = new Map();
+  /** Chats already asked for a fresh suggestion; reset when the chat runs again. */
+  const promptSuggestionRequested = new Set();
   /** Mode placeholder shown when no suggestion is active. */
   let promptBasePlaceholder = "";
   let promptSuggestionsEnabled = true;
@@ -2876,13 +2878,15 @@
     }
   }
 
+  function activePromptSuggestionText() {
+    return (activeChatId && promptSuggestions.get(activeChatId)) || "";
+  }
+
   /** Suggestion is shown only in an empty, idle composer of its own chat. */
   function promptSuggestionVisible() {
     return Boolean(
       promptSuggestionsEnabled &&
-        promptSuggestion &&
-        promptSuggestion.text &&
-        promptSuggestion.chatId === activeChatId &&
+        activePromptSuggestionText() &&
         !busy &&
         promptEl &&
         !String(promptEl.value || "") &&
@@ -2896,7 +2900,7 @@
     }
     const visible = promptSuggestionVisible();
     const next = visible
-      ? `${promptSuggestion.text}   ⇥ Tab`
+      ? `${activePromptSuggestionText()}   ⇥ Tab`
       : promptBasePlaceholder || promptEl.placeholder;
     if (promptEl.placeholder !== next) {
       promptEl.placeholder = next;
@@ -2909,16 +2913,44 @@
   }
 
   function setPromptSuggestion(chatId, text) {
+    if (!chatId) {
+      return;
+    }
     const value = String(text || "").trim();
-    promptSuggestion = chatId && value ? { chatId, text: value } : null;
+    if (value) {
+      promptSuggestions.set(chatId, value);
+    } else {
+      promptSuggestions.delete(chatId);
+    }
     refreshPromptSuggestion();
   }
 
-  function clearPromptSuggestion() {
-    if (!promptSuggestion) {
+  /**
+   * Opened chat has no suggestion (e.g. it was lost on reload): ask the host
+   * for a fresh one once per chat until the next turn there.
+   */
+  function requestPromptSuggestionIfMissing() {
+    const chatId = activeChatId;
+    if (
+      !chatId ||
+      !promptSuggestionsEnabled ||
+      busy ||
+      promptSuggestions.has(chatId) ||
+      promptSuggestionRequested.has(chatId)
+    ) {
       return;
     }
-    promptSuggestion = null;
+    promptSuggestionRequested.add(chatId);
+    host.postMessage({ type: "requestPromptSuggestion", chatId });
+  }
+
+  /** Drop one chat's suggestion (default: the active chat); `null` drops all. */
+  function clearPromptSuggestion(chatId) {
+    if (chatId === null) {
+      promptSuggestions.clear();
+    } else {
+      promptSuggestions.delete(chatId === undefined ? activeChatId : chatId);
+    }
     refreshPromptSuggestion();
   }
 
@@ -2927,8 +2959,8 @@
     if (!promptSuggestionVisible()) {
       return false;
     }
-    const text = promptSuggestion.text;
-    promptSuggestion = null;
+    const text = activePromptSuggestionText();
+    promptSuggestions.delete(activeChatId);
     promptEl.value = text;
     promptEl.setSelectionRange(text.length, text.length);
     promptEl.dispatchEvent(new Event("input", { bubbles: true }));
@@ -8417,6 +8449,11 @@
     if (status === "error") {
       return "error";
     }
+    // Running: spinner glyph (the row icon spins via agent-step-spin) — a
+    // rotating type icon (account_tree, terminal, …) looks broken.
+    if (status === "running") {
+      return "progress_activity";
+    }
     // Type icon stays after done — option C rows, not checkmarks.
     const toolName = canonicalToolName(name);
     switch (toolName) {
@@ -8875,6 +8912,9 @@
   /** update_todo plan card: «План · 1/4» header + collapsible step list. */
   function renderTodoStep(el, step) {
     const steps = Array.isArray(step.steps) ? step.steps : [];
+    // The composer plan dock (syncTodoDock) reads the steps from here — the
+    // card DOM may be a collapsed chip without rows.
+    el.__harborTodoSteps = steps;
     const prevOpen = el.dataset.todoOpen === "1";
     const open = prevOpen;
     const failed = String(step.status || "") === "error";
@@ -9159,6 +9199,195 @@
     return el;
   }
 
+  // ── Plan dock above the composer ─────────────────────────────────────────
+  // The running plan card of the active chat is mirrored into a one-line bar
+  // right above the composer («План 3/7 · current step»), click → full list.
+  // While the dock shows it, the inline card is hidden (no duplicate); when
+  // the turn ends the dock goes away and the card stays in the history.
+  // Driven by a MutationObserver on the timeline, so every path (update_todo,
+  // Stop, turn end, chat switch, history restore) keeps it in sync.
+  let todoDockEl = null;
+  let todoDockOpen = false;
+  let todoDockedCard = null;
+  let todoDockSyncQueued = false;
+
+  function ensureTodoDock() {
+    if (todoDockEl) {
+      return todoDockEl;
+    }
+    if (!composerEl || !composerEl.parentNode) {
+      return null;
+    }
+    todoDockEl = document.createElement("div");
+    todoDockEl.id = "todoDock";
+    todoDockEl.className = "todo-dock";
+    todoDockEl.hidden = true;
+    composerEl.parentNode.insertBefore(todoDockEl, composerEl);
+    todoDockEl.addEventListener("click", (event) => {
+      if (!event.target.closest(".todo-dock-head")) {
+        return;
+      }
+      todoDockOpen = !todoDockOpen;
+      syncTodoDock();
+    });
+    return todoDockEl;
+  }
+
+  /** Running plan card of the last turn in the visible chat, if any. */
+  function findDockableTodoCard() {
+    const turns = messagesEl.querySelectorAll(".chat-turn");
+    const lastTurn = turns.length ? turns[turns.length - 1] : null;
+    const scope = lastTurn || messagesEl;
+    const cards = scope.querySelectorAll(
+      '.agent-step-todo[data-status="running"]'
+    );
+    const card = cards.length ? cards[cards.length - 1] : null;
+    if (!card || card.dataset.cancelled === "1") {
+      return null;
+    }
+    const steps = Array.isArray(card.__harborTodoSteps)
+      ? card.__harborTodoSteps
+      : [];
+    return steps.length ? { card, steps } : null;
+  }
+
+  function hideTodoDock() {
+    if (todoDockedCard) {
+      todoDockedCard.classList.remove("is-docked");
+      todoDockedCard = null;
+    }
+    if (todoDockEl) {
+      todoDockEl.hidden = true;
+      todoDockEl.innerHTML = "";
+    }
+  }
+
+  function syncTodoDock() {
+    const dock = ensureTodoDock();
+    if (!dock) {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found) {
+      hideTodoDock();
+      return;
+    }
+    const { card, steps } = found;
+    if (todoDockedCard && todoDockedCard !== card) {
+      todoDockedCard.classList.remove("is-docked");
+    }
+    todoDockedCard = card;
+    card.classList.add("is-docked");
+
+    let doneCount = 0;
+    let current = null;
+    for (const item of steps) {
+      const status = String(item.status || "");
+      if (status === "done") {
+        doneCount += 1;
+      } else if (!current && status === "in_progress") {
+        current = item;
+      }
+    }
+    if (!current) {
+      current = steps.find((item) => String(item.status || "") !== "done") || null;
+    }
+
+    const list = document.createElement("div");
+    list.className = "todo-dock-list";
+    list.hidden = !todoDockOpen;
+    for (const item of steps) {
+      const status = String(item.status || "pending");
+      const row = document.createElement("div");
+      row.className = "todo-plan-item";
+      row.dataset.todoStatus = status;
+      const icon =
+        status === "done"
+          ? "check"
+          : status === "in_progress"
+            ? "progress_activity"
+            : "schedule";
+      row.innerHTML =
+        `<span class="material-symbols-outlined todo-plan-item-icon" aria-hidden="true">${icon}</span>` +
+        `<span class="todo-plan-item-title"></span>`;
+      row.querySelector(".todo-plan-item-title").textContent = String(
+        item.title || ""
+      );
+      list.appendChild(row);
+    }
+
+    // Collapsed: a small pill (icon + counter, current step in the tooltip).
+    // Click → the full plan opens above it.
+    const currentTitle = current ? String(current.title || "") : "";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "todo-dock-head";
+    head.setAttribute("aria-expanded", todoDockOpen ? "true" : "false");
+    head.title = currentTitle
+      ? `${t("todoPlanTitle")}: ${currentTitle}`
+      : t("todoPlanTitle");
+    head.innerHTML =
+      `<span class="material-symbols-outlined todo-dock-icon" aria-hidden="true">checklist</span>` +
+      `<span class="todo-plan-counter"></span>` +
+      `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${todoDockOpen ? "expand_more" : "expand_less"}</span>`;
+    head.querySelector(".todo-plan-counter").textContent = `${doneCount}/${steps.length}`;
+
+    const panel = document.createElement("div");
+    panel.className = "todo-dock-panel";
+    panel.hidden = !todoDockOpen;
+    const panelTitle = document.createElement("div");
+    panelTitle.className = "todo-dock-panel-title";
+    panelTitle.innerHTML =
+      `<span class="todo-plan-title"></span><span class="todo-plan-counter"></span>`;
+    panelTitle.querySelector(".todo-plan-title").textContent = t("todoPlanTitle");
+    panelTitle.querySelector(".todo-plan-counter").textContent = `${doneCount}/${steps.length}`;
+    list.hidden = false;
+    panel.appendChild(panelTitle);
+    panel.appendChild(list);
+
+    // What the model is doing right now — next to the pill.
+    const row = document.createElement("div");
+    row.className = "todo-dock-row";
+    row.appendChild(head);
+    if (currentTitle) {
+      const currentEl = document.createElement("span");
+      currentEl.className = "todo-dock-current";
+      currentEl.title = currentTitle;
+      currentEl.innerHTML =
+        `<span class="material-symbols-outlined todo-dock-current-icon" aria-hidden="true">progress_activity</span>` +
+        `<span class="todo-dock-current-text"></span>`;
+      currentEl.querySelector(".todo-dock-current-text").textContent = currentTitle;
+      row.appendChild(currentEl);
+    }
+
+    dock.innerHTML = "";
+    // Panel above the pill: the pill stays next to the composer and the
+    // opened plan grows upward.
+    dock.appendChild(panel);
+    dock.appendChild(row);
+    dock.classList.toggle("is-open", todoDockOpen);
+    dock.hidden = false;
+  }
+
+  function queueTodoDockSync() {
+    if (todoDockSyncQueued) {
+      return;
+    }
+    todoDockSyncQueued = true;
+    requestAnimationFrame(() => {
+      todoDockSyncQueued = false;
+      syncTodoDock();
+    });
+  }
+
+  if (typeof MutationObserver !== "undefined" && messagesEl) {
+    new MutationObserver(queueTodoDockSync).observe(messagesEl, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-status", "data-cancelled"],
+    });
+  }
   function showSettingsCategory(category) {
     const allowed = [
       "models",
@@ -12737,7 +12966,7 @@
       settingsPromptSuggestionsEnabled.checked = promptSuggestionsEnabled;
     }
     if (!promptSuggestionsEnabled) {
-      clearPromptSuggestion();
+      clearPromptSuggestion(null);
     }
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
@@ -16451,6 +16680,7 @@
     busy = nextBusy;
     if (nextBusy) {
       clearPromptSuggestion();
+      promptSuggestionRequested.delete(activeChatId);
     }
     // Keep composer editable while a run is active so the user can queue
     // the next message. Model/mode/plus stay available for that draft.
@@ -17519,15 +17749,14 @@
       setComposerDropActive(true, true);
       armComposerDropWatchdog();
     });
-    dropRoot.addEventListener("dragleave", (event) => {
-      const related = event.relatedTarget;
-      if (related instanceof Node && dropRoot.contains(related)) {
-        return;
+    dropRoot.addEventListener("dragleave", () => {
+      // dragenter приходит на каждый дочерний элемент раньше dragleave
+      // предыдущего, поэтому пары считаем по всем событиям без фильтра:
+      // 0 — курсор вышел из области чата.
+      composerDragDepth = Math.max(0, composerDragDepth - 1);
+      if (composerDragDepth === 0) {
+        clearComposerDropState();
       }
-      // Ушли за пределы области чата (relatedTarget снаружи или null — курсор
-      // покинул webview). Счётчик глубины тут не годится: dragenter на
-      // дочерних элементах его наращивает, а их dragleave отфильтрован выше.
-      clearComposerDropState();
     });
     dropRoot.addEventListener("drop", (event) => {
       event.preventDefault();
@@ -17548,6 +17777,25 @@
 
   window.addEventListener("dragend", clearComposerDropState);
   window.addEventListener("blur", clearComposerDropState);
+
+  // VS Code (webview pre/index.html) слушает dragenter на window: если файловый
+  // drag не отменён страницей, он ставит iframe pointer-events: none до конца
+  // своего drag — панель больше не получает ни dragleave, ни drop, подсказка
+  // залипает, а следующие файлы не принимаются. Отменяем файловые drag на
+  // capture-фазе для всего webview, не только для области чата.
+  const preventFileDragDefault = (event) => {
+    if (isFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+    }
+  };
+  window.addEventListener("dragenter", preventFileDragDefault, true);
+  window.addEventListener("dragover", preventFileDragDefault, true);
+  // Drop мимо области чата (другой экран, край панели) — не открывать файл
+  // в webview и снять подсказку.
+  window.addEventListener("drop", (event) => {
+    event.preventDefault();
+    clearComposerDropState();
+  });
 
   function extractClipboardImages(clipboardData) {
     const files = [];
@@ -19988,7 +20236,9 @@
         showCopyToast(t("figmaNeedsConnectToast"));
         break;
       case "promptSuggestion":
-        if (msg.chatId && msg.chatId === activeChatId) {
+        // Keep suggestions for background chats too: each chat shows its own
+        // when the user switches back to it.
+        if (msg.chatId) {
           setPromptSuggestion(msg.chatId, msg.text);
         }
         host.postMessage({
@@ -20007,12 +20257,13 @@
           // Сохранить черновик покидаемого чата до смены activeChatId:
           // текст мог меняться программно (slash/mention) без persist.
           persistDraftPrompt();
-          clearPromptSuggestion();
         }
         if (msg.chatId) {
           activeChatId = msg.chatId;
         }
         if (chatChanged) {
+          // Show the opened chat's own suggestion (kept per chat).
+          refreshPromptSuggestion();
           // Не тянуть черновые вложения из предыдущего чата в новый.
           // Только при смене chatId: тот же чат repost-ится и после
           // attachmentsAdded (превью только что добавленных вложений).
@@ -20078,6 +20329,9 @@
           runStartedAt:
             typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
         });
+        if (chatChanged) {
+          requestPromptSuggestionIfMissing();
+        }
         renderMessageQueue();
         {
           const highlight =

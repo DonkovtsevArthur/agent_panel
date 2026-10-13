@@ -108,6 +108,11 @@ import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
 import { createHttpTool, HTTP_REQUEST_TOOL } from "./httpTool";
 import { withTodoStepEmitter } from "./todoStepContext";
+import {
+  createTodoReminderState,
+  withHarborTodoReminderExtension,
+  withTodoReminder,
+} from "./todoReminder";
 import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import {
   clearTurnEditedPaths,
@@ -586,8 +591,9 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
                 ...mcp.tools,
               ],
               // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
-              extensions: withHarborGitCommandGuardExtension(
-                input.config.extensions
+              // + update_todo reminder after N tool calls without a plan.
+              extensions: withHarborTodoReminderExtension(
+                withHarborGitCommandGuardExtension(input.config.extensions)
               ),
             },
           };
@@ -3116,7 +3122,9 @@ export async function runClineAgentTurn(options: {
           // Iteration budget: leave unset so Cline treats it as unlimited
           // Cline treats unset maxIterations as unlimited.
           systemPrompt: baseSystemPrompt,
-          extensions: withHarborGitCommandGuardExtension(undefined),
+          extensions: withHarborTodoReminderExtension(
+            withHarborGitCommandGuardExtension(undefined)
+          ),
           ...(skillsMasterEnabled && skillAllowlist.length
             ? { skills: skillAllowlist }
             : skillsMasterEnabled
@@ -3148,7 +3156,11 @@ export async function runClineAgentTurn(options: {
       // to this turn's Harbor callbacks (ALS, same as inspect_images).
       withTodoStepEmitter(
         (step) => emitStep(callbacks, step),
-        () => withTurnImages(userImages, runTurn)
+        () =>
+          withTodoReminder(
+            createTodoReminderState(todoNudgeThisTurn, uiLang),
+            () => withTurnImages(userImages, runTurn)
+          )
       )
     );
     timing.end("send");
