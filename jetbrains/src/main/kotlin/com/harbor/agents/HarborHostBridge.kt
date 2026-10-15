@@ -14,6 +14,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -410,10 +411,19 @@ class HarborHostBridge(
       "openFile", "openFileDiff" -> {
         // JCEF JSQuery runs off the EDT; FileEditorManager.openFile asserts EDT.
         val raw = obj.get("path")?.asString ?: return
+        // Plan card chips carry `path:line` (1-based) — jump to that line.
+        val lineEl = obj.get("line")
+        val line =
+          if (lineEl != null && lineEl.isJsonPrimitive && lineEl.asJsonPrimitive.isNumber) lineEl.asInt
+          else 0
         ApplicationManager.getApplication().invokeLater {
           val vf = resolvePanelFile(raw)
           if (vf != null) {
-            FileEditorManager.getInstance(project).openFile(vf, true)
+            if (line > 0 && type == "openFile") {
+              OpenFileDescriptor(project, vf, line - 1, 0).navigate(true)
+            } else {
+              FileEditorManager.getInstance(project).openFile(vf, true)
+            }
           } else {
             openAbbreviatedFile(raw)
           }
@@ -526,8 +536,25 @@ class HarborHostBridge(
       "openPlanMarkdown" -> {
         val text = obj.get("text")?.asString ?: return
         val reveal = obj.get("reveal")?.asString ?: "editor"
+        val keepExisting = obj.get("keepExisting")?.asBoolean == true
         ApplicationManager.getApplication().executeOnPooledThread {
-          HarborPlan.writeAndOpen(project, text, reveal)
+          HarborPlan.writeAndOpen(project, text, reveal, keepExisting)
+        }
+      }
+      "requestLivePlanStatus" -> {
+        // Plan card «Edited in editor»: current Plan.md text, no Build.
+        ApplicationManager.getApplication().executeOnPooledThread {
+          val live = HarborPlan.readLive(project)
+          ApplicationManager.getApplication().invokeLater {
+            postToWebview(
+              gson.toJson(
+                mapOf(
+                  "type" to "livePlanStatus",
+                  "text" to live,
+                )
+              )
+            )
+          }
         }
       }
       "requestLivePlanForBuild" -> {

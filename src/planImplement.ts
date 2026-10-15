@@ -20,6 +20,69 @@ export const HARBOR_PLAN_MODE_CARD_HINT = [
   "Do not write PLAN.md via tools. Do not put clarifying questions inside <proposed_plan>.",
 ].join(" ");
 
+/**
+ * Harbor Plan-mode rules (localized), injected into the Cline rules slot.
+ * - Overrides Cline's manual-switch contract («toggle to Act mode»): in Harbor
+ *   the user starts implementation with the «Собрать» / Build button.
+ * - Card tag rules (same contract as HARBOR_PLAN_MODE_CARD_HINT).
+ * - Required plan template: Build starts a fresh Agent turn that does not see
+ *   Plan-mode tool results, so the plan must be self-contained.
+ */
+export function harborPlanModeRulesForLanguage(lang: "en" | "ru"): string {
+  if (lang === "ru") {
+    return [
+      "# Режим: Plan (Harbor)",
+      "Переключения в Act mode в Harbor нет. Не проси пользователя «toggle to Act mode» / «переключиться в Act» и не упоминай тумблер Act. Когда план готов, заверши ход: пользователь сам нажмёт кнопку «Собрать» — она передаст план агенту на реализацию. Можно одной строкой сказать: «Нажмите „Собрать“, чтобы реализовать план», или предложить поправить план.",
+      "",
+      "## Карточка плана",
+      "Оборачивай финал в <proposed_plan>…</proposed_plan> ТОЛЬКО когда предлагаешь план реализации изменения, которое просил пользователь. Теги без атрибутов.",
+      "НЕ оборачивай приветствия, вопросы о статусе («как там?»), подтверждения, уточняющие вопросы, отчёты о состоянии workspace/git/файлов и обычные ответы о существующем коде — это обычный текст без тегов. Не выдумывай план только потому, что включён Plan.",
+      "Если завершаешь через submit_and_exit — положи тот же блок <proposed_plan>…</proposed_plan> в поле summary (только если это план реализации).",
+      "Не пиши PLAN.md инструментами. Один план на ответ: при ревизии выдай полный новый план, не патч к старому.",
+      "",
+      "## Когда план рано писать",
+      "Если без ответа пользователя нельзя выбрать подход (несколько равноценных вариантов, неясен объём, неясна целевая платформа) — НЕ пиши <proposed_plan>: кратко опиши варианты и задай вопрос обычным текстом. Вопросы внутрь <proposed_plan> не клади.",
+      "",
+      "## Шаблон плана (внутри <proposed_plan>)",
+      "«Собрать» запускает отдельный ход агента, который НЕ видит результатов твоих инструментов (прочитанных файлов, grep, вывода команд) — только текст плана. План должен быть самодостаточным: конкретные пути, `path:line`, имена функций; без «как обсуждали выше».",
+      "Разделы — markdown-заголовки `##` в этом порядке (пустые разделы пропускай, кроме обязательных):",
+      "1. `## Цель` (обязательно) — 1–2 предложения: что меняется и зачем.",
+      "2. `## Контекст` — что ты нашёл: ключевые места кода с `path:line`, текущее поведение, ограничения из правил проекта.",
+      "3. `## Шаги` (обязательно) — нумерованный список. Каждый шаг начинается с короткого заголовка жирным (2–5 слов), затем тире и суть: `1. **Типы нового ответа** — сгруппировать по стажировкам в `path:line``. В сути: что сделать + в каких файлах (`path`) + суть изменения (функция, поле, условие). Один шаг — одно проверяемое действие; без «и т.д.».",
+      "4. `## Затронутые файлы` (обязательно) — список `path` — создать / изменить / удалить.",
+      "5. `## Проверка` (обязательно) — команды (тесты, сборка, линт) и что проверить руками.",
+      "6. `## Риски` — что может сломаться, обратная совместимость, миграции.",
+      "7. `## Вне рамок` — что сознательно не делаем.",
+      "Сниппеты кода — только когда без них шаг неоднозначен; короткие, не целые файлы.",
+    ].join("\n");
+  }
+  return [
+    "# Mode: Plan (Harbor)",
+    "Harbor has no Act-mode toggle. Do not tell the user to \"toggle to Act mode\" / \"switch to Act\" or mention the Act toggle. When the plan is ready, end your turn: the user clicks the \"Build\" button, which hands the plan to the agent for implementation. You may say in one line: \"Click Build to implement the plan\", or offer to adjust the plan.",
+    "",
+    "## Plan card",
+    "Wrap a finale in <proposed_plan>…</proposed_plan> ONLY when you are proposing an implementation plan for a change the user asked to make. Use the tags with no attributes.",
+    "Do NOT wrap greetings, status checks (\"how's it going?\"), acknowledgements, clarifying questions, workspace/git/file status reports, or ordinary Q&A about existing code — those stay plain chat text with no tags. Never invent a plan just because Plan mode is on.",
+    "If you finish with submit_and_exit, put that same <proposed_plan>…</proposed_plan> block in the summary field (only when it is an implementation plan).",
+    "Do not write PLAN.md via tools. One plan per reply: when revising, emit the full new plan, not a patch to the old one.",
+    "",
+    "## When it is too early for a plan",
+    "If you cannot choose an approach without the user (several equally valid options, unclear scope, unclear target platform) — do NOT emit <proposed_plan>: briefly describe the options and ask in plain text. Never put questions inside <proposed_plan>.",
+    "",
+    "## Plan template (inside <proposed_plan>)",
+    "Build starts a separate agent turn that does NOT see your tool results (files read, grep, command output) — only the plan text. The plan must be self-contained: concrete paths, `path:line`, function names; no \"as discussed above\".",
+    "Sections are `##` markdown headings in this order (skip empty optional ones):",
+    "1. `## Goal` (required) — 1–2 sentences: what changes and why.",
+    "2. `## Context` — what you found: key code locations with `path:line`, current behavior, constraints from project rules.",
+    "3. `## Steps` (required) — numbered list. Each step starts with a short bold title (2–5 words), then a dash and the gist: `1. **New response types** — group by internship in `path:line``. The gist: what to do + which files (`path`) + the change (function, field, condition). One step = one verifiable action; no \"etc.\".",
+    "4. `## Affected files` (required) — list of `path` — create / modify / delete.",
+    "5. `## Verification` (required) — commands (tests, build, lint) and what to check manually.",
+    "6. `## Risks` — what may break, backward compatibility, migrations.",
+    "7. `## Out of scope` — what we deliberately do not do.",
+    "Code snippets only when a step is ambiguous without them; short, never whole files.",
+  ].join("\n");
+}
+
 const PROPOSED_PLAN_RE =
   /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*[\s\S]*?(?:<\/proposed_plan>|&lt;\/proposed_plan&gt;)/i;
 

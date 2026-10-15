@@ -782,7 +782,7 @@
       return;
     }
     const SELECTOR =
-      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build";
+      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build, .proposed-plan-build, .proposed-plan-continue";
     const POINTER_ACTION_SELECTOR =
       ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .composer-plan-build, #sendBtn";
     let downEl = null;

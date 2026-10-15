@@ -43,6 +43,7 @@ const MODULES = [
   "18-pickers-and-send.js",
   "19-clipboard-bindings.js",
   "20-message-router.js",
+  "21-feed-ux.js",
 ];
 
 function build() {

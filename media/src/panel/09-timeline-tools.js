@@ -635,6 +635,16 @@
     return t("stepsMany", n);
   }
 
+  /** Tool steps that ended with status «error» (shown in the run summary). */
+  function timelineToolErrorsCount(group) {
+    if (!group) {
+      return 0;
+    }
+    return group.querySelectorAll(
+      '.agent-step[data-step-kind="tool"][data-status="error"]'
+    ).length;
+  }
+
   /** Steps users perceive as actions: tool calls only (no thinking/text). */
   function timelineToolStepsCount(group) {
     if (!group) {
@@ -1536,6 +1546,14 @@
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
         }
+        // Шаги с ошибкой (упавшая команда, неудачная правка) не должны
+        // прятаться за зелёным «выполнено»: число ошибок — в сводку,
+        // класс — для янтарной точки.
+        const stepErrors = timelineToolErrorsCount(group);
+        group.classList.toggle("has-step-errors", stepErrors > 0);
+        if (stepErrors > 0) {
+          parts.push(t("runErrors", stepErrors));
+        }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
         }`;
@@ -1849,6 +1867,7 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
+    advanceTodoPlanFromNarration(raw);
     positionTextStepAfterTimeline(turnScope, el);
     keepStatusAtEnd();
     scrollToBottom();
@@ -1896,6 +1915,9 @@
         todoEl.dataset.status = step.status;
       }
       todoEl.classList.add("agent-step-todo");
+      // Fresh update_todo → the plan is in sync again; the dock's stale
+      // hint counts edits from here (see noteEditForTodoPlan).
+      todoEl.__harborEditIds = new Set();
       renderTodoStep(todoEl, step);
       // Pin the plan card right under the user's prompt, above the step /
       // thinking timeline, regardless of the order events arrive in.
@@ -1931,6 +1953,10 @@
         scrollToBottom();
         return latest;
       }
+    }
+
+    if (step.kind === "tool") {
+      noteEditForTodoPlan(step);
     }
 
     const stepIdSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
@@ -2229,6 +2255,13 @@
 
     const counter = steps.length ? `${doneCount}/${steps.length}` : "";
     el.dataset.todoOpen = open ? "1" : "0";
+    // Незакрытый план: CSS показывает «не завершён», когда ход уже
+    // закончился (лента запечатана и не is-run-working).
+    if (!failed && steps.length && doneCount < steps.length) {
+      el.dataset.todoIncomplete = "1";
+    } else {
+      delete el.dataset.todoIncomplete;
+    }
 
     // Full card collapse: when data-todo-card-collapsed="1", only a compact
     // chip is visible — click it to restore the card.
@@ -2265,7 +2298,12 @@
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
       `<span class="todo-plan-title"></span>` +
       `<span class="todo-plan-counter"></span>` +
-      `<span class="material-symbols-outlined todo-plan-minimize" title="Свернуть панель" aria-hidden="true">minimize</span>` +
+      `<span class="todo-plan-stale"></span>` +
+      // Свернуть в чип — только в раскрытой карточке, чтобы в свёрнутой
+      // не было двух соседних «свернуть».
+      (open
+        ? `<button type="button" class="todo-plan-minimize" title="${escapeHtml(t("todoPlanMinimize"))}" aria-label="${escapeHtml(t("todoPlanMinimize"))}"><span class="material-symbols-outlined" aria-hidden="true">unfold_less</span></button>`
+        : "") +
       `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
     const titleEl = head.querySelector(".todo-plan-title");
     if (titleEl) {
@@ -2274,6 +2312,10 @@
     const counterEl = head.querySelector(".todo-plan-counter");
     if (counterEl) {
       counterEl.textContent = counter;
+    }
+    const staleEl = head.querySelector(".todo-plan-stale");
+    if (staleEl) {
+      staleEl.textContent = t("todoPlanIncomplete");
     }
     head.addEventListener("click", (e) => {
       // Minimize button: collapse entire card into compact chip.
@@ -2378,6 +2420,7 @@
       `<span class="agent-step-label">${escapeHtml(t("thinkingLabel"))}</span>` +
       `<button type="button" class="agent-step-thinking-toggle" hidden>` +
       `<span class="agent-step-thinking-toggle-label"></span>` +
+      `<span class="material-symbols-outlined agent-step-thinking-chevron" aria-hidden="true">expand_more</span>` +
       `</button>` +
       `</div>` +
       `<div class="agent-step-thinking-text"></div>`;
@@ -2411,6 +2454,7 @@
     el.classList.toggle("is-thinking-collapsed", !open);
     toggle.hidden = false;
     toggleLabel.textContent = open ? t("hideThinking") : t("showThinking");
+    toggle.title = toggleLabel.textContent;
     toggle.setAttribute("aria-expanded", String(open));
   }
 
@@ -2543,6 +2587,91 @@
     return steps.length ? { card, steps } : null;
   }
 
+  /**
+   * «Шаг 9 — правлю тесты» / «Step 3: …» in the agent's narration → step
+   * number (1-based), or 0. Self-contained — tests eval it from panel.js.
+   */
+  function narrationTodoStepNumber(text) {
+    const m = /(?:^|[\n.;!?]\s*|\s)(?:Шаг|Этап|Step)\s*№?\s*(\d{1,2})(?!\d)(?:\s*(?:из|of|\/)\s*\d{1,2})?\s*(?:[—–:.-]|$)/i.exec(
+      String(text || "")
+    );
+    return m ? Number(m[1]) : 0;
+  }
+  // end narrationTodoStepNumber
+
+  /**
+   * Keep the running plan card in step with the work: when the agent says
+   * «Шаг N — …» and N is ahead of the card, mark 1…N-1 done and N in progress
+   * right away instead of waiting for its next update_todo (models often
+   * forget it on long Build turns). Forward only; the next real update_todo
+   * replaces the card as usual.
+   */
+  function advanceTodoPlanFromNarration(text) {
+    const n = narrationTodoStepNumber(text);
+    if (!n) {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found || n > found.steps.length) {
+      return;
+    }
+    const { card, steps } = found;
+    const firstOpen = steps.findIndex(
+      (item) => String(item.status || "") !== "done"
+    );
+    const target = n - 1;
+    if (firstOpen < 0 || target < firstOpen) {
+      return;
+    }
+    if (
+      target === firstOpen &&
+      String(steps[target].status || "") === "in_progress"
+    ) {
+      return;
+    }
+    const next = steps.map((item, index) => {
+      if (index < target) {
+        return { ...item, status: "done" };
+      }
+      if (index === target) {
+        return { ...item, status: "in_progress" };
+      }
+      return String(item.status || "") === "in_progress"
+        ? { ...item, status: "pending" }
+        : item;
+    });
+    renderTodoStep(card, {
+      stepId: card.getAttribute("data-step-id") || "",
+      kind: "todo",
+      name: "update_todo",
+      status: card.dataset.status || "running",
+      steps: next,
+    });
+    // The card now matches the narration — restart the «not updated» count.
+    card.__harborEditIds = new Set();
+    queueTodoDockSync();
+  }
+
+  /** Edits (editor / apply_patch) since the plan card's last update_todo. */
+  const TODO_STALE_EDITS = 3;
+
+  function noteEditForTodoPlan(step) {
+    const name = canonicalToolName(step.name);
+    if ((name !== "editor" && name !== "apply_patch") || step.status === "error") {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found || !found.card.__harborEditIds) {
+      return;
+    }
+    const ids = found.card.__harborEditIds;
+    const before = ids.size;
+    ids.add(String(step.stepId));
+    if (ids.size !== before) {
+      queueTodoDockSync();
+    }
+  }
+
   function hideTodoDock() {
     if (todoDockedCard) {
       todoDockedCard.classList.remove("is-docked");
@@ -2551,6 +2680,8 @@
     if (todoDockEl) {
       todoDockEl.hidden = true;
       todoDockEl.innerHTML = "";
+      todoDockEl.__harborDockSig = "";
+      todoDockEl.__harborDockCurrent = "";
     }
   }
 
@@ -2651,7 +2782,40 @@
       currentEl.querySelector(".todo-dock-current-text").textContent = currentTitle;
       row.appendChild(currentEl);
     }
+    // The model keeps editing but never advances update_todo — say so
+    // instead of silently showing a frozen step as «in progress».
+    const staleEdits = card.__harborEditIds ? card.__harborEditIds.size : 0;
+    if (staleEdits >= TODO_STALE_EDITS && doneCount < steps.length) {
+      const staleEl = document.createElement("span");
+      staleEl.className = "todo-dock-stale";
+      staleEl.title = t("todoPlanStale", staleEdits);
+      staleEl.innerHTML =
+        `<span class="material-symbols-outlined todo-dock-stale-icon" aria-hidden="true">update</span>` +
+        `<span class="todo-dock-stale-text"></span>`;
+      staleEl.querySelector(".todo-dock-stale-text").textContent = t(
+        "todoPlanStale",
+        staleEdits
+      );
+      row.appendChild(staleEl);
+    }
 
+    // The observer fires on every chat mutation (stream, run timer…): skip
+    // the rebuild when nothing in the dock changed, and keep the list's
+    // scroll position when it does — a rebuild used to jump it to the top.
+    const signature = JSON.stringify([
+      todoDockOpen,
+      UI_LANG,
+      staleEdits >= TODO_STALE_EDITS && doneCount < steps.length ? staleEdits : 0,
+      steps.map((item) => [String(item.title || ""), String(item.status || "")]),
+    ]);
+    if (dock.__harborDockSig === signature && !dock.hidden) {
+      return;
+    }
+    const prevList = dock.querySelector(".todo-dock-list");
+    const prevScroll = prevList ? prevList.scrollTop : 0;
+    const prevCurrent = dock.__harborDockCurrent || "";
+    dock.__harborDockSig = signature;
+    dock.__harborDockCurrent = currentTitle;
     dock.innerHTML = "";
     // Panel above the pill: the pill stays next to the composer and the
     // opened plan grows upward.
@@ -2659,6 +2823,23 @@
     dock.appendChild(row);
     dock.classList.toggle("is-open", todoDockOpen);
     dock.hidden = false;
+    list.scrollTop = prevScroll;
+    // Current step moved → bring it into the list's view (list only, the
+    // chat scroll is untouched).
+    if (todoDockOpen && currentTitle && currentTitle !== prevCurrent) {
+      const rows = list.querySelectorAll(".todo-plan-item");
+      const index = current ? steps.indexOf(current) : -1;
+      const rowEl = index >= 0 ? rows[index] : null;
+      if (rowEl) {
+        const top = rowEl.offsetTop - list.offsetTop;
+        const bottom = top + rowEl.offsetHeight;
+        if (top < list.scrollTop) {
+          list.scrollTop = top;
+        } else if (bottom > list.scrollTop + list.clientHeight) {
+          list.scrollTop = bottom - list.clientHeight;
+        }
+      }
+    }
   }
 
   function queueTodoDockSync() {

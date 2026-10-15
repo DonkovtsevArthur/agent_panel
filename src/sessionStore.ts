@@ -68,6 +68,13 @@ export interface UiMessage {
    * Stamped with runDurationMs; used in the status line / group summary.
    */
   ttftMs?: number;
+  /**
+   * Когда сообщение появилось (ms). user — отправка, assistant — финал.
+   * Подпись под ответом и разделители по времени в ленте.
+   */
+  ts?: number;
+  /** Модель, ответившая этим сообщением (id) — подпись под ответом. */
+  model?: string;
 }
 
 /** Cap persisted Thinking text so long Kimi/Claude traces do not bloat workspaceState. */
@@ -236,6 +243,8 @@ export interface AgentRecord {
   createdAt?: number;
   /** Если задано — агент в архиве и скрыт из основного списка */
   archivedAt?: number;
+  /** Если задано — агент закреплён вверху списка (время закрепления). */
+  pinnedAt?: number;
 }
 
 export type AgentNameSource =
@@ -276,6 +285,10 @@ export interface AgentListItem {
   selectedModel: string;
   /** Нет пользовательских/assistant сообщений — можно удалить без архива. */
   empty: boolean;
+  /** Закреплён вверху списка. */
+  pinned: boolean;
+  /** Режим активного чата агента (agent / plan / ask / custom id). */
+  mode: string;
 }
 
 function uid(prefix: string): string {
@@ -609,6 +622,45 @@ function sanitizeMessages<T>(list: unknown): T[] {
     : [];
 }
 
+/**
+ * Старые чаты (до 2.9.65) сохраняли сообщения без `ts`. Для разделителей
+ * «Сегодня / Вчера» в ленте восстанавливаем две точно известные точки:
+ * первый запрос — время создания чата, последнее сообщение — время
+ * последней активности (`updatedAt` двигается только при новых сообщениях).
+ * Ничего не трогаем, если хотя бы у одного сообщения время уже есть.
+ * Возвращает true, если что-то проставлено.
+ */
+export function backfillLegacyMessageTimes(chat: ChatSession | undefined): boolean {
+  const list = chat?.uiMessages;
+  if (!chat || !Array.isArray(list) || !list.length) {
+    return false;
+  }
+  if (list.some((m) => m && typeof m.ts === "number" && m.ts > 0)) {
+    return false;
+  }
+  const createdAt = Number(chat.createdAt) || 0;
+  const updatedAt = Number(chat.updatedAt) || 0;
+  let changed = false;
+  const firstUser = list.findIndex((m) => m?.role === "user");
+  if (firstUser >= 0 && createdAt > 0) {
+    list[firstUser] = { ...list[firstUser], ts: createdAt };
+    changed = true;
+  }
+  let last = -1;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const role = list[i]?.role;
+    if (role === "user" || role === "assistant") {
+      last = i;
+      break;
+    }
+  }
+  if (last >= 0 && last !== firstUser && updatedAt > 0 && updatedAt >= createdAt) {
+    list[last] = { ...list[last], ts: updatedAt };
+    changed = true;
+  }
+  return changed;
+}
+
 function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
   const updatedAt = chat.updatedAt || Date.now();
   const uiMessages = sanitizeMessages<UiMessage>(chat.uiMessages);
@@ -635,6 +687,7 @@ function normalizeChat(chat: ChatSession, fallbackModel: string): ChatSession {
   if (typeof chat.scrollTop === "number" && Number.isFinite(chat.scrollTop)) {
     next.scrollTop = chat.scrollTop;
   }
+  backfillLegacyMessageTimes(next);
   if (Array.isArray(chat.lastAgentEditedPaths)) {
     next.lastAgentEditedPaths = chat.lastAgentEditedPaths
       .map((p) => String(p || "").trim())
@@ -700,6 +753,9 @@ function normalizeAgents(
       createdAt: frozenCreatedAt(rawAgent.createdAt, earliestChatCreated),
       updatedAt: Math.max(rawAgent.updatedAt || 0, latestChatUpdated),
       archivedAt: rawAgent.archivedAt,
+      ...(typeof rawAgent.pinnedAt === "number" && rawAgent.pinnedAt > 0
+        ? { pinnedAt: rawAgent.pinnedAt }
+        : {}),
       ...(asNameSource(rawAgent.nameSource)
         ? { nameSource: asNameSource(rawAgent.nameSource) }
         : {}),
@@ -931,8 +987,78 @@ export function buildAgentsList(store: AgentsStoreV2): AgentListItem[] {
             : 0,
         selectedModel: chat?.selectedModel || "",
         empty: !chatHasMessages(chat?.uiMessages),
+        pinned: Boolean(agent.pinnedAt),
+        mode: normalizeSelectedMode(chat?.selectedMode),
       };
     });
+}
+
+/** Закрепить / открепить агента. false — агента нет или он в архиве. */
+export function setAgentPinnedInStore(
+  store: AgentsStoreV2,
+  agentId: string,
+  pinned: boolean
+): boolean {
+  const agent = store.agents.find((a) => a.id === agentId);
+  if (!agent || agent.archivedAt) {
+    return false;
+  }
+  if (pinned) {
+    agent.pinnedAt = Date.now();
+  } else {
+    delete agent.pinnedAt;
+  }
+  return true;
+}
+
+/**
+ * Копия агента: новый агент с копией его текущего чата (ветки не копируются).
+ * Ставится первым в списке. Вызывающий сначала сбрасывает живой чат в store
+ * (чтобы копия получила последние сообщения), потом открывает копию.
+ */
+export function duplicateAgentInStore(
+  store: AgentsStoreV2,
+  agentId: string,
+  nameSuffix: string
+): { agent: AgentRecord; chat: ChatSession } | undefined {
+  const source = store.agents.find((a) => a.id === agentId);
+  if (!source || source.archivedAt) {
+    return undefined;
+  }
+  const sourceChat = store.chats[source.chatId];
+  if (!sourceChat || sourceChat.archivedAt) {
+    return undefined;
+  }
+  const now = Date.now();
+  const copy = JSON.parse(JSON.stringify(sourceChat)) as ChatSession;
+  const chat: ChatSession = {
+    ...copy,
+    id: uid("chat"),
+    createdAt: now,
+    updatedAt: now,
+  };
+  delete chat.archivedAt;
+  delete chat.parentChatId;
+  delete chat.branchedFromUiIndex;
+  delete chat.tabTitle;
+  delete chat.scrollTop;
+  // «Свои» правки для discard принадлежат исходному агенту.
+  delete chat.lastAgentEditedPaths;
+  const baseName = getAgentDisplayName(source, sourceChat);
+  const agent: AgentRecord = {
+    id: uid("agent"),
+    name: `${baseName}${nameSuffix}`,
+    nameSource: "user",
+    chatId: chat.id,
+    chatIds: [chat.id],
+    createdAt: now,
+    updatedAt: now,
+  };
+  store.chats[chat.id] = chat;
+  store.agents.unshift(agent);
+  // Активным не делаем: хост открывает копию своим openAgent, который
+  // сначала сохраняет текущий живой чат в его собственный id.
+  return { agent, chat };
 }
 
 function pickFallbackActive(store: AgentsStoreV2): void {
@@ -1149,6 +1275,16 @@ function cloneUiMessage(msg: UiMessage): UiMessage {
   }
   if (msg.step) {
     next.step = { ...msg.step };
+  }
+  // Подпись под ответом и разделители по времени — тоже в ветку.
+  if (typeof msg.ts === "number") {
+    next.ts = msg.ts;
+  }
+  if (msg.model) {
+    next.model = msg.model;
+  }
+  if (typeof msg.runDurationMs === "number") {
+    next.runDurationMs = msg.runDurationMs;
   }
   return next;
 }

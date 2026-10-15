@@ -54,6 +54,12 @@ import {
   detectUnfinishedAssistantTurn,
   toolContinueNudgePrompt,
 } from "./toolContinue";
+import {
+  appendReplyLanguageRuntimeNudge,
+  needsReplyLanguageRewrite,
+  replyLanguageRetryLabel,
+  replyLanguageRewritePrompt,
+} from "./replyLanguage";
 import { toClineReasoningOptions } from "./reasoningEffort";
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiTypes";
@@ -96,7 +102,7 @@ import {
   createHarborNoopTelemetry,
   HARBOR_CLINE_DISTINCT_ID,
 } from "./clineNoopTelemetry";
-import { HARBOR_PLAN_MODE_CARD_HINT } from "./planImplement";
+import { harborPlanModeRulesForLanguage } from "./planImplement";
 import { needsPlanCard, needsVerifyNudge } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
@@ -125,6 +131,10 @@ import {
   recordWorkspaceToolFailure,
 } from "./learnedErrors";
 import { createRememberTool } from "./projectMemory";
+import {
+  clineRuleSearchPathsWithoutWorkspaceAgentsMd,
+  loadOversizedWorkspaceAgentsMd,
+} from "./workspaceRules";
 import {
   createCodeNavTool,
   createRenameSymbolTool,
@@ -2160,6 +2170,9 @@ export async function runClineAgentTurn(options: {
   const enabledSkills = skillsMasterEnabled
     ? listHarborSkills(cwd, skillsConfig).filter((s) => !s.disabled)
     : [];
+  // Oversized workspace AGENTS.md: Cline would put all of it into every
+  // request — take it out of Cline's rule paths and inject a capped copy.
+  const oversizedAgentsMd = await loadOversizedWorkspaceAgentsMd(cwd);
   const harborRules = [
     customRules,
     // Truthful self-identification: the UI-selected model id, ahead of any
@@ -2181,16 +2194,15 @@ export async function runClineAgentTurn(options: {
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
     // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
-    enableTodoTool ? harborTodoRulesForLanguage(uiLang) : "",
+    enableTodoTool ? harborTodoRulesForLanguage(uiLang, harborModeId) : "",
     // Skill catalog with descriptions — the Cline skills tool lists names only.
     harborSkillsRulesForLanguage(enabledSkills, uiLang),
     resolveModelNeedsVisionHelper(options.model)
       ? harborVisionInspectRulesForLanguage(uiLang)
       : "",
-    // Harbor Plan card: ask models to wrap finales in <proposed_plan> (Ask stays plain).
-    String(options.agentMode || "").toLowerCase() === "plan"
-      ? HARBOR_PLAN_MODE_CARD_HINT
-      : "",
+    // Harbor Plan: «Собрать» instead of Cline's Act toggle, <proposed_plan>
+    // card contract and the self-contained plan template (Ask stays plain).
+    harborModeId === "plan" ? harborPlanModeRulesForLanguage(uiLang) : "",
     // Ask shares Cline's "plan" mode under the hood (see mapHarborModeToCline),
     // so Cline's base prompt always says "Plan mode" / "toggle to Act mode".
     // Override that framing so the model calls itself "Ask" to the user.
@@ -2210,6 +2222,7 @@ export async function runClineAgentTurn(options: {
     modePrompt
       ? `# Mode: ${modeDef.label || modeDef.id}\n${modePrompt}`
       : "",
+    oversizedAgentsMd ? oversizedAgentsMd.rule : "",
   ]
     .map((part) => String(part || "").trim())
     .filter(Boolean)
@@ -2315,6 +2328,9 @@ export async function runClineAgentTurn(options: {
     mcpFingerprint ? mcpFingerprint.split(",").filter(Boolean).length : 0
   );
   timing.note("skills", enabledSkills.length);
+  if (oversizedAgentsMd) {
+    timing.note("agentsMdTruncatedFrom", oversizedAgentsMd.originalChars);
+  }
   const fingerprint = clineSessionFingerprint({
     mode: String(options.agentMode || "agent").toLowerCase(),
     model: options.model,
@@ -2951,8 +2967,16 @@ export async function runClineAgentTurn(options: {
     options.model,
     uiLang
   );
+  // Reply language rides on every turn too: flash models drift into Chinese
+  // at the end of long turns when only the system prompt names the language.
+  userPrompt = appendReplyLanguageRuntimeNudge(userPrompt, uiLang);
   // update_todo nudge only on multi-step turns (short Q&A skips the card).
-  userPrompt = appendTodoRuntimeNudge(userPrompt, todoNudgeThisTurn, uiLang);
+  userPrompt = appendTodoRuntimeNudge(
+    userPrompt,
+    todoNudgeThisTurn,
+    uiLang,
+    harborModeId
+  );
   // After edits: verify nudge only on Agent-like turns that may edit files.
   clearTurnEditedPaths();
   userPrompt = appendVerifyRuntimeNudge(userPrompt, verifyNudgeThisTurn, uiLang);
@@ -3016,7 +3040,12 @@ export async function runClineAgentTurn(options: {
           directories: skillDirs,
           includePluginSkills: false,
         },
-        rules: { workspacePath: cwd },
+        rules: oversizedAgentsMd
+          ? {
+              workspacePath: cwd,
+              directories: clineRuleSearchPathsWithoutWorkspaceAgentsMd(cwd),
+            }
+          : { workspacePath: cwd },
         workflows: { workspacePath: cwd },
       })
     : undefined;
@@ -3158,7 +3187,7 @@ export async function runClineAgentTurn(options: {
         (step) => emitStep(callbacks, step),
         () =>
           withTodoReminder(
-            createTodoReminderState(todoNudgeThisTurn, uiLang),
+            createTodoReminderState(todoNudgeThisTurn, uiLang, harborModeId),
             () => withTurnImages(userImages, runTurn)
           )
       )
@@ -3235,6 +3264,64 @@ export async function runClineAgentTurn(options: {
             error instanceof Error ? error.message : String(error)
           );
           break;
+        }
+      }
+    }
+
+    // Finale in the wrong language (mostly Chinese while the UI is ru/en):
+    // ask the same live session ONCE to rewrite it. The drifted text is
+    // hidden from the finale; it comes back if the follow-up fails.
+    if (persistSession && !options.signal?.aborted && !harborAbort) {
+      const submitText =
+        submitSummary ||
+        submitSummaryFromToolCalls(result?.toolCalls) ||
+        submitSummaryFromMessages(result?.messages);
+      const finaleCandidate =
+        String(result?.text || "").trim() || pendingTextTail().trim();
+      if (
+        !submitText.trim() &&
+        needsReplyLanguageRewrite(
+          finaleCandidate,
+          String(options.userText || ""),
+          uiLang
+        )
+      ) {
+        emitStep(callbacks, {
+          stepId: "reply-language-rewrite",
+          kind: "retry",
+          text: replyLanguageRetryLabel(uiLang),
+          attempt: 1,
+          maxAttempts: 1,
+        });
+        const hidden = textBlocks.filter((block) => !block.flushed);
+        const hiddenTail = currentTextBlock;
+        for (const block of hidden) {
+          block.flushed = true;
+        }
+        currentTextBlock = "";
+        callbacks.onAssistantStreamClear?.();
+        let rewritten = false;
+        try {
+          const next = await core.send({
+            sessionId,
+            prompt: replyLanguageRewritePrompt(uiLang),
+            mode: clineMode,
+          });
+          if (next !== undefined) {
+            result = next;
+            rewritten = true;
+          }
+        } catch (error) {
+          console.warn(
+            "[clineRuntime] reply-language rewrite failed:",
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+        if (!rewritten) {
+          for (const block of hidden) {
+            block.flushed = false;
+          }
+          currentTextBlock = hiddenTail;
         }
       }
     }

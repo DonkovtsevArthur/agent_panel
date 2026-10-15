@@ -425,7 +425,22 @@ export function appendVisionInspectRuntimeNudge(
  * Appended to the runtime user prompt in Agent/Plan when update_todo is
  * registered — makes the model maintain the visible plan card.
  */
-export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
+export function harborTodoUserNudgeForLanguage(
+  lang: UiLanguage,
+  modeId?: string
+): string {
+  if (String(modeId || "").toLowerCase() === "plan") {
+    if (lang === "ru") {
+      return [
+        "[Harbor] Tool update_todo доступен — только для хода исследования (что изучить), не для самого плана.",
+        "Итоговый план целиком (все разделы шаблона) — в <proposed_plan> финала.",
+      ].join(" ");
+    }
+    return [
+      "[Harbor] Tool update_todo is available — only to track the exploration (what to investigate), not for the plan itself.",
+      "The final plan goes in full (every template section) inside the finale's <proposed_plan>.",
+    ].join(" ");
+  }
   if (lang === "ru") {
     return [
       "[Harbor] Tool update_todo доступен — только для многошаговой работы.",
@@ -444,13 +459,14 @@ export function harborTodoUserNudgeForLanguage(lang: UiLanguage): string {
 export function appendTodoRuntimeNudge(
   userText: string,
   enabled: boolean,
-  lang: UiLanguage
+  lang: UiLanguage,
+  modeId?: string
 ): string {
   const base = String(userText || "").trim();
   if (!enabled) {
     return base;
   }
-  const nudge = harborTodoUserNudgeForLanguage(lang);
+  const nudge = harborTodoUserNudgeForLanguage(lang, modeId);
   return base ? `${base}\n\n${nudge}` : nudge;
 }
 
@@ -458,13 +474,37 @@ export function appendTodoRuntimeNudge(
  * Session rules for update_todo — the model maintains the visible plan card.
  * Injected into the Cline rules slot for Agent/Plan sessions.
  */
-export function harborTodoRulesForLanguage(lang: UiLanguage): string {
+export function harborTodoRulesForLanguage(
+  lang: UiLanguage,
+  modeId?: string
+): string {
+  // Plan: the deliverable is the <proposed_plan> card, not the todo card —
+  // the Agent-mode «do not repeat the plan as text» rule would hollow it out.
+  if (String(modeId || "").toLowerCase() === "plan") {
+    if (lang === "ru") {
+      return [
+        "# update_todo в режиме Plan",
+        "update_todo здесь — только чек-лист исследования (какие части кода изучить), 2+ пунктов. Короткий вопрос — без update_todo.",
+        "Шаги реализации в update_todo НЕ клади: карточка задач не передаётся по «Собрать».",
+        "Итоговый план — целиком внутри <proposed_plan> (Цель, Шаги, Затронутые файлы, Проверка…), даже если пункты пересекаются с update_todo. Правило «не дублируй план текстом» к <proposed_plan> не относится.",
+        "Перед финалом — все пункты update_todo 'done'. Из spawn_agent не вызывать.",
+      ].join("\n");
+    }
+    return [
+      "# update_todo in Plan mode",
+      "Here update_todo is only the exploration checklist (which parts of the code to investigate), 2+ items. Short question — no update_todo.",
+      "Do NOT put implementation steps into update_todo: the todo card is not handed over by Build.",
+      "The final plan goes in full inside <proposed_plan> (Goal, Steps, Affected files, Verification…), even if items overlap update_todo. The \"do not repeat the plan as text\" rule does not apply to <proposed_plan>.",
+      "Before the finale, mark every update_todo item 'done'. Never call it from spawned sub-agents.",
+    ].join("\n");
+  }
   if (lang === "ru") {
     return [
       "# update_todo — карточка плана",
       "Только для многошаговой работы (2+ шага). Короткий вопрос или одно действие — НЕ вызывай update_todo.",
       "Для многошаговой работы: первый вызов — полный список (все 'pending', первый 'in_progress'); далее — обновлённый полный список после каждого шага (вызов заменяет карточку).",
       "Если план уже в карточке update_todo — НЕ дублируй его текстом в сообщении (никаких «План работ:» / «План реализации:» + нумерованный или маркированный список шагов). В тексте — только статус, уточнения и результат.",
+      "Переходя к следующему шагу, начинай короткую реплику с «Шаг N — …», где N — номер пункта в карточке update_todo (Harbor по ней сразу двигает карточку). Номера — только из карточки, не из <proposed_plan>.",
       "Финал — все шаги 'done'. Из spawn_agent не вызывать.",
     ].join("\n");
   }
@@ -473,6 +513,7 @@ export function harborTodoRulesForLanguage(lang: UiLanguage): string {
     "Multi-step work only (2+ steps). Short question or a single action — do NOT call update_todo.",
     "For multi-step work: first call is the full step list (all 'pending', first 'in_progress'); then the full updated list after each step (each call replaces the card).",
     "If the plan is already in the update_todo card — do NOT repeat it as text in the message (no \"Plan of work:\" / \"Implementation plan:\" + numbered or bulleted step list). Message text is status, clarifications, and results only.",
+    "When moving to the next step, start a short note with \"Step N — …\", where N is the item number in the update_todo card (Harbor advances the card from it right away). Use the card's numbering only, not <proposed_plan>'s.",
     "Finale — every step 'done'. Never call it from spawned sub-agents.",
   ].join("\n");
 }

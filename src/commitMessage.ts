@@ -27,6 +27,12 @@ const execFileAsync = promisify(execFile);
 const MAX_DIFF_CHARS = 90_000;
 const COMMIT_DOC_RULE_CHAR_CAP = 32_000;
 
+/** Сообщение, которое отклонил commit-msg хук, и вывод хука — для повторной генерации. */
+export type CommitMessageRejection = {
+  message: string;
+  output: string;
+};
+
 /** Thrown when Settings → Commit messages has no usable model selected. */
 export class CommitMessageModelNotConfiguredError extends Error {
   readonly code = "COMMIT_MESSAGE_MODEL_NOT_CONFIGURED" as const;
@@ -418,12 +424,31 @@ function buildPrompts(
   lang: "en" | "ru",
   diff: string,
   source: "staged" | "unstaged",
+  instruction?: string,
+  rejection?: CommitMessageRejection
+): { system: string; user: string } {
+  const built = buildBasePrompts(lang, diff, source, instruction);
+  if (!rejection) {
+    return built;
+  }
+  const hookOutput = rejection.output.trim().slice(-2000);
+  const tail =
+    lang === "ru"
+      ? `\n\nПредыдущее сообщение отклонил git-хук репозитория:\n${rejection.message}\n\nВывод хука:\n${hookOutput}\n\nНапиши новое сообщение, которое проходит эти правила (особенно по длине первой строки).`
+      : `\n\nThe repository git hook rejected the previous message:\n${rejection.message}\n\nHook output:\n${hookOutput}\n\nWrite a new message that passes these rules (especially the first-line length).`;
+  return { system: built.system, user: built.user + tail };
+}
+
+function buildBasePrompts(
+  lang: "en" | "ru",
+  diff: string,
+  source: "staged" | "unstaged",
   instruction?: string
 ): { system: string; user: string } {
   const baseSystem =
     lang === "ru"
-      ? "Ты помогаешь писать сообщения git-коммитов. Используй формат: <тип>(<область>): <описание> — одно краткое предложение на русском. Типы: feat/fix/docs/style/refactor/test/chore/perf. Ответь ТОЛЬКО текстом сообщения — без кавычек, без markdown, без префикса."
-      : "You write git commit messages. Use the format: <type>(<scope>): <description> — one concise sentence. Types: feat/fix/docs/style/refactor/test/chore/perf. Reply with the commit message text only — no quotes, no markdown, no prefix.";
+      ? "Ты помогаешь писать сообщения git-коммитов. Используй формат: <тип>(<область>): <описание> — одно краткое предложение на русском. Первая строка — не длиннее 72 символов (хуки репозиториев часто отклоняют длинные заголовки): не перечисляй всё подряд, назови главное. Типы: feat/fix/docs/style/refactor/test/chore/perf. Ответь ТОЛЬКО текстом сообщения — без кавычек, без markdown, без префикса."
+      : "You write git commit messages. Use the format: <type>(<scope>): <description> — one concise sentence. Keep the first line within 72 characters (repository hooks often reject longer headers): name the main change, do not list everything. Types: feat/fix/docs/style/refactor/test/chore/perf. Reply with the commit message text only — no quotes, no markdown, no prefix.";
 
   const outputOnlyTail =
     lang === "ru"
@@ -486,7 +511,8 @@ export async function composeCommitMessageText(
   cwd: string,
   collected?: { diff: string; source: "staged" | "unstaged" },
   signal?: AbortSignal,
-  paths: string[] = []
+  paths: string[] = [],
+  rejection?: CommitMessageRejection
 ): Promise<string> {
   const data = collected ?? (await collectCommitDiff(cwd, paths));
   if (!data) {
@@ -549,7 +575,8 @@ export async function composeCommitMessageText(
     effectiveLang,
     data.diff,
     data.source,
-    instruction
+    instruction,
+    rejection
   );
 
   // Reasoning-модели на большом diff регулярно не укладываются в 10 с.

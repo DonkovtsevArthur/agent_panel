@@ -45,12 +45,23 @@ object HarborPlan {
     project: Project,
     markdown: String?,
     @Suppress("UNUSED_PARAMETER") reveal: String = "editor",
+    keepExisting: Boolean = false,
   ) {
     val content = stripWrapper(markdown)
     if (content.isBlank()) {
       return
     }
     val file = planFile(project)
+    if (keepExisting && file.isFile && readLive(project).isNotBlank()) {
+      // Plan card «Edit»: just reveal Plan.md — never overwrite the user's edits.
+      ApplicationManager.getApplication().invokeLater {
+        val vf =
+          LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
+            ?: return@invokeLater
+        FileEditorManager.getInstance(project).openFile(vf, true)
+      }
+      return
+    }
     file.writeText(content)
     // Keep both names in sync so Build can find either.
     val alt =

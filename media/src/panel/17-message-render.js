@@ -45,11 +45,17 @@
       // Keep full Build payload in dataset.raw for the model / edit-resend;
       // in chat show a short handoff chip — not a second copy of the plan.
       el.classList.add("is-plan-implement");
+      // The plan itself sits under the chip, hidden until «Show plan»
+      // (maybeCollapseLongUserMessage adds the toggle).
+      const planText = stripPlanImplementWrapper(raw);
       body.innerHTML =
         `<span class="plan-implement-chip">` +
         `<span class="material-symbols-outlined" aria-hidden="true">construction</span>` +
         `<span>${escapeHtml(t("proposedPlanImplementBubble"))}</span>` +
-        `</span>`;
+        `</span>` +
+        (planText
+          ? `<div class="plan-implement-plan msg-text">${renderInlineMarkdown(planText)}</div>`
+          : "");
       return;
     }
     if (role === "user") {
@@ -280,10 +286,15 @@
           }
         }
       }
+      if (!isEditing) {
+        maybeCollapseLongUserMessage(el, text);
+      }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
       wrap.appendChild(el);
-      startChatTurn().appendChild(wrap);
+      const turnEl = startChatTurn();
+      turnEl.appendChild(wrap);
+      maybeInsertTimeSeparator(turnEl, index, shouldScroll);
       keepStatusAtEnd();
       if (shouldScroll) {
         scrollToBottom();
@@ -304,6 +315,7 @@
       wrap.appendChild(el);
       wrap.appendChild(actions);
       ensureChatTurn().appendChild(wrap);
+      paintAssistantMeta(index);
       keepStatusAtEnd();
       if (shouldScroll) {
         scrollToBottom();
@@ -319,6 +331,119 @@
     return el;
   }
 
+  /**
+   * Стартовый экран пустого чата: подсказки-задачи, горячие клавиши,
+   * недавние агенты. Живёт внутри #messages и прячется CSS-ом, как только
+   * появляется первое сообщение (.chat-turn / .msg) — без отдельного
+   * состояния, которое могло бы разойтись с лентой.
+   */
+  function renderChatWelcome() {
+    if (!messagesEl) {
+      return;
+    }
+    messagesEl.querySelector(".chat-welcome")?.remove();
+    const root = document.createElement("div");
+    root.className = "chat-welcome";
+
+    const title = document.createElement("div");
+    title.className = "chat-welcome-title";
+    title.textContent = t("welcomeTitle");
+    root.appendChild(title);
+
+    const suggestions = [
+      ["travel_explore", "welcomeSuggestExplain"],
+      ["bug_report", "welcomeSuggestFix"],
+      ["science", "welcomeSuggestTests"],
+      ["checklist", "welcomeSuggestPlan"],
+    ];
+    const list = document.createElement("div");
+    list.className = "chat-welcome-suggestions";
+    for (const [icon, key] of suggestions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chat-welcome-suggestion";
+      btn.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+        `<span class="chat-welcome-suggestion-text"></span>`;
+      const text = t(key);
+      btn.querySelector(".chat-welcome-suggestion-text").textContent = text;
+      btn.addEventListener("click", () => {
+        if (!promptEl) {
+          return;
+        }
+        promptEl.value = text;
+        promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+        promptEl.focus();
+        const end = promptEl.value.length;
+        try {
+          promptEl.setSelectionRange(end, end);
+        } catch {
+          /* ignore */
+        }
+      });
+      list.appendChild(btn);
+    }
+    root.appendChild(list);
+
+    const hints = document.createElement("div");
+    hints.className = "chat-welcome-hints";
+    const isMac = /Mac|iPhone|iPad/i.test(
+      navigator.platform || navigator.userAgent || ""
+    );
+    const hintItems = [
+      ["@", t("welcomeHintMention")],
+      ["/", t("welcomeHintSlash")],
+    ];
+    // Хоткей выделения — команда VS Code; в JetBrains свой keymap.
+    const jetbrains =
+      typeof harborHostAvailable === "function" && harborHostAvailable();
+    if (!jetbrains) {
+      hintItems.push([isMac ? "⌘⇧L" : "Ctrl+Shift+L", t("welcomeHintSelection")]);
+    }
+    for (const [key, label] of hintItems) {
+      const item = document.createElement("span");
+      item.className = "chat-welcome-hint";
+      const kbd = document.createElement("kbd");
+      kbd.textContent = key;
+      item.appendChild(kbd);
+      item.appendChild(document.createTextNode(` ${label}`));
+      hints.appendChild(item);
+    }
+    root.appendChild(hints);
+
+    const recent = (Array.isArray(agentsData) ? agentsData : [])
+      .filter((a) => a && !a.empty && a.id && a.id !== activeAgentId)
+      .slice(0, 3);
+    if (recent.length) {
+      const recentTitle = document.createElement("div");
+      recentTitle.className = "chat-welcome-section";
+      recentTitle.textContent = t("welcomeRecent");
+      root.appendChild(recentTitle);
+      const recentList = document.createElement("div");
+      recentList.className = "chat-welcome-recent";
+      for (const a of recent) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "chat-welcome-agent";
+        btn.innerHTML =
+          `<span class="material-symbols-outlined" aria-hidden="true">history</span>` +
+          `<span class="chat-welcome-agent-name"></span>` +
+          `<span class="chat-welcome-agent-time"></span>`;
+        btn.querySelector(".chat-welcome-agent-name").textContent =
+          a.name || t("agent");
+        btn.querySelector(".chat-welcome-agent-time").textContent =
+          a.time || "";
+        btn.addEventListener("click", () => {
+          host.postMessage({ type: "openAgent", agentId: a.id });
+        });
+        recentList.appendChild(btn);
+      }
+      root.appendChild(recentList);
+    }
+
+    messagesEl.appendChild(root);
+  }
+
   function renderMessages(list, scrollMode = "bottom", restoredScrollTop) {
     restoringChatScroll = true;
     // Full remount destroys DOM nodes — drop the streaming ref so later
@@ -332,6 +457,9 @@
     if (!Array.isArray(list)) {
       restoringChatScroll = false;
       return;
+    }
+    if (!list.length) {
+      renderChatWelcome();
     }
 
     let regenAssistantIndex = -1;

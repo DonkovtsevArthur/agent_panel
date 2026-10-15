@@ -70,6 +70,8 @@
             totalOutputTokens: msg.totalOutputTokens,
             totalCacheReadTokens: msg.totalCacheReadTokens,
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
+            lastPromptTokens: msg.lastPromptTokens || 0,
+            lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
         }
         renderChatBranches(msg.branches);
@@ -114,6 +116,9 @@
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        if (typeof msg.archivedCount === "number") {
+          agentsArchivedCount = Math.max(0, msg.archivedCount);
+        }
         {
           const active = agentsData.find((a) => a.active);
           if (active) {
@@ -121,6 +126,10 @@
           }
         }
         renderAgentsList();
+        // Недавние агенты на стартовом экране пустого чата.
+        if (messagesEl.querySelector(".chat-welcome")) {
+          renderChatWelcome();
+        }
         if (
           !settingsSwitchSuppressed() &&
           (msg.screen === "agents" || msg.screen === "chat")
@@ -294,6 +303,8 @@
             totalOutputTokens: msg.totalOutputTokens,
             totalCacheReadTokens: msg.totalCacheReadTokens,
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
+            lastPromptTokens: msg.lastPromptTokens || 0,
+            lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
         }
         if (!settingsSwitchSuppressed()) {
@@ -367,6 +378,9 @@
           totalOutputTokens: msg.totalOutputTokens,
           totalCacheReadTokens: msg.totalCacheReadTokens,
           totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          // Per-call fields (promptTokens / cacheReadTokens) — both hosts.
+          lastPromptTokens: msg.promptTokens,
+          lastCacheReadTokens: msg.cacheReadTokens,
         });
         break;
       case "modelsUpdated":
@@ -474,6 +488,9 @@
             syncComposerPlanFromCache({ openEditor: false });
           }
         }
+        break;
+      case "livePlanStatus":
+        applyLivePlanStatus(msg.text || "");
         break;
       case "livePlanForBuild": {
         const text = stripPlanImplementWrapper(msg.text || "");
@@ -654,6 +671,23 @@
         }
         streamingEl = null;
         streamingRenderScheduled = false;
+        // Подпись под ответом: время и модель от хоста (live).
+        for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+          const cached = uiMessagesCache[i];
+          if (cached?.role !== "assistant") {
+            continue;
+          }
+          if (typeof msg.ts === "number" && !cached.ts) {
+            cached.ts = msg.ts;
+          } else if (!cached.ts) {
+            cached.ts = Date.now();
+          }
+          if (msg.model && !cached.model) {
+            cached.model = msg.model;
+          }
+          paintAssistantMeta(i);
+          break;
+        }
         completeRunningTodoPlans();
         // A duplicate catch-up finale must not clear an open edit composer —
         // Save silently no-ops once editingUserIndex is gone.
@@ -708,6 +742,7 @@
           // Paint «выполнено · … · 18,6 с» on the timeline even when the
           // step-level stamp never landed (or arrived before the DOM group).
           applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
+          paintLatestAssistantMeta();
           // Terminal message right before `idle` — arm the drain fallback in
           // case the idle message is lost on the webview bridge.
           armQueueDrainFallback();
@@ -795,6 +830,7 @@
       case "cleared":
         messagesEl.innerHTML = "";
         uiMessagesCache = [];
+        renderChatWelcome();
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -808,6 +844,8 @@
           totalOutputTokens: 0,
           totalCacheReadTokens: 0,
           totalCacheWriteTokens: 0,
+          lastPromptTokens: 0,
+          lastCacheReadTokens: 0,
         });
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);

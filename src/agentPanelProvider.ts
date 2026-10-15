@@ -82,6 +82,7 @@ import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
+import { AgentPendingDiffTracker } from "./agentPendingDiff";
 import {
   buildSkillsListPayload,
   ensureHarborSkillRoots,
@@ -118,6 +119,8 @@ import {
   buildArchiveList,
   chatHasMessages,
   cloneStore,
+  duplicateAgentInStore,
+  setAgentPinnedInStore,
   collapseOldToolUiMessages,
   copyUiAttachmentsOntoHistory,
   createEmptyAgent,
@@ -252,6 +255,8 @@ type WebviewToHost =
   | { type: "saveModes"; modes: SettingsPayload["modes"] }
   | { type: "renameAgent"; agentId: string; name: string }
   | { type: "archiveAgent"; agentId: string }
+  | { type: "pinAgent"; agentId: string; pinned: boolean }
+  | { type: "duplicateAgent"; agentId: string }
   | { type: "restoreAgent"; agentId: string }
   | { type: "deleteAgent"; agentId: string }
   | { type: "deleteAllArchived" }
@@ -262,19 +267,23 @@ type WebviewToHost =
       reasoningEffort: string;
       chatId?: string;
     }
-  | { type: "openFile"; path: string }
+  | { type: "openFile"; path: string; line?: number }
   | { type: "openFileDiff"; path: string }
   | {
       type: "openPlanMarkdown";
       text: string;
       /** Default: editable editor tab (live plan). */
       reveal?: "editor" | "preview";
+      /** Card «Edit»: reveal the existing Plan.md as is (keep user edits). */
+      keepExisting?: boolean;
     }
   | {
       type: "requestLivePlanForBuild";
       requestId: string;
       fallbackText?: string;
     }
+  /** Plan card «Edited in editor» — current Plan.md text, no Build. */
+  | { type: "requestLivePlanStatus" }
   | { type: "commitAndPush"; paths: string[] }
   | { type: "discardChanges"; paths: string[] }
   | { type: "openScm" }
@@ -417,6 +426,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private totalCacheReadTokens = 0;
   /** Накопленные записи в prompt-кэш по активному чату. */
   private totalCacheWriteTokens = 0;
+  /**
+   * Последний запрос к модели по чату: весь input и сколько из него пришло из
+   * prompt-кэша. Только в памяти (не персистится) — для подсказки кольца контекста.
+   */
+  private readonly lastRequestUsage = new Map<
+    string,
+    { promptTokens: number; cacheReadTokens: number }
+  >();
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
   /**
@@ -429,6 +446,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     string,
     "running" | "success" | "error"
   >();
+  /** «+N −M» незакоммиченных правок агента в списке агентов. */
+  private readonly pendingDiff = new AgentPendingDiffTracker(
+    () => this.store,
+    () => this.postAgentsList(),
+    resolveRemainingReviewFiles
+  );
   private readonly chatStatusState = new Map<
     string,
     { text: string; hidden: boolean; phase?: AgentPhase; modelLabel?: string }
@@ -899,6 +922,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   dispose(): void {
+    this.pendingDiff.dispose();
     this.abortAllRuns("discard");
     this.stopProviderConnPolling();
     if (this.scmRefreshTimer) {
@@ -1377,6 +1401,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postContextUsage(): void {
     const max = getContextWindow(this.selectedModel);
+    const last = this.activeLastRequestUsage();
     this.postChat({
       type: "contextUsage",
       used: this.contextTokens,
@@ -1385,7 +1410,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
       totalCacheWriteTokens: this.totalCacheWriteTokens,
+      promptTokens: last.promptTokens,
+      cacheReadTokens: last.cacheReadTokens,
     });
+  }
+
+  private activeLastRequestUsage(): {
+    promptTokens: number;
+    cacheReadTokens: number;
+  } {
+    return (
+      this.lastRequestUsage.get(this.store.activeChatId || "") || {
+        promptTokens: 0,
+        cacheReadTokens: 0,
+      }
+    );
   }
 
   private saveStore(): Promise<void> {
@@ -1552,6 +1591,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.chatRunState.set(chatId, state);
     } else {
       this.chatRunState.delete(chatId);
+    }
+    if (state && state !== "running") {
+      // Ход закончился — правки агента могли поменять «+N −M» в списке.
+      this.pendingDiff.schedule(600);
     }
     this.postAgentsList();
   }
@@ -2379,22 +2422,32 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
 
   private postAgentsList(): void {
     const lang = resolveUiLanguage(getConfig().language);
-    const list = buildAgentsList(this.store).map((a) => ({
-      id: a.id,
-      name: a.name,
-      model: this.modelLabel(a.model) || a.model || "—",
-      preview: a.preview,
-      time: formatListTime(a.createdAt || a.updatedAt, lang),
-      active: a.active,
-      empty: a.empty,
-      runState: this.runStateForAgent(a.id),
-      runMode: this.runModeForAgent(a.id),
-    }));
+    const list = buildAgentsList(this.store).map((a) => {
+      const diff = this.pendingDiff.get(a.id);
+      return {
+        id: a.id,
+        name: a.name,
+        model: this.modelLabel(a.model) || a.model || "—",
+        preview: a.preview,
+        time: formatListTime(a.createdAt || a.updatedAt, lang),
+        // Сырое время для группировки «Сегодня / Вчера / …» в панели.
+        ts: a.createdAt || a.updatedAt,
+        active: a.active,
+        empty: a.empty,
+        pinned: a.pinned,
+        mode: a.mode,
+        runState: this.runStateForAgent(a.id),
+        runMode: this.runModeForAgent(a.id),
+        ...(diff ? { diffAdded: diff.added, diffRemoved: diff.removed } : {}),
+      };
+    });
     this.postChat({
       type: "agentsList",
       agents: list,
+      archivedCount: buildArchiveList(this.store).length,
       screen: this.store.screen,
     });
+    this.pendingDiff.scheduleIfStale();
   }
 
   private postArchiveList(): void {
@@ -2460,6 +2513,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
       totalCacheWriteTokens: this.totalCacheWriteTokens,
+      lastPromptTokens: this.activeLastRequestUsage().promptTokens,
+      lastCacheReadTokens: this.activeLastRequestUsage().cacheReadTokens,
       scrollTop: this.store.chats[this.store.activeChatId || ""]?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus,
@@ -2725,6 +2780,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "archiveAgent":
         await this.archiveAgent(message.agentId);
         break;
+      case "pinAgent":
+        if (
+          setAgentPinnedInStore(
+            this.store,
+            message.agentId,
+            Boolean(message.pinned)
+          )
+        ) {
+          this.saveStore();
+          this.postAgentsList();
+        }
+        break;
+      case "duplicateAgent":
+        this.duplicateAgent(message.agentId);
+        break;
       case "restoreAgent":
         this.restoreAgent(message.agentId);
         break;
@@ -2855,7 +2925,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         }
         break;
       case "openFile":
-        await this.openWorkspaceFile(message.path);
+        await this.openWorkspaceFile(
+          message.path,
+          typeof message.line === "number" ? message.line : undefined
+        );
         break;
       case "openFileDiff":
         await this.openWorkspaceFileDiff(message.path);
@@ -2863,8 +2936,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "openPlanMarkdown":
         await this.openPlanMarkdown(String(message.text || ""), {
           reveal: message.reveal === "preview" ? "preview" : "editor",
+          keepExisting: message.keepExisting === true,
         });
         break;
+      case "requestLivePlanStatus": {
+        this.postChat({
+          type: "livePlanStatus",
+          text: await this.readLivePlanMarkdown(),
+        });
+        break;
+      }
       case "requestLivePlanForBuild": {
         const live = await this.readLivePlanMarkdown();
         const fallback = stripPlanImplementWrapper(
@@ -3215,6 +3296,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     void this.postChatScreen();
   }
 
+  /** Копия агента (текущая ветка) — открывается сразу. */
+  private duplicateAgent(agentId: string): void {
+    // Живой чат → store, чтобы копия получила последние сообщения.
+    this.persistActiveChat();
+    const suffix =
+      resolveUiLanguage(getConfig().language) === "ru" ? " (копия)" : " (copy)";
+    const created = duplicateAgentInStore(this.store, agentId, suffix);
+    if (!created) {
+      return;
+    }
+    this.saveStore();
+    this.openAgent(created.agent.id);
+  }
+
   /** Archive immediately — no confirm modal (restore stays in Archive screen). */
   private async archiveAgent(agentId: string): Promise<void> {
     const agent = this.store.agents.find((a) => a.id === agentId);
@@ -3387,7 +3482,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.ensureProviderProbe(this.selectedModel);
   }
 
-  private async openWorkspaceFile(relativePath: string): Promise<void> {
+  private async openWorkspaceFile(
+    relativePath: string,
+    line?: number
+  ): Promise<void> {
     if (this.resolveWorkspaceUris(relativePath).length === 0) {
       return;
     }
@@ -3410,7 +3508,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     try {
       const doc = await vscode.workspace.openTextDocument(target);
-      await vscode.window.showTextDocument(doc, { preview: true });
+      // Plan card chips carry `path:line` — jump to that line (1-based).
+      const lineIndex =
+        typeof line === "number" && line > 0
+          ? Math.min(line - 1, Math.max(0, doc.lineCount - 1))
+          : -1;
+      const position = lineIndex >= 0 ? new vscode.Position(lineIndex, 0) : undefined;
+      await vscode.window.showTextDocument(doc, {
+        preview: true,
+        ...(position ? { selection: new vscode.Range(position, position) } : {}),
+      });
     } catch (error) {
       // Binary payload (xlsx/pdf/zip/…) can't load as a text document —
       // images go to the built-in viewer, the rest to the OS default app.
@@ -3527,11 +3634,21 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
    */
   private async openPlanMarkdown(
     markdown: string,
-    options?: { reveal?: "editor" | "preview" }
+    options?: { reveal?: "editor" | "preview"; keepExisting?: boolean }
   ): Promise<void> {
-    const content = stripPlanImplementWrapper(markdown);
+    let content = stripPlanImplementWrapper(markdown);
     if (!content) {
       return;
+    }
+    // Card «Edit»: the live buffer (with the user's edits) wins — reveal it
+    // without writing, so an unsaved Plan.md never gets a disk conflict.
+    let reuseLive = false;
+    if (options?.keepExisting) {
+      const live = await this.readLivePlanMarkdown();
+      if (live) {
+        content = live;
+        reuseLive = true;
+      }
     }
     const reveal = options?.reveal === "preview" ? "preview" : "editor";
     const fileName = planMarkdownFileName(
@@ -3543,8 +3660,13 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         "plan-preview"
       );
       await vscode.workspace.fs.createDirectory(dir);
-      const uri = vscode.Uri.joinPath(dir, fileName);
-      await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+      const uri =
+        reuseLive && this.planPreviewUri
+          ? this.planPreviewUri
+          : vscode.Uri.joinPath(dir, fileName);
+      if (!reuseLive) {
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+      }
       this.planPreviewUri = uri;
 
       const openDoc = vscode.workspace.textDocuments.find(
@@ -3892,6 +4014,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         role: "user",
         text: trimmed,
         mode: selectedMode.id,
+        ts: Date.now(),
       };
       if (autoResolvedMode) {
         uiMsg.autoResolvedMode = autoResolvedMode;
@@ -4180,7 +4303,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               hadFileEdits: turnEdits.length > 0,
               previousUserText: lastUiUserText(runUiMessages),
             });
-            const uiMsg: UiMessage = { role: "assistant", text: displayText };
+            const uiMsg: UiMessage = {
+              role: "assistant",
+              text: displayText,
+              ts: Date.now(),
+              ...(activeTurnModel ? { model: activeTurnModel } : {}),
+            };
             if (meta?.reasoning) {
               uiMsg.reasoning = meta.reasoning;
             }
@@ -4190,6 +4318,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             postToRunChat({
               type: "assistantDone",
               text: displayText,
+              ts: uiMsg.ts,
+              ...(uiMsg.model
+                ? { model: uiMsg.model, modelLabel: this.modelLabel(uiMsg.model) }
+                : {}),
               ...(meta?.reasoning ? { reasoning: meta.reasoning } : {}),
             });
             if (this.isViewingChat(runChatId)) {
@@ -4256,6 +4388,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             runContextTokens = usage.used;
+            if ((usage.promptTokens || 0) > 0) {
+              this.lastRequestUsage.set(runChatId, {
+                promptTokens: usage.promptTokens || 0,
+                cacheReadTokens: usage.cacheReadTokens || 0,
+              });
+            }
             // Prefer cumulative totals from Cline (totals survive tool rounds
             // and spawn children); fall back to summing deltas for runtimes
             // that do not emit total* fields.
@@ -4758,6 +4896,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       role: "user",
       text: nextText,
       mode: getModeById(agentMode).id,
+      ts: Date.now(),
     };
     if (attachments.length) {
       uiMsg.attachments = attachments.map(stripAttachmentPayload);
@@ -4906,14 +5045,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postRunFinished(runChatId, result.ok ? "success" : "error");
       }
       if (result.openCommitMessageSettings) {
+        // Не ждём тост: промис с кнопкой резолвится только при закрытии
+        // уведомления, и до этого прогон чата оставался «занятым» — повторные
+        // клики по «Закоммитить» молча отбивались isChatRunning.
         const selectLabel = lang === "ru" ? "Выбрать" : "Select";
-        const picked = await vscode.window.showWarningMessage(
-          result.answer,
-          selectLabel
-        );
-        if (picked === selectLabel) {
-          this.openSettingsEditor({ section: "commit" });
-        }
+        void vscode.window
+          .showWarningMessage(result.answer, selectLabel)
+          .then((picked) => {
+            if (picked === selectLabel) {
+              this.openSettingsEditor({ section: "commit" });
+            }
+          });
       }
     } catch (error) {
       if (!this.isChatRunCurrent(runChatId, runRef)) {
@@ -5176,6 +5318,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.scmRefreshTimer = setTimeout(() => {
       void this.refreshReviewScmButtons();
     }, 350);
+    this.pendingDiff.schedule(800);
   }
 
   private bindGitStatusRefresh(): void {
@@ -6262,6 +6405,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
       totalCacheWriteTokens: this.totalCacheWriteTokens,
+      lastPromptTokens: this.activeLastRequestUsage().promptTokens,
+      lastCacheReadTokens: this.activeLastRequestUsage().cacheReadTokens,
       chatId: this.store.activeChatId || "",
       scrollTop: getActiveChat(this.store)?.scrollTop,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,

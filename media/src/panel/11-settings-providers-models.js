@@ -548,6 +548,60 @@
     listEl.appendChild(row);
   }
 
+  /**
+   * Первый запуск: вместо голого «Нет провайдеров» — карточка с пресетами.
+   * Пресет только заполняет форму провайдера (адрес); ключ вводит
+   * пользователь, ничего не отправляется до сохранения.
+   */
+  const PROVIDER_ONBOARDING_PRESETS = [
+    { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+    { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
+    { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
+    { id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1" },
+    { id: "lmstudio", name: "LM Studio", baseUrl: "http://localhost:1234/v1" },
+  ];
+
+  function buildProvidersOnboarding() {
+    const card = document.createElement("div");
+    card.className = "providers-onboarding";
+    const title = document.createElement("div");
+    title.className = "providers-onboarding-title";
+    title.textContent = t("providersEmptyTitle");
+    const note = document.createElement("div");
+    note.className = "providers-onboarding-note";
+    note.textContent = t("providersEmptyNote");
+    const presets = document.createElement("div");
+    presets.className = "providers-onboarding-presets";
+    const addPreset = (label, preset) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "text-btn providers-onboarding-preset";
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        setProvidersHint("");
+        openProviderEditModal(
+          -1,
+          preset
+            ? {
+                id: preset.id,
+                name: preset.name,
+                baseUrl: preset.baseUrl,
+                apiKey: "",
+                statusUrl: "",
+              }
+            : undefined
+        );
+      });
+      presets.appendChild(btn);
+    };
+    for (const preset of PROVIDER_ONBOARDING_PRESETS) {
+      addPreset(preset.name, preset);
+    }
+    addPreset(t("providersEmptyCustom"), null);
+    card.append(title, note, presets);
+    return card;
+  }
+
   function renderSettingsCatalog() {
     if (!settingsProvidersList || !settingsModelsList) {
       return;
@@ -559,8 +613,8 @@
     settingsModelsList.innerHTML = "";
 
     if (!settingsProviders.length && !settingsModels.length) {
-      settingsProvidersList.innerHTML =
-        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      settingsProvidersList.innerHTML = "";
+      settingsProvidersList.appendChild(buildProvidersOnboarding());
       settingsModelsList.innerHTML =
         `<div class="settings-models-empty">${t("selectProviderToSeeModels")}</div>`;
       syncDefaultModelSelect();

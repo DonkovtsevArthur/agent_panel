@@ -1702,6 +1702,14 @@
       if (event.target.closest(".agent-name-input")) {
         return;
       }
+      const moreBtnJb = event.target.closest(".agent-more");
+      if (moreBtnJb && agentsListEl.contains(moreBtnJb)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        openAgentMenu(moreBtnJb.dataset.agentMenu, moreBtnJb);
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn && agentsListEl.contains(deleteBtn)) {
         event.preventDefault();
@@ -1756,6 +1764,16 @@
         event.stopPropagation();
         return;
       }
+      const moreBtn = event.target.closest(".agent-more");
+      if (moreBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        openAgentMenu(moreBtn.dataset.agentMenu, moreBtn);
+        return;
+      }
+      if (event.target.closest(".agent-name-input")) {
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn) {
         event.preventDefault();
@@ -1793,6 +1811,9 @@
       }
     });
     agentsListEl.addEventListener("keydown", (event) => {
+      if (onAgentsListKeyNav(event)) {
+        return;
+      }
       if (event.key !== "Enter" && event.key !== " ") {
         return;
       }
@@ -1853,6 +1874,13 @@
       openImgLightbox(previewBtn.getAttribute("data-preview-src") || "");
       return;
     }
+    const codeTool = event.target.closest("[data-code-action]");
+    if (codeTool && messagesEl.contains(codeTool)) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleCodeBlockAction(codeTool);
+      return;
+    }
     const codeToggle = event.target.closest(".md-pre-toggle");
     if (
       codeToggle &&
@@ -1893,9 +1921,13 @@
       updateReasoningGroupSummary(group);
       return;
     }
-    const thinkingToggle = event.target.closest(
-      ".agent-step-thinking-toggle"
-    );
+    // Вся строка «Мысли ⌄» — одна кликабельная цель (иконка, подпись, шеврон).
+    const thinkingHead = event.target.closest(".agent-step-thinking .agent-step-head");
+    const thinkingToggle =
+      event.target.closest(".agent-step-thinking-toggle") ||
+      (thinkingHead
+        ? thinkingHead.querySelector(".agent-step-thinking-toggle:not([hidden])")
+        : null);
     if (thinkingToggle && messagesEl.contains(thinkingToggle)) {
       event.preventDefault();
       event.stopPropagation();
@@ -1916,6 +1948,7 @@
         label.textContent = collapsed
           ? t("showThinking")
           : t("hideThinking");
+        thinkingToggle.title = label.textContent;
       }
       return;
     }
@@ -1925,10 +1958,57 @@
       event.stopPropagation();
       const card = planToggleBtn.closest(".proposed-plan-card");
       if (card) {
-        setProposedPlanCollapsed(
-          card,
-          !card.classList.contains("is-collapsed")
-        );
+        const collapsed = !card.classList.contains("is-collapsed");
+        planCardUserCollapsed.set(planCardKey(card.dataset.planRaw || ""), collapsed);
+        setProposedPlanCollapsed(card, collapsed);
+      }
+      return;
+    }
+    const planFoldBtn = event.target.closest("[data-plan-action='fold']");
+    if (planFoldBtn && messagesEl.contains(planFoldBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const sec = planFoldBtn.closest(".proposed-plan-sec");
+      if (sec) {
+        sec.classList.toggle("is-folded");
+      }
+      return;
+    }
+    const planCardActionBtn = event.target.closest(
+      "[data-plan-action='build'], [data-plan-action='continue'], [data-plan-action='copy'], [data-plan-action='complete'], [data-plan-action='edit']"
+    );
+    if (planCardActionBtn && messagesEl.contains(planCardActionBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = planCardActionBtn.closest(".proposed-plan-card");
+      const action = planCardActionBtn.getAttribute("data-plan-action");
+      if (!card || planCardActionBtn.disabled) {
+        return;
+      }
+      if (action === "copy") {
+        copyPlanFromCard(card);
+      } else if (action === "continue") {
+        sendPlanContinue();
+      } else if (action === "complete") {
+        sendPlanComplete(card);
+      } else if (action === "edit") {
+        const raw = stripPlanImplementWrapper(card.dataset.planRaw || "");
+        if (raw) {
+          // Same plan already in Plan.md → just reveal it (keep the user's
+          // edits); another plan → write this one.
+          const key = planCardKey(raw);
+          const keepExisting = key === lastOpenedPlanKey;
+          lastOpenedPlanKey = key;
+          host.postMessage({
+            type: "openPlanMarkdown",
+            text: raw,
+            reveal: "editor",
+            keepExisting,
+          });
+        }
+      } else if (action === "build") {
+        // Same path as the composer tag: live Plan.md (with edits) wins.
+        sendImplementPlan(card.dataset.planRaw || "");
       }
       return;
     }
@@ -2061,7 +2141,9 @@
     if (
       userMsg &&
       messagesEl.contains(userMsg) &&
-      !userMsg.classList.contains("is-editing")
+      !userMsg.classList.contains("is-editing") &&
+      // Opened plan under the «Build plan» chip: links / reading, not edit.
+      !event.target.closest(".plan-implement-plan")
     ) {
       const selection = window.getSelection();
       if (
@@ -2090,8 +2172,11 @@
     if (file) {
       event.preventDefault();
       const path = file.getAttribute("data-path");
+      const line = Number(file.getAttribute("data-line")) || 0;
       if (path) {
-        host.postMessage({ type: "openFile", path });
+        host.postMessage(
+          line > 0 ? { type: "openFile", path, line } : { type: "openFile", path }
+        );
       }
       return;
     }
@@ -2248,3 +2333,14 @@
     });
   }
 
+
+  // Plan card «Edited in editor»: the user edits Plan.md beside the panel and
+  // comes back — re-read the live text when the panel regains focus.
+  window.addEventListener("focus", () => {
+    requestLivePlanStatus();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      requestLivePlanStatus();
+    }
+  });

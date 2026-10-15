@@ -1,4 +1,5 @@
 import * as fs from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 
 export const DEFAULT_WORKSPACE_RULE_CHAR_CAP = 12_000;
@@ -291,4 +292,91 @@ export async function loadWorkspaceRules(
     options.targetPaths,
     options.charCap ?? DEFAULT_WORKSPACE_RULE_CHAR_CAP
   );
+}
+
+/**
+ * Cline loads the workspace AGENTS.md into the session rules (system prompt)
+ * with no size limit, so a huge file is re-sent with every request. Above this
+ * cap Harbor takes AGENTS.md out of Cline's rule search paths and injects a
+ * truncated copy itself (see `loadOversizedWorkspaceAgentsMd`).
+ */
+export const SESSION_AGENTS_MD_CHAR_CAP = 12_000;
+
+/**
+ * Cline's default rule search paths (`resolveRulesConfigSearchPaths` in
+ * vendor/cline/sdk/packages/shared/src/storage/paths.ts) minus the workspace
+ * AGENTS.md. Keep in sync on re-fork. `<workspace>/.cline` is appended by
+ * Cline itself when `workspacePath` is passed.
+ */
+export function clineRuleSearchPathsWithoutWorkspaceAgentsMd(
+  workspacePath: string,
+  homeDir: string = os.homedir()
+): string[] {
+  const clineDir = String(process.env.CLINE_DIR || "").trim() ||
+    path.join(homeDir, ".cline");
+  return [
+    path.join(workspacePath, ".clinerules"),
+    path.join(workspacePath, ".cline", "rules"),
+    path.join(homeDir, ".agents", "AGENTS.md"),
+    path.join(clineDir, "rules"),
+    path.join(homeDir, "Documents", "Cline", "Rules"),
+  ];
+}
+
+export type OversizedWorkspaceAgentsMd = {
+  /** Rule block for the Harbor rules slot (truncated body + notice). */
+  rule: string;
+  originalChars: number;
+};
+
+/** Truncate an AGENTS.md body to the cap, on a line boundary when possible. */
+export function truncateWorkspaceAgentsMd(
+  text: string,
+  charCap = SESSION_AGENTS_MD_CHAR_CAP
+): string {
+  const body = String(text || "");
+  if (body.length <= charCap) {
+    return body;
+  }
+  const head = body.slice(0, Math.max(0, Math.floor(charCap)));
+  const lastNewline = head.lastIndexOf("\n");
+  return lastNewline > charCap * 0.8 ? head.slice(0, lastNewline) : head;
+}
+
+export function formatOversizedWorkspaceAgentsMdRule(
+  text: string,
+  charCap = SESSION_AGENTS_MD_CHAR_CAP
+): string {
+  const body = String(text || "");
+  const shown = truncateWorkspaceAgentsMd(body, charCap);
+  return [
+    "## Workspace AGENTS.md",
+    shown.trimEnd(),
+    "",
+    `[Harbor: AGENTS.md is ${body.length} chars; only the first ${shown.length} are in the prompt. Read the rest of AGENTS.md with read_files when the task needs it.]`,
+  ].join("\n");
+}
+
+/**
+ * Returns the truncated AGENTS.md rule when the workspace AGENTS.md is larger
+ * than the cap; undefined when it is missing or small enough for Cline to load
+ * as usual.
+ */
+export async function loadOversizedWorkspaceAgentsMd(
+  workspacePath: string,
+  charCap = SESSION_AGENTS_MD_CHAR_CAP
+): Promise<OversizedWorkspaceAgentsMd | undefined> {
+  let text: string;
+  try {
+    text = await fs.readFile(path.join(workspacePath, "AGENTS.md"), "utf8");
+  } catch {
+    return undefined;
+  }
+  if (text.length <= charCap) {
+    return undefined;
+  }
+  return {
+    rule: formatOversizedWorkspaceAgentsMdRule(text, charCap),
+    originalChars: text.length,
+  };
 }

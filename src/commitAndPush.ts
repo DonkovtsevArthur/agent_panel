@@ -30,7 +30,66 @@ export type CommitAndPushResult = {
   openCommitMessageSettings?: boolean;
 };
 
+/**
+ * Коммит отклонён из-за текста сообщения (commit-msg хук), а не из-за lint /
+ * тестов в pre-commit: при падении pre-commit commit-msg не запускается.
+ */
+export function isCommitMessageRejected(stderr: string): boolean {
+  return /commit[ -]?msg|commit message|сообщени\w* коммит|subject|header|первая строка|first line|длиннее|too long|conventional|commitlint/i.test(
+    stderr
+  );
+}
+
+/** Чужой git (встроенный Git VS Code, обновление SCM) держит index.lock. */
+function isIndexLockError(stderr: string): boolean {
+  return /index\.lock'?:? File exists/i.test(stderr);
+}
+
+const INDEX_LOCK_RETRY_DELAYS_MS = [250, 500, 1000, 1500, 2000];
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+/**
+ * git с повтором, пока index.lock занят параллельным процессом: VS Code
+ * регулярно запускает `git status`, и наш `git add` / `commit` с ним
+ * сталкивался («Unable to create index.lock: File exists»).
+ */
 async function runGit(
+  cwd: string,
+  args: string[],
+  signal?: AbortSignal
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  let result = await runGitOnce(cwd, args, signal);
+  for (const ms of INDEX_LOCK_RETRY_DELAYS_MS) {
+    if (result.ok || signal?.aborted || !isIndexLockError(result.stderr)) {
+      break;
+    }
+    await delay(ms, signal);
+    if (signal?.aborted) {
+      break;
+    }
+    result = await runGitOnce(cwd, args, signal);
+  }
+  return result;
+}
+
+async function runGitOnce(
   cwd: string,
   args: string[],
   signal?: AbortSignal
@@ -190,8 +249,9 @@ export async function commitAndPushPaths(
     lang === "ru" ? "Генерирую сообщение коммита…" : "Generating commit message…"
   );
   let commitMessage = "";
+  let collected: Awaited<ReturnType<typeof collectCommitDiff>>;
   try {
-    const collected = await collectCommitDiff(cwd, scoped);
+    collected = await collectCommitDiff(cwd, scoped);
     commitMessage = await composeCommitMessageText(
       cwd,
       collected,
@@ -219,7 +279,36 @@ export async function commitAndPushPaths(
     commitMessage = fallbackCommitMessage(scoped, lang);
   }
 
-  const commit = await run(["commit", "-m", commitMessage]);
+  let commit = await run(["commit", "-m", commitMessage]);
+  if (
+    !commit.ok &&
+    !signal?.aborted &&
+    isCommitMessageRejected(commit.stderr || "")
+  ) {
+    // commit-msg хук отклонил текст (длина, формат, язык): один повтор с
+    // выводом хука в промпте. Файлы уже в индексе, pre-commit прогонится снова.
+    options?.onPhase?.(
+      lang === "ru"
+        ? "Хук отклонил сообщение — генерирую новое…"
+        : "Hook rejected the message — regenerating…"
+    );
+    let retryMessage = "";
+    try {
+      retryMessage = await composeCommitMessageText(
+        cwd,
+        collected,
+        signal,
+        scoped,
+        { message: commitMessage, output: commit.stderr || "" }
+      );
+    } catch {
+      retryMessage = "";
+    }
+    if (retryMessage.trim() && retryMessage.trim() !== commitMessage.trim()) {
+      commitMessage = retryMessage;
+      commit = await run(["commit", "-m", commitMessage]);
+    }
+  }
   if (!commit.ok) {
     return finish(
       false,

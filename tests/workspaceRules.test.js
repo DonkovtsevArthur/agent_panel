@@ -6,7 +6,10 @@ const path = require("node:path");
 
 const {
   capWorkspaceRuleText,
+  clineRuleSearchPathsWithoutWorkspaceAgentsMd,
   combineWorkspaceRules,
+  formatOversizedWorkspaceAgentsMdRule,
+  loadOversizedWorkspaceAgentsMd,
   loadWorkspaceRules,
   matchesWorkspaceRuleGlob,
   parseWorkspaceRule,
@@ -121,4 +124,54 @@ test("loadWorkspaceRules loads AGENTS.md and sorted direct mdc rules", async (t)
   assert.ok(withoutAgents);
   assert.doesNotMatch(withoutAgents, /Agent instructions/);
   assert.match(withoutAgents, /A instructions/);
+});
+
+test("loadOversizedWorkspaceAgentsMd leaves a small AGENTS.md to Cline", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agents-md-cap-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  assert.equal(await loadOversizedWorkspaceAgentsMd(root, 100), undefined);
+  await fs.writeFile(path.join(root, "AGENTS.md"), "short rules");
+  assert.equal(await loadOversizedWorkspaceAgentsMd(root, 100), undefined);
+});
+
+test("loadOversizedWorkspaceAgentsMd truncates a large AGENTS.md on a line boundary", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agents-md-cap-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const lines = Array.from({ length: 50 }, (_, i) => `line ${i} ${"x".repeat(20)}`);
+  const text = lines.join("\n");
+  await fs.writeFile(path.join(root, "AGENTS.md"), text);
+
+  const result = await loadOversizedWorkspaceAgentsMd(root, 300);
+  assert.ok(result);
+  assert.equal(result.originalChars, text.length);
+  assert.match(result.rule, /^## Workspace AGENTS\.md\n/);
+  assert.match(result.rule, /line 0 /);
+  assert.doesNotMatch(result.rule, /line 49 /);
+  assert.match(result.rule, new RegExp(`AGENTS\\.md is ${text.length} chars`));
+  const body = result.rule.split("\n").slice(1, -2).join("\n");
+  assert.ok(body.length <= 300);
+  assert.ok(lines.includes(body.split("\n").pop()), "cut on a whole line");
+});
+
+test("formatOversizedWorkspaceAgentsMdRule keeps a single long line under the cap", () => {
+  const rule = formatOversizedWorkspaceAgentsMdRule("y".repeat(1000), 100);
+  assert.match(rule, /\ny{100}\n/);
+});
+
+test("clineRuleSearchPathsWithoutWorkspaceAgentsMd drops only the workspace AGENTS.md", () => {
+  const ws = path.join(path.sep, "ws");
+  const home = path.join(path.sep, "home", "u");
+  const saved = process.env.CLINE_DIR;
+  delete process.env.CLINE_DIR;
+  try {
+    const paths = clineRuleSearchPathsWithoutWorkspaceAgentsMd(ws, home);
+    assert.ok(!paths.includes(path.join(ws, "AGENTS.md")));
+    assert.ok(paths.includes(path.join(ws, ".clinerules")));
+    assert.ok(paths.includes(path.join(ws, ".cline", "rules")));
+    assert.ok(paths.includes(path.join(home, ".agents", "AGENTS.md")));
+    assert.ok(paths.includes(path.join(home, ".cline", "rules")));
+    assert.ok(paths.includes(path.join(home, "Documents", "Cline", "Rules")));
+  } finally {
+    if (saved !== undefined) process.env.CLINE_DIR = saved;
+  }
 });

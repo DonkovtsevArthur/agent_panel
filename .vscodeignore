@@ -36,3 +36,4 @@ packages/**
 jetbrains/**
 figma/**
 .tmp-harbor-qa/**
+.claude/**

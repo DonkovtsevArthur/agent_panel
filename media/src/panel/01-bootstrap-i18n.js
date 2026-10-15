@@ -445,6 +445,52 @@
       hideSteps: "Hide steps",
       showThinking: "Show thoughts",
       hideThinking: "Hide thoughts",
+      runErrors: (n) => (n === 1 ? "1 error" : `${n} errors`),
+      todoPlanMinimize: "Collapse plan to a chip",
+      todoPlanIncomplete: "not finished",
+      todoPlanStale: (n) =>
+        `Plan not updated · ${n} ${n === 1 ? "edit" : "edits"} since`,
+      codeWrap: "Wrap lines",
+      codeCopy: "Copy code",
+      welcomeTitle: "What are we working on?",
+      welcomeSuggestExplain: "Explain how this project is structured",
+      welcomeSuggestFix: "Find and fix problems in the open file",
+      welcomeSuggestTests: "Write tests for the selected code",
+      welcomeSuggestPlan: "Plan a new feature step by step",
+      welcomeHintMention: "attach a file",
+      welcomeHintSlash: "commands",
+      welcomeHintSelection: "selection to chat",
+      welcomeRecent: "Recent agents",
+      feedShowAll: (n) => (n > 0 ? `Show all · ${n} lines` : "Show all"),
+      feedCollapse: "Collapse",
+      feedShowPlan: (n) => (n > 0 ? `Show plan · ${n} lines` : "Show plan"),
+      feedJumpNew: "New",
+      feedJumpLatest: "Jump to latest",
+      feedStickyTitle: "Back to the start of this turn",
+      feedTurnMap: "Chat turns",
+      agentsGroupPinned: "Pinned",
+      agentsGroupToday: "Today",
+      agentsGroupYesterday: "Yesterday",
+      agentsGroupWeek: "This week",
+      agentsGroupEarlier: "Earlier",
+      agentsFilter: "Filter agents",
+      agentsFilterEmpty: "No agents match",
+      agentMenu: "Agent actions",
+      agentRename: "Rename",
+      agentPin: "Pin",
+      agentUnpin: "Unpin",
+      agentDuplicate: "Duplicate",
+      agentArchive: "Archive",
+      agentDelete: "Delete",
+      agentUnread: "New result",
+      agentPinned: "Pinned",
+      agentRunErrorShort: "Error",
+      agentRunRunning: "Running",
+      agentRunDone: "Done",
+      agentRunError: "Finished with an error",
+      providersEmptyTitle: "Connect your first model",
+      providersEmptyNote: "Pick a provider to prefill its address — then add an API key. Requests go only to the API you choose.",
+      providersEmptyCustom: "Other OpenAI-compatible",
       thinkingLabel: "Thoughts",
       thinkingWorking: "Thoughts…",
       textStepLabel: "Note",
@@ -549,6 +595,36 @@
       proposedPlanCodeBlock: "Code",
       proposedPlanCodeLines: (n) => (n === 1 ? "1 line" : `${n} lines`),
       proposedPlanCodeToggle: "Show or hide code",
+      proposedPlanCopy: "Copy plan",
+      proposedPlanStepsCount: (n) => (n === 1 ? "1 step" : `${n} steps`),
+      proposedPlanFilesCount: (n) => (n === 1 ? "1 file" : `${n} files`),
+      proposedPlanMissing: (names) => `Missing: ${names}`,
+      proposedPlanIncompleteHint:
+        "Required plan sections are missing — ask the agent to complete the plan before Build.",
+      proposedPlanSection_goal: "Goal",
+      proposedPlanSection_steps: "Steps",
+      proposedPlanSection_files: "Affected files",
+      proposedPlanSection_verify: "Verification",
+      proposedPlanTruncated: "Plan is cut off",
+      proposedPlanContinue: "Continue plan",
+      proposedPlanContinueHint: "Ask the agent to finish the cut-off plan",
+      proposedPlanContinuePrompt:
+        "The plan was cut off. Output the full plan again inside <proposed_plan>…</proposed_plan>, with every section.",
+      proposedPlanEdited: "Edited in editor",
+      proposedPlanEditedHint:
+        "Plan.md differs from this card — Build will use the editor version.",
+      proposedPlanStatusDone: "Done",
+      proposedPlanStatusReady: "Ready to build",
+      proposedPlanStatusStreaming: "Writing…",
+      proposedPlanContextCount: (n) => (n === 1 ? "1 code location" : `${n} code locations`),
+      proposedPlanMissingText_verify: "The agent didn't say how to verify the changes",
+      proposedPlanComplete: "Complete",
+      proposedPlanCompletePrompt: (names) =>
+        `Complete the plan: add the missing sections (${names}). Output the full plan again inside <proposed_plan>…</proposed_plan>.`,
+      proposedPlanFootHint: "Editable in Plan.md",
+      proposedPlanEditBtn: "Edit",
+      proposedPlanEditHint: "Open Plan.md in the editor",
+      proposedPlanStatusSuperseded: "Superseded",
       proposedPlanImplementBubble: "Build plan",
       proposedPlanImplementPrefix:
         "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
@@ -628,10 +704,10 @@
       commitPromptPlaceholder:
         "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
       figma: "Figma",
-      mcpServers: "MCP Servers",
+      mcpServers: "MCP-серверы",
       mcpServersNote:
         "Управление MCP-подключениями Harbor Agents (Figma и другие).",
-      skillsSection: "Skills",
+      skillsSection: "Скиллы",
       skillsNote:
         "Skills — пакеты SKILL.md, подключаются когда нужны. Кладите их в папки проекта или глобальную — список ниже.",
       skillsEnabled: "Включить skills",
@@ -948,6 +1024,92 @@
       hideSteps: "Скрыть шаги",
       showThinking: "Показать мысли",
       hideThinking: "Скрыть мысли",
+      runErrors: (n) => {
+        const abs = Math.abs(n) % 100;
+        const d = abs % 10;
+        if (abs > 10 && abs < 20) {
+          return `${n} ошибок`;
+        }
+        if (d === 1) {
+          return `${n} ошибка`;
+        }
+        if (d >= 2 && d <= 4) {
+          return `${n} ошибки`;
+        }
+        return `${n} ошибок`;
+      },
+      todoPlanMinimize: "Свернуть план в чип",
+      todoPlanIncomplete: "не завершён",
+      todoPlanStale: (n) => {
+        const d = n % 10;
+        const h = n % 100;
+        const word =
+          d === 1 && h !== 11
+            ? "правка"
+            : d >= 2 && d <= 4 && (h < 12 || h > 14)
+              ? "правки"
+              : "правок";
+        return `План не обновлялся · с тех пор ${n} ${word}`;
+      },
+      codeWrap: "Переносить строки",
+      codeCopy: "Копировать код",
+      welcomeTitle: "Над чем работаем?",
+      welcomeSuggestExplain: "Объясни, как устроен этот проект",
+      welcomeSuggestFix: "Найди и исправь проблемы в открытом файле",
+      welcomeSuggestTests: "Напиши тесты для выделенного кода",
+      welcomeSuggestPlan: "Составь пошаговый план новой фичи",
+      welcomeHintMention: "прикрепить файл",
+      welcomeHintSlash: "команды",
+      welcomeHintSelection: "выделение в чат",
+      welcomeRecent: "Недавние агенты",
+      feedShowAll: (n) => {
+        if (!(n > 0)) {
+          return "Показать всё";
+        }
+        const abs = Math.abs(n) % 100;
+        const d = abs % 10;
+        const word =
+          abs > 10 && abs < 20
+            ? "строк"
+            : d === 1
+              ? "строка"
+              : d >= 2 && d <= 4
+                ? "строки"
+                : "строк";
+        return `Показать всё · ${n} ${word}`;
+      },
+      feedCollapse: "Свернуть",
+      feedShowPlan: (n) =>
+        n > 0
+          ? `Показать план · ${n} ${ruPlural(n, "строка", "строки", "строк")}`
+          : "Показать план",
+      feedJumpNew: "Новое",
+      feedJumpLatest: "К последнему сообщению",
+      feedStickyTitle: "К началу этого хода",
+      feedTurnMap: "Ходы чата",
+      agentsGroupPinned: "Закреплено",
+      agentsGroupToday: "Сегодня",
+      agentsGroupYesterday: "Вчера",
+      agentsGroupWeek: "На этой неделе",
+      agentsGroupEarlier: "Раньше",
+      agentsFilter: "Фильтр агентов",
+      agentsFilterEmpty: "Ничего не найдено",
+      agentMenu: "Действия с агентом",
+      agentRename: "Переименовать",
+      agentPin: "Закрепить",
+      agentUnpin: "Открепить",
+      agentDuplicate: "Дублировать",
+      agentArchive: "В архив",
+      agentDelete: "Удалить",
+      agentUnread: "Есть новый результат",
+      agentPinned: "Закреплён",
+      agentRunErrorShort: "Ошибка",
+      agentRunRunning: "Работает",
+      agentRunDone: "Готово",
+      agentRunError: "Завершён с ошибкой",
+      providersEmptyTitle: "Подключите первую модель",
+      providersEmptyNote: "Выберите провайдера — адрес подставится сам, останется добавить API-ключ. Запросы уходят только в выбранный API.",
+      providersEmptyCustom: "Другой OpenAI-совместимый",
       thinkingLabel: "Мысли",
       thinkingWorking: "Мысли…",
       textStepLabel: "Сообщение",
@@ -1076,12 +1238,59 @@
       proposedPlanCodeLines: (n) =>
         n === 1 ? "1 строка" : n < 5 ? `${n} строки` : `${n} строк`,
       proposedPlanCodeToggle: "Показать или скрыть код",
+      proposedPlanCopy: "Скопировать план",
+      proposedPlanStepsCount: (n) => `${n} ${ruPlural(n, "шаг", "шага", "шагов")}`,
+      proposedPlanFilesCount: (n) => `${n} ${ruPlural(n, "файл", "файла", "файлов")}`,
+      proposedPlanMissing: (names) => `Не хватает: ${names}`,
+      proposedPlanIncompleteHint:
+        "В плане нет обязательных разделов — попросите агента дополнить план перед «Собрать».",
+      proposedPlanSection_goal: "Цель",
+      proposedPlanSection_steps: "Шаги",
+      proposedPlanSection_files: "Затронутые файлы",
+      proposedPlanSection_verify: "Проверка",
+      proposedPlanTruncated: "План обрезан",
+      proposedPlanContinue: "Продолжить план",
+      proposedPlanContinueHint: "Попросить агента дописать обрезанный план",
+      proposedPlanContinuePrompt:
+        "План обрезался. Выдай его заново целиком внутри <proposed_plan>…</proposed_plan>, со всеми разделами.",
+      proposedPlanEdited: "Изменён в редакторе",
+      proposedPlanEditedHint:
+        "План.md отличается от карточки — «Собрать» возьмёт версию из редактора.",
+      proposedPlanStatusDone: "Выполнен",
+      proposedPlanStatusReady: "Готов к сборке",
+      proposedPlanStatusStreaming: "Пишется…",
+      proposedPlanContextCount: (n) => `${n} ${ruPlural(n, "место", "места", "мест")} в коде`,
+      proposedPlanMissingText_verify: "Агент не указал, как проверить изменения",
+      proposedPlanComplete: "Дополнить",
+      proposedPlanCompletePrompt: (names) =>
+        `Дополни план: добавь недостающие разделы (${names}). Выдай план заново целиком внутри <proposed_plan>…</proposed_plan>.`,
+      proposedPlanFootHint: "Можно поправить в План.md",
+      proposedPlanEditBtn: "Изменить",
+      proposedPlanEditHint: "Открыть План.md в редакторе",
+      proposedPlanStatusSuperseded: "Заменён",
       proposedPlanImplementBubble: "Собрать план",
       proposedPlanImplementPrefix:
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
   };
   let STR = UI_STRINGS[UI_LANG];
+  /** Russian plural: 1 шаг, 2 шага, 5 шагов (11–14 → many). */
+  function ruPlural(n, one, few, many) {
+    const abs = Math.abs(Number(n) || 0);
+    const mod100 = abs % 100;
+    const mod10 = abs % 10;
+    if (mod100 >= 11 && mod100 <= 14) {
+      return many;
+    }
+    if (mod10 === 1) {
+      return one;
+    }
+    if (mod10 >= 2 && mod10 <= 4) {
+      return few;
+    }
+    return many;
+  }
+
   const t = (key, ...args) => {
     const value = STR[key];
     return typeof value === "function" ? value(...args) : value;

@@ -112,7 +112,18 @@
     // Общее построение (заголовок, строки, диф-итоги в сводку шагов) —
     // в одном месте, чтобы live-рендер и SCM-обновления не расходились.
     renderReviewCardBody(card, list);
-    setComposerScmActions(list, Boolean(parsed.showScm));
+    if (parsed.showScm) {
+      // Кнопка коммитит все незакоммиченные файлы чата, не только этот ход.
+      setComposerScmActions(
+        collectChatScmFiles([
+          ...reviewEntriesFromCache(),
+          { files: list, showScm: true },
+        ]),
+        true
+      );
+    } else {
+      syncComposerScmFromCache();
+    }
     syncComposerPlanFromCache({ openEditor: false });
     keepStatusAtEnd();
     scrollToBottom();
@@ -219,7 +230,143 @@
     });
   }
 
+  /** Plan key (whitespace-normalized) → collapsed, for cards the user toggled. */
+  const planCardUserCollapsed = new Map();
+  /** Latest Plan.md text from the host (null — not asked yet). */
+  let livePlanEditorText = null;
+
+  function planCardKey(text) {
+    return stripPlanImplementWrapper(text).replace(/\s+/g, " ").trim();
+  }
+
+  /**
+   * Card state per plan: streaming (being written), ready (latest, Build
+   * available), done (Build ran / files edited after it), superseded (a newer
+   * plan exists). Latest card is expanded unless the user collapsed it.
+   */
+  function syncPlanCardStates() {
+    if (!messagesEl) {
+      return;
+    }
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    let latestIndex = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i]?.role === "assistant" && extractLatestProposedPlan(list[i].text)) {
+        latestIndex = i;
+        break;
+      }
+    }
+    const cards = Array.from(messagesEl.querySelectorAll(".proposed-plan-card"));
+    cards.forEach((card) => {
+      const msgEl = card.closest(".msg");
+      const index = Number(msgEl?.dataset.index);
+      const isStreaming = Boolean(
+        msgEl && typeof streamingEl !== "undefined" && streamingEl === msgEl
+      );
+      let state = "ready";
+      if (isStreaming) {
+        state = "streaming";
+      } else if (Number.isInteger(index) && index >= 0 && list[index]) {
+        if (planIsAlreadyExecuted(list, index)) {
+          state = "done";
+        } else if (latestIndex >= 0 && index !== latestIndex) {
+          state = "superseded";
+        }
+      }
+      card.dataset.planState = state;
+      card.classList.toggle(
+        "is-truncated",
+        card.classList.contains("is-partial") && state !== "streaming"
+      );
+      const key = planCardKey(card.dataset.planRaw || "");
+      const edited =
+        state === "ready" &&
+        livePlanEditorText !== null &&
+        key === lastOpenedPlanKey &&
+        Boolean(planCardKey(livePlanEditorText)) &&
+        planCardKey(livePlanEditorText) !== key;
+      card.classList.toggle("is-edited", edited);
+      const buildBtn = card.querySelector("[data-plan-action='build']");
+      if (buildBtn instanceof HTMLButtonElement) {
+        buildBtn.disabled = busy;
+      }
+      const continueBtn = card.querySelector("[data-plan-action='continue']");
+      if (continueBtn instanceof HTMLButtonElement) {
+        continueBtn.disabled = busy;
+      }
+      const collapsed = planCardUserCollapsed.has(key)
+        ? planCardUserCollapsed.get(key)
+        : state === "done" || state === "superseded";
+      setProposedPlanCollapsed(card, collapsed);
+    });
+  }
+
+  /** Ask the host for Plan.md text (panel regained focus — user may have edited it). */
+  function requestLivePlanStatus() {
+    if (!lastOpenedPlanKey || !messagesEl) {
+      return;
+    }
+    if (!messagesEl.querySelector(".proposed-plan-card[data-plan-state='ready']")) {
+      return;
+    }
+    host.postMessage({ type: "requestLivePlanStatus" });
+  }
+
+  function applyLivePlanStatus(text) {
+    livePlanEditorText = String(text || "");
+    syncPlanCardStates();
+  }
+
+  function copyPlanFromCard(card) {
+    const raw = stripPlanImplementWrapper(card?.dataset.planRaw || "");
+    if (!raw) {
+      return;
+    }
+    const done = () => showCopyToast(t("copied"));
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(raw).then(done).catch(() => {
+        host.postMessage({ type: "copyText", text: raw });
+      });
+      return;
+    }
+    host.postMessage({ type: "copyText", text: raw });
+  }
+
+  /** «Continue plan» on a cut-off card: re-ask in the current mode. */
+  function sendPlanContinue() {
+    sendPlanFollowup(t("proposedPlanContinuePrompt"));
+  }
+
+  /** «Complete» on a plan missing required sections. */
+  function sendPlanComplete(card) {
+    const summary = summarizePlanMarkdown(card?.dataset.planRaw || "");
+    const keys = summary.missing.length ? summary.missing : ["verify"];
+    const names = keys.map((key) => t(`proposedPlanSection_${key}`)).join(", ");
+    sendPlanFollowup(t("proposedPlanCompletePrompt", names));
+  }
+
+  /** Card follow-up prompt in the current mode (Plan stays Plan). */
+  function sendPlanFollowup(text) {
+    if (busy || !text) {
+      return;
+    }
+    const mode = agentMode;
+    stickToBottom = true;
+    uiMessagesCache.push({ role: "user", text, attachments: [], mode });
+    appendMessage("user", text, uiMessagesCache.length - 1, -1, []);
+    setBusy(true, { restartRun: true });
+    host.postMessage({
+      type: "send",
+      text,
+      model: getSelectedModel(),
+      agentMode: mode,
+      reasoningEffort: selectedReasoningEffort || undefined,
+      attachments: [],
+    });
+  }
+
   function setComposerPlanBuild(planText, show) {
+    syncPlanCardStates();
     if (!composerPlanActionsEl) {
       return;
     }
@@ -414,7 +561,13 @@
         paths,
       });
     });
-    composerScmActionsEl.appendChild(commitPushBtn);
+    // Одна сегментированная кнопка «Закоммитить | +N −M»: цифры уже есть в
+    // карточке изменений, здесь — только действия.
+    const split = document.createElement("div");
+    split.className = "composer-scm-split";
+    split.setAttribute("role", "group");
+    split.appendChild(commitPushBtn);
+    composerScmActionsEl.appendChild(split);
 
     const scmBtn = document.createElement("button");
     scmBtn.type = "button";
@@ -428,7 +581,7 @@
     scmBtn.addEventListener("click", () => {
       host.postMessage({ type: "openScm" });
     });
-    composerScmActionsEl.appendChild(scmBtn);
+    split.appendChild(scmBtn);
   }
 
   function findReviewFilesByPaths(paths) {
@@ -554,28 +707,57 @@
     }
   }
 
-  function syncComposerScmFromCache() {
+  /** Карточки изменений чата из кэша сообщений, по порядку ходов. */
+  function reviewEntriesFromCache() {
     const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
-    for (let i = list.length - 1; i >= 0; i--) {
-      const item = list[i];
+    const entries = [];
+    for (const item of list) {
       if (item?.role !== "review") {
         continue;
       }
       const parsed = parseReviewData(item.text);
-      const files = Array.isArray(parsed.files) ? parsed.files : [];
-      if (parsed.showScm && files.length) {
-        setComposerScmActions(files, true);
-        return;
+      entries.push({
+        files: Array.isArray(parsed.files) ? parsed.files : [],
+        showScm: Boolean(parsed.showScm),
+      });
+    }
+    return entries;
+  }
+
+  /**
+   * Незакоммиченные файлы всех ходов чата для «Закоммитить». Путь из
+   * нескольких ходов берётся один раз — со статистикой из самого позднего.
+   */
+  function collectChatScmFiles(entries) {
+    const out = [];
+    const seen = new Set();
+    const list = Array.isArray(entries) ? entries : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const entry = list[i];
+      if (!entry?.showScm) {
+        continue;
+      }
+      for (const f of Array.isArray(entry.files) ? entry.files : []) {
+        const path = String(f?.path || "").trim();
+        if (!path || seen.has(path)) {
+          continue;
+        }
+        seen.add(path);
+        out.push(f);
       }
     }
-    setComposerScmActions([], false);
+    return out;
+  }
+
+  function syncComposerScmFromCache() {
+    const files = collectChatScmFiles(reviewEntriesFromCache());
+    setComposerScmActions(files, files.length > 0);
   }
 
   function applyScmButtons(reviews) {
     const list = Array.isArray(reviews) ? reviews : [];
     syncReviewCardsFromScm(list);
-    for (let i = list.length - 1; i >= 0; i--) {
-      const entry = list[i];
+    const entries = list.map((entry) => {
       const files = Array.isArray(entry?.files)
         ? entry.files
         : (entry?.paths || []).map((path) => ({
@@ -586,13 +768,11 @@
       const paths = files
         .map((f) => String(f.path || ""))
         .filter(Boolean);
-      if (entry?.showScm && paths.length) {
-        setComposerScmActions(
-          files.length ? files : findReviewFilesByPaths(paths),
-          true
-        );
-        return;
-      }
-    }
-    setComposerScmActions([], false);
+      return {
+        files: files.length ? files : findReviewFilesByPaths(paths),
+        showScm: Boolean(entry?.showScm),
+      };
+    });
+    const files = collectChatScmFiles(entries);
+    setComposerScmActions(files, files.length > 0);
   }

@@ -1464,6 +1464,12 @@
       if (typeof totals.totalCacheWriteTokens === "number") {
         totalCacheWriteTokens = Math.max(0, totals.totalCacheWriteTokens);
       }
+      if (typeof totals.lastPromptTokens === "number") {
+        lastPromptTokens = Math.max(0, totals.lastPromptTokens);
+      }
+      if (typeof totals.lastCacheReadTokens === "number") {
+        lastCacheReadTokens = Math.max(0, totals.lastCacheReadTokens);
+      }
     }
     const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
@@ -1474,25 +1480,55 @@
     );
     contextRingEl.classList.toggle("is-warn", pct >= 0.7 && pct < 0.9);
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
+    // С половины окна показываем процент рядом с кольцом — без наведения
+    // видно, что чат скоро сожмётся.
+    let pctEl = contextRingEl.querySelector(".context-pct");
+    if (!pctEl) {
+      pctEl = document.createElement("span");
+      pctEl.className = "context-pct";
+      pctEl.setAttribute("aria-hidden", "true");
+      contextRingEl.insertBefore(pctEl, contextRingEl.firstChild);
+    }
+    const showPct = pct >= 0.5;
+    pctEl.hidden = !showPct;
+    pctEl.textContent = showPct ? `${pctLabel}%` : "";
+    contextRingEl.classList.toggle("has-pct", showPct);
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
     const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
-    contextRingEl.setAttribute("aria-label", `Context: ${tip}`);
+    contextRingEl.setAttribute(
+      "aria-label",
+      `Context: ${tip.replace(/\n/g, " · ")}`
+    );
     contextRingEl.hidden = false;
     if (stickToBottom) {
       scrollToBottom();
     }
   }
 
+  /** "last request 18k · cached 15k (83%)" — per-call prompt-cache share. */
+  function buildLastRequestTip() {
+    if (lastPromptTokens <= 0) {
+      return "";
+    }
+    const cached = Math.min(lastCacheReadTokens, lastPromptTokens);
+    const pct = Math.round((cached / lastPromptTokens) * 100);
+    return `last request ${formatTokenCount(lastPromptTokens)} · cached ${formatTokenCount(cached)} (${pct}%)`;
+  }
+
   function buildContextRingTip(usedLabel, maxLabel, pctLabel) {
-    const base = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const lines = [`${usedLabel} / ${maxLabel} · ${pctLabel}%`];
+    const lastRequest = buildLastRequestTip();
+    if (lastRequest) {
+      lines.push(lastRequest);
+    }
     const hasTotals =
       totalInputTokens > 0 || totalOutputTokens > 0;
     if (!hasTotals) {
-      return base;
+      return lines.join("\n");
     }
     const inLabel = formatTokenCount(totalInputTokens);
     const outLabel = formatTokenCount(totalOutputTokens);
@@ -1502,7 +1538,8 @@
       const cacheWrite = formatTokenCount(totalCacheWriteTokens);
       parts.push(`cache read ${cacheRead}`, `cache write ${cacheWrite}`);
     }
-    return `${base}  ·  ${parts.join(" / ")}`;
+    lines.push(`chat total: ${parts.join(" / ")}`);
+    return lines.join("\n");
   }
 
   /**

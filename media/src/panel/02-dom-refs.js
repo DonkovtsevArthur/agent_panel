@@ -486,4 +486,8 @@
   let totalOutputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheWriteTokens = 0;
+  // Last model request of the active chat: full input + the part served from
+  // the prompt cache (per-call, not cumulative). Shown as its own tooltip line.
+  let lastPromptTokens = 0;
+  let lastCacheReadTokens = 0;
   let notificationAudioContext = null;

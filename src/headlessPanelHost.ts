@@ -44,6 +44,7 @@ import {
   deleteAgentBranch,
   deleteAgentFromStore,
   deleteAllArchivedAgentsFromStore,
+  duplicateAgentInStore,
   ensureActiveVisible,
   findAgentByChatId,
   formatListTime,
@@ -51,7 +52,9 @@ import {
   getAgentChatIds,
   getAgentDisplayName,
   applyAgentName,
+  backfillLegacyMessageTimes,
   restoreAgentInStore,
+  setAgentPinnedInStore,
   switchAgentBranch,
   touchChat,
 } from "./sessionStore";
@@ -85,6 +88,7 @@ import type { FileEditStat } from "./diffStats";
 import { hasUncommittedChanges } from "./gitStatus";
 import { toRepoRelativePath } from "./repoPaths";
 import { resolveRemainingReviewFiles } from "./turnFileChanges";
+import { AgentPendingDiffTracker } from "./agentPendingDiff";
 import { discardPaths } from "./discardPaths";
 import {
   assistantFinaleDisplayText,
@@ -154,6 +158,14 @@ export class HeadlessPanelHost {
   private selectedMode = "agent";
   private selectedReasoningEffort = "";
   private contextTokens = 0;
+  /**
+   * Last model request per chat: full input + prompt-cache share. In memory
+   * only — feeds the context ring tooltip (parity with agentPanelProvider).
+   */
+  private readonly lastRequestUsage = new Map<
+    string,
+    { promptTokens: number; cacheReadTokens: number }
+  >();
   /** Live turn per chat — parallel chats may run simultaneously (VS Code parity). */
   private readonly chatRuns = new Map<string, AbortController>();
   /**
@@ -170,6 +182,13 @@ export class HeadlessPanelHost {
   >();
   /** Per-chat run indicator for the agents rail loader (cube). */
   private readonly chatRunState = new Map<string, ChatRunState>();
+  /** «+N −M» незакоммиченных правок агента в списке агентов. */
+  private readonly pendingDiff = new AgentPendingDiffTracker(
+    () => this.store,
+    () => this.postAgentsList(),
+    resolveRemainingReviewFiles,
+    () => this.opts.workspaceRoot
+  );
   /** Busy-line under the transcript («Думаю…» / tool phases) — same as VS Code. */
   private readonly chatStatusState = new Map<
     string,
@@ -183,6 +202,10 @@ export class HeadlessPanelHost {
     if (isStoreV2(loaded)) {
       this.store = loaded;
       ensureActiveVisible(this.store);
+      // Старые чаты без времени у сообщений — для разделителей в ленте.
+      for (const chat of Object.values(this.store.chats || {})) {
+        backfillLegacyMessageTimes(chat);
+      }
     } else {
       const cfg = getConfig();
       this.store = createDefaultStore(cfg.defaultModel || "");
@@ -468,6 +491,20 @@ export class HeadlessPanelHost {
         return { ok: true };
       case "archiveAgent":
         return this.onArchiveAgent(String(msg.agentId || ""));
+      case "pinAgent": {
+        const ok = setAgentPinnedInStore(
+          this.store,
+          String(msg.agentId || ""),
+          Boolean(msg.pinned)
+        );
+        if (ok) {
+          this.persist();
+          this.postAgentsList();
+        }
+        return { ok };
+      }
+      case "duplicateAgent":
+        return this.onDuplicateAgent(String(msg.agentId || ""));
       case "restoreAgent":
         return this.onRestoreAgent(String(msg.agentId || ""));
       case "deleteAgent":
@@ -1007,6 +1044,12 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      lastPromptTokens:
+        this.lastRequestUsage.get(this.store.activeChatId || "")
+          ?.promptTokens || 0,
+      lastCacheReadTokens:
+        this.lastRequestUsage.get(this.store.activeChatId || "")
+          ?.cacheReadTokens || 0,
       modes: this.serializeModes(),
       harborHost: "jetbrains",
       fontSize: getConfig().fontSize,
@@ -1030,6 +1073,12 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      lastPromptTokens:
+        this.lastRequestUsage.get(this.store.activeChatId || "")
+          ?.promptTokens || 0,
+      lastCacheReadTokens:
+        this.lastRequestUsage.get(this.store.activeChatId || "")
+          ?.cacheReadTokens || 0,
       status: this.chatStatusState.get(this.store.activeChatId || "") || null,
       providerConnStatus: this.getProviderConnStatusForModel(this.selectedModel),
       fontSize: getConfig().fontSize,
@@ -1103,6 +1152,10 @@ export class HeadlessPanelHost {
     } else {
       this.chatRunState.delete(chatId);
     }
+    if (state && state !== "running") {
+      // Ход закончился — правки агента могли поменять «+N −M» в списке.
+      this.pendingDiff.schedule(600);
+    }
     this.postAgentsList();
   }
 
@@ -1146,23 +1199,33 @@ export class HeadlessPanelHost {
 
   private postAgentsList(): void {
     const lang = resolveUiLanguage(getConfig().language);
-    const agents = buildAgentsList(this.store).map((a) => ({
-      id: a.id,
-      name: a.name,
-      model: this.modelLabel(a.model) || a.model || "—",
-      preview: a.preview,
-      time: formatListTime(a.createdAt || a.updatedAt, lang),
-      active: a.active,
-      empty: a.empty,
-      runState: this.runStateForAgent(a.id),
-      runMode: this.runModeForAgent(a.id),
-    }));
+    const agents = buildAgentsList(this.store).map((a) => {
+      const diff = this.pendingDiff.get(a.id);
+      return {
+        id: a.id,
+        name: a.name,
+        model: this.modelLabel(a.model) || a.model || "—",
+        preview: a.preview,
+        time: formatListTime(a.createdAt || a.updatedAt, lang),
+        // Сырое время для группировки «Сегодня / Вчера / …» в панели.
+        ts: a.createdAt || a.updatedAt,
+        active: a.active,
+        empty: a.empty,
+        pinned: a.pinned,
+        mode: a.mode,
+        runState: this.runStateForAgent(a.id),
+        runMode: this.runModeForAgent(a.id),
+        ...(diff ? { diffAdded: diff.added, diffRemoved: diff.removed } : {}),
+      };
+    });
     this.post({
       type: "agentsList",
       agents,
+      archivedCount: buildArchiveList(this.store).length,
       activeAgentId: this.store.activeAgentId,
       screen: this.store.screen || "chat",
     });
+    this.pendingDiff.scheduleIfStale();
   }
 
   private postArchiveList(): void {
@@ -1480,6 +1543,7 @@ export class HeadlessPanelHost {
         void this.refreshReviewScmButtons();
       }, Math.max(0, ms));
     }
+    this.pendingDiff.schedule(Math.max(800, ...delays));
   }
 
   private async refreshReviewScmButtons(): Promise<void> {
@@ -1740,6 +1804,21 @@ export class HeadlessPanelHost {
     }
     this.post(renamed);
     return { ok: true };
+  }
+
+  /** Копия агента (текущая ветка) — открывается сразу. */
+  private async onDuplicateAgent(agentId: string): Promise<unknown> {
+    // Живой чат → store, чтобы копия получила последние сообщения.
+    this.flushActiveChatToStore();
+    const suffix =
+      resolveUiLanguage(getConfig().language) === "ru" ? " (копия)" : " (copy)";
+    const created = duplicateAgentInStore(this.store, agentId, suffix);
+    if (!created) {
+      return { ok: false };
+    }
+    this.persist();
+    this.postAgentsList();
+    return this.onOpenAgent(created.agent.id);
   }
 
   private async onOpenAgent(agentId: string): Promise<unknown> {
@@ -2057,6 +2136,7 @@ export class HeadlessPanelHost {
       role: "user",
       text: nextText,
       mode: agentMode,
+      ts: Date.now(),
     };
     if (attachments.length) {
       uiMsg.attachments = attachments.map(stripAttachmentPayload);
@@ -2293,6 +2373,7 @@ export class HeadlessPanelHost {
         role: "user",
         text,
         mode: agentMode,
+        ts: Date.now(),
       };
       if (autoResolvedMode) {
         userUi.autoResolvedMode = autoResolvedMode;
@@ -2487,12 +2568,15 @@ export class HeadlessPanelHost {
             });
             assistantText = displayText;
             this.lastTurnModel = model;
+            const doneTs = Date.now();
             runUiMessages = [
               ...runUiMessages,
               {
                 role: "assistant",
                 text: displayText,
                 reasoning: meta?.reasoning,
+                ts: doneTs,
+                ...(model ? { model } : {}),
               },
             ];
             syncRunChat();
@@ -2500,6 +2584,10 @@ export class HeadlessPanelHost {
               type: "assistantDone",
               text: displayText,
               reasoning: meta?.reasoning,
+              ts: doneTs,
+              ...(model
+                ? { model, modelLabel: this.modelLabel(model) }
+                : {}),
             });
             this.postRegenerateState();
           },
@@ -2540,6 +2628,12 @@ export class HeadlessPanelHost {
           onUsage: (usage) => {
             if (!runActive()) return;
             runContextTokens = usage.used;
+            if ((usage.promptTokens || 0) > 0) {
+              this.lastRequestUsage.set(runChatId, {
+                promptTokens: usage.promptTokens || 0,
+                cacheReadTokens: usage.cacheReadTokens || 0,
+              });
+            }
             postToRun({
               type: "contextUsage",
               ...usage,

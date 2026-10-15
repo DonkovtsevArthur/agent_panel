@@ -272,7 +272,9 @@
         // Обрезанный случай: заменяем вручную, regex не матчит.
         const body = allMatches[0][1];
         const id = blocks.length;
-        blocks.push(renderProposedPlanCard(String(body || "").trim()));
+        blocks.push(
+          renderProposedPlanCard(String(body || "").trim(), { partial: true })
+        );
         out = text.replace(
           /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*)/i,
           `\n\n\u0002PLAN${id}\u0002\n\n`
@@ -303,7 +305,104 @@
   }
 
   const PLAN_SECTION_NEXT_RE =
-    /^(Цель|Goal|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Affected(?:\s+files)?|Риски|Risks|Acceptance)\b/i;
+    /^(Цель|Goal|Контекст|Context|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Затронутые(?:\s+файлы)?|Affected(?:\s+files)?|Проверка|Verification|Риски|Risks|Вне\s+рамок|Out\s+of\s+scope|Acceptance)/i;
+
+  /**
+   * Plan template sections (Harbor Plan-mode rules, src/planImplement.ts).
+   * Required ones feed the «incomplete plan» chip on the card.
+   * No `\b`: JS word boundaries are ASCII-only and never match after «Цель».
+   */
+  const PLAN_SECTION_DEFS = [
+    { key: "goal", re: /^(?:Цель|Goal)(?![\p{L}\p{N}])/iu, required: true },
+    { key: "context", re: /^(?:Контекст|Context)(?![\p{L}\p{N}])/iu },
+    {
+      key: "steps",
+      re: /^(?:Шаги|Steps|План\s+работ|Implementation\s+steps)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    {
+      key: "files",
+      re: /^(?:Затронутые|Затрагиваемые|Affected|Изменяемые\s+файлы|Files)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    {
+      key: "verify",
+      re: /^(?:Проверка|Verification|Тестирование|Testing|Acceptance)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    { key: "risks", re: /^(?:Риски|Risks)(?![\p{L}\p{N}])/iu },
+    { key: "outOfScope", re: /^(?:Вне\s+рамок|Out\s+of\s+scope)(?![\p{L}\p{N}])/iu },
+  ];
+
+  /**
+   * Header facts for the plan card: goal line, step / file counts and missing
+   * required sections. Self-contained (no outer helpers) — tests eval it.
+   */
+  function summarizePlanMarkdown(markdown) {
+    const lines = String(markdown || "").split(/\r?\n/);
+    const sections = {};
+    let current = "";
+    let goalInline = "";
+    const plain = (value) =>
+      String(value || "")
+        .replace(/[*_`]+/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    for (const line of lines) {
+      const heading =
+        /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line) ||
+        /^\s{0,3}\*\*([^*]+?)\*\*\s*:?\s*(.*)$/.exec(line);
+      if (heading) {
+        const label = plain(heading[1]).replace(/:\s*$/, "");
+        const def = PLAN_SECTION_DEFS.find((d) => d.re.test(label));
+        if (def) {
+          current = def.key;
+          sections[current] = sections[current] || [];
+          // «## Цель: текст» / «**Цель:** текст» — goal on the heading line.
+          const rest =
+            plain(heading[2] || "") ||
+            plain(label.replace(def.re, "").replace(/^\s*[:—–-]\s*/, ""));
+          if (current === "goal" && rest) {
+            goalInline = rest;
+          }
+          continue;
+        }
+        if (/^\s{0,3}#{1,6}\s/.test(line)) {
+          current = "";
+          continue;
+        }
+      }
+      if (current) {
+        sections[current].push(line);
+      }
+    }
+    const topNumbered = (list) =>
+      list.filter((l) => /^\s{0,3}\d+[.)]\s+\S/.test(l)).length;
+    // Nested items under «1.» are indented 3 spaces — top level is ≤ 1.
+    const topItems = (list) =>
+      list.filter((l) => /^\s?(?:\d+[.)]|[-*+•])\s+\S/.test(l)).length;
+    let goal = goalInline;
+    if (!goal && sections.goal) {
+      const first = sections.goal.find((l) => l.trim());
+      goal = plain(first ? first.replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, "") : "");
+    }
+    let steps = sections.steps
+      ? topNumbered(sections.steps) || topItems(sections.steps)
+      : 0;
+    if (!sections.steps) {
+      steps = topNumbered(lines);
+    }
+    const files = sections.files ? topItems(sections.files) : 0;
+    const missing = PLAN_SECTION_DEFS.filter(
+      (d) =>
+        d.required &&
+        !(sections[d.key] && sections[d.key].some((l) => l.trim())) &&
+        !(d.key === "goal" && goal) &&
+        !(d.key === "steps" && steps > 0)
+    ).map((d) => d.key);
+    return { goal, steps, files, missing };
+  }
+  // end summarizePlanMarkdown
 
   /** Drop blank paragraphs / lone <br> that inflate vertical gaps. */
   function stripEmptyPlanBlocks(root) {
@@ -397,6 +496,7 @@
       }
     }
 
+    decoratePlanSections(root);
     return root.innerHTML;
   }
 
@@ -428,25 +528,338 @@
       .replace(/\n/g, "<br />");
   }
 
-  function renderProposedPlanCard(planBody) {
+  function planSectionLabelText(el) {
+    return String((el && el.textContent) || "")
+      .trim()
+      .replace(/^#+\s*/, "")
+      .replace(/[*_`:]+/g, "")
+      .trim();
+  }
+
+  /** First list right after a section heading (until the next heading). */
+  function planSectionList(kids, headingRe) {
+    for (let i = 0; i < kids.length; i++) {
+      const el = kids[i];
+      const isHeading =
+        /^H[1-6]$/.test(el.tagName) || el.classList.contains("md-h");
+      const label = planSectionLabelText(el);
+      if (!isHeading && !(el.querySelector("strong") && label.length < 48)) {
+        continue;
+      }
+      if (!headingRe.test(label)) {
+        continue;
+      }
+      for (let j = i + 1; j < kids.length; j++) {
+        const next = kids[j];
+        if (/^H[1-6]$/.test(next.tagName) || next.classList.contains("md-h")) {
+          break;
+        }
+        if (next.tagName === "OL" || next.tagName === "UL") {
+          return next;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Icon for an «Affected files» row: create / delete / modify. */
+  function planFileActionIcon(text) {
+    const value = String(text || "").toLowerCase();
+    if (/(?:созда|нов(?:ый|ая|ое)|добав|\bcreate|\bnew\b|\badd)/.test(value)) {
+      return { icon: "add_circle", cls: "is-create" };
+    }
+    if (/(?:удал|\bdelete|\bremove)/.test(value)) {
+      return { icon: "remove_circle", cls: "is-delete" };
+    }
+    return { icon: "edit", cls: "is-modify" };
+  }
+
+  const PLAN_PATH_LINE_RE =
+    /^(.+?\.[A-Za-z0-9]+|(?:[\w.@-]+\/)+[\w.@-]+)(?::(\d+)(?:\s*[-–]\s*(\d+))?)?$/;
+
+  /** `src/a/b.ts:53-71` → compact chip «b.ts:53–71» (full path in title). */
+  function planFileChipHtml(path, line, lineEnd) {
+    const full = String(path || "");
+    const lineLabel = line ? `:${line}${lineEnd ? `–${lineEnd}` : ""}` : "";
+    const title = escapeHtml(full + lineLabel);
+    return `<a class="md-file plan-file-chip" href="#" data-path="${escapeHtml(full)}"`
+      + (line ? ` data-line="${escapeHtml(line)}"` : "")
+      + ` title="${title}">${escapeHtml(pathBasename(full))}`
+      + (lineLabel ? `<em>${escapeHtml(lineLabel)}</em>` : "")
+      + `</a>`;
+  }
+
+  /** Inline-code paths (with optional :line) and plain file links → chips. */
+  function chipifyPlanPaths(root) {
+    root.querySelectorAll("code.md-code").forEach((code) => {
+      const m = PLAN_PATH_LINE_RE.exec(String(code.textContent || "").trim());
+      if (!m || !isFilePath(m[1])) {
+        return;
+      }
+      const tmp = document.createElement("span");
+      tmp.innerHTML = planFileChipHtml(m[1], m[2], m[3]);
+      code.replaceWith(tmp.firstChild);
+    });
+    root.querySelectorAll("a.md-file:not(.plan-file-chip)").forEach((a) => {
+      a.classList.add("plan-file-chip");
+    });
+  }
+
+  function planHeadingEl(el) {
+    if (!(el instanceof HTMLElement)) {
+      return false;
+    }
+    if (/^H[1-6]$/.test(el.tagName) || el.classList.contains("md-h")) {
+      return true;
+    }
+    // «**Шаги:**» on its own line — bold-label heading.
+    return (
+      el.classList.contains("md-p") &&
+      el.children.length === 1 &&
+      el.firstElementChild.tagName === "STRONG" &&
+      planSectionLabelText(el).length < 48 &&
+      planSectionLabelText(el) === planSectionLabelText(el.firstElementChild)
+    );
+  }
+
+  function planSectionKey(label) {
+    const def = PLAN_SECTION_DEFS.find((d) => d.re.test(label));
+    return def ? def.key : "";
+  }
+
+  /** Affected files list → chips grouped by folder, with action icons. */
+  function groupPlanFiles(list) {
+    const groups = new Map();
+    const order = [];
+    Array.from(list.children).forEach((li) => {
+      if (li.tagName !== "LI") {
+        return;
+      }
+      const link = li.querySelector("a.md-file");
+      const path = link ? String(link.getAttribute("data-path") || "") : "";
+      if (!path) {
+        return;
+      }
+      const slash = path.lastIndexOf("/");
+      const folder = slash > 0 ? path.slice(0, slash + 1) : "";
+      if (!groups.has(folder)) {
+        groups.set(folder, []);
+        order.push(folder);
+      }
+      groups.get(folder).push({ path, action: planFileActionIcon(li.textContent) });
+    });
+    if (!order.length) {
+      return null;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "proposed-plan-files";
+    order.forEach((folder) => {
+      const group = document.createElement("div");
+      group.className = "proposed-plan-files-group";
+      if (folder) {
+        const label = document.createElement("div");
+        label.className = "proposed-plan-files-folder";
+        // Long folders keep their tail: «…/initial-briefing-knowledge-check/lib/».
+        const parts = folder.split("/").filter(Boolean);
+        label.textContent =
+          parts.length > 3 ? `…/${parts.slice(-3).join("/")}/` : folder;
+        label.title = folder;
+        group.appendChild(label);
+      }
+      const row = document.createElement("div");
+      row.className = "proposed-plan-files-row";
+      groups.get(folder).forEach(({ path, action }) => {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = planFileChipHtml(path);
+        const chip = tmp.firstChild;
+        chip.classList.add(action.cls);
+        const icon = document.createElement("span");
+        icon.className = "material-symbols-outlined proposed-plan-file-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = action.icon;
+        chip.insertBefore(icon, chip.firstChild);
+        row.appendChild(chip);
+      });
+      group.appendChild(row);
+      wrap.appendChild(group);
+    });
+    return wrap;
+  }
+
+  /**
+   * Plan body → foldable sections (heading + content). Goal is shown in the
+   * card header, Context is folded by default (reference for the agent),
+   * Steps become a numbered timeline, Affected files — chips by folder, and a
+   * missing required section gets an inline «Complete» placeholder.
+   */
+  function decoratePlanSections(root) {
+    chipifyPlanPaths(root);
+    const kids = Array.from(root.children);
+    const sections = [];
+    let current = null;
+    kids.forEach((el) => {
+      if (planHeadingEl(el)) {
+        const label = planSectionLabelText(el);
+        current = { label, key: planSectionKey(label), head: el, nodes: [] };
+        sections.push(current);
+        return;
+      }
+      if (!current) {
+        current = { label: "", key: "intro", head: null, nodes: [] };
+        sections.push(current);
+      }
+      current.nodes.push(el);
+    });
+    root.replaceChildren();
+    const seen = new Set();
+    sections.forEach((sec) => {
+      seen.add(sec.key);
+      const box = document.createElement("section");
+      box.className = "proposed-plan-sec";
+      if (sec.key) {
+        box.dataset.sec = sec.key;
+      }
+      const body = document.createElement("div");
+      body.className = "proposed-plan-sec-body";
+      sec.nodes.forEach((node) => body.appendChild(node));
+      if (sec.key === "steps") {
+        const ol = body.querySelector("ol");
+        if (ol) {
+          ol.classList.add("proposed-plan-steps");
+          // «**Title** — gist»: the title becomes the step heading, drop
+          // the leading dash of the gist.
+          Array.from(ol.children).forEach((li) => {
+            const host =
+              li.firstElementChild && li.firstElementChild.classList.contains("md-p")
+                ? li.firstElementChild
+                : li;
+            const strong = host.firstChild;
+            if (!strong || strong.nodeName !== "STRONG") {
+              return;
+            }
+            const next = strong.nextSibling;
+            if (next && next.nodeType === 3) {
+              next.textContent = next.textContent.replace(/^\s*(?:[—–-]|:)\s*/, "");
+            }
+          });
+        }
+      }
+      if (sec.key === "files") {
+        const list = body.querySelector("ul, ol");
+        const grouped = list ? groupPlanFiles(list) : null;
+        if (grouped) {
+          list.replaceWith(grouped);
+        }
+      }
+      if (sec.head) {
+        const head = document.createElement("button");
+        head.type = "button";
+        head.className = "proposed-plan-sec-head";
+        head.setAttribute("data-plan-action", "fold");
+        let count = "";
+        if (sec.key === "context") {
+          const n = body.querySelectorAll(".plan-file-chip").length;
+          count = n ? t("proposedPlanContextCount", n) : "";
+          box.classList.add("is-folded");
+        }
+        head.innerHTML =
+          `<span class="material-symbols-outlined" aria-hidden="true">expand_more</span>`
+          + `<span>${escapeHtml(sec.label)}</span>`
+          + (count ? `<span class="proposed-plan-sec-count">· ${escapeHtml(count)}</span>` : "");
+        box.appendChild(head);
+      }
+      box.appendChild(body);
+      root.appendChild(box);
+    });
+    ["verify"].forEach((key) => {
+      if (seen.has(key) || !sections.some((sec) => sec.head)) {
+        return;
+      }
+      const box = document.createElement("section");
+      box.className = "proposed-plan-sec is-missing";
+      box.dataset.sec = key;
+      box.innerHTML =
+        `<div class="proposed-plan-sec-head is-static"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span><span>${escapeHtml(t(`proposedPlanSection_${key}`))}</span></div>`
+        + `<div class="proposed-plan-missing">`
+        + `<span class="material-symbols-outlined" aria-hidden="true">warning</span>`
+        + `<span class="proposed-plan-missing-text">${escapeHtml(t(`proposedPlanMissingText_${key}`))}</span>`
+        + `<button type="button" class="proposed-plan-missing-btn" data-plan-action="complete">${escapeHtml(t("proposedPlanComplete"))}</button>`
+        + `</div>`;
+      root.appendChild(box);
+    });
+  }
+
+  function planCountLabel(n, kind) {
+    return t(kind === "files" ? "proposedPlanFilesCount" : "proposedPlanStepsCount", n);
+  }
+
+  function renderProposedPlanCard(planBody, opts) {
     const raw = stripPlanImplementWrapper(planBody);
+    const partial = Boolean(opts && opts.partial);
+    const summary = summarizePlanMarkdown(raw);
     const title = escapeHtml(t("proposedPlanTitle"));
     const openTab = escapeHtml(t("proposedPlanOpenTab"));
-    const expand = escapeHtml(t("proposedPlanExpand"));
-    return `<div class="proposed-plan-card is-collapsed" data-plan-raw="${escapeHtml(raw)}">`
+    const collapse = escapeHtml(t("proposedPlanCollapse"));
+    const build = escapeHtml(t("proposedPlanBuild"));
+    const copy = escapeHtml(t("proposedPlanCopy"));
+    const icon = (name) =>
+      `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
+    const chips = [];
+    if (summary.steps > 0) {
+      chips.push(
+        `<span class="proposed-plan-chip">${icon("format_list_numbered")}${escapeHtml(planCountLabel(summary.steps, "steps"))}</span>`
+      );
+    }
+    if (summary.files > 0) {
+      chips.push(
+        `<span class="proposed-plan-chip">${icon("description")}${escapeHtml(planCountLabel(summary.files, "files"))}</span>`
+      );
+    }
+    if (summary.missing.length) {
+      const names = summary.missing
+        .map((key) => t(`proposedPlanSection_${key}`))
+        .join(", ");
+      chips.push(
+        `<span class="proposed-plan-chip is-warn" title="${escapeHtml(t("proposedPlanIncompleteHint"))}">${icon("warning")}${escapeHtml(t("proposedPlanMissing", names))}</span>`
+      );
+    }
+    // Visible only once the stream ended without </proposed_plan> (sync).
+    chips.push(
+      `<span class="proposed-plan-chip is-warn proposed-plan-truncated-chip">${icon("content_cut")}${escapeHtml(t("proposedPlanTruncated"))}</span>`
+    );
+    chips.push(
+      `<span class="proposed-plan-chip is-info proposed-plan-edited-chip" title="${escapeHtml(t("proposedPlanEditedHint"))}">${icon("edit_note")}${escapeHtml(t("proposedPlanEdited"))}</span>`
+    );
+    const status = (state, name, label) =>
+      `<span class="proposed-plan-pill proposed-plan-pill-${state}">${name ? icon(name) : ""}${escapeHtml(label)}</span>`;
+    return `<div class="proposed-plan-card${partial ? " is-partial" : ""}${summary.goal ? " has-goal" : ""}" data-plan-raw="${escapeHtml(raw)}" data-plan-state="draft">`
       + `<div class="proposed-plan-head">`
-      + `<button class="proposed-plan-toggle" type="button" data-plan-action="toggle" aria-expanded="false" title="${expand}">`
-      + `<span class="material-symbols-outlined proposed-plan-chevron" aria-hidden="true">expand_more</span>`
+      + `<button class="proposed-plan-toggle" type="button" data-plan-action="toggle" aria-expanded="true" title="${collapse}">`
+      + `<span class="material-symbols-outlined proposed-plan-title-icon" aria-hidden="true">checklist</span>`
       + `<span class="proposed-plan-title">${title}</span>`
       + `</button>`
+      + status("ready", "", t("proposedPlanStatusReady"))
+      + status("streaming", "", t("proposedPlanStatusStreaming"))
+      + status("done", "check_circle", t("proposedPlanStatusDone"))
+      + status("superseded", "history", t("proposedPlanStatusSuperseded"))
+      + `<span class="proposed-plan-head-spacer"></span>`
       + `<div class="proposed-plan-actions">`
-      + `<button class="proposed-plan-open-tab" type="button" data-plan-action="open-tab" title="${openTab}">`
-      + `<span class="material-symbols-outlined" aria-hidden="true">preview</span>`
-      + `<span>${openTab}</span>`
-      + `</button>`
+      + `<button class="proposed-plan-icon-btn" type="button" data-plan-action="copy" title="${copy}" aria-label="${copy}">${icon("content_copy")}</button>`
+      + `<button class="proposed-plan-icon-btn" type="button" data-plan-action="open-tab" title="${openTab}" aria-label="${openTab}">${icon("preview")}</button>`
+      + `<button class="proposed-plan-icon-btn proposed-plan-chevron-btn" type="button" data-plan-action="toggle" title="${collapse}" aria-label="${collapse}"><span class="material-symbols-outlined proposed-plan-chevron" aria-hidden="true">expand_less</span></button>`
       + `</div>`
       + `</div>`
-      + `<div class="proposed-plan-body" hidden>${renderPlanBodyHtml(raw)}</div>`
+      + (summary.goal
+        ? `<div class="proposed-plan-goal" title="${escapeHtml(summary.goal)}">${escapeHtml(summary.goal)}</div>`
+        : "")
+      + `<div class="proposed-plan-meta">${chips.join("")}</div>`
+      + `<div class="proposed-plan-body">${renderPlanBodyHtml(raw)}</div>`
+      + `<div class="proposed-plan-foot">`
+      + `<span class="proposed-plan-foot-hint">${escapeHtml(t("proposedPlanFootHint"))}</span>`
+      + `<button class="proposed-plan-secondary-btn proposed-plan-continue" type="button" data-plan-action="continue" title="${escapeHtml(t("proposedPlanContinueHint"))}">${icon("play_arrow")}<span>${escapeHtml(t("proposedPlanContinue"))}</span></button>`
+      + `<button class="proposed-plan-secondary-btn proposed-plan-edit" type="button" data-plan-action="edit" title="${escapeHtml(t("proposedPlanEditHint"))}">${icon("edit")}<span>${escapeHtml(t("proposedPlanEditBtn"))}</span></button>`
+      + `<button class="proposed-plan-build" type="button" data-plan-action="build" title="${build}">${icon("construction")}<span>${build}</span></button>`
+      + `</div>`
       + `</div>`;
   }
 
@@ -455,16 +868,17 @@
       return;
     }
     const body = card.querySelector(".proposed-plan-body");
-    const toggle = card.querySelector("[data-plan-action='toggle']");
-    if (!body || !(toggle instanceof HTMLButtonElement)) {
+    if (!body) {
       return;
     }
     card.classList.toggle("is-collapsed", collapsed);
     body.hidden = collapsed;
-    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    toggle.title = collapsed
-      ? t("proposedPlanExpand")
-      : t("proposedPlanCollapse");
+    card.querySelectorAll("[data-plan-action='toggle']").forEach((toggle) => {
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggle.title = collapsed
+        ? t("proposedPlanExpand")
+        : t("proposedPlanCollapse");
+    });
   }
 
   function openProposedPlanInTab(card) {
@@ -723,12 +1137,68 @@
         `</div>`;
     }
 
+    const wrapLabel = escapeHtml(t("codeWrap"));
+    const copyLabel = escapeHtml(t("codeCopy"));
+    const toolsHtml =
+      `<div class="md-pre-tools">` +
+      `<button type="button" class="md-pre-tool" data-code-action="wrap" aria-pressed="false" title="${wrapLabel}" aria-label="${wrapLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">wrap_text</span>` +
+      `</button>` +
+      `<button type="button" class="md-pre-tool" data-code-action="copy" title="${copyLabel}" aria-label="${copyLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>` +
+      `</button>` +
+      `</div>`;
+
     return (
       `<div class="md-pre-wrap${showLines ? " has-lines is-collapsible is-collapsed" : ""}">` +
       metaHtml +
+      `<div class="md-pre-box">` +
+      toolsHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
+      `</div>` +
       `</div>\n`
     );
+  }
+
+  /** Plain code of a rendered block (without gutter line numbers). */
+  function codeBlockPlainText(wrap) {
+    const code = wrap?.querySelector(".md-pre code");
+    if (!code) {
+      return "";
+    }
+    const lines = code.querySelectorAll(".md-line-text");
+    if (lines.length) {
+      return Array.from(lines, (el) => el.textContent || "").join("\n");
+    }
+    return code.textContent || "";
+  }
+
+  /** Toolbar on code blocks: toggle soft wrap, copy the code. */
+  function handleCodeBlockAction(btn) {
+    const wrap = btn?.closest(".md-pre-wrap");
+    if (!wrap) {
+      return;
+    }
+    const action = btn.getAttribute("data-code-action");
+    if (action === "wrap") {
+      const on = wrap.classList.toggle("is-wrapped");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    if (action === "copy") {
+      const text = codeBlockPlainText(wrap);
+      if (!text) {
+        return;
+      }
+      const done = () => showCopyToast(t("copied"));
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+          host.postMessage({ type: "copyText", text });
+        });
+        return;
+      }
+      host.postMessage({ type: "copyText", text });
+    }
   }
 
   function toggleCodeBlock(toggle) {

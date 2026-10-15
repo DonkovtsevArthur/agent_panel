@@ -20,6 +20,15 @@
           btn.getAttribute("data-settings-cat") === cat
         );
       });
+      // Узкая панель: вкладки — горизонтальная лента; держим активную в кадре.
+      const activeBtn = nav.querySelector(".settings-nav-item.is-active");
+      if (activeBtn && nav.scrollWidth > nav.clientWidth + 1) {
+        try {
+          activeBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
+        } catch {
+          /* old engines */
+        }
+      }
     }
     document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
       panel.hidden = panel.getAttribute("data-settings-panel") !== cat;

@@ -667,6 +667,15 @@
         planBtn.disabled = busy;
       }
     }
+    if (messagesEl) {
+      messagesEl
+        .querySelectorAll(
+          ".proposed-plan-card [data-plan-action='build'], .proposed-plan-card [data-plan-action='continue']"
+        )
+        .forEach((btn) => {
+          btn.disabled = busy;
+        });
+    }
     if (busy) {
       const hostStartedAt =
         opts && typeof opts.runStartedAt === "number" ? opts.runStartedAt : 0;

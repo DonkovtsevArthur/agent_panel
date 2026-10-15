@@ -445,6 +445,52 @@
       hideSteps: "Hide steps",
       showThinking: "Show thoughts",
       hideThinking: "Hide thoughts",
+      runErrors: (n) => (n === 1 ? "1 error" : `${n} errors`),
+      todoPlanMinimize: "Collapse plan to a chip",
+      todoPlanIncomplete: "not finished",
+      todoPlanStale: (n) =>
+        `Plan not updated · ${n} ${n === 1 ? "edit" : "edits"} since`,
+      codeWrap: "Wrap lines",
+      codeCopy: "Copy code",
+      welcomeTitle: "What are we working on?",
+      welcomeSuggestExplain: "Explain how this project is structured",
+      welcomeSuggestFix: "Find and fix problems in the open file",
+      welcomeSuggestTests: "Write tests for the selected code",
+      welcomeSuggestPlan: "Plan a new feature step by step",
+      welcomeHintMention: "attach a file",
+      welcomeHintSlash: "commands",
+      welcomeHintSelection: "selection to chat",
+      welcomeRecent: "Recent agents",
+      feedShowAll: (n) => (n > 0 ? `Show all · ${n} lines` : "Show all"),
+      feedCollapse: "Collapse",
+      feedShowPlan: (n) => (n > 0 ? `Show plan · ${n} lines` : "Show plan"),
+      feedJumpNew: "New",
+      feedJumpLatest: "Jump to latest",
+      feedStickyTitle: "Back to the start of this turn",
+      feedTurnMap: "Chat turns",
+      agentsGroupPinned: "Pinned",
+      agentsGroupToday: "Today",
+      agentsGroupYesterday: "Yesterday",
+      agentsGroupWeek: "This week",
+      agentsGroupEarlier: "Earlier",
+      agentsFilter: "Filter agents",
+      agentsFilterEmpty: "No agents match",
+      agentMenu: "Agent actions",
+      agentRename: "Rename",
+      agentPin: "Pin",
+      agentUnpin: "Unpin",
+      agentDuplicate: "Duplicate",
+      agentArchive: "Archive",
+      agentDelete: "Delete",
+      agentUnread: "New result",
+      agentPinned: "Pinned",
+      agentRunErrorShort: "Error",
+      agentRunRunning: "Running",
+      agentRunDone: "Done",
+      agentRunError: "Finished with an error",
+      providersEmptyTitle: "Connect your first model",
+      providersEmptyNote: "Pick a provider to prefill its address — then add an API key. Requests go only to the API you choose.",
+      providersEmptyCustom: "Other OpenAI-compatible",
       thinkingLabel: "Thoughts",
       thinkingWorking: "Thoughts…",
       textStepLabel: "Note",
@@ -549,6 +595,36 @@
       proposedPlanCodeBlock: "Code",
       proposedPlanCodeLines: (n) => (n === 1 ? "1 line" : `${n} lines`),
       proposedPlanCodeToggle: "Show or hide code",
+      proposedPlanCopy: "Copy plan",
+      proposedPlanStepsCount: (n) => (n === 1 ? "1 step" : `${n} steps`),
+      proposedPlanFilesCount: (n) => (n === 1 ? "1 file" : `${n} files`),
+      proposedPlanMissing: (names) => `Missing: ${names}`,
+      proposedPlanIncompleteHint:
+        "Required plan sections are missing — ask the agent to complete the plan before Build.",
+      proposedPlanSection_goal: "Goal",
+      proposedPlanSection_steps: "Steps",
+      proposedPlanSection_files: "Affected files",
+      proposedPlanSection_verify: "Verification",
+      proposedPlanTruncated: "Plan is cut off",
+      proposedPlanContinue: "Continue plan",
+      proposedPlanContinueHint: "Ask the agent to finish the cut-off plan",
+      proposedPlanContinuePrompt:
+        "The plan was cut off. Output the full plan again inside <proposed_plan>…</proposed_plan>, with every section.",
+      proposedPlanEdited: "Edited in editor",
+      proposedPlanEditedHint:
+        "Plan.md differs from this card — Build will use the editor version.",
+      proposedPlanStatusDone: "Done",
+      proposedPlanStatusReady: "Ready to build",
+      proposedPlanStatusStreaming: "Writing…",
+      proposedPlanContextCount: (n) => (n === 1 ? "1 code location" : `${n} code locations`),
+      proposedPlanMissingText_verify: "The agent didn't say how to verify the changes",
+      proposedPlanComplete: "Complete",
+      proposedPlanCompletePrompt: (names) =>
+        `Complete the plan: add the missing sections (${names}). Output the full plan again inside <proposed_plan>…</proposed_plan>.`,
+      proposedPlanFootHint: "Editable in Plan.md",
+      proposedPlanEditBtn: "Edit",
+      proposedPlanEditHint: "Open Plan.md in the editor",
+      proposedPlanStatusSuperseded: "Superseded",
       proposedPlanImplementBubble: "Build plan",
       proposedPlanImplementPrefix:
         "Implement the following plan exactly (components, paths, and steps as written — do not substitute your own):",
@@ -628,10 +704,10 @@
       commitPromptPlaceholder:
         "Необязательно. Пример: пиши короткие русские commit message с акцентом на зачем.",
       figma: "Figma",
-      mcpServers: "MCP Servers",
+      mcpServers: "MCP-серверы",
       mcpServersNote:
         "Управление MCP-подключениями Harbor Agents (Figma и другие).",
-      skillsSection: "Skills",
+      skillsSection: "Скиллы",
       skillsNote:
         "Skills — пакеты SKILL.md, подключаются когда нужны. Кладите их в папки проекта или глобальную — список ниже.",
       skillsEnabled: "Включить skills",
@@ -948,6 +1024,92 @@
       hideSteps: "Скрыть шаги",
       showThinking: "Показать мысли",
       hideThinking: "Скрыть мысли",
+      runErrors: (n) => {
+        const abs = Math.abs(n) % 100;
+        const d = abs % 10;
+        if (abs > 10 && abs < 20) {
+          return `${n} ошибок`;
+        }
+        if (d === 1) {
+          return `${n} ошибка`;
+        }
+        if (d >= 2 && d <= 4) {
+          return `${n} ошибки`;
+        }
+        return `${n} ошибок`;
+      },
+      todoPlanMinimize: "Свернуть план в чип",
+      todoPlanIncomplete: "не завершён",
+      todoPlanStale: (n) => {
+        const d = n % 10;
+        const h = n % 100;
+        const word =
+          d === 1 && h !== 11
+            ? "правка"
+            : d >= 2 && d <= 4 && (h < 12 || h > 14)
+              ? "правки"
+              : "правок";
+        return `План не обновлялся · с тех пор ${n} ${word}`;
+      },
+      codeWrap: "Переносить строки",
+      codeCopy: "Копировать код",
+      welcomeTitle: "Над чем работаем?",
+      welcomeSuggestExplain: "Объясни, как устроен этот проект",
+      welcomeSuggestFix: "Найди и исправь проблемы в открытом файле",
+      welcomeSuggestTests: "Напиши тесты для выделенного кода",
+      welcomeSuggestPlan: "Составь пошаговый план новой фичи",
+      welcomeHintMention: "прикрепить файл",
+      welcomeHintSlash: "команды",
+      welcomeHintSelection: "выделение в чат",
+      welcomeRecent: "Недавние агенты",
+      feedShowAll: (n) => {
+        if (!(n > 0)) {
+          return "Показать всё";
+        }
+        const abs = Math.abs(n) % 100;
+        const d = abs % 10;
+        const word =
+          abs > 10 && abs < 20
+            ? "строк"
+            : d === 1
+              ? "строка"
+              : d >= 2 && d <= 4
+                ? "строки"
+                : "строк";
+        return `Показать всё · ${n} ${word}`;
+      },
+      feedCollapse: "Свернуть",
+      feedShowPlan: (n) =>
+        n > 0
+          ? `Показать план · ${n} ${ruPlural(n, "строка", "строки", "строк")}`
+          : "Показать план",
+      feedJumpNew: "Новое",
+      feedJumpLatest: "К последнему сообщению",
+      feedStickyTitle: "К началу этого хода",
+      feedTurnMap: "Ходы чата",
+      agentsGroupPinned: "Закреплено",
+      agentsGroupToday: "Сегодня",
+      agentsGroupYesterday: "Вчера",
+      agentsGroupWeek: "На этой неделе",
+      agentsGroupEarlier: "Раньше",
+      agentsFilter: "Фильтр агентов",
+      agentsFilterEmpty: "Ничего не найдено",
+      agentMenu: "Действия с агентом",
+      agentRename: "Переименовать",
+      agentPin: "Закрепить",
+      agentUnpin: "Открепить",
+      agentDuplicate: "Дублировать",
+      agentArchive: "В архив",
+      agentDelete: "Удалить",
+      agentUnread: "Есть новый результат",
+      agentPinned: "Закреплён",
+      agentRunErrorShort: "Ошибка",
+      agentRunRunning: "Работает",
+      agentRunDone: "Готово",
+      agentRunError: "Завершён с ошибкой",
+      providersEmptyTitle: "Подключите первую модель",
+      providersEmptyNote: "Выберите провайдера — адрес подставится сам, останется добавить API-ключ. Запросы уходят только в выбранный API.",
+      providersEmptyCustom: "Другой OpenAI-совместимый",
       thinkingLabel: "Мысли",
       thinkingWorking: "Мысли…",
       textStepLabel: "Сообщение",
@@ -1076,12 +1238,59 @@
       proposedPlanCodeLines: (n) =>
         n === 1 ? "1 строка" : n < 5 ? `${n} строки` : `${n} строк`,
       proposedPlanCodeToggle: "Показать или скрыть код",
+      proposedPlanCopy: "Скопировать план",
+      proposedPlanStepsCount: (n) => `${n} ${ruPlural(n, "шаг", "шага", "шагов")}`,
+      proposedPlanFilesCount: (n) => `${n} ${ruPlural(n, "файл", "файла", "файлов")}`,
+      proposedPlanMissing: (names) => `Не хватает: ${names}`,
+      proposedPlanIncompleteHint:
+        "В плане нет обязательных разделов — попросите агента дополнить план перед «Собрать».",
+      proposedPlanSection_goal: "Цель",
+      proposedPlanSection_steps: "Шаги",
+      proposedPlanSection_files: "Затронутые файлы",
+      proposedPlanSection_verify: "Проверка",
+      proposedPlanTruncated: "План обрезан",
+      proposedPlanContinue: "Продолжить план",
+      proposedPlanContinueHint: "Попросить агента дописать обрезанный план",
+      proposedPlanContinuePrompt:
+        "План обрезался. Выдай его заново целиком внутри <proposed_plan>…</proposed_plan>, со всеми разделами.",
+      proposedPlanEdited: "Изменён в редакторе",
+      proposedPlanEditedHint:
+        "План.md отличается от карточки — «Собрать» возьмёт версию из редактора.",
+      proposedPlanStatusDone: "Выполнен",
+      proposedPlanStatusReady: "Готов к сборке",
+      proposedPlanStatusStreaming: "Пишется…",
+      proposedPlanContextCount: (n) => `${n} ${ruPlural(n, "место", "места", "мест")} в коде`,
+      proposedPlanMissingText_verify: "Агент не указал, как проверить изменения",
+      proposedPlanComplete: "Дополнить",
+      proposedPlanCompletePrompt: (names) =>
+        `Дополни план: добавь недостающие разделы (${names}). Выдай план заново целиком внутри <proposed_plan>…</proposed_plan>.`,
+      proposedPlanFootHint: "Можно поправить в План.md",
+      proposedPlanEditBtn: "Изменить",
+      proposedPlanEditHint: "Открыть План.md в редакторе",
+      proposedPlanStatusSuperseded: "Заменён",
       proposedPlanImplementBubble: "Собрать план",
       proposedPlanImplementPrefix:
         "Реализуй следующий план точно (компоненты, пути и шаги — как написано, без подмены своими):",
     }
   };
   let STR = UI_STRINGS[UI_LANG];
+  /** Russian plural: 1 шаг, 2 шага, 5 шагов (11–14 → many). */
+  function ruPlural(n, one, few, many) {
+    const abs = Math.abs(Number(n) || 0);
+    const mod100 = abs % 100;
+    const mod10 = abs % 10;
+    if (mod100 >= 11 && mod100 <= 14) {
+      return many;
+    }
+    if (mod10 === 1) {
+      return one;
+    }
+    if (mod10 >= 2 && mod10 <= 4) {
+      return few;
+    }
+    return many;
+  }
+
   const t = (key, ...args) => {
     const value = STR[key];
     return typeof value === "function" ? value(...args) : value;
@@ -1619,6 +1828,10 @@
   let totalOutputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheWriteTokens = 0;
+  // Last model request of the active chat: full input + the part served from
+  // the prompt cache (per-call, not cumulative). Shown as its own tooltip line.
+  let lastPromptTokens = 0;
+  let lastCacheReadTokens = 0;
   let notificationAudioContext = null;
 
   function ensureNotificationAudioContext() {
@@ -4094,7 +4307,7 @@
       return;
     }
     const SELECTOR =
-      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build";
+      "#sendBtn, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .composer-plan-build, .proposed-plan-build, .proposed-plan-continue";
     const POINTER_ACTION_SELECTOR =
       ".msg-edit-mode-trigger, .msg-edit-model-trigger, .msg-edit-plus-btn, .msg-edit-reason-trigger, .msg-edit-save, .msg-regenerate, .msg-copy, .msg-branch, .composer-plan-build, #sendBtn";
     let downEl = null;
@@ -6661,6 +6874,12 @@
       if (typeof totals.totalCacheWriteTokens === "number") {
         totalCacheWriteTokens = Math.max(0, totals.totalCacheWriteTokens);
       }
+      if (typeof totals.lastPromptTokens === "number") {
+        lastPromptTokens = Math.max(0, totals.lastPromptTokens);
+      }
+      if (typeof totals.lastCacheReadTokens === "number") {
+        lastCacheReadTokens = Math.max(0, totals.lastCacheReadTokens);
+      }
     }
     const pct = contextPct(contextUsed, contextMax);
     const filled = Math.max(pct > 0 ? 1.5 : 0, Math.round(pct * 1000) / 10);
@@ -6671,25 +6890,55 @@
     );
     contextRingEl.classList.toggle("is-warn", pct >= 0.7 && pct < 0.9);
     contextRingEl.classList.toggle("is-danger", pct >= 0.9);
+    // С половины окна показываем процент рядом с кольцом — без наведения
+    // видно, что чат скоро сожмётся.
+    let pctEl = contextRingEl.querySelector(".context-pct");
+    if (!pctEl) {
+      pctEl = document.createElement("span");
+      pctEl.className = "context-pct";
+      pctEl.setAttribute("aria-hidden", "true");
+      contextRingEl.insertBefore(pctEl, contextRingEl.firstChild);
+    }
+    const showPct = pct >= 0.5;
+    pctEl.hidden = !showPct;
+    pctEl.textContent = showPct ? `${pctLabel}%` : "";
+    contextRingEl.classList.toggle("has-pct", showPct);
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
     const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
     if (contextTipEl) {
       contextTipEl.textContent = tip;
     }
-    contextRingEl.setAttribute("aria-label", `Context: ${tip}`);
+    contextRingEl.setAttribute(
+      "aria-label",
+      `Context: ${tip.replace(/\n/g, " · ")}`
+    );
     contextRingEl.hidden = false;
     if (stickToBottom) {
       scrollToBottom();
     }
   }
 
+  /** "last request 18k · cached 15k (83%)" — per-call prompt-cache share. */
+  function buildLastRequestTip() {
+    if (lastPromptTokens <= 0) {
+      return "";
+    }
+    const cached = Math.min(lastCacheReadTokens, lastPromptTokens);
+    const pct = Math.round((cached / lastPromptTokens) * 100);
+    return `last request ${formatTokenCount(lastPromptTokens)} · cached ${formatTokenCount(cached)} (${pct}%)`;
+  }
+
   function buildContextRingTip(usedLabel, maxLabel, pctLabel) {
-    const base = `${usedLabel} / ${maxLabel} · ${pctLabel}%`;
+    const lines = [`${usedLabel} / ${maxLabel} · ${pctLabel}%`];
+    const lastRequest = buildLastRequestTip();
+    if (lastRequest) {
+      lines.push(lastRequest);
+    }
     const hasTotals =
       totalInputTokens > 0 || totalOutputTokens > 0;
     if (!hasTotals) {
-      return base;
+      return lines.join("\n");
     }
     const inLabel = formatTokenCount(totalInputTokens);
     const outLabel = formatTokenCount(totalOutputTokens);
@@ -6699,7 +6948,8 @@
       const cacheWrite = formatTokenCount(totalCacheWriteTokens);
       parts.push(`cache read ${cacheRead}`, `cache write ${cacheWrite}`);
     }
-    return `${base}  ·  ${parts.join(" / ")}`;
+    lines.push(`chat total: ${parts.join(" / ")}`);
+    return lines.join("\n");
   }
 
   /**
@@ -7341,6 +7591,16 @@
       return t("stepsOne");
     }
     return t("stepsMany", n);
+  }
+
+  /** Tool steps that ended with status «error» (shown in the run summary). */
+  function timelineToolErrorsCount(group) {
+    if (!group) {
+      return 0;
+    }
+    return group.querySelectorAll(
+      '.agent-step[data-step-kind="tool"][data-status="error"]'
+    ).length;
   }
 
   /** Steps users perceive as actions: tool calls only (no thinking/text). */
@@ -8244,6 +8504,14 @@
         if (reviewAdd > 0 || reviewDel > 0) {
           parts.push(`+${reviewAdd} −${reviewDel}`);
         }
+        // Шаги с ошибкой (упавшая команда, неудачная правка) не должны
+        // прятаться за зелёным «выполнено»: число ошибок — в сводку,
+        // класс — для янтарной точки.
+        const stepErrors = timelineToolErrorsCount(group);
+        group.classList.toggle("has-step-errors", stepErrors > 0);
+        if (stepErrors > 0) {
+          parts.push(t("runErrors", stepErrors));
+        }
         summary.textContent = `${base}${
           parts.length ? ` · ${parts.join(" · ")}` : ""
         }`;
@@ -8557,6 +8825,7 @@
     if (textLabel) {
       textLabel.innerHTML = renderInlineMarkdown(raw);
     }
+    advanceTodoPlanFromNarration(raw);
     positionTextStepAfterTimeline(turnScope, el);
     keepStatusAtEnd();
     scrollToBottom();
@@ -8604,6 +8873,9 @@
         todoEl.dataset.status = step.status;
       }
       todoEl.classList.add("agent-step-todo");
+      // Fresh update_todo → the plan is in sync again; the dock's stale
+      // hint counts edits from here (see noteEditForTodoPlan).
+      todoEl.__harborEditIds = new Set();
       renderTodoStep(todoEl, step);
       // Pin the plan card right under the user's prompt, above the step /
       // thinking timeline, regardless of the order events arrive in.
@@ -8639,6 +8911,10 @@
         scrollToBottom();
         return latest;
       }
+    }
+
+    if (step.kind === "tool") {
+      noteEditForTodoPlan(step);
     }
 
     const stepIdSel = `.agent-step[data-step-id="${String(step.stepId).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
@@ -8937,6 +9213,13 @@
 
     const counter = steps.length ? `${doneCount}/${steps.length}` : "";
     el.dataset.todoOpen = open ? "1" : "0";
+    // Незакрытый план: CSS показывает «не завершён», когда ход уже
+    // закончился (лента запечатана и не is-run-working).
+    if (!failed && steps.length && doneCount < steps.length) {
+      el.dataset.todoIncomplete = "1";
+    } else {
+      delete el.dataset.todoIncomplete;
+    }
 
     // Full card collapse: when data-todo-card-collapsed="1", only a compact
     // chip is visible — click it to restore the card.
@@ -8973,7 +9256,12 @@
       `<span class="material-symbols-outlined agent-step-icon" aria-hidden="true">${statusIcon}</span>` +
       `<span class="todo-plan-title"></span>` +
       `<span class="todo-plan-counter"></span>` +
-      `<span class="material-symbols-outlined todo-plan-minimize" title="Свернуть панель" aria-hidden="true">minimize</span>` +
+      `<span class="todo-plan-stale"></span>` +
+      // Свернуть в чип — только в раскрытой карточке, чтобы в свёрнутой
+      // не было двух соседних «свернуть».
+      (open
+        ? `<button type="button" class="todo-plan-minimize" title="${escapeHtml(t("todoPlanMinimize"))}" aria-label="${escapeHtml(t("todoPlanMinimize"))}"><span class="material-symbols-outlined" aria-hidden="true">unfold_less</span></button>`
+        : "") +
       `<span class="material-symbols-outlined todo-plan-chevron" aria-hidden="true">${open ? "expand_less" : "expand_more"}</span>`;
     const titleEl = head.querySelector(".todo-plan-title");
     if (titleEl) {
@@ -8982,6 +9270,10 @@
     const counterEl = head.querySelector(".todo-plan-counter");
     if (counterEl) {
       counterEl.textContent = counter;
+    }
+    const staleEl = head.querySelector(".todo-plan-stale");
+    if (staleEl) {
+      staleEl.textContent = t("todoPlanIncomplete");
     }
     head.addEventListener("click", (e) => {
       // Minimize button: collapse entire card into compact chip.
@@ -9086,6 +9378,7 @@
       `<span class="agent-step-label">${escapeHtml(t("thinkingLabel"))}</span>` +
       `<button type="button" class="agent-step-thinking-toggle" hidden>` +
       `<span class="agent-step-thinking-toggle-label"></span>` +
+      `<span class="material-symbols-outlined agent-step-thinking-chevron" aria-hidden="true">expand_more</span>` +
       `</button>` +
       `</div>` +
       `<div class="agent-step-thinking-text"></div>`;
@@ -9119,6 +9412,7 @@
     el.classList.toggle("is-thinking-collapsed", !open);
     toggle.hidden = false;
     toggleLabel.textContent = open ? t("hideThinking") : t("showThinking");
+    toggle.title = toggleLabel.textContent;
     toggle.setAttribute("aria-expanded", String(open));
   }
 
@@ -9251,6 +9545,91 @@
     return steps.length ? { card, steps } : null;
   }
 
+  /**
+   * «Шаг 9 — правлю тесты» / «Step 3: …» in the agent's narration → step
+   * number (1-based), or 0. Self-contained — tests eval it from panel.js.
+   */
+  function narrationTodoStepNumber(text) {
+    const m = /(?:^|[\n.;!?]\s*|\s)(?:Шаг|Этап|Step)\s*№?\s*(\d{1,2})(?!\d)(?:\s*(?:из|of|\/)\s*\d{1,2})?\s*(?:[—–:.-]|$)/i.exec(
+      String(text || "")
+    );
+    return m ? Number(m[1]) : 0;
+  }
+  // end narrationTodoStepNumber
+
+  /**
+   * Keep the running plan card in step with the work: when the agent says
+   * «Шаг N — …» and N is ahead of the card, mark 1…N-1 done and N in progress
+   * right away instead of waiting for its next update_todo (models often
+   * forget it on long Build turns). Forward only; the next real update_todo
+   * replaces the card as usual.
+   */
+  function advanceTodoPlanFromNarration(text) {
+    const n = narrationTodoStepNumber(text);
+    if (!n) {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found || n > found.steps.length) {
+      return;
+    }
+    const { card, steps } = found;
+    const firstOpen = steps.findIndex(
+      (item) => String(item.status || "") !== "done"
+    );
+    const target = n - 1;
+    if (firstOpen < 0 || target < firstOpen) {
+      return;
+    }
+    if (
+      target === firstOpen &&
+      String(steps[target].status || "") === "in_progress"
+    ) {
+      return;
+    }
+    const next = steps.map((item, index) => {
+      if (index < target) {
+        return { ...item, status: "done" };
+      }
+      if (index === target) {
+        return { ...item, status: "in_progress" };
+      }
+      return String(item.status || "") === "in_progress"
+        ? { ...item, status: "pending" }
+        : item;
+    });
+    renderTodoStep(card, {
+      stepId: card.getAttribute("data-step-id") || "",
+      kind: "todo",
+      name: "update_todo",
+      status: card.dataset.status || "running",
+      steps: next,
+    });
+    // The card now matches the narration — restart the «not updated» count.
+    card.__harborEditIds = new Set();
+    queueTodoDockSync();
+  }
+
+  /** Edits (editor / apply_patch) since the plan card's last update_todo. */
+  const TODO_STALE_EDITS = 3;
+
+  function noteEditForTodoPlan(step) {
+    const name = canonicalToolName(step.name);
+    if ((name !== "editor" && name !== "apply_patch") || step.status === "error") {
+      return;
+    }
+    const found = findDockableTodoCard();
+    if (!found || !found.card.__harborEditIds) {
+      return;
+    }
+    const ids = found.card.__harborEditIds;
+    const before = ids.size;
+    ids.add(String(step.stepId));
+    if (ids.size !== before) {
+      queueTodoDockSync();
+    }
+  }
+
   function hideTodoDock() {
     if (todoDockedCard) {
       todoDockedCard.classList.remove("is-docked");
@@ -9259,6 +9638,8 @@
     if (todoDockEl) {
       todoDockEl.hidden = true;
       todoDockEl.innerHTML = "";
+      todoDockEl.__harborDockSig = "";
+      todoDockEl.__harborDockCurrent = "";
     }
   }
 
@@ -9359,7 +9740,40 @@
       currentEl.querySelector(".todo-dock-current-text").textContent = currentTitle;
       row.appendChild(currentEl);
     }
+    // The model keeps editing but never advances update_todo — say so
+    // instead of silently showing a frozen step as «in progress».
+    const staleEdits = card.__harborEditIds ? card.__harborEditIds.size : 0;
+    if (staleEdits >= TODO_STALE_EDITS && doneCount < steps.length) {
+      const staleEl = document.createElement("span");
+      staleEl.className = "todo-dock-stale";
+      staleEl.title = t("todoPlanStale", staleEdits);
+      staleEl.innerHTML =
+        `<span class="material-symbols-outlined todo-dock-stale-icon" aria-hidden="true">update</span>` +
+        `<span class="todo-dock-stale-text"></span>`;
+      staleEl.querySelector(".todo-dock-stale-text").textContent = t(
+        "todoPlanStale",
+        staleEdits
+      );
+      row.appendChild(staleEl);
+    }
 
+    // The observer fires on every chat mutation (stream, run timer…): skip
+    // the rebuild when nothing in the dock changed, and keep the list's
+    // scroll position when it does — a rebuild used to jump it to the top.
+    const signature = JSON.stringify([
+      todoDockOpen,
+      UI_LANG,
+      staleEdits >= TODO_STALE_EDITS && doneCount < steps.length ? staleEdits : 0,
+      steps.map((item) => [String(item.title || ""), String(item.status || "")]),
+    ]);
+    if (dock.__harborDockSig === signature && !dock.hidden) {
+      return;
+    }
+    const prevList = dock.querySelector(".todo-dock-list");
+    const prevScroll = prevList ? prevList.scrollTop : 0;
+    const prevCurrent = dock.__harborDockCurrent || "";
+    dock.__harborDockSig = signature;
+    dock.__harborDockCurrent = currentTitle;
     dock.innerHTML = "";
     // Panel above the pill: the pill stays next to the composer and the
     // opened plan grows upward.
@@ -9367,6 +9781,23 @@
     dock.appendChild(row);
     dock.classList.toggle("is-open", todoDockOpen);
     dock.hidden = false;
+    list.scrollTop = prevScroll;
+    // Current step moved → bring it into the list's view (list only, the
+    // chat scroll is untouched).
+    if (todoDockOpen && currentTitle && currentTitle !== prevCurrent) {
+      const rows = list.querySelectorAll(".todo-plan-item");
+      const index = current ? steps.indexOf(current) : -1;
+      const rowEl = index >= 0 ? rows[index] : null;
+      if (rowEl) {
+        const top = rowEl.offsetTop - list.offsetTop;
+        const bottom = top + rowEl.offsetHeight;
+        if (top < list.scrollTop) {
+          list.scrollTop = top;
+        } else if (bottom > list.scrollTop + list.clientHeight) {
+          list.scrollTop = bottom - list.clientHeight;
+        }
+      }
+    }
   }
 
   function queueTodoDockSync() {
@@ -9410,6 +9841,15 @@
           btn.getAttribute("data-settings-cat") === cat
         );
       });
+      // Узкая панель: вкладки — горизонтальная лента; держим активную в кадре.
+      const activeBtn = nav.querySelector(".settings-nav-item.is-active");
+      if (activeBtn && nav.scrollWidth > nav.clientWidth + 1) {
+        try {
+          activeBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
+        } catch {
+          /* old engines */
+        }
+      }
     }
     document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
       panel.hidden = panel.getAttribute("data-settings-panel") !== cat;
@@ -10516,6 +10956,60 @@
     listEl.appendChild(row);
   }
 
+  /**
+   * Первый запуск: вместо голого «Нет провайдеров» — карточка с пресетами.
+   * Пресет только заполняет форму провайдера (адрес); ключ вводит
+   * пользователь, ничего не отправляется до сохранения.
+   */
+  const PROVIDER_ONBOARDING_PRESETS = [
+    { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
+    { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
+    { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
+    { id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1" },
+    { id: "lmstudio", name: "LM Studio", baseUrl: "http://localhost:1234/v1" },
+  ];
+
+  function buildProvidersOnboarding() {
+    const card = document.createElement("div");
+    card.className = "providers-onboarding";
+    const title = document.createElement("div");
+    title.className = "providers-onboarding-title";
+    title.textContent = t("providersEmptyTitle");
+    const note = document.createElement("div");
+    note.className = "providers-onboarding-note";
+    note.textContent = t("providersEmptyNote");
+    const presets = document.createElement("div");
+    presets.className = "providers-onboarding-presets";
+    const addPreset = (label, preset) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "text-btn providers-onboarding-preset";
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        setProvidersHint("");
+        openProviderEditModal(
+          -1,
+          preset
+            ? {
+                id: preset.id,
+                name: preset.name,
+                baseUrl: preset.baseUrl,
+                apiKey: "",
+                statusUrl: "",
+              }
+            : undefined
+        );
+      });
+      presets.appendChild(btn);
+    };
+    for (const preset of PROVIDER_ONBOARDING_PRESETS) {
+      addPreset(preset.name, preset);
+    }
+    addPreset(t("providersEmptyCustom"), null);
+    card.append(title, note, presets);
+    return card;
+  }
+
   function renderSettingsCatalog() {
     if (!settingsProvidersList || !settingsModelsList) {
       return;
@@ -10527,8 +11021,8 @@
     settingsModelsList.innerHTML = "";
 
     if (!settingsProviders.length && !settingsModels.length) {
-      settingsProvidersList.innerHTML =
-        `<div class="settings-models-empty">${t("noProvidersOrModels")}</div>`;
+      settingsProvidersList.innerHTML = "";
+      settingsProvidersList.appendChild(buildProvidersOnboarding());
       settingsModelsList.innerHTML =
         `<div class="settings-models-empty">${t("selectProviderToSeeModels")}</div>`;
       syncDefaultModelSelect();
@@ -13791,6 +14285,219 @@
     return last;
   }
 
+  /**
+   * Список агентов: плотные строки, группы по дате, закреплённые сверху,
+   * фильтр по названию, меню «⋯». Пустые агенты (без сообщений) не
+   * показываются, кроме активного.
+   *
+   * Классы .agent-block / .agent-row[data-agent] / .agent-name / .row-archive /
+   * .row-delete сохранены — на них завязаны обработчики открытия (в т.ч.
+   * JCEF pointerdown), подсветка активного и переименование.
+   */
+  let agentsArchivedCount = 0;
+  let agentsFilterQuery = "";
+  let agentsFilterEl = null;
+  let agentsFooterEl = null;
+  let agentMenuEl = null;
+  let agentMenuAgentId = "";
+
+  const AGENT_MORE_ICON =
+    `<span class="material-symbols-outlined" aria-hidden="true">more_horiz</span>`;
+
+  function agentDayStart(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  /** "today" | "yesterday" | "week" | "earlier" по локальной дате. */
+  function agentDateGroup(ts) {
+    const n = Number(ts) || 0;
+    if (n <= 0) {
+      return "earlier";
+    }
+    const today = agentDayStart(new Date());
+    const day = agentDayStart(new Date(n));
+    const dayMs = 86_400_000;
+    if (day >= today) {
+      return "today";
+    }
+    if (day >= today - dayMs) {
+      return "yesterday";
+    }
+    if (day >= today - 6 * dayMs) {
+      return "week";
+    }
+    return "earlier";
+  }
+
+  /** Время в строке: часы для сегодня/вчера, день недели, иначе дата. */
+  function agentTimeLabel(a, group) {
+    const n = Number(a.ts) || 0;
+    if (n <= 0) {
+      return a.time || "";
+    }
+    const locale = UI_LANG === "ru" ? "ru-RU" : "en-US";
+    const d = new Date(n);
+    try {
+      if (group === "today" || group === "yesterday") {
+        return d.toLocaleTimeString(locale, {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+      if (group === "week") {
+        return d.toLocaleDateString(locale, { weekday: "short" });
+      }
+      return d.toLocaleDateString(locale, { day: "numeric", month: "short" });
+    } catch {
+      return a.time || "";
+    }
+  }
+
+  function agentStatusHtml(a) {
+    if (a.runState === "running") {
+      const mode = String(a.runMode || "").trim();
+      return (
+        `<span class="agent-list-status is-running"${mode ? ` data-mode="${escapeHtml(mode)}"` : ""} role="img" aria-label="${escapeHtml(t("agentRunRunning"))}" title="${escapeHtml(t("agentRunRunning"))}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">progress_activity</span></span>`
+      );
+    }
+    if (a.runState === "error") {
+      return (
+        `<span class="agent-list-status is-error" role="img" aria-label="${escapeHtml(t("agentRunError"))}" title="${escapeHtml(t("agentRunError"))}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">error</span></span>`
+      );
+    }
+    if (a.runState === "success") {
+      return (
+        `<span class="agent-list-status is-unread" role="img" aria-label="${escapeHtml(t("agentUnread"))}" title="${escapeHtml(t("agentUnread"))}">` +
+        `<span class="agent-unread-dot"></span></span>`
+      );
+    }
+    if (a.pinned) {
+      return (
+        `<span class="agent-list-status is-pinned" role="img" aria-label="${escapeHtml(t("agentPinned"))}" title="${escapeHtml(t("agentPinned"))}">` +
+        `<span class="material-symbols-outlined" aria-hidden="true">keep</span></span>`
+      );
+    }
+    return `<span class="agent-list-status" aria-hidden="true"></span>`;
+  }
+
+  /** Строка мета: «Работает · модель», «Ошибка · 10:02», «модель · 14:20 · +87 −3». */
+  function fillAgentMeta(metaEl, a, group) {
+    metaEl.replaceChildren();
+    const parts = [];
+    const add = (text, cls) => {
+      const span = document.createElement("span");
+      if (cls) {
+        span.className = cls;
+      }
+      span.textContent = text;
+      parts.push(span);
+    };
+    const model = shortModelChip(a.model);
+    const hasModel = model && model !== "—";
+    if (a.runState === "running") {
+      add(t("agentRunRunning"), "agent-meta-running");
+      if (hasModel) {
+        add(model);
+      }
+    } else if (a.runState === "error") {
+      add(t("agentRunErrorShort"), "agent-meta-error");
+      add(agentTimeLabel(a, group));
+    } else {
+      if (hasModel) {
+        add(model);
+      }
+      add(agentTimeLabel(a, group));
+    }
+    const added = Number(a.diffAdded) || 0;
+    const removed = Number(a.diffRemoved) || 0;
+    if (added > 0 || removed > 0) {
+      const diff = document.createElement("span");
+      diff.className = "agent-meta-diff";
+      diff.innerHTML =
+        `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;
+      parts.push(diff);
+    }
+    parts
+      .filter((el) => el.textContent)
+      .forEach((el, i) => {
+        if (i > 0) {
+          metaEl.appendChild(document.createTextNode(" · "));
+        }
+        metaEl.appendChild(el);
+      });
+  }
+
+  function agentMatchesFilter(a, query) {
+    if (!query) {
+      return true;
+    }
+    const hay = `${a.name || ""}\n${a.preview || ""}`.toLowerCase();
+    return hay.includes(query);
+  }
+
+  function ensureAgentsChrome() {
+    if (!agentsScreen || !agentsListEl) {
+      return;
+    }
+    agentsListEl.classList.add("is-v2");
+    if (!agentsFilterEl) {
+      const wrap = document.createElement("label");
+      wrap.className = "agents-filter";
+      wrap.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">search</span>` +
+        `<input type="text" class="agents-filter-input" autocomplete="off" spellcheck="false">`;
+      const input = wrap.querySelector("input");
+      input.addEventListener("input", () => {
+        agentsFilterQuery = input.value.trim().toLowerCase();
+        renderAgentsList();
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && input.value) {
+          event.preventDefault();
+          event.stopPropagation();
+          input.value = "";
+          agentsFilterQuery = "";
+          renderAgentsList();
+        } else if (event.key === "ArrowDown") {
+          const first = agentsListEl.querySelector(".agent-row[data-agent]");
+          if (first) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      });
+      agentsListEl.before(wrap);
+      agentsFilterEl = wrap;
+    }
+    const filterInput = agentsFilterEl.querySelector("input");
+    if (filterInput) {
+      filterInput.placeholder = t("agentsFilter");
+      filterInput.setAttribute("aria-label", t("agentsFilter"));
+    }
+    if (!agentsFooterEl) {
+      const footer = document.createElement("button");
+      footer.type = "button";
+      footer.className = "agents-footer-archive";
+      footer.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">inventory_2</span>` +
+        `<span class="agents-footer-label"></span>` +
+        `<span class="agents-footer-count"></span>`;
+      footer.addEventListener("click", () => {
+        openArchiveBtn?.click();
+      });
+      agentsListEl.after(footer);
+      agentsFooterEl = footer;
+    }
+    agentsFooterEl.querySelector(".agents-footer-label").textContent =
+      t("archive");
+    agentsFooterEl.querySelector(".agents-footer-count").textContent = String(
+      agentsArchivedCount
+    );
+    agentsFooterEl.hidden = !(agentsArchivedCount > 0);
+  }
+
   function renderAgentsList() {
     if (!agentsListEl) {
       return;
@@ -13799,80 +14506,268 @@
       syncActiveAgentHighlight();
       return;
     }
-    const list = agentsData;
-
-    if (!list.length) {
-      agentsListEl.innerHTML =
-        `<div class="agents-empty">${t("noAgentsYet")}</div>`;
+    ensureAgentsChrome();
+    const visible = agentsData.filter((a) => !a.empty || a.active);
+    if (!visible.length) {
+      agentsListEl.innerHTML = `<div class="agents-empty">${t("noAgentsYet")}</div>`;
+      return;
+    }
+    const query = agentsFilterQuery;
+    const shown = visible.filter((a) => agentMatchesFilter(a, query));
+    if (!shown.length) {
+      agentsListEl.innerHTML = `<div class="agents-empty">${escapeHtml(t("agentsFilterEmpty"))}</div>`;
       return;
     }
 
-    agentsListEl.innerHTML = list
-      .map((a) => {
-        const action = a.empty
-          ? `<button type="button" class="row-action row-delete" data-delete-agent="${a.id}" title="${t("delete")}" aria-label="${t("delete")}">` +
-            DELETE_ICON +
-            `</button>`
-          : `<button type="button" class="row-action row-archive" data-archive-agent="${a.id}" title="${t("archive")}" aria-label="${t("archive")}">` +
-            ARCHIVE_ICON +
-            `</button>`;
-        const runMode = String(a.runMode || "").trim();
-        const runModeAttr = runMode
-          ? ` data-mode="${escapeHtml(runMode)}"`
-          : "";
-        const statusHtml =
-          a.runState === "running"
-            ? `<span class="agent-run-status agent-run-status-running"${runModeAttr} aria-label="Running"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>`
-            : a.runState === "success"
-              ? '<span class="agent-run-status agent-run-status-success" aria-label="Done"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
-              : a.runState === "error"
-                ? '<span class="agent-run-status agent-run-status-error" aria-label="Error"><span class="cube-bit cube-bit-1"></span><span class="cube-bit cube-bit-2"></span><span class="cube-bit cube-bit-3"></span><span class="cube-bit cube-bit-4"></span></span>'
-                : '<span class="agent-run-status agent-run-status-empty" aria-hidden="true"></span>';
-        return (
-          `<div class="agent-block${a.active ? " is-active" : ""}" data-agent="${a.id}">` +
-          `<div class="agent-row-wrap">` +
-          `<div class="agent-row flat" role="button" tabindex="0" data-agent="${a.id}">` +
-          `<div class="agent-main">` +
-          statusHtml +
-          `<div class="agent-name-row">` +
-          `<div class="agent-name-wrap"><div class="agent-name"></div></div>` +
-          `<div class="agent-trailing">` +
-          `<span class="agent-time"></span>` +
-          `<div class="row-actions">` +
-          action +
-          `</div>` +
-          `</div>` +
-          `</div>` +
-          `<div class="agent-preview"></div>` +
-          `<span class="agent-chip"></span>` +
-          `</div>` +
-          `</div>` +
-          `</div>` +
-          `</div>`
-        );
-      })
-      .join("");
+    const order = ["pinned", "today", "yesterday", "week", "earlier"];
+    const titles = {
+      pinned: t("agentsGroupPinned"),
+      today: t("agentsGroupToday"),
+      yesterday: t("agentsGroupYesterday"),
+      week: t("agentsGroupWeek"),
+      earlier: t("agentsGroupEarlier"),
+    };
+    const groups = new Map(order.map((key) => [key, []]));
+    for (const a of shown) {
+      const dateGroup = agentDateGroup(a.ts);
+      groups.get(a.pinned ? "pinned" : dateGroup).push({ a, dateGroup });
+    }
 
-    list.forEach((a, index) => {
-      const block = agentsListEl.children[index];
-      if (!block) {
-        return;
+    const frag = document.createDocumentFragment();
+    for (const key of order) {
+      const items = groups.get(key);
+      if (!items.length) {
+        continue;
       }
-      block.querySelector(".agent-name").textContent = a.name || t("agent");
-      const chip = block.querySelector(".agent-chip");
-      const chipText = shortModelChip(a.model);
-      chip.textContent = chipText === "—" ? "" : chipText;
-      if (chip.textContent && a.model) {
-        chip.title = String(a.model);
-      } else {
-        chip.removeAttribute("title");
+      const head = document.createElement("div");
+      head.className = "agents-group-title";
+      head.textContent = titles[key];
+      frag.appendChild(head);
+      for (const { a, dateGroup } of items) {
+        const block = document.createElement("div");
+        block.className = "agent-block";
+        block.dataset.agent = a.id;
+        block.classList.toggle("is-active", Boolean(a.active));
+        block.classList.toggle("is-unread", a.runState === "success");
+        block.classList.toggle("is-running", a.runState === "running");
+        const showBadge = a.mode && a.mode !== "agent" && a.mode !== "auto";
+        block.innerHTML =
+          `<div class="agent-row-wrap">` +
+          `<div class="agent-row flat" role="button" tabindex="0" data-agent="${escapeHtml(a.id)}">` +
+          agentStatusHtml(a) +
+          `<div class="agent-text">` +
+          `<div class="agent-name-row">` +
+          `<div class="agent-name"></div>` +
+          (showBadge
+            ? `<span class="agent-mode-badge" data-mode="${escapeHtml(a.mode)}"></span>`
+            : "") +
+          `</div>` +
+          `<div class="agent-meta"></div>` +
+          `<div class="agent-preview"></div>` +
+          `</div>` +
+          `</div>` +
+          `<button type="button" class="agent-more" data-agent-menu="${escapeHtml(a.id)}" title="${escapeHtml(t("agentMenu"))}" aria-label="${escapeHtml(t("agentMenu"))}" aria-haspopup="menu" aria-expanded="false">` +
+          AGENT_MORE_ICON +
+          `</button>` +
+          `</div>`;
+        block.querySelector(".agent-name").textContent = a.name || t("agent");
+        const badge = block.querySelector(".agent-mode-badge");
+        if (badge) {
+          badge.textContent = modeDisplayName(a.mode);
+        }
+        fillAgentMeta(block.querySelector(".agent-meta"), a, dateGroup);
+        const preview = block.querySelector(".agent-preview");
+        if (a.active && a.preview && !a.empty) {
+          preview.innerHTML = renderPreviewMarkdown(a.preview);
+        } else {
+          preview.remove();
+        }
+        if (a.active) {
+          block.querySelector(".agent-row").setAttribute("aria-current", "true");
+        }
+        frag.appendChild(block);
       }
-      block.querySelector(".agent-preview").innerHTML = renderPreviewMarkdown(
-        a.preview
-      );
-      block.querySelector(".agent-time").textContent = a.time || "";
-    });
+    }
+    agentsListEl.replaceChildren(frag);
+    if (agentMenuEl && !agentMenuEl.hidden) {
+      closeAgentMenu();
+    }
   }
+
+  function agentRowById(agentId) {
+    if (!agentsListEl || !agentId) {
+      return null;
+    }
+    return agentsListEl.querySelector(
+      `.agent-block[data-agent="${CSS.escape(agentId)}"]`
+    );
+  }
+
+  function closeAgentMenu() {
+    if (!agentMenuEl) {
+      return;
+    }
+    agentMenuEl.hidden = true;
+    const btn = agentsListEl?.querySelector(
+      `.agent-more[aria-expanded="true"]`
+    );
+    btn?.setAttribute("aria-expanded", "false");
+    agentMenuAgentId = "";
+  }
+
+  function runAgentMenuAction(action, agentId) {
+    const a = agentsData.find((item) => item.id === agentId);
+    closeAgentMenu();
+    if (!a) {
+      return;
+    }
+    if (action === "rename") {
+      const nameEl = agentRowById(agentId)?.querySelector(".agent-name");
+      if (nameEl) {
+        startAgentRename(agentId, nameEl);
+      }
+    } else if (action === "pin") {
+      host.postMessage({ type: "pinAgent", agentId, pinned: !a.pinned });
+    } else if (action === "duplicate") {
+      if (workspaceNarrow) {
+        setAgentsRailOpen(false);
+      }
+      host.postMessage({ type: "duplicateAgent", agentId });
+    } else if (action === "archive") {
+      host.postMessage({ type: "archiveAgent", agentId });
+    } else if (action === "delete") {
+      host.postMessage({ type: "deleteAgent", agentId });
+    }
+  }
+
+  function openAgentMenu(agentId, anchor) {
+    const a = agentsData.find((item) => item.id === agentId);
+    if (!a || !agentsScreen) {
+      return;
+    }
+    if (agentMenuAgentId === agentId && agentMenuEl && !agentMenuEl.hidden) {
+      closeAgentMenu();
+      return;
+    }
+    closeAgentMenu();
+    if (!agentMenuEl) {
+      agentMenuEl = document.createElement("div");
+      agentMenuEl.className = "agent-menu";
+      agentMenuEl.setAttribute("role", "menu");
+      agentMenuEl.hidden = true;
+      agentMenuEl.addEventListener("click", (event) => {
+        const item = event.target.closest("[data-agent-action]");
+        if (!item) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        runAgentMenuAction(
+          item.getAttribute("data-agent-action"),
+          agentMenuAgentId
+        );
+      });
+      agentMenuEl.addEventListener("keydown", (event) => {
+        const items = [...agentMenuEl.querySelectorAll("[data-agent-action]")];
+        const idx = items.indexOf(document.activeElement);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          const back = agentMenuAgentId;
+          closeAgentMenu();
+          agentRowById(back)?.querySelector(".agent-more")?.focus();
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const step = event.key === "ArrowDown" ? 1 : -1;
+          items[(idx + step + items.length) % items.length]?.focus();
+        }
+      });
+      agentsScreen.appendChild(agentMenuEl);
+    }
+    const item = (action, icon, label, extra = "") =>
+      `<button type="button" class="agent-menu-item${extra}" role="menuitem" data-agent-action="${action}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+      `<span class="agent-menu-label">${escapeHtml(label)}</span>` +
+      (action === "rename" ? `<span class="agent-menu-key">F2</span>` : "") +
+      `</button>`;
+    agentMenuEl.setAttribute("aria-label", t("agentMenu"));
+    agentMenuEl.innerHTML =
+      item("rename", "edit", t("agentRename")) +
+      item("pin", "keep", a.pinned ? t("agentUnpin") : t("agentPin")) +
+      (a.empty ? "" : item("duplicate", "content_copy", t("agentDuplicate"))) +
+      `<div class="agent-menu-sep" role="separator"></div>` +
+      (a.empty
+        ? item("delete", "delete", t("agentDelete"), " is-danger")
+        : item("archive", "inventory_2", t("agentArchive")));
+    agentMenuAgentId = agentId;
+    agentMenuEl.hidden = false;
+    anchor?.setAttribute("aria-expanded", "true");
+    // Под кнопкой «⋯», по её правому краю (position: fixed — от окна);
+    // если не влезает вниз — над ней.
+    const r = (anchor || agentRowById(agentId))?.getBoundingClientRect();
+    if (r) {
+      const menuH = agentMenuEl.offsetHeight;
+      let top = r.bottom + 4;
+      if (top + menuH > window.innerHeight - 4) {
+        top = Math.max(4, r.top - menuH - 4);
+      }
+      agentMenuEl.style.top = `${Math.round(top)}px`;
+      agentMenuEl.style.right = `${Math.max(6, Math.round(window.innerWidth - r.right))}px`;
+    }
+    agentMenuEl.querySelector("[data-agent-action]")?.focus();
+  }
+
+  /** ↑/↓ по строкам, F2 — переименовать, Shift+F10 / ContextMenu — меню. */
+  function onAgentsListKeyNav(event) {
+    const row = event.target.closest?.(".agent-row[data-agent]");
+    if (!row || !agentsListEl.contains(row)) {
+      return false;
+    }
+    if (event.target.closest(".agent-name-input")) {
+      return false;
+    }
+    const agentId = row.getAttribute("data-agent");
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const rows = [...agentsListEl.querySelectorAll(".agent-row[data-agent]")];
+      const idx = rows.indexOf(row);
+      const next = rows[idx + (event.key === "ArrowDown" ? 1 : -1)];
+      event.preventDefault();
+      if (next) {
+        next.focus();
+      } else if (event.key === "ArrowUp") {
+        agentsFilterEl?.querySelector("input")?.focus();
+      }
+      return true;
+    }
+    if (event.key === "F2") {
+      event.preventDefault();
+      runAgentMenuAction("rename", agentId);
+      return true;
+    }
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+      event.preventDefault();
+      openAgentMenu(
+        agentId,
+        agentRowById(agentId)?.querySelector(".agent-more")
+      );
+      return true;
+    }
+    return false;
+  }
+
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (
+        agentMenuEl &&
+        !agentMenuEl.hidden &&
+        !agentMenuEl.contains(event.target) &&
+        !event.target.closest?.(".agent-more")
+      ) {
+        closeAgentMenu();
+      }
+    },
+    true
+  );
 
   function syncActiveAgentHighlight() {
     if (!agentsListEl) {
@@ -14102,7 +14997,18 @@
     // Общее построение (заголовок, строки, диф-итоги в сводку шагов) —
     // в одном месте, чтобы live-рендер и SCM-обновления не расходились.
     renderReviewCardBody(card, list);
-    setComposerScmActions(list, Boolean(parsed.showScm));
+    if (parsed.showScm) {
+      // Кнопка коммитит все незакоммиченные файлы чата, не только этот ход.
+      setComposerScmActions(
+        collectChatScmFiles([
+          ...reviewEntriesFromCache(),
+          { files: list, showScm: true },
+        ]),
+        true
+      );
+    } else {
+      syncComposerScmFromCache();
+    }
     syncComposerPlanFromCache({ openEditor: false });
     keepStatusAtEnd();
     scrollToBottom();
@@ -14209,7 +15115,143 @@
     });
   }
 
+  /** Plan key (whitespace-normalized) → collapsed, for cards the user toggled. */
+  const planCardUserCollapsed = new Map();
+  /** Latest Plan.md text from the host (null — not asked yet). */
+  let livePlanEditorText = null;
+
+  function planCardKey(text) {
+    return stripPlanImplementWrapper(text).replace(/\s+/g, " ").trim();
+  }
+
+  /**
+   * Card state per plan: streaming (being written), ready (latest, Build
+   * available), done (Build ran / files edited after it), superseded (a newer
+   * plan exists). Latest card is expanded unless the user collapsed it.
+   */
+  function syncPlanCardStates() {
+    if (!messagesEl) {
+      return;
+    }
+    const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
+    let latestIndex = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i]?.role === "assistant" && extractLatestProposedPlan(list[i].text)) {
+        latestIndex = i;
+        break;
+      }
+    }
+    const cards = Array.from(messagesEl.querySelectorAll(".proposed-plan-card"));
+    cards.forEach((card) => {
+      const msgEl = card.closest(".msg");
+      const index = Number(msgEl?.dataset.index);
+      const isStreaming = Boolean(
+        msgEl && typeof streamingEl !== "undefined" && streamingEl === msgEl
+      );
+      let state = "ready";
+      if (isStreaming) {
+        state = "streaming";
+      } else if (Number.isInteger(index) && index >= 0 && list[index]) {
+        if (planIsAlreadyExecuted(list, index)) {
+          state = "done";
+        } else if (latestIndex >= 0 && index !== latestIndex) {
+          state = "superseded";
+        }
+      }
+      card.dataset.planState = state;
+      card.classList.toggle(
+        "is-truncated",
+        card.classList.contains("is-partial") && state !== "streaming"
+      );
+      const key = planCardKey(card.dataset.planRaw || "");
+      const edited =
+        state === "ready" &&
+        livePlanEditorText !== null &&
+        key === lastOpenedPlanKey &&
+        Boolean(planCardKey(livePlanEditorText)) &&
+        planCardKey(livePlanEditorText) !== key;
+      card.classList.toggle("is-edited", edited);
+      const buildBtn = card.querySelector("[data-plan-action='build']");
+      if (buildBtn instanceof HTMLButtonElement) {
+        buildBtn.disabled = busy;
+      }
+      const continueBtn = card.querySelector("[data-plan-action='continue']");
+      if (continueBtn instanceof HTMLButtonElement) {
+        continueBtn.disabled = busy;
+      }
+      const collapsed = planCardUserCollapsed.has(key)
+        ? planCardUserCollapsed.get(key)
+        : state === "done" || state === "superseded";
+      setProposedPlanCollapsed(card, collapsed);
+    });
+  }
+
+  /** Ask the host for Plan.md text (panel regained focus — user may have edited it). */
+  function requestLivePlanStatus() {
+    if (!lastOpenedPlanKey || !messagesEl) {
+      return;
+    }
+    if (!messagesEl.querySelector(".proposed-plan-card[data-plan-state='ready']")) {
+      return;
+    }
+    host.postMessage({ type: "requestLivePlanStatus" });
+  }
+
+  function applyLivePlanStatus(text) {
+    livePlanEditorText = String(text || "");
+    syncPlanCardStates();
+  }
+
+  function copyPlanFromCard(card) {
+    const raw = stripPlanImplementWrapper(card?.dataset.planRaw || "");
+    if (!raw) {
+      return;
+    }
+    const done = () => showCopyToast(t("copied"));
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(raw).then(done).catch(() => {
+        host.postMessage({ type: "copyText", text: raw });
+      });
+      return;
+    }
+    host.postMessage({ type: "copyText", text: raw });
+  }
+
+  /** «Continue plan» on a cut-off card: re-ask in the current mode. */
+  function sendPlanContinue() {
+    sendPlanFollowup(t("proposedPlanContinuePrompt"));
+  }
+
+  /** «Complete» on a plan missing required sections. */
+  function sendPlanComplete(card) {
+    const summary = summarizePlanMarkdown(card?.dataset.planRaw || "");
+    const keys = summary.missing.length ? summary.missing : ["verify"];
+    const names = keys.map((key) => t(`proposedPlanSection_${key}`)).join(", ");
+    sendPlanFollowup(t("proposedPlanCompletePrompt", names));
+  }
+
+  /** Card follow-up prompt in the current mode (Plan stays Plan). */
+  function sendPlanFollowup(text) {
+    if (busy || !text) {
+      return;
+    }
+    const mode = agentMode;
+    stickToBottom = true;
+    uiMessagesCache.push({ role: "user", text, attachments: [], mode });
+    appendMessage("user", text, uiMessagesCache.length - 1, -1, []);
+    setBusy(true, { restartRun: true });
+    host.postMessage({
+      type: "send",
+      text,
+      model: getSelectedModel(),
+      agentMode: mode,
+      reasoningEffort: selectedReasoningEffort || undefined,
+      attachments: [],
+    });
+  }
+
   function setComposerPlanBuild(planText, show) {
+    syncPlanCardStates();
     if (!composerPlanActionsEl) {
       return;
     }
@@ -14404,7 +15446,13 @@
         paths,
       });
     });
-    composerScmActionsEl.appendChild(commitPushBtn);
+    // Одна сегментированная кнопка «Закоммитить | +N −M»: цифры уже есть в
+    // карточке изменений, здесь — только действия.
+    const split = document.createElement("div");
+    split.className = "composer-scm-split";
+    split.setAttribute("role", "group");
+    split.appendChild(commitPushBtn);
+    composerScmActionsEl.appendChild(split);
 
     const scmBtn = document.createElement("button");
     scmBtn.type = "button";
@@ -14418,7 +15466,7 @@
     scmBtn.addEventListener("click", () => {
       host.postMessage({ type: "openScm" });
     });
-    composerScmActionsEl.appendChild(scmBtn);
+    split.appendChild(scmBtn);
   }
 
   function findReviewFilesByPaths(paths) {
@@ -14544,28 +15592,57 @@
     }
   }
 
-  function syncComposerScmFromCache() {
+  /** Карточки изменений чата из кэша сообщений, по порядку ходов. */
+  function reviewEntriesFromCache() {
     const list = Array.isArray(uiMessagesCache) ? uiMessagesCache : [];
-    for (let i = list.length - 1; i >= 0; i--) {
-      const item = list[i];
+    const entries = [];
+    for (const item of list) {
       if (item?.role !== "review") {
         continue;
       }
       const parsed = parseReviewData(item.text);
-      const files = Array.isArray(parsed.files) ? parsed.files : [];
-      if (parsed.showScm && files.length) {
-        setComposerScmActions(files, true);
-        return;
+      entries.push({
+        files: Array.isArray(parsed.files) ? parsed.files : [],
+        showScm: Boolean(parsed.showScm),
+      });
+    }
+    return entries;
+  }
+
+  /**
+   * Незакоммиченные файлы всех ходов чата для «Закоммитить». Путь из
+   * нескольких ходов берётся один раз — со статистикой из самого позднего.
+   */
+  function collectChatScmFiles(entries) {
+    const out = [];
+    const seen = new Set();
+    const list = Array.isArray(entries) ? entries : [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const entry = list[i];
+      if (!entry?.showScm) {
+        continue;
+      }
+      for (const f of Array.isArray(entry.files) ? entry.files : []) {
+        const path = String(f?.path || "").trim();
+        if (!path || seen.has(path)) {
+          continue;
+        }
+        seen.add(path);
+        out.push(f);
       }
     }
-    setComposerScmActions([], false);
+    return out;
+  }
+
+  function syncComposerScmFromCache() {
+    const files = collectChatScmFiles(reviewEntriesFromCache());
+    setComposerScmActions(files, files.length > 0);
   }
 
   function applyScmButtons(reviews) {
     const list = Array.isArray(reviews) ? reviews : [];
     syncReviewCardsFromScm(list);
-    for (let i = list.length - 1; i >= 0; i--) {
-      const entry = list[i];
+    const entries = list.map((entry) => {
       const files = Array.isArray(entry?.files)
         ? entry.files
         : (entry?.paths || []).map((path) => ({
@@ -14576,15 +15653,13 @@
       const paths = files
         .map((f) => String(f.path || ""))
         .filter(Boolean);
-      if (entry?.showScm && paths.length) {
-        setComposerScmActions(
-          files.length ? files : findReviewFilesByPaths(paths),
-          true
-        );
-        return;
-      }
-    }
-    setComposerScmActions([], false);
+      return {
+        files: files.length ? files : findReviewFilesByPaths(paths),
+        showScm: Boolean(entry?.showScm),
+      };
+    });
+    const files = collectChatScmFiles(entries);
+    setComposerScmActions(files, files.length > 0);
   }
 
   function escapeHtml(value) {
@@ -14860,7 +15935,9 @@
         // Обрезанный случай: заменяем вручную, regex не матчит.
         const body = allMatches[0][1];
         const id = blocks.length;
-        blocks.push(renderProposedPlanCard(String(body || "").trim()));
+        blocks.push(
+          renderProposedPlanCard(String(body || "").trim(), { partial: true })
+        );
         out = text.replace(
           /(?:<proposed_plan>|&lt;proposed_plan&gt;)\s*([\s\S]*)/i,
           `\n\n\u0002PLAN${id}\u0002\n\n`
@@ -14891,7 +15968,104 @@
   }
 
   const PLAN_SECTION_NEXT_RE =
-    /^(Цель|Goal|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Affected(?:\s+files)?|Риски|Risks|Acceptance)\b/i;
+    /^(Цель|Goal|Контекст|Context|Шаги|Steps|Затрагиваемые(?:\s+файлы)?|Затронутые(?:\s+файлы)?|Affected(?:\s+files)?|Проверка|Verification|Риски|Risks|Вне\s+рамок|Out\s+of\s+scope|Acceptance)/i;
+
+  /**
+   * Plan template sections (Harbor Plan-mode rules, src/planImplement.ts).
+   * Required ones feed the «incomplete plan» chip on the card.
+   * No `\b`: JS word boundaries are ASCII-only and never match after «Цель».
+   */
+  const PLAN_SECTION_DEFS = [
+    { key: "goal", re: /^(?:Цель|Goal)(?![\p{L}\p{N}])/iu, required: true },
+    { key: "context", re: /^(?:Контекст|Context)(?![\p{L}\p{N}])/iu },
+    {
+      key: "steps",
+      re: /^(?:Шаги|Steps|План\s+работ|Implementation\s+steps)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    {
+      key: "files",
+      re: /^(?:Затронутые|Затрагиваемые|Affected|Изменяемые\s+файлы|Files)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    {
+      key: "verify",
+      re: /^(?:Проверка|Verification|Тестирование|Testing|Acceptance)(?![\p{L}\p{N}])/iu,
+      required: true,
+    },
+    { key: "risks", re: /^(?:Риски|Risks)(?![\p{L}\p{N}])/iu },
+    { key: "outOfScope", re: /^(?:Вне\s+рамок|Out\s+of\s+scope)(?![\p{L}\p{N}])/iu },
+  ];
+
+  /**
+   * Header facts for the plan card: goal line, step / file counts and missing
+   * required sections. Self-contained (no outer helpers) — tests eval it.
+   */
+  function summarizePlanMarkdown(markdown) {
+    const lines = String(markdown || "").split(/\r?\n/);
+    const sections = {};
+    let current = "";
+    let goalInline = "";
+    const plain = (value) =>
+      String(value || "")
+        .replace(/[*_`]+/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    for (const line of lines) {
+      const heading =
+        /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line) ||
+        /^\s{0,3}\*\*([^*]+?)\*\*\s*:?\s*(.*)$/.exec(line);
+      if (heading) {
+        const label = plain(heading[1]).replace(/:\s*$/, "");
+        const def = PLAN_SECTION_DEFS.find((d) => d.re.test(label));
+        if (def) {
+          current = def.key;
+          sections[current] = sections[current] || [];
+          // «## Цель: текст» / «**Цель:** текст» — goal on the heading line.
+          const rest =
+            plain(heading[2] || "") ||
+            plain(label.replace(def.re, "").replace(/^\s*[:—–-]\s*/, ""));
+          if (current === "goal" && rest) {
+            goalInline = rest;
+          }
+          continue;
+        }
+        if (/^\s{0,3}#{1,6}\s/.test(line)) {
+          current = "";
+          continue;
+        }
+      }
+      if (current) {
+        sections[current].push(line);
+      }
+    }
+    const topNumbered = (list) =>
+      list.filter((l) => /^\s{0,3}\d+[.)]\s+\S/.test(l)).length;
+    // Nested items under «1.» are indented 3 spaces — top level is ≤ 1.
+    const topItems = (list) =>
+      list.filter((l) => /^\s?(?:\d+[.)]|[-*+•])\s+\S/.test(l)).length;
+    let goal = goalInline;
+    if (!goal && sections.goal) {
+      const first = sections.goal.find((l) => l.trim());
+      goal = plain(first ? first.replace(/^\s*(?:[-*+•]|\d+[.)])\s+/, "") : "");
+    }
+    let steps = sections.steps
+      ? topNumbered(sections.steps) || topItems(sections.steps)
+      : 0;
+    if (!sections.steps) {
+      steps = topNumbered(lines);
+    }
+    const files = sections.files ? topItems(sections.files) : 0;
+    const missing = PLAN_SECTION_DEFS.filter(
+      (d) =>
+        d.required &&
+        !(sections[d.key] && sections[d.key].some((l) => l.trim())) &&
+        !(d.key === "goal" && goal) &&
+        !(d.key === "steps" && steps > 0)
+    ).map((d) => d.key);
+    return { goal, steps, files, missing };
+  }
+  // end summarizePlanMarkdown
 
   /** Drop blank paragraphs / lone <br> that inflate vertical gaps. */
   function stripEmptyPlanBlocks(root) {
@@ -14985,6 +16159,7 @@
       }
     }
 
+    decoratePlanSections(root);
     return root.innerHTML;
   }
 
@@ -15016,25 +16191,338 @@
       .replace(/\n/g, "<br />");
   }
 
-  function renderProposedPlanCard(planBody) {
+  function planSectionLabelText(el) {
+    return String((el && el.textContent) || "")
+      .trim()
+      .replace(/^#+\s*/, "")
+      .replace(/[*_`:]+/g, "")
+      .trim();
+  }
+
+  /** First list right after a section heading (until the next heading). */
+  function planSectionList(kids, headingRe) {
+    for (let i = 0; i < kids.length; i++) {
+      const el = kids[i];
+      const isHeading =
+        /^H[1-6]$/.test(el.tagName) || el.classList.contains("md-h");
+      const label = planSectionLabelText(el);
+      if (!isHeading && !(el.querySelector("strong") && label.length < 48)) {
+        continue;
+      }
+      if (!headingRe.test(label)) {
+        continue;
+      }
+      for (let j = i + 1; j < kids.length; j++) {
+        const next = kids[j];
+        if (/^H[1-6]$/.test(next.tagName) || next.classList.contains("md-h")) {
+          break;
+        }
+        if (next.tagName === "OL" || next.tagName === "UL") {
+          return next;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Icon for an «Affected files» row: create / delete / modify. */
+  function planFileActionIcon(text) {
+    const value = String(text || "").toLowerCase();
+    if (/(?:созда|нов(?:ый|ая|ое)|добав|\bcreate|\bnew\b|\badd)/.test(value)) {
+      return { icon: "add_circle", cls: "is-create" };
+    }
+    if (/(?:удал|\bdelete|\bremove)/.test(value)) {
+      return { icon: "remove_circle", cls: "is-delete" };
+    }
+    return { icon: "edit", cls: "is-modify" };
+  }
+
+  const PLAN_PATH_LINE_RE =
+    /^(.+?\.[A-Za-z0-9]+|(?:[\w.@-]+\/)+[\w.@-]+)(?::(\d+)(?:\s*[-–]\s*(\d+))?)?$/;
+
+  /** `src/a/b.ts:53-71` → compact chip «b.ts:53–71» (full path in title). */
+  function planFileChipHtml(path, line, lineEnd) {
+    const full = String(path || "");
+    const lineLabel = line ? `:${line}${lineEnd ? `–${lineEnd}` : ""}` : "";
+    const title = escapeHtml(full + lineLabel);
+    return `<a class="md-file plan-file-chip" href="#" data-path="${escapeHtml(full)}"`
+      + (line ? ` data-line="${escapeHtml(line)}"` : "")
+      + ` title="${title}">${escapeHtml(pathBasename(full))}`
+      + (lineLabel ? `<em>${escapeHtml(lineLabel)}</em>` : "")
+      + `</a>`;
+  }
+
+  /** Inline-code paths (with optional :line) and plain file links → chips. */
+  function chipifyPlanPaths(root) {
+    root.querySelectorAll("code.md-code").forEach((code) => {
+      const m = PLAN_PATH_LINE_RE.exec(String(code.textContent || "").trim());
+      if (!m || !isFilePath(m[1])) {
+        return;
+      }
+      const tmp = document.createElement("span");
+      tmp.innerHTML = planFileChipHtml(m[1], m[2], m[3]);
+      code.replaceWith(tmp.firstChild);
+    });
+    root.querySelectorAll("a.md-file:not(.plan-file-chip)").forEach((a) => {
+      a.classList.add("plan-file-chip");
+    });
+  }
+
+  function planHeadingEl(el) {
+    if (!(el instanceof HTMLElement)) {
+      return false;
+    }
+    if (/^H[1-6]$/.test(el.tagName) || el.classList.contains("md-h")) {
+      return true;
+    }
+    // «**Шаги:**» on its own line — bold-label heading.
+    return (
+      el.classList.contains("md-p") &&
+      el.children.length === 1 &&
+      el.firstElementChild.tagName === "STRONG" &&
+      planSectionLabelText(el).length < 48 &&
+      planSectionLabelText(el) === planSectionLabelText(el.firstElementChild)
+    );
+  }
+
+  function planSectionKey(label) {
+    const def = PLAN_SECTION_DEFS.find((d) => d.re.test(label));
+    return def ? def.key : "";
+  }
+
+  /** Affected files list → chips grouped by folder, with action icons. */
+  function groupPlanFiles(list) {
+    const groups = new Map();
+    const order = [];
+    Array.from(list.children).forEach((li) => {
+      if (li.tagName !== "LI") {
+        return;
+      }
+      const link = li.querySelector("a.md-file");
+      const path = link ? String(link.getAttribute("data-path") || "") : "";
+      if (!path) {
+        return;
+      }
+      const slash = path.lastIndexOf("/");
+      const folder = slash > 0 ? path.slice(0, slash + 1) : "";
+      if (!groups.has(folder)) {
+        groups.set(folder, []);
+        order.push(folder);
+      }
+      groups.get(folder).push({ path, action: planFileActionIcon(li.textContent) });
+    });
+    if (!order.length) {
+      return null;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "proposed-plan-files";
+    order.forEach((folder) => {
+      const group = document.createElement("div");
+      group.className = "proposed-plan-files-group";
+      if (folder) {
+        const label = document.createElement("div");
+        label.className = "proposed-plan-files-folder";
+        // Long folders keep their tail: «…/initial-briefing-knowledge-check/lib/».
+        const parts = folder.split("/").filter(Boolean);
+        label.textContent =
+          parts.length > 3 ? `…/${parts.slice(-3).join("/")}/` : folder;
+        label.title = folder;
+        group.appendChild(label);
+      }
+      const row = document.createElement("div");
+      row.className = "proposed-plan-files-row";
+      groups.get(folder).forEach(({ path, action }) => {
+        const tmp = document.createElement("span");
+        tmp.innerHTML = planFileChipHtml(path);
+        const chip = tmp.firstChild;
+        chip.classList.add(action.cls);
+        const icon = document.createElement("span");
+        icon.className = "material-symbols-outlined proposed-plan-file-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = action.icon;
+        chip.insertBefore(icon, chip.firstChild);
+        row.appendChild(chip);
+      });
+      group.appendChild(row);
+      wrap.appendChild(group);
+    });
+    return wrap;
+  }
+
+  /**
+   * Plan body → foldable sections (heading + content). Goal is shown in the
+   * card header, Context is folded by default (reference for the agent),
+   * Steps become a numbered timeline, Affected files — chips by folder, and a
+   * missing required section gets an inline «Complete» placeholder.
+   */
+  function decoratePlanSections(root) {
+    chipifyPlanPaths(root);
+    const kids = Array.from(root.children);
+    const sections = [];
+    let current = null;
+    kids.forEach((el) => {
+      if (planHeadingEl(el)) {
+        const label = planSectionLabelText(el);
+        current = { label, key: planSectionKey(label), head: el, nodes: [] };
+        sections.push(current);
+        return;
+      }
+      if (!current) {
+        current = { label: "", key: "intro", head: null, nodes: [] };
+        sections.push(current);
+      }
+      current.nodes.push(el);
+    });
+    root.replaceChildren();
+    const seen = new Set();
+    sections.forEach((sec) => {
+      seen.add(sec.key);
+      const box = document.createElement("section");
+      box.className = "proposed-plan-sec";
+      if (sec.key) {
+        box.dataset.sec = sec.key;
+      }
+      const body = document.createElement("div");
+      body.className = "proposed-plan-sec-body";
+      sec.nodes.forEach((node) => body.appendChild(node));
+      if (sec.key === "steps") {
+        const ol = body.querySelector("ol");
+        if (ol) {
+          ol.classList.add("proposed-plan-steps");
+          // «**Title** — gist»: the title becomes the step heading, drop
+          // the leading dash of the gist.
+          Array.from(ol.children).forEach((li) => {
+            const host =
+              li.firstElementChild && li.firstElementChild.classList.contains("md-p")
+                ? li.firstElementChild
+                : li;
+            const strong = host.firstChild;
+            if (!strong || strong.nodeName !== "STRONG") {
+              return;
+            }
+            const next = strong.nextSibling;
+            if (next && next.nodeType === 3) {
+              next.textContent = next.textContent.replace(/^\s*(?:[—–-]|:)\s*/, "");
+            }
+          });
+        }
+      }
+      if (sec.key === "files") {
+        const list = body.querySelector("ul, ol");
+        const grouped = list ? groupPlanFiles(list) : null;
+        if (grouped) {
+          list.replaceWith(grouped);
+        }
+      }
+      if (sec.head) {
+        const head = document.createElement("button");
+        head.type = "button";
+        head.className = "proposed-plan-sec-head";
+        head.setAttribute("data-plan-action", "fold");
+        let count = "";
+        if (sec.key === "context") {
+          const n = body.querySelectorAll(".plan-file-chip").length;
+          count = n ? t("proposedPlanContextCount", n) : "";
+          box.classList.add("is-folded");
+        }
+        head.innerHTML =
+          `<span class="material-symbols-outlined" aria-hidden="true">expand_more</span>`
+          + `<span>${escapeHtml(sec.label)}</span>`
+          + (count ? `<span class="proposed-plan-sec-count">· ${escapeHtml(count)}</span>` : "");
+        box.appendChild(head);
+      }
+      box.appendChild(body);
+      root.appendChild(box);
+    });
+    ["verify"].forEach((key) => {
+      if (seen.has(key) || !sections.some((sec) => sec.head)) {
+        return;
+      }
+      const box = document.createElement("section");
+      box.className = "proposed-plan-sec is-missing";
+      box.dataset.sec = key;
+      box.innerHTML =
+        `<div class="proposed-plan-sec-head is-static"><span class="material-symbols-outlined" aria-hidden="true">expand_more</span><span>${escapeHtml(t(`proposedPlanSection_${key}`))}</span></div>`
+        + `<div class="proposed-plan-missing">`
+        + `<span class="material-symbols-outlined" aria-hidden="true">warning</span>`
+        + `<span class="proposed-plan-missing-text">${escapeHtml(t(`proposedPlanMissingText_${key}`))}</span>`
+        + `<button type="button" class="proposed-plan-missing-btn" data-plan-action="complete">${escapeHtml(t("proposedPlanComplete"))}</button>`
+        + `</div>`;
+      root.appendChild(box);
+    });
+  }
+
+  function planCountLabel(n, kind) {
+    return t(kind === "files" ? "proposedPlanFilesCount" : "proposedPlanStepsCount", n);
+  }
+
+  function renderProposedPlanCard(planBody, opts) {
     const raw = stripPlanImplementWrapper(planBody);
+    const partial = Boolean(opts && opts.partial);
+    const summary = summarizePlanMarkdown(raw);
     const title = escapeHtml(t("proposedPlanTitle"));
     const openTab = escapeHtml(t("proposedPlanOpenTab"));
-    const expand = escapeHtml(t("proposedPlanExpand"));
-    return `<div class="proposed-plan-card is-collapsed" data-plan-raw="${escapeHtml(raw)}">`
+    const collapse = escapeHtml(t("proposedPlanCollapse"));
+    const build = escapeHtml(t("proposedPlanBuild"));
+    const copy = escapeHtml(t("proposedPlanCopy"));
+    const icon = (name) =>
+      `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;
+    const chips = [];
+    if (summary.steps > 0) {
+      chips.push(
+        `<span class="proposed-plan-chip">${icon("format_list_numbered")}${escapeHtml(planCountLabel(summary.steps, "steps"))}</span>`
+      );
+    }
+    if (summary.files > 0) {
+      chips.push(
+        `<span class="proposed-plan-chip">${icon("description")}${escapeHtml(planCountLabel(summary.files, "files"))}</span>`
+      );
+    }
+    if (summary.missing.length) {
+      const names = summary.missing
+        .map((key) => t(`proposedPlanSection_${key}`))
+        .join(", ");
+      chips.push(
+        `<span class="proposed-plan-chip is-warn" title="${escapeHtml(t("proposedPlanIncompleteHint"))}">${icon("warning")}${escapeHtml(t("proposedPlanMissing", names))}</span>`
+      );
+    }
+    // Visible only once the stream ended without </proposed_plan> (sync).
+    chips.push(
+      `<span class="proposed-plan-chip is-warn proposed-plan-truncated-chip">${icon("content_cut")}${escapeHtml(t("proposedPlanTruncated"))}</span>`
+    );
+    chips.push(
+      `<span class="proposed-plan-chip is-info proposed-plan-edited-chip" title="${escapeHtml(t("proposedPlanEditedHint"))}">${icon("edit_note")}${escapeHtml(t("proposedPlanEdited"))}</span>`
+    );
+    const status = (state, name, label) =>
+      `<span class="proposed-plan-pill proposed-plan-pill-${state}">${name ? icon(name) : ""}${escapeHtml(label)}</span>`;
+    return `<div class="proposed-plan-card${partial ? " is-partial" : ""}${summary.goal ? " has-goal" : ""}" data-plan-raw="${escapeHtml(raw)}" data-plan-state="draft">`
       + `<div class="proposed-plan-head">`
-      + `<button class="proposed-plan-toggle" type="button" data-plan-action="toggle" aria-expanded="false" title="${expand}">`
-      + `<span class="material-symbols-outlined proposed-plan-chevron" aria-hidden="true">expand_more</span>`
+      + `<button class="proposed-plan-toggle" type="button" data-plan-action="toggle" aria-expanded="true" title="${collapse}">`
+      + `<span class="material-symbols-outlined proposed-plan-title-icon" aria-hidden="true">checklist</span>`
       + `<span class="proposed-plan-title">${title}</span>`
       + `</button>`
+      + status("ready", "", t("proposedPlanStatusReady"))
+      + status("streaming", "", t("proposedPlanStatusStreaming"))
+      + status("done", "check_circle", t("proposedPlanStatusDone"))
+      + status("superseded", "history", t("proposedPlanStatusSuperseded"))
+      + `<span class="proposed-plan-head-spacer"></span>`
       + `<div class="proposed-plan-actions">`
-      + `<button class="proposed-plan-open-tab" type="button" data-plan-action="open-tab" title="${openTab}">`
-      + `<span class="material-symbols-outlined" aria-hidden="true">preview</span>`
-      + `<span>${openTab}</span>`
-      + `</button>`
+      + `<button class="proposed-plan-icon-btn" type="button" data-plan-action="copy" title="${copy}" aria-label="${copy}">${icon("content_copy")}</button>`
+      + `<button class="proposed-plan-icon-btn" type="button" data-plan-action="open-tab" title="${openTab}" aria-label="${openTab}">${icon("preview")}</button>`
+      + `<button class="proposed-plan-icon-btn proposed-plan-chevron-btn" type="button" data-plan-action="toggle" title="${collapse}" aria-label="${collapse}"><span class="material-symbols-outlined proposed-plan-chevron" aria-hidden="true">expand_less</span></button>`
       + `</div>`
       + `</div>`
-      + `<div class="proposed-plan-body" hidden>${renderPlanBodyHtml(raw)}</div>`
+      + (summary.goal
+        ? `<div class="proposed-plan-goal" title="${escapeHtml(summary.goal)}">${escapeHtml(summary.goal)}</div>`
+        : "")
+      + `<div class="proposed-plan-meta">${chips.join("")}</div>`
+      + `<div class="proposed-plan-body">${renderPlanBodyHtml(raw)}</div>`
+      + `<div class="proposed-plan-foot">`
+      + `<span class="proposed-plan-foot-hint">${escapeHtml(t("proposedPlanFootHint"))}</span>`
+      + `<button class="proposed-plan-secondary-btn proposed-plan-continue" type="button" data-plan-action="continue" title="${escapeHtml(t("proposedPlanContinueHint"))}">${icon("play_arrow")}<span>${escapeHtml(t("proposedPlanContinue"))}</span></button>`
+      + `<button class="proposed-plan-secondary-btn proposed-plan-edit" type="button" data-plan-action="edit" title="${escapeHtml(t("proposedPlanEditHint"))}">${icon("edit")}<span>${escapeHtml(t("proposedPlanEditBtn"))}</span></button>`
+      + `<button class="proposed-plan-build" type="button" data-plan-action="build" title="${build}">${icon("construction")}<span>${build}</span></button>`
+      + `</div>`
       + `</div>`;
   }
 
@@ -15043,16 +16531,17 @@
       return;
     }
     const body = card.querySelector(".proposed-plan-body");
-    const toggle = card.querySelector("[data-plan-action='toggle']");
-    if (!body || !(toggle instanceof HTMLButtonElement)) {
+    if (!body) {
       return;
     }
     card.classList.toggle("is-collapsed", collapsed);
     body.hidden = collapsed;
-    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    toggle.title = collapsed
-      ? t("proposedPlanExpand")
-      : t("proposedPlanCollapse");
+    card.querySelectorAll("[data-plan-action='toggle']").forEach((toggle) => {
+      toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      toggle.title = collapsed
+        ? t("proposedPlanExpand")
+        : t("proposedPlanCollapse");
+    });
   }
 
   function openProposedPlanInTab(card) {
@@ -15311,12 +16800,68 @@
         `</div>`;
     }
 
+    const wrapLabel = escapeHtml(t("codeWrap"));
+    const copyLabel = escapeHtml(t("codeCopy"));
+    const toolsHtml =
+      `<div class="md-pre-tools">` +
+      `<button type="button" class="md-pre-tool" data-code-action="wrap" aria-pressed="false" title="${wrapLabel}" aria-label="${wrapLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">wrap_text</span>` +
+      `</button>` +
+      `<button type="button" class="md-pre-tool" data-code-action="copy" title="${copyLabel}" aria-label="${copyLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>` +
+      `</button>` +
+      `</div>`;
+
     return (
       `<div class="md-pre-wrap${showLines ? " has-lines is-collapsible is-collapsed" : ""}">` +
       metaHtml +
+      `<div class="md-pre-box">` +
+      toolsHtml +
       `<pre class="md-pre"><code>${codeHtml}</code></pre>` +
+      `</div>` +
       `</div>\n`
     );
+  }
+
+  /** Plain code of a rendered block (without gutter line numbers). */
+  function codeBlockPlainText(wrap) {
+    const code = wrap?.querySelector(".md-pre code");
+    if (!code) {
+      return "";
+    }
+    const lines = code.querySelectorAll(".md-line-text");
+    if (lines.length) {
+      return Array.from(lines, (el) => el.textContent || "").join("\n");
+    }
+    return code.textContent || "";
+  }
+
+  /** Toolbar on code blocks: toggle soft wrap, copy the code. */
+  function handleCodeBlockAction(btn) {
+    const wrap = btn?.closest(".md-pre-wrap");
+    if (!wrap) {
+      return;
+    }
+    const action = btn.getAttribute("data-code-action");
+    if (action === "wrap") {
+      const on = wrap.classList.toggle("is-wrapped");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
+    if (action === "copy") {
+      const text = codeBlockPlainText(wrap);
+      if (!text) {
+        return;
+      }
+      const done = () => showCopyToast(t("copied"));
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => {
+          host.postMessage({ type: "copyText", text });
+        });
+        return;
+      }
+      host.postMessage({ type: "copyText", text });
+    }
   }
 
   function toggleCodeBlock(toggle) {
@@ -15678,11 +17223,17 @@
       // Keep full Build payload in dataset.raw for the model / edit-resend;
       // in chat show a short handoff chip — not a second copy of the plan.
       el.classList.add("is-plan-implement");
+      // The plan itself sits under the chip, hidden until «Show plan»
+      // (maybeCollapseLongUserMessage adds the toggle).
+      const planText = stripPlanImplementWrapper(raw);
       body.innerHTML =
         `<span class="plan-implement-chip">` +
         `<span class="material-symbols-outlined" aria-hidden="true">construction</span>` +
         `<span>${escapeHtml(t("proposedPlanImplementBubble"))}</span>` +
-        `</span>`;
+        `</span>` +
+        (planText
+          ? `<div class="plan-implement-plan msg-text">${renderInlineMarkdown(planText)}</div>`
+          : "");
       return;
     }
     if (role === "user") {
@@ -15913,10 +17464,15 @@
           }
         }
       }
+      if (!isEditing) {
+        maybeCollapseLongUserMessage(el, text);
+      }
       const wrap = document.createElement("div");
       wrap.className = "msg-wrap msg-wrap-user";
       wrap.appendChild(el);
-      startChatTurn().appendChild(wrap);
+      const turnEl = startChatTurn();
+      turnEl.appendChild(wrap);
+      maybeInsertTimeSeparator(turnEl, index, shouldScroll);
       keepStatusAtEnd();
       if (shouldScroll) {
         scrollToBottom();
@@ -15937,6 +17493,7 @@
       wrap.appendChild(el);
       wrap.appendChild(actions);
       ensureChatTurn().appendChild(wrap);
+      paintAssistantMeta(index);
       keepStatusAtEnd();
       if (shouldScroll) {
         scrollToBottom();
@@ -15952,6 +17509,119 @@
     return el;
   }
 
+  /**
+   * Стартовый экран пустого чата: подсказки-задачи, горячие клавиши,
+   * недавние агенты. Живёт внутри #messages и прячется CSS-ом, как только
+   * появляется первое сообщение (.chat-turn / .msg) — без отдельного
+   * состояния, которое могло бы разойтись с лентой.
+   */
+  function renderChatWelcome() {
+    if (!messagesEl) {
+      return;
+    }
+    messagesEl.querySelector(".chat-welcome")?.remove();
+    const root = document.createElement("div");
+    root.className = "chat-welcome";
+
+    const title = document.createElement("div");
+    title.className = "chat-welcome-title";
+    title.textContent = t("welcomeTitle");
+    root.appendChild(title);
+
+    const suggestions = [
+      ["travel_explore", "welcomeSuggestExplain"],
+      ["bug_report", "welcomeSuggestFix"],
+      ["science", "welcomeSuggestTests"],
+      ["checklist", "welcomeSuggestPlan"],
+    ];
+    const list = document.createElement("div");
+    list.className = "chat-welcome-suggestions";
+    for (const [icon, key] of suggestions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chat-welcome-suggestion";
+      btn.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">${icon}</span>` +
+        `<span class="chat-welcome-suggestion-text"></span>`;
+      const text = t(key);
+      btn.querySelector(".chat-welcome-suggestion-text").textContent = text;
+      btn.addEventListener("click", () => {
+        if (!promptEl) {
+          return;
+        }
+        promptEl.value = text;
+        promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+        promptEl.focus();
+        const end = promptEl.value.length;
+        try {
+          promptEl.setSelectionRange(end, end);
+        } catch {
+          /* ignore */
+        }
+      });
+      list.appendChild(btn);
+    }
+    root.appendChild(list);
+
+    const hints = document.createElement("div");
+    hints.className = "chat-welcome-hints";
+    const isMac = /Mac|iPhone|iPad/i.test(
+      navigator.platform || navigator.userAgent || ""
+    );
+    const hintItems = [
+      ["@", t("welcomeHintMention")],
+      ["/", t("welcomeHintSlash")],
+    ];
+    // Хоткей выделения — команда VS Code; в JetBrains свой keymap.
+    const jetbrains =
+      typeof harborHostAvailable === "function" && harborHostAvailable();
+    if (!jetbrains) {
+      hintItems.push([isMac ? "⌘⇧L" : "Ctrl+Shift+L", t("welcomeHintSelection")]);
+    }
+    for (const [key, label] of hintItems) {
+      const item = document.createElement("span");
+      item.className = "chat-welcome-hint";
+      const kbd = document.createElement("kbd");
+      kbd.textContent = key;
+      item.appendChild(kbd);
+      item.appendChild(document.createTextNode(` ${label}`));
+      hints.appendChild(item);
+    }
+    root.appendChild(hints);
+
+    const recent = (Array.isArray(agentsData) ? agentsData : [])
+      .filter((a) => a && !a.empty && a.id && a.id !== activeAgentId)
+      .slice(0, 3);
+    if (recent.length) {
+      const recentTitle = document.createElement("div");
+      recentTitle.className = "chat-welcome-section";
+      recentTitle.textContent = t("welcomeRecent");
+      root.appendChild(recentTitle);
+      const recentList = document.createElement("div");
+      recentList.className = "chat-welcome-recent";
+      for (const a of recent) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "chat-welcome-agent";
+        btn.innerHTML =
+          `<span class="material-symbols-outlined" aria-hidden="true">history</span>` +
+          `<span class="chat-welcome-agent-name"></span>` +
+          `<span class="chat-welcome-agent-time"></span>`;
+        btn.querySelector(".chat-welcome-agent-name").textContent =
+          a.name || t("agent");
+        btn.querySelector(".chat-welcome-agent-time").textContent =
+          a.time || "";
+        btn.addEventListener("click", () => {
+          host.postMessage({ type: "openAgent", agentId: a.id });
+        });
+        recentList.appendChild(btn);
+      }
+      root.appendChild(recentList);
+    }
+
+    messagesEl.appendChild(root);
+  }
+
   function renderMessages(list, scrollMode = "bottom", restoredScrollTop) {
     restoringChatScroll = true;
     // Full remount destroys DOM nodes — drop the streaming ref so later
@@ -15965,6 +17635,9 @@
     if (!Array.isArray(list)) {
       restoringChatScroll = false;
       return;
+    }
+    if (!list.length) {
+      renderChatWelcome();
     }
 
     let regenAssistantIndex = -1;
@@ -16706,6 +18379,15 @@
       if (planBtn) {
         planBtn.disabled = busy;
       }
+    }
+    if (messagesEl) {
+      messagesEl
+        .querySelectorAll(
+          ".proposed-plan-card [data-plan-action='build'], .proposed-plan-card [data-plan-action='continue']"
+        )
+        .forEach((btn) => {
+          btn.disabled = busy;
+        });
     }
     if (busy) {
       const hostStartedAt =
@@ -19478,6 +21160,14 @@
       if (event.target.closest(".agent-name-input")) {
         return;
       }
+      const moreBtnJb = event.target.closest(".agent-more");
+      if (moreBtnJb && agentsListEl.contains(moreBtnJb)) {
+        event.preventDefault();
+        event.stopPropagation();
+        harborAgentNavAt = Date.now();
+        openAgentMenu(moreBtnJb.dataset.agentMenu, moreBtnJb);
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn && agentsListEl.contains(deleteBtn)) {
         event.preventDefault();
@@ -19532,6 +21222,16 @@
         event.stopPropagation();
         return;
       }
+      const moreBtn = event.target.closest(".agent-more");
+      if (moreBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        openAgentMenu(moreBtn.dataset.agentMenu, moreBtn);
+        return;
+      }
+      if (event.target.closest(".agent-name-input")) {
+        return;
+      }
       const deleteBtn = event.target.closest(".row-delete");
       if (deleteBtn) {
         event.preventDefault();
@@ -19569,6 +21269,9 @@
       }
     });
     agentsListEl.addEventListener("keydown", (event) => {
+      if (onAgentsListKeyNav(event)) {
+        return;
+      }
       if (event.key !== "Enter" && event.key !== " ") {
         return;
       }
@@ -19629,6 +21332,13 @@
       openImgLightbox(previewBtn.getAttribute("data-preview-src") || "");
       return;
     }
+    const codeTool = event.target.closest("[data-code-action]");
+    if (codeTool && messagesEl.contains(codeTool)) {
+      event.preventDefault();
+      event.stopPropagation();
+      handleCodeBlockAction(codeTool);
+      return;
+    }
     const codeToggle = event.target.closest(".md-pre-toggle");
     if (
       codeToggle &&
@@ -19669,9 +21379,13 @@
       updateReasoningGroupSummary(group);
       return;
     }
-    const thinkingToggle = event.target.closest(
-      ".agent-step-thinking-toggle"
-    );
+    // Вся строка «Мысли ⌄» — одна кликабельная цель (иконка, подпись, шеврон).
+    const thinkingHead = event.target.closest(".agent-step-thinking .agent-step-head");
+    const thinkingToggle =
+      event.target.closest(".agent-step-thinking-toggle") ||
+      (thinkingHead
+        ? thinkingHead.querySelector(".agent-step-thinking-toggle:not([hidden])")
+        : null);
     if (thinkingToggle && messagesEl.contains(thinkingToggle)) {
       event.preventDefault();
       event.stopPropagation();
@@ -19692,6 +21406,7 @@
         label.textContent = collapsed
           ? t("showThinking")
           : t("hideThinking");
+        thinkingToggle.title = label.textContent;
       }
       return;
     }
@@ -19701,10 +21416,57 @@
       event.stopPropagation();
       const card = planToggleBtn.closest(".proposed-plan-card");
       if (card) {
-        setProposedPlanCollapsed(
-          card,
-          !card.classList.contains("is-collapsed")
-        );
+        const collapsed = !card.classList.contains("is-collapsed");
+        planCardUserCollapsed.set(planCardKey(card.dataset.planRaw || ""), collapsed);
+        setProposedPlanCollapsed(card, collapsed);
+      }
+      return;
+    }
+    const planFoldBtn = event.target.closest("[data-plan-action='fold']");
+    if (planFoldBtn && messagesEl.contains(planFoldBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const sec = planFoldBtn.closest(".proposed-plan-sec");
+      if (sec) {
+        sec.classList.toggle("is-folded");
+      }
+      return;
+    }
+    const planCardActionBtn = event.target.closest(
+      "[data-plan-action='build'], [data-plan-action='continue'], [data-plan-action='copy'], [data-plan-action='complete'], [data-plan-action='edit']"
+    );
+    if (planCardActionBtn && messagesEl.contains(planCardActionBtn)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const card = planCardActionBtn.closest(".proposed-plan-card");
+      const action = planCardActionBtn.getAttribute("data-plan-action");
+      if (!card || planCardActionBtn.disabled) {
+        return;
+      }
+      if (action === "copy") {
+        copyPlanFromCard(card);
+      } else if (action === "continue") {
+        sendPlanContinue();
+      } else if (action === "complete") {
+        sendPlanComplete(card);
+      } else if (action === "edit") {
+        const raw = stripPlanImplementWrapper(card.dataset.planRaw || "");
+        if (raw) {
+          // Same plan already in Plan.md → just reveal it (keep the user's
+          // edits); another plan → write this one.
+          const key = planCardKey(raw);
+          const keepExisting = key === lastOpenedPlanKey;
+          lastOpenedPlanKey = key;
+          host.postMessage({
+            type: "openPlanMarkdown",
+            text: raw,
+            reveal: "editor",
+            keepExisting,
+          });
+        }
+      } else if (action === "build") {
+        // Same path as the composer tag: live Plan.md (with edits) wins.
+        sendImplementPlan(card.dataset.planRaw || "");
       }
       return;
     }
@@ -19837,7 +21599,9 @@
     if (
       userMsg &&
       messagesEl.contains(userMsg) &&
-      !userMsg.classList.contains("is-editing")
+      !userMsg.classList.contains("is-editing") &&
+      // Opened plan under the «Build plan» chip: links / reading, not edit.
+      !event.target.closest(".plan-implement-plan")
     ) {
       const selection = window.getSelection();
       if (
@@ -19866,8 +21630,11 @@
     if (file) {
       event.preventDefault();
       const path = file.getAttribute("data-path");
+      const line = Number(file.getAttribute("data-line")) || 0;
       if (path) {
-        host.postMessage({ type: "openFile", path });
+        host.postMessage(
+          line > 0 ? { type: "openFile", path, line } : { type: "openFile", path }
+        );
       }
       return;
     }
@@ -20024,6 +21791,17 @@
     });
   }
 
+
+  // Plan card «Edited in editor»: the user edits Plan.md beside the panel and
+  // comes back — re-read the live text when the panel regains focus.
+  window.addEventListener("focus", () => {
+    requestLivePlanStatus();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      requestLivePlanStatus();
+    }
+  });
   /**
    * JetBrains: a late `ready` burst (init/showChat arriving right after the
    * page finished loading, or the host's 800 ms ready timer) must not yank the
@@ -20096,6 +21874,8 @@
             totalOutputTokens: msg.totalOutputTokens,
             totalCacheReadTokens: msg.totalCacheReadTokens,
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
+            lastPromptTokens: msg.lastPromptTokens || 0,
+            lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
         }
         renderChatBranches(msg.branches);
@@ -20140,6 +21920,9 @@
         break;
       case "agentsList":
         agentsData = Array.isArray(msg.agents) ? msg.agents : [];
+        if (typeof msg.archivedCount === "number") {
+          agentsArchivedCount = Math.max(0, msg.archivedCount);
+        }
         {
           const active = agentsData.find((a) => a.active);
           if (active) {
@@ -20147,6 +21930,10 @@
           }
         }
         renderAgentsList();
+        // Недавние агенты на стартовом экране пустого чата.
+        if (messagesEl.querySelector(".chat-welcome")) {
+          renderChatWelcome();
+        }
         if (
           !settingsSwitchSuppressed() &&
           (msg.screen === "agents" || msg.screen === "chat")
@@ -20320,6 +22107,8 @@
             totalOutputTokens: msg.totalOutputTokens,
             totalCacheReadTokens: msg.totalCacheReadTokens,
             totalCacheWriteTokens: msg.totalCacheWriteTokens,
+            lastPromptTokens: msg.lastPromptTokens || 0,
+            lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
         }
         if (!settingsSwitchSuppressed()) {
@@ -20393,6 +22182,9 @@
           totalOutputTokens: msg.totalOutputTokens,
           totalCacheReadTokens: msg.totalCacheReadTokens,
           totalCacheWriteTokens: msg.totalCacheWriteTokens,
+          // Per-call fields (promptTokens / cacheReadTokens) — both hosts.
+          lastPromptTokens: msg.promptTokens,
+          lastCacheReadTokens: msg.cacheReadTokens,
         });
         break;
       case "modelsUpdated":
@@ -20500,6 +22292,9 @@
             syncComposerPlanFromCache({ openEditor: false });
           }
         }
+        break;
+      case "livePlanStatus":
+        applyLivePlanStatus(msg.text || "");
         break;
       case "livePlanForBuild": {
         const text = stripPlanImplementWrapper(msg.text || "");
@@ -20680,6 +22475,23 @@
         }
         streamingEl = null;
         streamingRenderScheduled = false;
+        // Подпись под ответом: время и модель от хоста (live).
+        for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+          const cached = uiMessagesCache[i];
+          if (cached?.role !== "assistant") {
+            continue;
+          }
+          if (typeof msg.ts === "number" && !cached.ts) {
+            cached.ts = msg.ts;
+          } else if (!cached.ts) {
+            cached.ts = Date.now();
+          }
+          if (msg.model && !cached.model) {
+            cached.model = msg.model;
+          }
+          paintAssistantMeta(i);
+          break;
+        }
         completeRunningTodoPlans();
         // A duplicate catch-up finale must not clear an open edit composer —
         // Save silently no-ops once editingUserIndex is gone.
@@ -20734,6 +22546,7 @@
           // Paint «выполнено · … · 18,6 с» on the timeline even when the
           // step-level stamp never landed (or arrived before the DOM group).
           applyRunDurationToTimeline(msg.runDurationMs, msg.ttftMs);
+          paintLatestAssistantMeta();
           // Terminal message right before `idle` — arm the drain fallback in
           // case the idle message is lost on the webview bridge.
           armQueueDrainFallback();
@@ -20821,6 +22634,7 @@
       case "cleared":
         messagesEl.innerHTML = "";
         uiMessagesCache = [];
+        renderChatWelcome();
         editingUserIndex = null;
         editingUserText = "";
         editingModelId = "";
@@ -20834,6 +22648,8 @@
           totalOutputTokens: 0,
           totalCacheReadTokens: 0,
           totalCacheWriteTokens: 0,
+          lastPromptTokens: 0,
+          lastCacheReadTokens: 0,
         });
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
@@ -20851,4 +22667,597 @@
       host.postMessage({ type: "ready", surface: UI_SURFACE });
     }
   }, 400);
+
+  /* ===================================================================
+   * Лента: навигация и подписи.
+   * - кнопка «↓» над полем ввода (с меткой «Новое», если ниже дописалось);
+   * - закреплённый вопрос текущего хода при прокрутке его ответа;
+   * - мини-карта ходов у правого края + Alt+↑/↓;
+   * - разделители по времени между ходами;
+   * - сворачивание длинных сообщений пользователя;
+   * - действия под ответом видны у последнего ответа, у остальных — по наведению.
+   * Всё строится из DOM ленты и uiMessagesCache, без отдельного состояния,
+   * которое могло бы разойтись с лентой после перерисовки.
+   * =================================================================== */
+
+  const FEED_LONG_USER_LINES = 10;
+  /** Turn map: distance between stacked ticks (px), before shrinking. */
+  const FEED_TICK_STEP = 8;
+  /** Below this list height (px) the turn map is not drawn (layout not ready). */
+  const FEED_MAP_MIN_HEIGHT = 80;
+  let feedMapRetryTimer = 0;
+  const FEED_LONG_USER_CHARS = 900;
+  const FEED_TIME_GAP_MS = 60 * 60 * 1000;
+  const FEED_JUMP_DISTANCE_PX = 240;
+
+  let feedOverlayEl = null;
+  let feedStickyEl = null;
+  let feedMapEl = null;
+  let feedTipEl = null;
+  let feedJumpEl = null;
+  let feedUpdateRaf = 0;
+  let feedSeenHeight = 0;
+  let feedHasNew = false;
+  let feedJumpShown = false;
+
+  function feedLocale() {
+    return UI_LANG === "ru" ? "ru-RU" : "en-US";
+  }
+
+  function feedDayStart(ts) {
+    const d = new Date(ts);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  function feedClock(ts) {
+    try {
+      return new Date(ts).toLocaleTimeString(feedLocale(), {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  /** "today" | "yesterday" | "other" по локальной дате. */
+  function feedDayKind(ts) {
+    const today = feedDayStart(Date.now());
+    const day = feedDayStart(ts);
+    if (day >= today) {
+      return "today";
+    }
+    if (day >= today - 86_400_000) {
+      return "yesterday";
+    }
+    return "other";
+  }
+
+  function feedShortDate(ts) {
+    try {
+      return new Date(ts).toLocaleDateString(feedLocale(), {
+        day: "numeric",
+        month: "short",
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  /** Разделитель: «Сегодня, 14:05» / «Вчера, 18:40» / «12 окт., 09:10». */
+  function feedSeparatorLabel(ts) {
+    const kind = feedDayKind(ts);
+    const day =
+      kind === "today"
+        ? t("agentsGroupToday")
+        : kind === "yesterday"
+          ? t("agentsGroupYesterday")
+          : feedShortDate(ts);
+    return `${day}, ${feedClock(ts)}`;
+  }
+
+  function feedPrevTs(index) {
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const ts = Number(uiMessagesCache[i]?.ts) || 0;
+      if (ts > 0) {
+        return ts;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Перед ходом — тонкий разделитель, если с прошлого сообщения прошёл
+   * час или сменился день. Живое сообщение без ts от хоста получает
+   * локальное «сейчас» (хост проставит своё при сохранении).
+   */
+  function maybeInsertTimeSeparator(turnEl, index, live) {
+    if (!turnEl || typeof index !== "number") {
+      return;
+    }
+    const item = uiMessagesCache[index];
+    if (!item) {
+      return;
+    }
+    let ts = Number(item.ts) || 0;
+    if (!ts && live) {
+      ts = Date.now();
+      item.ts = ts;
+    }
+    if (!ts) {
+      return;
+    }
+    const prev = feedPrevTs(index);
+    // Первый ход чата с известным временем — заголовок с датой сверху,
+    // чтобы было видно, когда разговор начался.
+    let prevTurn = turnEl.previousElementSibling;
+    while (prevTurn && !prevTurn.classList.contains("chat-turn")) {
+      prevTurn = prevTurn.previousElementSibling;
+    }
+    const isFirstTurn = !prevTurn;
+    if (!prev && !isFirstTurn) {
+      return;
+    }
+    if (
+      prev &&
+      ts - prev < FEED_TIME_GAP_MS &&
+      feedDayStart(ts) === feedDayStart(prev)
+    ) {
+      return;
+    }
+    const prevEl = turnEl.previousElementSibling;
+    if (prevEl && prevEl.classList.contains("feed-time-sep")) {
+      return;
+    }
+    const sep = document.createElement("div");
+    sep.className = "feed-time-sep";
+    sep.setAttribute("role", "separator");
+    const label = document.createElement("span");
+    label.textContent = feedSeparatorLabel(ts);
+    sep.appendChild(label);
+    turnEl.before(sep);
+  }
+
+  /** Длинное сообщение пользователя (вставленный лог) — свернуть до ~7 строк. */
+  /**
+   * One-line label of a user turn for the sticky question / turn map.
+   * Build handoff → «Build plan · <goal>» instead of the raw
+   * «[[harbor:implement_plan]] Implement the following plan…» payload.
+   */
+  function feedUserSummary(msg) {
+    const raw = String(msg?.dataset.raw || msg?.textContent || "");
+    if (looksLikePlanImplementDisplay(raw)) {
+      const goal = summarizePlanMarkdown(stripPlanImplementWrapper(raw)).goal;
+      const label = t("proposedPlanImplementBubble");
+      return goal ? `${label} · ${goal}` : label;
+    }
+    return raw
+      .replace(/\[\[harbor:[a-z_]+\]\]\s*/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function maybeCollapseLongUserMessage(el, text) {
+    if (!el) {
+      return;
+    }
+    const raw = String(text || "");
+    // Build handoff: the bubble shows a «Build plan» chip — the toggle opens
+    // the plan under it (any length), not a taller clamp of a one-line chip.
+    const isPlan = el.classList.contains("is-plan-implement");
+    if (isPlan && !el.querySelector(".plan-implement-plan")) {
+      return;
+    }
+    const lines = isPlan
+      ? stripPlanImplementWrapper(raw).split("\n").length
+      : raw.split("\n").length;
+    if (
+      !isPlan &&
+      lines <= FEED_LONG_USER_LINES &&
+      raw.length <= FEED_LONG_USER_CHARS
+    ) {
+      return;
+    }
+    if (el.querySelector(":scope > .msg-expand")) {
+      return;
+    }
+    el.classList.add("is-long", "is-long-collapsed");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "msg-expand";
+    btn.dataset.lines = String(lines);
+    btn.setAttribute("aria-expanded", "false");
+    if (isPlan) {
+      btn.dataset.plan = "1";
+    }
+    btn.textContent = isPlan ? t("feedShowPlan", lines) : t("feedShowAll", lines);
+    el.appendChild(btn);
+  }
+
+  function toggleLongUserMessage(btn) {
+    const el = btn?.closest(".msg.user");
+    if (!el) {
+      return;
+    }
+    const collapsed = el.classList.toggle("is-long-collapsed");
+    btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    const showKey = btn.dataset.plan === "1" ? "feedShowPlan" : "feedShowAll";
+    btn.textContent = collapsed
+      ? t(showKey, Number(btn.dataset.lines) || 0)
+      : t("feedCollapse");
+    if (collapsed) {
+      // Свернули длинное — вернуть начало сообщения в кадр.
+      const r = el.getBoundingClientRect();
+      const m = messagesEl.getBoundingClientRect();
+      if (r.top < m.top) {
+        messagesEl.scrollTop += r.top - m.top - 8;
+      }
+    }
+    scheduleFeedUpdate();
+  }
+
+  /** Подпись «модель · время · длительность» в строке действий ответа. */
+  /** Подпись под ответом (модель · время · длительность) отключена — убираем остатки. */
+  function paintAssistantMeta(index) {
+    if (typeof index !== "number" || !messagesEl) {
+      return;
+    }
+    const el = messagesEl.querySelector(
+      `.msg.assistant[data-index="${index}"]`
+    );
+    const wrap = el ? el.closest(".msg-wrap-assistant") : null;
+    wrap?.querySelector(":scope > .msg-actions > .msg-meta")?.remove();
+  }
+
+  function paintLatestAssistantMeta() {
+    for (let i = uiMessagesCache.length - 1; i >= 0; i -= 1) {
+      if (uiMessagesCache[i]?.role === "assistant") {
+        paintAssistantMeta(i);
+        return;
+      }
+    }
+  }
+
+  function feedUserWraps() {
+    if (!messagesEl) {
+      return [];
+    }
+    return [...messagesEl.querySelectorAll(".chat-turn > .msg-wrap-user")];
+  }
+
+  /** Индекс хода, чей вопрос последним ушёл под верх ленты (или -1). */
+  function feedCurrentTurnIndex(wraps, top) {
+    let current = -1;
+    for (let i = 0; i < wraps.length; i += 1) {
+      // +12: после перехода к ходу его пузырь стоит на 8px ниже верха.
+      if (wraps[i].getBoundingClientRect().top <= top + 12) {
+        current = i;
+      } else {
+        break;
+      }
+    }
+    return current;
+  }
+
+  function scrollFeedToTurn(wrap) {
+    if (!wrap || !messagesEl) {
+      return;
+    }
+    const top = messagesEl.getBoundingClientRect().top;
+    const offset = wrap.getBoundingClientRect().top - top - 8;
+    messagesEl.scrollTop += offset;
+    stickToBottom = isNearBottom();
+    scheduleFeedUpdate();
+  }
+
+  function ensureFeedChrome() {
+    if (!messagesEl) {
+      return false;
+    }
+    if (!feedOverlayEl || !feedOverlayEl.isConnected) {
+      feedOverlayEl = document.createElement("div");
+      feedOverlayEl.className = "feed-overlay";
+
+      feedStickyEl = document.createElement("button");
+      feedStickyEl.type = "button";
+      feedStickyEl.className = "feed-sticky-question";
+      feedStickyEl.hidden = true;
+      feedStickyEl.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>` +
+        `<span class="feed-sticky-text"></span>` +
+        `<span class="feed-sticky-count"></span>`;
+      feedStickyEl.addEventListener("click", () => {
+        const wraps = feedUserWraps();
+        const idx = Number(feedStickyEl.dataset.turn);
+        if (Number.isInteger(idx) && wraps[idx]) {
+          scrollFeedToTurn(wraps[idx]);
+        }
+      });
+      feedOverlayEl.appendChild(feedStickyEl);
+
+      feedMapEl = document.createElement("div");
+      feedMapEl.className = "feed-turn-map";
+      feedMapEl.hidden = true;
+      feedMapEl.addEventListener("click", (event) => {
+        const tick = event.target.closest("[data-turn]");
+        if (!tick) {
+          return;
+        }
+        const wraps = feedUserWraps();
+        const wrap = wraps[Number(tick.getAttribute("data-turn"))];
+        if (wrap) {
+          scrollFeedToTurn(wrap);
+        }
+      });
+      feedOverlayEl.appendChild(feedMapEl);
+
+      // Hover popup for ticks — our own element instead of a native `title`
+      // tooltip, so it looks the same in VS Code (Electron) and WebStorm (JCEF).
+      feedTipEl = document.createElement("div");
+      feedTipEl.className = "feed-turn-tip";
+      feedTipEl.hidden = true;
+      feedTipEl.setAttribute("role", "tooltip");
+      feedTipEl.innerHTML =
+        `<span class="feed-turn-tip-num"></span><span class="feed-turn-tip-text"></span>`;
+      feedOverlayEl.appendChild(feedTipEl);
+      const showTip = (event) => {
+        const tick = event.target.closest?.(".feed-turn-tick");
+        if (!tick || !feedMapEl.contains(tick)) {
+          return;
+        }
+        // Stale geometry (map laid out while the panel was resizing) would
+        // keep the stack off-center — re-measure once the pointer is here.
+        const expected = Math.max(
+          0,
+          (Math.round(messagesEl.getBoundingClientRect().height) ||
+            messagesEl.clientHeight) - 16
+        );
+        if (Math.abs(parseFloat(feedMapEl.style.height || "0") - expected) > 2) {
+          scheduleFeedUpdate();
+          return;
+        }
+        feedTipEl.querySelector(".feed-turn-tip-num").textContent =
+          `${Number(tick.getAttribute("data-turn")) + 1}`;
+        feedTipEl.querySelector(".feed-turn-tip-text").textContent =
+          tick.dataset.tip || "";
+        feedTipEl.style.top = `${feedMapEl.offsetTop + tick.offsetTop + tick.offsetHeight / 2}px`;
+        feedTipEl.hidden = false;
+      };
+      const hideTip = () => {
+        feedTipEl.hidden = true;
+      };
+      feedMapEl.addEventListener("mouseover", showTip);
+      feedMapEl.addEventListener("focusin", showTip);
+      feedMapEl.addEventListener("mouseout", (event) => {
+        const next = event.relatedTarget;
+        if (!next || !next.closest?.(".feed-turn-tick")) {
+          hideTip();
+        }
+      });
+      feedMapEl.addEventListener("focusout", hideTip);
+      feedMapEl.addEventListener("click", hideTip);
+
+      messagesEl.before(feedOverlayEl);
+    }
+    if ((!feedJumpEl || !feedJumpEl.isConnected) && composerWrapEl) {
+      feedJumpEl = document.createElement("button");
+      feedJumpEl.type = "button";
+      feedJumpEl.className = "feed-jump";
+      feedJumpEl.hidden = true;
+      feedJumpEl.innerHTML =
+        `<span class="material-symbols-outlined" aria-hidden="true">arrow_downward</span>` +
+        `<span class="feed-jump-label"></span>` +
+        `<span class="feed-jump-dot" aria-hidden="true"></span>`;
+      feedJumpEl.addEventListener("click", () => {
+        feedHasNew = false;
+        pinChatToBottom();
+        scheduleFeedUpdate();
+      });
+      composerWrapEl.appendChild(feedJumpEl);
+    }
+    return true;
+  }
+
+  function updateFeed() {
+    feedUpdateRaf = 0;
+    if (!ensureFeedChrome() || !chatScreen || chatScreen.hidden) {
+      return;
+    }
+    const mRect = messagesEl.getBoundingClientRect();
+    const top = mRect.top;
+    const distance =
+      messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+
+    // «↓» — когда прокрутили заметно выше конца ленты.
+    const showJump = distance > FEED_JUMP_DISTANCE_PX;
+    if (showJump && !feedJumpShown) {
+      feedSeenHeight = messagesEl.scrollHeight;
+      feedHasNew = false;
+    } else if (showJump && messagesEl.scrollHeight > feedSeenHeight + 8) {
+      feedHasNew = true;
+    }
+    if (!showJump) {
+      feedHasNew = false;
+    }
+    feedJumpShown = showJump;
+    if (feedJumpEl) {
+      feedJumpEl.hidden = !showJump;
+      feedJumpEl.classList.toggle("has-new", feedHasNew);
+      const label = feedHasNew ? t("feedJumpNew") : t("feedJumpLatest");
+      feedJumpEl.querySelector(".feed-jump-label").textContent = feedHasNew
+        ? label
+        : "";
+      feedJumpEl.title = t("feedJumpLatest");
+      feedJumpEl.setAttribute("aria-label", t("feedJumpLatest"));
+    }
+
+    const wraps = feedUserWraps();
+    const current = feedCurrentTurnIndex(wraps, top);
+
+    // Закреплённый вопрос: его пузырь уже ушёл вверх, а ответ ещё на экране.
+    let showSticky = false;
+    if (current >= 0) {
+      const wrap = wraps[current];
+      const turn = wrap.parentElement;
+      const wrapBottom = wrap.getBoundingClientRect().bottom;
+      const turnBottom = turn ? turn.getBoundingClientRect().bottom : 0;
+      if (wrapBottom < top + 2 && turnBottom > top + 56) {
+        const msg = wrap.querySelector(".msg.user");
+        const raw = feedUserSummary(msg);
+        if (raw) {
+          showSticky = true;
+          feedStickyEl.dataset.turn = String(current);
+          feedStickyEl.querySelector(".feed-sticky-text").textContent = raw;
+          feedStickyEl.querySelector(".feed-sticky-count").textContent =
+            wraps.length > 1 ? `${current + 1} / ${wraps.length}` : "";
+          feedStickyEl.title = t("feedStickyTitle");
+        }
+      }
+    }
+    if (feedStickyEl) {
+      feedStickyEl.hidden = !showSticky;
+    }
+
+    // Мини-карта ходов — только в длинных чатах с прокруткой.
+    const scrollable = messagesEl.scrollHeight > messagesEl.clientHeight * 1.3;
+    // Real on-screen height of the chat list. A hidden / still-laying-out
+    // webview (VS Code keeps background tabs at ~0px) reports a tiny value —
+    // then all ticks collapse into one dot at the top. Skip and retry.
+    const mapHeight = Math.round(mRect.height) || messagesEl.clientHeight;
+    const tooLow = mapHeight < FEED_MAP_MIN_HEIGHT;
+    if (tooLow && wraps.length >= 3 && scrollable) {
+      clearTimeout(feedMapRetryTimer);
+      feedMapRetryTimer = setTimeout(scheduleFeedUpdate, 300);
+    }
+    const showMap = wraps.length >= 3 && scrollable && !tooLow;
+    if (feedMapEl) {
+      feedMapEl.hidden = !showMap;
+      if (showMap) {
+        const h = mapHeight;
+        feedMapEl.style.height = `${Math.max(0, h - 16)}px`;
+        feedMapEl.setAttribute("aria-label", t("feedTurnMap"));
+        // Ticks as a compact stack, vertically centered: one tick per turn
+        // at an even step (not spread by scroll offset). Long chats shrink
+        // the step so the stack stays within ~70% of the track.
+        const track = Math.max(1, h - 16);
+        const step = Math.max(
+          4,
+          Math.min(FEED_TICK_STEP, (track * 0.7) / Math.max(1, wraps.length))
+        );
+        const stackHeight = step * (wraps.length - 1) + 3;
+        const stackTop = Math.max(0, (track - stackHeight) / 2);
+        let html = "";
+        const tickTops = [];
+        wraps.forEach((wrap, i) => {
+          const y = Math.min(track - 3, stackTop + i * step);
+          tickTops.push(Math.round(y));
+          const raw = feedUserSummary(wrap.querySelector(".msg.user")).slice(
+            0,
+            80
+          );
+          html +=
+            `<button type="button" class="feed-turn-tick${i === Math.max(0, current) ? " is-current" : ""}" data-turn="${i}" data-tip="${escapeHtml(raw)}" aria-label="${escapeHtml(`${i + 1}. ${raw}`)}"></button>`;
+        });
+        feedMapEl.innerHTML = html;
+        // Position via CSSOM, not a `style="…"` attribute in the HTML string:
+        // the VS Code webview CSP (style-src without 'unsafe-inline') drops
+        // inline style attributes, which stacked every tick at the top.
+        feedMapEl.querySelectorAll(".feed-turn-tick").forEach((tick, i) => {
+          tick.style.top = `${tickTops[i] || 0}px`;
+        });
+      }
+    }
+
+    // Действия под ответом: у последнего всегда, у остальных — по наведению.
+    const assistants = messagesEl.querySelectorAll(".msg-wrap-assistant");
+    assistants.forEach((el, i) => {
+      el.classList.toggle("is-latest", i === assistants.length - 1);
+    });
+  }
+
+  function scheduleFeedUpdate() {
+    if (feedUpdateRaf) {
+      return;
+    }
+    feedUpdateRaf = requestAnimationFrame(updateFeed);
+  }
+
+  /** Alt+↑ / Alt+↓ — к предыдущему / следующему запросу в ленте. */
+  function onFeedTurnKey(event) {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+      return;
+    }
+    if (!chatScreen || chatScreen.hidden || !messagesEl) {
+      return;
+    }
+    const target = event.target;
+    if (
+      (target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement) &&
+      target.value
+    ) {
+      return;
+    }
+    const wraps = feedUserWraps();
+    if (!wraps.length) {
+      return;
+    }
+    event.preventDefault();
+    const top = messagesEl.getBoundingClientRect().top;
+    const current = feedCurrentTurnIndex(wraps, top);
+    if (event.key === "ArrowUp") {
+      const midTurn =
+        current >= 0 && wraps[current].getBoundingClientRect().top < top - 4;
+      const next = midTurn ? current : current - 1;
+      scrollFeedToTurn(wraps[Math.max(0, next)]);
+      return;
+    }
+    const next = current + 1;
+    if (next >= wraps.length) {
+      pinChatToBottom();
+      scheduleFeedUpdate();
+      return;
+    }
+    scrollFeedToTurn(wraps[next]);
+  }
+
+  if (messagesEl) {
+    messagesEl.addEventListener("scroll", scheduleFeedUpdate, {
+      passive: true,
+    });
+    if (typeof MutationObserver !== "undefined") {
+      new MutationObserver(scheduleFeedUpdate).observe(messagesEl, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(scheduleFeedUpdate).observe(messagesEl);
+    }
+    messagesEl.addEventListener(
+      "click",
+      (event) => {
+        const expand = event.target.closest?.(".msg-expand");
+        if (expand && messagesEl.contains(expand)) {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleLongUserMessage(expand);
+        }
+      },
+      true
+    );
+  }
+  document.addEventListener("keydown", onFeedTurnKey);
+  // The panel can be resized / maximized / revealed without the chat list
+  // itself mutating — re-center the turn map on those too.
+  window.addEventListener("resize", scheduleFeedUpdate);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      scheduleFeedUpdate();
+    }
+  });
 })();
