@@ -92,6 +92,7 @@ import {
   appendFigmaRuntimeNudge,
   ensureHarborFigmaConnected,
   harborMcpToolFingerprint,
+  listHarborDeferredMcpTools,
   loadHarborMcpToolsForCline,
   messageHasFigmaUrl,
   shouldNotifyFigmaNeedsConnect,
@@ -120,6 +121,12 @@ import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
 import { createHttpTool, HTTP_REQUEST_TOOL } from "./httpTool";
 import { withTodoStepEmitter } from "./todoStepContext";
+import { computeContextBreakdown } from "./contextBreakdown";
+import {
+  withContextBreakdownSink,
+  withHarborContextBreakdownExtension,
+  type CapturedModelRequest,
+} from "./contextBreakdownExtension";
 import {
   createTodoReminderState,
   withHarborTodoReminderExtension,
@@ -127,9 +134,9 @@ import {
 } from "./todoReminder";
 import { createTodoTool, TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import {
-  clearTurnEditedPaths,
   createVerifyEditsTool,
   noteTurnEditedPath,
+  withTurnEditedPaths,
 } from "./verifyEditsTool";
 import {
   recordToolFailure,
@@ -600,6 +607,10 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
             figmaUrlInTurn: messageHasFigmaUrl(turnPrompt),
             cwd: workspaceCwd(),
           });
+          rememberMcpSystemHint(
+            String(input.config.sessionId || ""),
+            mcp.systemHint
+          );
           const basePrompt = String(input.config.systemPrompt || "");
           const systemPrompt = [basePrompt, mcp.systemHint]
             .filter((part) => String(part || "").trim())
@@ -636,8 +647,11 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
               ],
               // Act (and Plan defense-in-depth): block commit/push/broad add via shell.
               // + update_todo reminder after N tool calls without a plan.
-              extensions: withHarborTodoReminderExtension(
-                withHarborGitCommandGuardExtension(input.config.extensions)
+              // + request snapshot for the «Context» popover (read-only).
+              extensions: withHarborContextBreakdownExtension(
+                withHarborTodoReminderExtension(
+                  withHarborGitCommandGuardExtension(input.config.extensions)
+                )
               ),
             },
           };
@@ -656,6 +670,25 @@ function getClineCore(bundle: ClineBundle): Promise<ClineCoreInstance> {
     });
   }
   return corePromise;
+}
+
+/** Cline sessionId → MCP system hint added at session start (Context popover). */
+const mcpSystemHintBySession = new Map<string, string>();
+const MCP_SYSTEM_HINT_SESSIONS_MAX = 64;
+
+function rememberMcpSystemHint(sessionId: string, hint: string): void {
+  if (!sessionId) {
+    return;
+  }
+  mcpSystemHintBySession.delete(sessionId);
+  mcpSystemHintBySession.set(sessionId, String(hint || ""));
+  while (mcpSystemHintBySession.size > MCP_SYSTEM_HINT_SESSIONS_MAX) {
+    const oldest = mcpSystemHintBySession.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    mcpSystemHintBySession.delete(oldest);
+  }
 }
 
 function mapHarborModeToCline(agentMode?: string): ClineMode {
@@ -2211,6 +2244,7 @@ export async function runClineAgentTurn(options: {
   // Oversized workspace AGENTS.md: Cline would put all of it into every
   // request — take it out of Cline's rule paths and inject a capped copy.
   const oversizedAgentsMd = await loadOversizedWorkspaceAgentsMd(cwd);
+  const skillsCatalogRules = harborSkillsRulesForLanguage(enabledSkills, uiLang);
   const harborRules = [
     customRules,
     // Truthful self-identification: the UI-selected model id, ahead of any
@@ -2234,7 +2268,7 @@ export async function runClineAgentTurn(options: {
     // update_todo plan card — registered only for Agent/Plan (see enableTodoTool).
     enableTodoTool ? harborTodoRulesForLanguage(uiLang, harborModeId) : "",
     // Skill catalog with descriptions — the Cline skills tool lists names only.
-    harborSkillsRulesForLanguage(enabledSkills, uiLang),
+    skillsCatalogRules,
     resolveModelNeedsVisionHelper(options.model)
       ? harborVisionInspectRulesForLanguage(uiLang)
       : "",
@@ -2406,6 +2440,8 @@ export async function runClineAgentTurn(options: {
   let reusedSession = Boolean(live);
 
   const edits: FileEditStat[] = [];
+  // verify_edits targets for this turn only (parallel chats keep their own).
+  const turnEditedPaths = new Set<string>();
   let assistantText = "";
   /**
    * Assistant text blocks this turn, one per model round (`content_end`).
@@ -2426,6 +2462,28 @@ export async function runClineAgentTurn(options: {
   /** Sum turn deltas so parent + forwarded child usage both count. */
   let usagePromptTokens = 0;
   let usageCompletionTokens = 0;
+  /** Root model request awaiting its usage event (Context popover). */
+  let pendingBreakdownRequest: CapturedModelRequest | undefined;
+  const contextWindowTokens = getContextWindow(options.model);
+  const compactTriggerTokens = enableAutoCompact
+    ? Math.floor(
+        harborCompactionInputBudget(contextWindowTokens, config.autoCompact) *
+          CLINE_COMPACTION_TRIGGER_RATIO
+      )
+    : 0;
+  const buildBreakdown = (
+    request: CapturedModelRequest,
+    usage: { promptTokens: number; completionTokens: number }
+  ) =>
+    computeContextBreakdown({
+      ...request,
+      skillsText: skillsCatalogRules,
+      mcpInstructions: mcpSystemHintBySession.get(sessionId) || "",
+      deferredMcpTools: listHarborDeferredMcpTools(clineMode === "plan"),
+      contextWindow: contextWindowTokens,
+      compactTriggerTokens,
+      usage,
+    });
 
   /**
    * Surface non-lifecycle Cline notices as Harbor phase "cline".
@@ -2696,7 +2754,7 @@ export async function runClineAgentTurn(options: {
                 created: false,
               };
               edits.push(edit);
-              noteTurnEditedPath(filePath);
+              noteTurnEditedPath(filePath, turnEditedPaths);
               callbacks.onFileEdit(edit);
             }
             for (const p of collectInputPaths(
@@ -2704,7 +2762,7 @@ export async function runClineAgentTurn(options: {
                 ? input
                 : {}) as Record<string, unknown>
             )) {
-              noteTurnEditedPath(p);
+              noteTurnEditedPath(p, turnEditedPaths);
             }
           }
         }
@@ -2753,6 +2811,10 @@ export async function runClineAgentTurn(options: {
         // are cumulative and drive the per-chat token totals in the UI.
         usagePromptTokens = Number(event.inputTokens ?? 0);
         usageCompletionTokens = Number(event.outputTokens ?? 0);
+        // First usage after the captured root request belongs to it; later
+        // ones (spawned children, re-dispatched on this session) do not.
+        const breakdownRequest = pendingBreakdownRequest;
+        pendingBreakdownRequest = undefined;
         const cacheRead = Number(event.cacheReadTokens ?? 0);
         const cacheWrite = Number(event.cacheWriteTokens ?? 0);
         // Timing log: request size + cache hits, first and last call of the turn.
@@ -2772,6 +2834,14 @@ export async function runClineAgentTurn(options: {
           totalOutputTokens: Number(event.totalOutputTokens ?? 0),
           totalCacheReadTokens: Number(event.totalCacheReadTokens ?? 0),
           totalCacheWriteTokens: Number(event.totalCacheWriteTokens ?? 0),
+          ...(breakdownRequest
+            ? {
+                breakdown: buildBreakdown(breakdownRequest, {
+                  promptTokens: usagePromptTokens,
+                  completionTokens: usageCompletionTokens,
+                }),
+              }
+            : {}),
         });
         break;
       }
@@ -3027,7 +3097,6 @@ export async function runClineAgentTurn(options: {
     harborModeId
   );
   // After edits: verify nudge only on Agent-like turns that may edit files.
-  clearTurnEditedPaths();
   userPrompt = appendVerifyRuntimeNudge(userPrompt, verifyNudgeThisTurn, uiLang);
   userPrompt = appendSubagentsRuntimeNudge(
     userPrompt,
@@ -3198,8 +3267,10 @@ export async function runClineAgentTurn(options: {
           // Iteration budget: leave unset so Cline treats it as unlimited
           // Cline treats unset maxIterations as unlimited.
           systemPrompt: baseSystemPrompt,
-          extensions: withHarborTodoReminderExtension(
-            withHarborGitCommandGuardExtension(undefined)
+          extensions: withHarborContextBreakdownExtension(
+            withHarborTodoReminderExtension(
+              withHarborGitCommandGuardExtension(undefined)
+            )
           ),
           ...(skillsMasterEnabled && skillAllowlist.length
             ? { skills: skillAllowlist }
@@ -3227,16 +3298,24 @@ export async function runClineAgentTurn(options: {
     };
     timing.start("send");
     timing.start("ttft");
-    await withInspectableImages(imageBundle.urls, () =>
-      // update_todo executes inside the Cline session; bridge its step events
-      // to this turn's Harbor callbacks (ALS, same as inspect_images).
-      withTodoStepEmitter(
-        (step) => emitStep(callbacks, step),
-        () =>
-          withTodoReminder(
-            createTodoReminderState(todoNudgeThisTurn, uiLang, harborModeId),
-            () => withTurnImages(userImages, runTurn)
+    // Root model requests → Context popover breakdown (ALS, same pattern).
+    const captureRequest = (request: CapturedModelRequest) => {
+      pendingBreakdownRequest = request;
+    };
+    await withTurnEditedPaths(turnEditedPaths, () =>
+      withContextBreakdownSink(captureRequest, () =>
+        withInspectableImages(imageBundle.urls, () =>
+          // update_todo executes inside the Cline session; bridge its step events
+          // to this turn's Harbor callbacks (ALS, same as inspect_images).
+          withTodoStepEmitter(
+            (step) => emitStep(callbacks, step),
+            () =>
+              withTodoReminder(
+                createTodoReminderState(todoNudgeThisTurn, uiLang, harborModeId),
+                () => withTurnImages(userImages, runTurn)
+              )
           )
+        )
       )
     );
     timing.end("send");
@@ -3293,11 +3372,15 @@ export async function runClineAgentTurn(options: {
           maxAttempts: MAX_TOOL_CONTINUE_ATTEMPTS,
         });
         try {
-          const next = await core.send({
-            sessionId,
-            prompt: toolContinueNudgePrompt(unfinished, uiLang),
-            mode: clineMode,
-          });
+          const next = await withTurnEditedPaths(turnEditedPaths, () =>
+            withContextBreakdownSink(captureRequest, () =>
+              core.send({
+                sessionId,
+                prompt: toolContinueNudgePrompt(unfinished, uiLang),
+                mode: clineMode,
+              })
+            )
+          );
           if (next === undefined) {
             break;
           }
@@ -3349,11 +3432,15 @@ export async function runClineAgentTurn(options: {
         callbacks.onAssistantStreamClear?.();
         let rewritten = false;
         try {
-          const next = await core.send({
-            sessionId,
-            prompt: replyLanguageRewritePrompt(uiLang),
-            mode: clineMode,
-          });
+          const next = await withTurnEditedPaths(turnEditedPaths, () =>
+            withContextBreakdownSink(captureRequest, () =>
+              core.send({
+                sessionId,
+                prompt: replyLanguageRewritePrompt(uiLang),
+                mode: clineMode,
+              })
+            )
+          );
           if (next !== undefined) {
             result = next;
             rewritten = true;

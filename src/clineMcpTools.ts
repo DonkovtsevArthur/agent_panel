@@ -245,6 +245,30 @@ export async function loadHarborMcpToolsForCline(options: {
 }
 
 /** Append Figma call instructions to the runtime user prompt (UI text unchanged). */
+/**
+ * MCP tool schemas hidden behind tools-on-demand dispatchers (not sent) —
+ * the «Context» popover shows them as deferred.
+ */
+export function listHarborDeferredMcpTools(readonlyOnly: boolean): Array<{
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}> {
+  const mcp = getMcpManager();
+  if (!mcp) {
+    return [];
+  }
+  try {
+    return mcp.listDeferredOpenAiTools(readonlyOnly).map((tool) => ({
+      name: String(tool.function?.name || ""),
+      description: tool.function?.description,
+      inputSchema: tool.function?.parameters,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function appendFigmaRuntimeNudge(userText: string): string {
   const base = String(userText || "").trim();
   const mcp = getMcpManager();

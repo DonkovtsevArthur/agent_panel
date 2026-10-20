@@ -32,6 +32,26 @@ test("narration step number: ignores unrelated numbers", () => {
   assert.equal(parse(""), 0);
 });
 
+function loadPrefixStripper() {
+  const start = panel.indexOf("function stripNarrationStepPrefix(");
+  const end = panel.indexOf("// end stripNarrationStepPrefix");
+  assert.ok(start > 0 && end > start, "stripper source found");
+  return new Function(`${panel.slice(start, end)}\nreturn stripNarrationStepPrefix;`)();
+}
+
+test("narration without a plan card: «Шаг N —» prefix is dropped", () => {
+  const strip = loadPrefixStripper();
+  assert.equal(
+    strip("Шаг 7 — проверяю тесты и снапшоты модалки."),
+    "Проверяю тесты и снапшоты модалки."
+  );
+  assert.equal(strip("Step 3: wire the store"), "Wire the store");
+  assert.equal(strip("Шаг 3 из 10 — UI"), "UI");
+  assert.equal(strip("Правлю 3 файла"), "Правлю 3 файла");
+  assert.equal(strip("Готово. Шаг 5: маппинг"), "Готово. Шаг 5: маппинг");
+  assert.match(panel, /: stripNarrationStepPrefix\(raw\) \|\| raw;/);
+});
+
 test("narration advances the running plan card (wiring)", () => {
   assert.match(panel, /advanceTodoPlanFromNarration\(raw\);/);
   assert.match(panel, /function advanceTodoPlanFromNarration\(text\)/);
@@ -57,6 +77,7 @@ test("agent update_todo rules ask for «Шаг N — …» narration", () => {
     assert.match(harborTodoRulesForLanguage("ru", "agent"), /«Шаг N — …»/);
     assert.match(harborTodoRulesForLanguage("en"), /"Step N — …"/);
     assert.doesNotMatch(harborTodoRulesForLanguage("ru", "plan"), /Шаг N/);
+    assert.match(harborTodoRulesForLanguage("ru", "agent"), /карточки нет, и «Шаг N» не пиши/);
   } finally {
     Module._load = originalLoad;
   }

@@ -438,7 +438,36 @@ export class McpManager {
     // connects lazily via ensureFigmaConnected on turns that reference a
     // Figma URL, plus explicit activation / Settings paths.
     void this.healCustomServers();
-    const onDemand = this.mcpToolsOnDemand();
+    return this.collectOpenAiTools(
+      readonlyOnly,
+      this.mcpToolsOnDemand(),
+      this.atlassianToolsOnDemand()
+    );
+  }
+
+  /**
+   * Full schemas hidden behind `<server>_read` / `_write` dispatchers (tools
+   * on demand) — not sent with requests; the «Context» popover lists them as
+   * deferred.
+   */
+  listDeferredOpenAiTools(readonlyOnly = false): ChatTool[] {
+    const sent = new Set(
+      this.collectOpenAiTools(
+        readonlyOnly,
+        this.mcpToolsOnDemand(),
+        this.atlassianToolsOnDemand()
+      ).map((t) => t.function.name)
+    );
+    return this.collectOpenAiTools(readonlyOnly, false, false).filter(
+      (t) => !sent.has(t.function.name)
+    );
+  }
+
+  private collectOpenAiTools(
+    readonlyOnly: boolean,
+    onDemand: boolean,
+    atlassianOnDemand: boolean
+  ): ChatTool[] {
     const serverTools = (id: string, list: ChatTool[]): ChatTool[] =>
       onDemand ? compactMcpServerTools(id, list) : list;
     const tools = [
@@ -454,13 +483,13 @@ export class McpManager {
           const cfg = this.customConfigs.find((c) => c.id === id);
           const native = cfg ? nativeAtlassianTools(cfg) : undefined;
           if (native) {
-            return this.atlassianToolsOnDemand()
+            return atlassianOnDemand
               ? atlassianChatTools(id, native, true)
               : rt.tools;
           }
           return serverTools(id, rt.tools);
         }),
-      ...this.nativeToolsWhileConnecting(),
+      ...this.nativeToolsWhileConnecting(atlassianOnDemand),
     ];
     if (!readonlyOnly) {
       return tools;
@@ -475,7 +504,9 @@ export class McpManager {
    * once it connects. A call made before then waits in callToolRaw →
    * connectCustom. Servers in error / backoff are left out, as before.
    */
-  private nativeToolsWhileConnecting(): ChatTool[] {
+  private nativeToolsWhileConnecting(
+    atlassianOnDemand = this.atlassianToolsOnDemand()
+  ): ChatTool[] {
     const out: ChatTool[] = [];
     for (const cfg of this.customConfigs) {
       if (cfg.enabled === false || !isNativeAtlassianConfig(cfg)) {
@@ -489,7 +520,7 @@ export class McpManager {
       const native = nativeAtlassianTools(cfg);
       if (native) {
         out.push(
-          ...atlassianChatTools(cfg.id, native, this.atlassianToolsOnDemand())
+          ...atlassianChatTools(cfg.id, native, atlassianOnDemand)
         );
       }
     }

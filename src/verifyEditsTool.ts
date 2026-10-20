@@ -4,6 +4,7 @@
  * Read-only (languages.getDiagnostics); safe in Agent / Plan / Ask.
  */
 import { buildDiagnosticsMessage } from "./turnContext";
+import { createTurnScopedValue } from "./turnScopedValue";
 
 type CreateTool = (config: {
   name: string;
@@ -15,22 +16,30 @@ type CreateTool = (config: {
 
 export const VERIFY_EDITS_TOOL = "verify_edits";
 
-/** Paths edited in the current turn (cleared at turn start). */
-const turnEditedPaths = new Set<string>();
+/**
+ * Paths edited in the current turn — one set per turn, so parallel chats never
+ * clear or read each other's edits.
+ */
+const turnEditedPaths = createTurnScopedValue<Set<string>>();
 
-export function clearTurnEditedPaths(): void {
-  turnEditedPaths.clear();
+export function withTurnEditedPaths<T>(
+  paths: Set<string>,
+  fn: () => Promise<T>
+): Promise<T> {
+  return turnEditedPaths.run(paths, fn);
 }
 
-export function noteTurnEditedPath(path: string): void {
+/** `target` — the turn's own set when the caller has it (Cline event handler). */
+export function noteTurnEditedPath(path: string, target?: Set<string>): void {
   const p = String(path || "").trim();
-  if (p) {
-    turnEditedPaths.add(p);
+  const paths = target ?? turnEditedPaths.get();
+  if (p && paths) {
+    paths.add(p);
   }
 }
 
 export function getTurnEditedPaths(): string[] {
-  return [...turnEditedPaths];
+  return [...(turnEditedPaths.get() ?? [])];
 }
 
 function normalizePaths(raw: unknown): string[] {

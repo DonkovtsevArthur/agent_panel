@@ -6,6 +6,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { runAgentTurn, type AgentPhase } from "./agentLoop";
 import type { AgentStepEvent } from "./agentSteps";
+import type { ContextBreakdown } from "./contextBreakdown";
 import {
   discardClineChatSession,
   discardClineChatSessions,
@@ -171,6 +172,8 @@ export class HeadlessPanelHost {
     string,
     { promptTokens: number; cacheReadTokens: number }
   >();
+  /** Last root request per chat split by category — «Context» popover; in memory only. */
+  private readonly contextBreakdown = new Map<string, ContextBreakdown>();
   /** Live turn per chat — parallel chats may run simultaneously (VS Code parity). */
   private readonly chatRuns = new Map<string, AbortController>();
   /**
@@ -1062,6 +1065,8 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      contextBreakdown:
+        this.contextBreakdown.get(this.store.activeChatId || "") || null,
       lastPromptTokens:
         this.lastRequestUsage.get(this.store.activeChatId || "")
           ?.promptTokens || 0,
@@ -1091,6 +1096,8 @@ export class HeadlessPanelHost {
       ...meta,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      contextBreakdown:
+        this.contextBreakdown.get(this.store.activeChatId || "") || null,
       lastPromptTokens:
         this.lastRequestUsage.get(this.store.activeChatId || "")
           ?.promptTokens || 0,
@@ -2793,6 +2800,9 @@ export class HeadlessPanelHost {
           onUsage: (usage) => {
             if (!runActive()) return;
             runContextTokens = usage.used;
+            if (usage.breakdown) {
+              this.contextBreakdown.set(runChatId, usage.breakdown);
+            }
             if ((usage.promptTokens || 0) > 0) {
               this.lastRequestUsage.set(runChatId, {
                 promptTokens: usage.promptTokens || 0,

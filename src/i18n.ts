@@ -35,7 +35,7 @@ export function harborDefaultRulesForLanguage(
       "Весь текст для пользователя — на русском, включая подписи, заголовки и метки полей («Заголовок:», «Описание:», «Ветки:»), а также тексты, которые ты готовишь для вставки (описание MR/PR, комментарий к задаче, changelog), если пользователь или шаблон проекта явно не требует другой язык. На английском оставляй только идентификаторы, пути, команды, имена веток и цитаты из кода.",
       "Для git status/log/diff и любых shell-команд используй run_commands — не проси пользователя запускать их вручную.",
       allowShellGit
-        ? "git commit и git push через run_commands разрешены (Settings → автоподтверждение команд) — выполняй их сам, когда пользователь просит закоммитить/запушить. Стейдж конкретные пути: git add . / -A / commit -a блокируются, если пользователь не просил все изменения."
+        ? "git commit и git push через run_commands выполняй ТОЛЬКО когда пользователь в текущем сообщении явно просит закоммитить/запушить — иначе Harbor их блокирует. Сам по своей инициативе не коммить и не пушь (даже если правила проекта описывают коммиты): оставь изменения незакоммиченными и скажи, что они готовы. Стейдж конкретные пути: git add . / -A / commit -a блокируются, если пользователь не просил все изменения."
         : "git commit / git push / git add . через shell блокируются Harbor — коммит и push только через тег панели «Commit and push» (или явная просьба только запушить).",
       "Чтобы прочитать http(s) страницу, вызывай fetch_web_content. Никогда не говори, что не можешь открывать или загружать внешние URL, и не выдумывай требования авторизации.",
       "Для Figma используй MCP-инструменты, если подключены (Settings → MCP Servers).",
@@ -46,7 +46,7 @@ export function harborDefaultRulesForLanguage(
     "Reply concisely in English.",
     "For git status/log/diff and any shell command, use run_commands instead of asking the user to run it manually.",
     allowShellGit
-      ? "git commit and git push via run_commands are allowed (Settings → auto-approve commands) — run them yourself when the user asks to commit/push. Stage specific paths: git add . / -A / commit -a are blocked unless the user asked for all changes."
+      ? "Run git commit and git push via run_commands ONLY when the current user message explicitly asks to commit/push — otherwise Harbor blocks them. Never commit or push on your own initiative (even if project rules describe commits): leave the changes uncommitted and say they are ready. Stage specific paths: git add . / -A / commit -a are blocked unless the user asked for all changes."
       : "git commit / git push / git add . via shell are blocked by Harbor — commit and push only via the panel «Commit and push» tag (or an explicit push-only request).",
     "To read an http(s) page, call fetch_web_content. Never claim you cannot open or load external URLs, and do not invent authorization requirements.",
     "For Figma use MCP tools when connected (Settings → MCP Servers).",
@@ -512,7 +512,7 @@ export function harborTodoRulesForLanguage(
       "Только для многошаговой работы (2+ шага). Короткий вопрос или одно действие — НЕ вызывай update_todo.",
       "Для многошаговой работы: первый вызов — полный список (все 'pending', первый 'in_progress'); далее — обновлённый полный список после каждого шага (вызов заменяет карточку).",
       "Если план уже в карточке update_todo — НЕ дублируй его текстом в сообщении (никаких «План работ:» / «План реализации:» + нумерованный или маркированный список шагов). В тексте — только статус, уточнения и результат.",
-      "Переходя к следующему шагу, начинай короткую реплику с «Шаг N — …», где N — номер пункта в карточке update_todo (Harbor по ней сразу двигает карточку). Номера — только из карточки, не из <proposed_plan>.",
+      "Переходя к следующему шагу, начинай короткую реплику с «Шаг N — …», где N — номер пункта в карточке update_todo (Harbor по ней сразу двигает карточку). Номера — только из карточки, не из <proposed_plan>. Если в этом ходе ты ещё не вызывал update_todo — карточки нет, и «Шаг N» не пиши.",
       "Финал — все шаги 'done'. Из spawn_agent не вызывать.",
     ].join("\n");
   }
@@ -521,7 +521,7 @@ export function harborTodoRulesForLanguage(
     "Multi-step work only (2+ steps). Short question or a single action — do NOT call update_todo.",
     "For multi-step work: first call is the full step list (all 'pending', first 'in_progress'); then the full updated list after each step (each call replaces the card).",
     "If the plan is already in the update_todo card — do NOT repeat it as text in the message (no \"Plan of work:\" / \"Implementation plan:\" + numbered or bulleted step list). Message text is status, clarifications, and results only.",
-    "When moving to the next step, start a short note with \"Step N — …\", where N is the item number in the update_todo card (Harbor advances the card from it right away). Use the card's numbering only, not <proposed_plan>'s.",
+    "When moving to the next step, start a short note with \"Step N — …\", where N is the item number in the update_todo card (Harbor advances the card from it right away). Use the card's numbering only, not <proposed_plan>'s. If you have not called update_todo this turn, there is no card — do not write \"Step N\".",
     "Finale — every step 'done'. Never call it from spawned sub-agents.",
   ].join("\n");
 }

@@ -38,6 +38,7 @@ import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
 import type { AgentPhase } from "./agentLoop";
+import type { ContextBreakdown } from "./contextBreakdown";
 import { resolveToolApproval } from "./toolApproval";
 import { buildHarborSettingsPayloadCore } from "./settingsPayload";
 import {
@@ -443,6 +444,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     string,
     { promptTokens: number; cacheReadTokens: number }
   >();
+  /** Last root request per chat split by category — «Context» popover; in memory only. */
+  private readonly contextBreakdown = new Map<string, ContextBreakdown>();
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
   /**
@@ -1422,6 +1425,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       totalCacheWriteTokens: this.totalCacheWriteTokens,
       promptTokens: last.promptTokens,
       cacheReadTokens: last.cacheReadTokens,
+      breakdown:
+        this.contextBreakdown.get(this.store.activeChatId || "") || null,
     });
   }
 
@@ -2519,6 +2524,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       branches,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      contextBreakdown:
+        this.contextBreakdown.get(this.store.activeChatId || "") || null,
       totalInputTokens: this.totalInputTokens,
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
@@ -4408,6 +4415,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               return;
             }
             runContextTokens = usage.used;
+            if (usage.breakdown) {
+              this.contextBreakdown.set(runChatId, usage.breakdown);
+            }
             if ((usage.promptTokens || 0) > 0) {
               this.lastRequestUsage.set(runChatId, {
                 promptTokens: usage.promptTokens || 0,
@@ -6451,6 +6461,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       chatTitle: agentName,
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
+      contextBreakdown:
+        this.contextBreakdown.get(this.store.activeChatId || "") || null,
       totalInputTokens: this.totalInputTokens,
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,

@@ -44,6 +44,7 @@ const MODULES = [
   "19-clipboard-bindings.js",
   "20-message-router.js",
   "21-feed-ux.js",
+  "22-context-popover.js",
 ];
 
 function build() {

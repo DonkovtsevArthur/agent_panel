@@ -9,11 +9,10 @@
  * bodies for the current turn, and keep them *before* text — GLM often
  * ignores image_url parts that come after a long text part.
  */
-import { AsyncLocalStorage } from "async_hooks";
+import { createTurnScopedValue } from "./turnScopedValue";
 
-const turnImages = new AsyncLocalStorage<string[]>();
-/** Fallback when Cline fetch runs outside the ALS context (event emitter). */
-let fallbackTurnImages: string[] = [];
+/** ALS + unambiguous fallback for Cline fetches outside the ALS context. */
+const turnImages = createTurnScopedValue<string[]>();
 
 const IMAGE_PLACEHOLDER_RE =
   /\[Image attached — this model cannot view images\]|\[media omitted: invalid or exceeds size limit\]/g;
@@ -28,22 +27,13 @@ export function withTurnImages<T>(
   if (clean.length) {
     visionLog(`turn images=${clean.length}`);
   }
-  // Pin the module fallback for the whole turn — image-less turns included —
-  // so a concurrent turn's images cannot leak into this turn's fetches that
-  // ran outside the ALS context (event emitter).
-  const previous = fallbackTurnImages;
-  fallbackTurnImages = clean;
-  return turnImages.run(clean, fn).finally(() => {
-    fallbackTurnImages = previous;
-  });
+  // Image-less turns open a scope too: while they overlap with an image turn
+  // the fallback is ambiguous, so a concurrent chat's images never leak in.
+  return turnImages.run(clean, fn);
 }
 
 function currentTurnImages(): string[] {
-  const fromAls = turnImages.getStore();
-  if (fromAls?.length) {
-    return fromAls;
-  }
-  return fallbackTurnImages;
+  return turnImages.get() ?? [];
 }
 
 function requestUrl(input: string | URL | Request): string {

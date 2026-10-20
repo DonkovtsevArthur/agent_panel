@@ -73,6 +73,7 @@
             lastPromptTokens: msg.lastPromptTokens || 0,
             lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
+          setContextBreakdown(msg.contextBreakdown || null);
         }
         renderChatBranches(msg.branches);
         if (!settingsSwitchSuppressed()) {
@@ -306,6 +307,7 @@
             lastPromptTokens: msg.lastPromptTokens || 0,
             lastCacheReadTokens: msg.lastCacheReadTokens || 0,
           });
+          setContextBreakdown(msg.contextBreakdown || null);
         }
         if (!settingsSwitchSuppressed()) {
           showScreen("chat");
@@ -383,6 +385,11 @@
           lastPromptTokens: msg.promptTokens,
           lastCacheReadTokens: msg.cacheReadTokens,
         });
+        // Breakdown rides only on usage that has it (root request); keep the
+        // last one otherwise. null = host says there is none for this chat.
+        if (msg.breakdown !== undefined) {
+          setContextBreakdown(msg.breakdown);
+        }
         break;
       case "modelsUpdated":
         fillModels(msg.models, msg.selectedModel);
@@ -868,6 +875,7 @@
           lastPromptTokens: 0,
           lastCacheReadTokens: 0,
         });
+        setContextBreakdown(null);
         clearMessageQueue(activeChatId || msg.chatId);
         setBusy(false);
         break;

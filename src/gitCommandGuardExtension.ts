@@ -6,8 +6,8 @@
 import {
   shouldBlockBroadGitDiscard,
   shouldBlockBroadGitStage,
-  shouldBlockGitCommitOrPush,
-  isGitCommitCommand,
+  shouldBlockGitCommit,
+  shouldBlockGitPush,
 } from "./gitCommandPolicy";
 
 export const HARBOR_GIT_COMMAND_GUARD_EXTENSION_NAME =
@@ -22,8 +22,9 @@ export function setHarborGitGuardUserText(text: string): void {
 
 /**
  * Settings → auto-approve shell commands (`tools.approvals.commands`, else the
- * master toggle). When on, `git commit` / `git push` via shell are allowed;
- * broad staging / discard stay guarded.
+ * master toggle). When on, `git commit` / `git push` via shell are allowed only
+ * if the current user message explicitly asks for them; broad staging /
+ * discard stay guarded.
  */
 export const harborGitGuardAllowShellGitRef: { current: boolean } = {
   current: false,
@@ -84,19 +85,21 @@ export function harborBlockedGitCommandReason(
   if (!cmd) {
     return undefined;
   }
-  if (shouldBlockGitCommitOrPush(cmd, userText, allowShellGit)) {
-    if (isGitCommitCommand(cmd)) {
-      return [
-        "Command not executed: Harbor blocks `git commit` via shell",
-        "unless Settings auto-approves shell commands.",
-        "Use the panel «Commit and push» control instead.",
-      ].join(" ");
-    }
+  if (shouldBlockGitCommit(cmd, userText, allowShellGit)) {
+    return [
+      "Command not executed: Harbor blocks `git commit` via shell",
+      allowShellGit
+        ? "unless the user explicitly asked to commit in the current message."
+        : "unless Settings auto-approves shell commands and the user explicitly asked to commit.",
+      "Do not commit on your own — leave the changes uncommitted and tell the user they are ready",
+      "(the panel «Commit and push» control commits them).",
+    ].join(" ");
+  }
+  if (shouldBlockGitPush(cmd, userText, allowShellGit)) {
     return [
       "Command not executed: Harbor blocks `git push` via shell",
-      "unless the user explicitly asked only to push",
-      "or Settings auto-approves shell commands.",
-      "Prefer the panel «Commit and push» control.",
+      "unless the user explicitly asked to push in the current message.",
+      "Do not push on your own; prefer the panel «Commit and push» control.",
     ].join(" ");
   }
   if (shouldBlockBroadGitStage(cmd, userText)) {

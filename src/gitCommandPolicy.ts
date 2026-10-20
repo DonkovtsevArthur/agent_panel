@@ -98,26 +98,87 @@ export function looksLikeExplicitPushRequest(text: string): boolean {
   );
 }
 
+function normalizeGitRequestText(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** «Почему закоммитил?» / «как запушить?» — вопрос, а не просьба. */
+function startsAsQuestion(value: string): boolean {
+  // `\b` в JS не видит границ кириллических слов — граница явная.
+  return /^(как|почему|зачем|что|когда|где|нужно ли|надо ли|стоит ли|why|how|what|when|should)(?=$|[\s,.?!])/.test(
+    value
+  );
+}
+
+const COMMIT_INTENT =
+  /(закоммит|коммитн|(?:сделай|сделать|создай|создать|оформи|оформить)\s+коммит|\bcommit\b(?!\s+messages?\b))/;
+const COMMIT_NEGATION =
+  /(^|[\s,.;:!])(не|без|не надо|не нужно|не стоит|никаких)\s+(?:\S+\s+)?(закоммит|коммит|commit)|\b(?:don'?t|do not|no|without)\s+(?:\S+\s+)?commit/;
+const PUSH_INTENT = /(запуш|пушн|пушь|\bpush\b)/;
+const PUSH_NEGATION =
+  /(^|[\s,.;:!])(не|без|не надо|не нужно|не стоит)\s+(?:\S+\s+)?(запуш|пуш|push)|\b(?:don'?t|do not|no|without)\s+(?:\S+\s+)?push/;
+
+/** В сообщении пользователя есть явная просьба закоммитить (не вопрос и не отрицание). */
+export function userRequestsGitCommit(text: string): boolean {
+  const value = normalizeGitRequestText(text);
+  if (!value || startsAsQuestion(value) || COMMIT_NEGATION.test(value)) {
+    return false;
+  }
+  return COMMIT_INTENT.test(value);
+}
+
+/** В сообщении пользователя есть явная просьба запушить (не вопрос и не отрицание). */
+export function userRequestsGitPush(text: string): boolean {
+  const value = normalizeGitRequestText(text);
+  if (!value || startsAsQuestion(value) || PUSH_NEGATION.test(value)) {
+    return false;
+  }
+  return PUSH_INTENT.test(value);
+}
+
+/** `git commit` через shell заблокирован для этого хода. */
+export function shouldBlockGitCommit(
+  command: string,
+  userText = "",
+  allowShellGit = false
+): boolean {
+  return (
+    isGitCommitCommand(command) &&
+    !(allowShellGit && userRequestsGitCommit(userText))
+  );
+}
+
+/** `git push` через shell заблокирован для этого хода. */
+export function shouldBlockGitPush(
+  command: string,
+  userText = "",
+  allowShellGit = false
+): boolean {
+  if (!isGitPushCommand(command) || looksLikeExplicitPushRequest(userText)) {
+    return false;
+  }
+  return !(allowShellGit && userRequestsGitPush(userText));
+}
+
 /**
- * В Settings включено автоподтверждение команд (`allowShellGit`) —
- * commit и push через run_command разрешены.
- * Иначе commit только через UI-тег, а push — только по явной просьбе запушить.
+ * Commit и push через run_command — только по явной просьбе в текущем
+ * сообщении пользователя. Автоподтверждение команд в Settings (`allowShellGit`)
+ * само по себе их не разрешает: без него commit только через UI-тег,
+ * а push — только по короткой просьбе «запушь».
  */
 export function shouldBlockGitCommitOrPush(
   command: string,
   userText = "",
   allowShellGit = false
 ): boolean {
-  if (allowShellGit) {
-    return false;
-  }
-  if (isGitCommitCommand(command)) {
-    return true;
-  }
-  if (isGitPushCommand(command)) {
-    return !looksLikeExplicitPushRequest(userText);
-  }
-  return false;
+  return (
+    shouldBlockGitCommit(command, userText, allowShellGit) ||
+    shouldBlockGitPush(command, userText, allowShellGit)
+  );
 }
 
 export function isGitMutationCommand(command: string): boolean {

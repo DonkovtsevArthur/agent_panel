@@ -9,6 +9,7 @@ import { runClineAgentTurn } from "./clineRuntime";
 import type * as vscode from "vscode";
 import type { AgentStepEvent } from "./agentSteps";
 import type { UiMessage } from "./sessionStore";
+import type { ContextBreakdown } from "./contextBreakdown";
 
 /**
  * Busy-line phase for Harbor hosts.
@@ -49,6 +50,8 @@ export interface ContextUsageInfo {
   totalCacheReadTokens?: number;
   /** Суммарные записи кеша за все итерации сессии. */
   totalCacheWriteTokens?: number;
+  /** Разбивка окна по категориям для попапа «Контекст» (запрос корневого агента). */
+  breakdown?: ContextBreakdown;
 }
 
 export interface AgentRunCallbacks {

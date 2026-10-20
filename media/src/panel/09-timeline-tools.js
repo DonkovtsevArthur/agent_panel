@@ -1865,7 +1865,12 @@
       `<span class="agent-step-label agent-step-text-label"></span>`;
     const textLabel = el.querySelector(".agent-step-text-label");
     if (textLabel) {
-      textLabel.innerHTML = renderInlineMarkdown(raw);
+      // «Шаг N — …» only makes sense next to a plan card; without one the
+      // number points nowhere — show the note without it.
+      const shown = findDockableTodoCard()
+        ? raw
+        : stripNarrationStepPrefix(raw) || raw;
+      textLabel.innerHTML = renderInlineMarkdown(shown);
     }
     advanceTodoPlanFromNarration(raw);
     positionTextStepAfterTimeline(turnScope, el);
@@ -2598,6 +2603,24 @@
     return m ? Number(m[1]) : 0;
   }
   // end narrationTodoStepNumber
+
+  /**
+   * Leading «Шаг 7 — » / «Step 3: » removed from a note (first letter
+   * re-capitalised); text without such a prefix is returned as is.
+   * Self-contained — tests eval it from panel.js.
+   */
+  function stripNarrationStepPrefix(text) {
+    const value = String(text || "");
+    const m = /^\s*(?:Шаг|Этап|Step)\s*№?\s*\d{1,2}(?!\d)(?:\s*(?:из|of|\/)\s*\d{1,2})?\s*(?:[—–:.-]\s*|$)/i.exec(
+      value
+    );
+    if (!m) {
+      return value;
+    }
+    const rest = value.slice(m[0].length);
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+  }
+  // end stripNarrationStepPrefix
 
   /**
    * Keep the running plan card in step with the work: when the agent says

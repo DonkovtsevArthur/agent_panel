@@ -151,28 +151,82 @@ test("formatGitRemoteOutput returns empty for blank input", () => {
   assert.equal(formatGitRemoteOutput("  ", "\n"), "");
 });
 
-test("allows git commit and push via shell when Settings auto-approves commands", () => {
+test("auto-approved commands allow git commit / push only on an explicit request", () => {
   const { shouldBlockGitCommitOrPush } = require("../out/gitCommandPolicy.js");
   const {
     harborBlockedGitCommandReason,
   } = require("../out/gitCommandGuardExtension.js");
-  assert.equal(shouldBlockGitCommitOrPush("git push", "поправь и отправь", true), false);
+
+  // Задача без просьбы закоммитить — даже с автоподтверждением блок.
+  const task = "так давай решим задачу ASUIP-3238 но ответвится от дев";
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", task, true), true);
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "", true), true);
+  assert.equal(shouldBlockGitCommitOrPush("git push -u origin HEAD", "", true), true);
+  assert.equal(shouldBlockGitCommitOrPush("git push", "поправь и отправь", true), true);
+  assert.match(
+    String(harborBlockedGitCommandReason("git commit -m 'x'", task, true)),
+    /blocks `git commit`.*explicitly asked to commit/
+  );
+
+  // Явная просьба + автоподтверждение — пропускаем.
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "закоммить", true), false);
   assert.equal(
-    shouldBlockGitCommitOrPush("git push -u origin HEAD", "", true),
+    shouldBlockGitCommitOrPush("git commit -m 'x'", "почини тест и сделай коммит", true),
     false
   );
-  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "", true), false);
-  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "", false), true);
   assert.equal(
-    harborBlockedGitCommandReason("git add -A && git commit -m 'x'", "закоммить", true) !== undefined,
-    true
+    shouldBlockGitCommitOrPush(
+      "git add src/a.ts && git commit -m 'x' && git push",
+      "закоммить и запушь",
+      true
+    ),
+    false
   );
+  assert.equal(harborBlockedGitCommandReason("git push", "запушь ветку в origin", true), undefined);
+
+  // Commit разрешён, push — нет: блок по push-части цепочки.
+  assert.match(
+    String(
+      harborBlockedGitCommandReason("git commit -m 'x' && git push", "закоммить", true)
+    ),
+    /blocks `git push`/
+  );
+
+  // Без автоподтверждения commit через shell закрыт всегда.
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "закоммить", false), true);
   assert.equal(shouldBlockGitCommitOrPush("git push", "поправь и отправь", false), true);
-  assert.equal(harborBlockedGitCommandReason("git push", "", true), undefined);
   assert.match(
     String(harborBlockedGitCommandReason("git push", "", false)),
     /blocks `git push`/
   );
+  assert.equal(
+    harborBlockedGitCommandReason("git add -A && git commit -m 'x'", "закоммить", true) !== undefined,
+    true
+  );
+});
+
+test("userRequestsGitCommit / userRequestsGitPush: вопросы и отрицания — не просьба", () => {
+  const {
+    userRequestsGitCommit,
+    userRequestsGitPush,
+  } = require("../out/gitCommandPolicy.js");
+
+  assert.equal(userRequestsGitCommit("закоммить изменения"), true);
+  assert.equal(userRequestsGitCommit("Закоммитим?"), true);
+  assert.equal(userRequestsGitCommit("коммитни это"), true);
+  assert.equal(userRequestsGitCommit("please commit this"), true);
+  assert.equal(userRequestsGitCommit("почему закоммитил если я не просил?"), false);
+  assert.equal(userRequestsGitCommit("поправь, но не коммить"), false);
+  assert.equal(userRequestsGitCommit("сделай без коммита"), false);
+  assert.equal(userRequestsGitCommit("don't commit yet"), false);
+  assert.equal(userRequestsGitCommit("напиши commit message"), false);
+  assert.equal(userRequestsGitCommit("реши задачу ASUIP-3238"), false);
+
+  assert.equal(userRequestsGitPush("закоммить и запушь"), true);
+  assert.equal(userRequestsGitPush("push it"), true);
+  assert.equal(userRequestsGitPush("закоммить, но не пушь"), false);
+  assert.equal(userRequestsGitPush("как запушить ветку?"), false);
+  assert.equal(userRequestsGitPush("поправь и отправь"), false);
 });
 
 test("formatHookFailureOutput: stderr + stdout в fenced-блоке", () => {
