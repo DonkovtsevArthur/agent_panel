@@ -20,6 +20,19 @@ export function setHarborGitGuardUserText(text: string): void {
   harborGitGuardUserTextRef.current = String(text || "");
 }
 
+/**
+ * Settings → auto-approve shell commands (`tools.approvals.commands`, else the
+ * master toggle). When on, `git commit` / `git push` via shell are allowed;
+ * broad staging / discard stay guarded.
+ */
+export const harborGitGuardAllowShellGitRef: { current: boolean } = {
+  current: false,
+};
+
+export function setHarborGitGuardAllowShellGit(allow: boolean): void {
+  harborGitGuardAllowShellGitRef.current = allow === true;
+}
+
 function commandLineFromEntry(entry: unknown): string {
   if (typeof entry === "string") {
     return entry.trim();
@@ -64,22 +77,25 @@ export function extractRunCommandLines(input: unknown): string[] {
 
 export function harborBlockedGitCommandReason(
   command: string,
-  userText: string
+  userText: string,
+  allowShellGit = false
 ): string | undefined {
   const cmd = String(command || "").trim();
   if (!cmd) {
     return undefined;
   }
-  if (shouldBlockGitCommitOrPush(cmd, userText)) {
+  if (shouldBlockGitCommitOrPush(cmd, userText, allowShellGit)) {
     if (isGitCommitCommand(cmd)) {
       return [
-        "Command not executed: Harbor blocks `git commit` via shell.",
+        "Command not executed: Harbor blocks `git commit` via shell",
+        "unless Settings auto-approves shell commands.",
         "Use the panel «Commit and push» control instead.",
       ].join(" ");
     }
     return [
       "Command not executed: Harbor blocks `git push` via shell",
-      "unless the user explicitly asked only to push.",
+      "unless the user explicitly asked only to push",
+      "or Settings auto-approves shell commands.",
       "Prefer the panel «Commit and push» control.",
     ].join(" ");
   }
@@ -133,7 +149,11 @@ export function createHarborGitCommandGuardExtension(): {
         }
         const userText = harborGitGuardUserTextRef.current;
         for (const command of commands) {
-          const reason = harborBlockedGitCommandReason(command, userText);
+          const reason = harborBlockedGitCommandReason(
+            command,
+            userText,
+            harborGitGuardAllowShellGitRef.current
+          );
           if (reason) {
             return { skip: true, reason };
           }

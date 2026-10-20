@@ -7784,6 +7784,42 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   font-size: 15px;
 }
 
+/* Markdown-блок (```markdown / описание MR): превью в рамке код-блока,
+   исходник — по кнопке «Показать исходник». */
+.md-md-preview {
+  padding: 8px 12px;
+  padding-right: 64px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--vscode-editorGroup-border);
+  background: var(
+    --vscode-textCodeBlock-background,
+    var(--vscode-editor-background)
+  );
+  overflow-wrap: anywhere;
+}
+
+.md-md-preview > :first-child {
+  margin-top: 0;
+}
+
+.md-md-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.md-pre-wrap.is-md-preview .md-md-source {
+  display: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.md-pre-wrap.is-md-preview.is-source .md-md-source {
+  display: block;
+}
+
+.md-pre-wrap.is-md-preview.is-source .md-md-preview {
+  display: none;
+}
+
 /* SCM над полем ввода: одна сегментированная кнопка. */
 .composer-scm-split {
   display: inline-flex;

@@ -20,6 +20,12 @@ export interface ModelCapabilities {
   /** Значение reasoning_effort по умолчанию, если не задано в конфиге. */
   reasoningEffortDefault?: string;
   /**
+   * Уровни reasoning_effort, которые принимает гейтвей для модели. Не задано —
+   * все уровни Harbor (low/medium/high/xhigh). DeepSeek V4 отвечает 400 на
+   * `medium`, поэтому селектор и хост ограничиваются этим списком.
+   */
+  reasoningEffortLevels?: string[];
+  /**
    * Anthropic extended thinking: thinking-блоки несут криптографическую
    * signature, которую OpenAI-style `reasoning_content` не передаёт. Эхо
    * reasoning_content на assistant tool-call turn гейтвей переводит в
@@ -137,6 +143,16 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
     },
   },
   {
+    // DeepSeek V4 / V4.1 thinking через LiteLLM: reasoning_effort принимает
+    // только low / high / xhigh / max (на `medium` — 400 BadRequest).
+    pattern: /deepseek[-_.]?v4/i,
+    capabilities: {
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: "high",
+      reasoningEffortLevels: ["low", "high", "xhigh"],
+    },
+  },
+  {
     pattern:
       /deepseek|coder|codestral|codellama|code-llama|starcoder|qwen3-coder/i,
     capabilities: { supportsVision: false },
@@ -227,6 +243,10 @@ export function resolveModelCapabilities(
       : {}),
     ...(typeof resolved.reasoningEffortDefault === "string"
       ? { reasoningEffortDefault: resolved.reasoningEffortDefault }
+      : {}),
+    ...(Array.isArray(resolved.reasoningEffortLevels) &&
+    resolved.reasoningEffortLevels.length
+      ? { reasoningEffortLevels: [...resolved.reasoningEffortLevels] }
       : {}),
     supportsVision: resolved.supportsVision === true,
     weakVision: resolved.weakVision === true,

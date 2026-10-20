@@ -345,7 +345,7 @@
     editingModelId = selectedModelId || models[0]?.id || "";
     editingModeId = normalizeAgentModeUi(item.mode || agentMode || "agent");
     editingReasoningEffort = modelSupportsReasoning(editingModelId)
-      ? normalizeReasonLevel(selectedReasoningEffort) ||
+      ? clampReasonLevel(selectedReasoningEffort, editingModelId) ||
         defaultReasonForModel(editingModelId)
       : "";
     editingAttachments = Array.isArray(item.attachments)
@@ -763,7 +763,7 @@
     editingModelId = next;
     if (modelSupportsReasoning(editingModelId)) {
       editingReasoningEffort =
-        normalizeReasonLevel(editingReasoningEffort) ||
+        clampReasonLevel(editingReasoningEffort, editingModelId) ||
         defaultReasonForModel(editingModelId);
     } else {
       editingReasoningEffort = "";
@@ -1063,7 +1063,7 @@
       return;
     }
     const level =
-      normalizeReasonLevel(editingReasoningEffort) ||
+      clampReasonLevel(editingReasoningEffort, editingModelId || selectedModelId) ||
       defaultReasonForModel(editingModelId || selectedModelId);
     const label = picker.querySelector(".msg-edit-reason-label");
     const trigger = picker.querySelector(".msg-edit-reason-trigger");
@@ -1080,8 +1080,9 @@
       return;
     }
     menuEl.innerHTML = "";
-    const activeLevel = normalizeReasonLevel(editingReasoningEffort);
-    for (const level of REASON_LEVELS) {
+    const editModelId = editingModelId || selectedModelId;
+    const activeLevel = clampReasonLevel(editingReasoningEffort, editModelId);
+    for (const level of reasonLevelsForModel(editModelId)) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className =

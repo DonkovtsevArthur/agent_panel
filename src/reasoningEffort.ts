@@ -32,6 +32,31 @@ export function normalizeReasoningEffort(
   return LEVEL_SET.has(id) ? (id as ReasoningEffortLevel) : undefined;
 }
 
+/**
+ * Подгоняет уровень под список, который принимает модель: неподдерживаемый
+ * уровень → ближайший допустимый не ниже (иначе самый высокий из допустимых).
+ * Пустой список — без ограничений.
+ */
+export function clampReasoningEffortToLevels(
+  level: string | undefined,
+  allowed: readonly string[] | undefined
+): ReasoningEffortLevel | undefined {
+  const normalized = normalizeReasoningEffort(level);
+  const levels = (allowed || [])
+    .map((item) => normalizeReasoningEffort(item))
+    .filter((item): item is ReasoningEffortLevel => Boolean(item));
+  if (!normalized || !levels.length || levels.includes(normalized)) {
+    return normalized;
+  }
+  const rank = (item: ReasoningEffortLevel) =>
+    REASONING_EFFORT_LEVELS.indexOf(item);
+  const sorted = [...levels].sort((a, b) => rank(a) - rank(b));
+  return (
+    sorted.find((item) => rank(item) >= rank(normalized)) ||
+    sorted[sorted.length - 1]
+  );
+}
+
 /** Опции для ClineCore `start` config. */
 export function toClineReasoningOptions(
   level: string | undefined

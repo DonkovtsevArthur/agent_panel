@@ -11,8 +11,7 @@ import {
   getModeById,
   resolveModelEndpoint,
   resolveModelPromptCache,
-  resolveModelReasoningEffort,
-  resolveModelSupportsReasoningEffort,
+  resolveReasoningEffortForRun,
   resolveModelSupportsVision,
   resolveModelNeedsVisionHelper,
 } from "./config";
@@ -61,6 +60,11 @@ import {
   replyLanguageRewritePrompt,
 } from "./replyLanguage";
 import { toClineReasoningOptions } from "./reasoningEffort";
+import {
+  appendSkillUsage,
+  buildSkillUsageEntry,
+  skillNameFromToolInput,
+} from "./skillUsageLog";
 import { FileEditStat } from "./diffStats";
 import { ChatMessage } from "./openaiTypes";
 import type { MessageAttachment } from "./attachments";
@@ -76,6 +80,8 @@ import {
   harborSkillsRulesForLanguage,
   listHarborSkills,
   resolveSkillDirectories,
+  selectCatalogSkills,
+  SKILL_RULES_MAX_SKILLS,
 } from "./harborSkills";
 import type {
   AgentRunCallbacks,
@@ -145,9 +151,11 @@ import { createVscodeCodeNavBackend } from "./codeNavVscode";
 import {
   harborClineToolPolicies,
   harborToolApprovalsFingerprint,
+  isToolGroupAutoApproved,
   requestHarborToolApproval,
 } from "./toolApproval";
 import {
+  setHarborGitGuardAllowShellGit,
   setHarborGitGuardUserText,
   withHarborGitCommandGuardExtension,
 } from "./gitCommandGuardExtension";
@@ -300,6 +308,32 @@ function logTurnTiming(chatId: string, timing: TurnTiming): void {
     }
   } catch {
     // headless hosts without window — timing is diagnostics, never fatal
+  }
+}
+
+const warnedSkillCatalogDrops = new Set<string>();
+
+/**
+ * Skill catalog over SKILL_RULES_MAX_SKILLS: the model never sees the dropped
+ * descriptions, so say which ones once per window (log every turn).
+ */
+function warnSkillCatalogDropped(dropped: string[], lang: "en" | "ru"): void {
+  const key = dropped.join(",");
+  console.warn(
+    `[clineRuntime] skills catalog over ${SKILL_RULES_MAX_SKILLS}, not shown to the model: ${key}`
+  );
+  if (warnedSkillCatalogDrops.has(key)) {
+    return;
+  }
+  warnedSkillCatalogDrops.add(key);
+  const message =
+    lang === "ru"
+      ? `Harbor: включено больше ${SKILL_RULES_MAX_SKILLS} скиллов — модель не видит описаний: ${dropped.join(", ")}. Отключите лишние в настройках, раздел «Скиллы».`
+      : `Harbor: more than ${SKILL_RULES_MAX_SKILLS} skills enabled — the model does not see descriptions of: ${dropped.join(", ")}. Disable unused ones in Settings → Skills.`;
+  try {
+    void vscode.window.showWarningMessage(message);
+  } catch {
+    // headless hosts without window — console line above is enough
   }
 }
 
@@ -2127,6 +2161,10 @@ export async function runClineAgentTurn(options: {
 
   // So Act git blockers see explicit "push" / "all changes" exceptions for this turn.
   setHarborGitGuardUserText(options.userText || "");
+  // Settings → auto-approve shell commands also lets `git commit` / `git push`
+  // through the guard (rules below tell the model the same).
+  const allowShellGit = isToolGroupAutoApproved("commands");
+  setHarborGitGuardAllowShellGit(allowShellGit);
 
   if (shouldNotifyFigmaNeedsConnect(options.userText)) {
     callbacks.onFigmaNeedsConnect?.();
@@ -2157,7 +2195,7 @@ export async function runClineAgentTurn(options: {
   // built-in / legacy defaults are full prompts (with env block) that would
   // duplicate Cline's base — swap them for the compact rules-only form.
   const customRules = isBuiltinSystemPrompt(config.systemPrompt)
-    ? harborDefaultRulesForLanguage(uiLang)
+    ? harborDefaultRulesForLanguage(uiLang, allowShellGit)
     : String(config.systemPrompt || "").trim();
   const modePrompt = String(modeDef.prompt || "").trim();
   const skillsConfig = config.skills;
@@ -2254,11 +2292,9 @@ export async function runClineAgentTurn(options: {
   if (persistSession) {
     liveClineBusyChatIds.add(chatId);
   }
-  const reasoningKey = resolveModelSupportsReasoningEffort(options.model)
-    ? String(
-        options.reasoningEffort || resolveModelReasoningEffort(options.model) || ""
-      )
-    : "";
+  const reasoningKey = String(
+    resolveReasoningEffortForRun(options.model, options.reasoningEffort) || ""
+  );
   const timing = new TurnTiming();
   // Lazy Figma: only reach for the network when this turn actually references
   // a Figma URL — the per-turn fingerprint must never wait on a reconnect
@@ -2328,6 +2364,11 @@ export async function runClineAgentTurn(options: {
     mcpFingerprint ? mcpFingerprint.split(",").filter(Boolean).length : 0
   );
   timing.note("skills", enabledSkills.length);
+  const droppedSkills = selectCatalogSkills(enabledSkills).dropped;
+  if (droppedSkills.length) {
+    timing.note("skillsDropped", droppedSkills.length);
+    warnSkillCatalogDropped(droppedSkills, uiLang);
+  }
   if (oversizedAgentsMd) {
     timing.note("agentsMdTruncatedFrom", oversizedAgentsMd.originalChars);
   }
@@ -2378,6 +2419,8 @@ export async function runClineAgentTurn(options: {
   let reasoningText = "";
   let submitSummary = "";
   let stepSeq = 0;
+  // `skills` tool loads this turn → ~/.harbor/skill-usage.jsonl.
+  const loadedSkills: string[] = [];
   let turnCheckpointRunCount: number | undefined;
   const toolInputs = new Map<string, unknown>();
   /** Sum turn deltas so parent + forwarded child usage both count. */
@@ -2591,6 +2634,12 @@ export async function runClineAgentTurn(options: {
                   ? errorMessageFromToolOutput(event.output)
                   : "";
           const failed = Boolean(errMsg) || toolOutputIsSoftFail(event.output);
+          if (name === "skills" && !failed) {
+            const skillName = skillNameFromToolInput(input);
+            if (skillName) {
+              loadedSkills.push(skillName);
+            }
+          }
           const metrics = parseToolMetrics(name, event.output, input);
           // Record failures for learned-errors context on the next turn.
           if (failed && errMsg && chatId) {
@@ -3001,11 +3050,9 @@ export async function runClineAgentTurn(options: {
     userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
-  const reasoningOptions = resolveModelSupportsReasoningEffort(options.model)
-    ? toClineReasoningOptions(
-        options.reasoningEffort || resolveModelReasoningEffort(options.model)
-      )
-    : {};
+  const reasoningOptions = toClineReasoningOptions(
+    resolveReasoningEffortForRun(options.model, options.reasoningEffort)
+  );
 
   // Resolve real context window / max output so Cline budgets auto-compact and
   // output caps against the model's actual limits instead of a blind default.
@@ -3439,6 +3486,19 @@ export async function runClineAgentTurn(options: {
     throw error;
   } finally {
     logTurnTiming(chatId, timing);
+    if (enabledSkills.length) {
+      appendSkillUsage(
+        buildSkillUsageEntry({
+          workspaceRoot: cwd,
+          chatId,
+          mode: harborModeId,
+          model: options.model,
+          loaded: loadedSkills,
+          catalog: selectCatalogSkills(enabledSkills).skills.length,
+          userText: options.userText || "",
+        })
+      );
+    }
     if (persistSession) {
       liveClineBusyChatIds.delete(chatId);
     } else {

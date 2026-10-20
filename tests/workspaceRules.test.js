@@ -8,6 +8,7 @@ const {
   capWorkspaceRuleText,
   clineRuleSearchPathsWithoutWorkspaceAgentsMd,
   combineWorkspaceRules,
+  findLinkedCommitRulePaths,
   formatOversizedWorkspaceAgentsMdRule,
   loadOversizedWorkspaceAgentsMd,
   loadWorkspaceRules,
@@ -174,4 +175,17 @@ test("clineRuleSearchPathsWithoutWorkspaceAgentsMd drops only the workspace AGEN
   } finally {
     if (saved !== undefined) process.env.CLINE_DIR = saved;
   }
+});
+
+test("findLinkedCommitRulePaths finds commit rule docs linked from AGENTS.md", () => {
+  const text = [
+    "| [commits.md](./docs/agents/commits.md) | Commit messages |",
+    "- Подробнее: [docs/agents/commits.md](./docs/agents/commits.md#git)",
+    "- [api](./docs/agents/api.md), [site](https://example.com/commit.md)",
+    "- [правила коммитов](<docs/коммиты.md>)",
+  ].join("\n");
+  assert.deepEqual(findLinkedCommitRulePaths(text), [
+    "./docs/agents/commits.md",
+    "docs/коммиты.md",
+  ]);
 });

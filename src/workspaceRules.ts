@@ -380,3 +380,30 @@ export async function loadOversizedWorkspaceAgentsMd(
     originalChars: text.length,
   };
 }
+
+/**
+ * Ссылки на отдельный файл правил коммитов из AGENTS.md / .cursorrules:
+ * `[commits.md](./docs/agents/commits.md)`. Сам AGENTS.md часто только
+ * отсылает туда — без этого модель не видела настоящих правил проекта.
+ * Возвращает относительные пути как в тексте, без якорей, без внешних URL.
+ */
+export function findLinkedCommitRulePaths(text: string): string[] {
+  const found: string[] = [];
+  const re = /\]\(\s*<?([^)\s>]+)>?\s*\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const target = match[1].split("#", 1)[0];
+    if (
+      !target ||
+      /^[a-z][a-z0-9+.-]*:/i.test(target) ||
+      !/\.(md|mdc|txt)$/i.test(target) ||
+      !/commit|коммит/i.test(target)
+    ) {
+      continue;
+    }
+    if (!found.includes(target)) {
+      found.push(target);
+    }
+  }
+  return found;
+}

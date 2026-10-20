@@ -18,7 +18,11 @@ import {
   resolveModelContextWindow,
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
-import { normalizeReasoningEffort } from "./reasoningEffort";
+import {
+  clampReasoningEffortToLevels,
+  normalizeReasoningEffort,
+  type ReasoningEffortLevel,
+} from "./reasoningEffort";
 import { DEFAULT_DB_SCHEMA_GLOBS } from "./dbSchemaContext";
 
 export type { AgentModeDef } from "./modes";
@@ -141,6 +145,8 @@ export interface AgentModel {
   supportsReasoningEffort?: boolean;
   /** Вычисляется при getEnabledModels — default для селектора. */
   reasoningEffortDefault?: string;
+  /** Вычисляется при getEnabledModels — допустимые уровни (пусто = все). */
+  reasoningEffortLevels?: string[];
 }
 
 export interface ModelEndpoint {
@@ -952,10 +958,37 @@ export function resolveModelReasoningEffort(
   if (!capabilities.supportsReasoningEffort) {
     return undefined;
   }
-  return (
+  return clampReasoningEffortToLevels(
     normalizeReasoningEffort(capabilities.reasoningEffortDefault) ||
-    normalizeReasoningEffort(fromConfig?.reasoningEffort) ||
-    "high"
+      normalizeReasoningEffort(fromConfig?.reasoningEffort) ||
+      "high",
+    capabilities.reasoningEffortLevels
+  );
+}
+
+/** Уровни reasoning_effort, которые принимает модель (undefined — все). */
+export function resolveModelReasoningEffortLevels(
+  modelOrId: string | AgentModel
+): string[] | undefined {
+  const id = typeof modelOrId === "string" ? modelOrId : modelOrId.id;
+  return resolveModelCapabilities(id).reasoningEffortLevels;
+}
+
+/**
+ * Уровень для запроса: выбранный в UI → default модели, подогнанный под
+ * допустимые уровни. undefined — модель без reasoning_effort.
+ */
+export function resolveReasoningEffortForRun(
+  modelId: string,
+  preferred?: string
+): ReasoningEffortLevel | undefined {
+  if (!resolveModelSupportsReasoningEffort(modelId)) {
+    return undefined;
+  }
+  return clampReasoningEffortToLevels(
+    normalizeReasoningEffort(preferred) ||
+      normalizeReasoningEffort(resolveModelReasoningEffort(modelId)),
+    resolveModelReasoningEffortLevels(modelId)
   );
 }
 
@@ -1013,6 +1046,7 @@ export function getEnabledModels(): AgentModel[] {
       supportsVision: resolveModelSupportsVision(m),
       supportsReasoningEffort: resolveModelSupportsReasoningEffort(m),
       reasoningEffortDefault: resolveModelReasoningEffort(m),
+      reasoningEffortLevels: resolveModelReasoningEffortLevels(m),
     }));
   enabledModelsCache = models;
   enabledModelsCacheKey = key;

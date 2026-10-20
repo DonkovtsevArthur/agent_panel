@@ -91,6 +91,11 @@ import { resolveRemainingReviewFiles } from "./turnFileChanges";
 import { AgentPendingDiffTracker } from "./agentPendingDiff";
 import { discardPaths } from "./discardPaths";
 import {
+  commitAndPushPaths,
+  commitStepToUiMessage,
+  type CommitPushOutcome,
+} from "./commitAndPush";
+import {
   assistantFinaleDisplayText,
   lastUiUserText,
 } from "./planImplement";
@@ -352,6 +357,7 @@ export class HeadlessPanelHost {
       supportsVision: m.supportsVision,
       supportsReasoningEffort: m.supportsReasoningEffort,
       reasoningEffortDefault: m.reasoningEffortDefault,
+      reasoningEffortLevels: m.reasoningEffortLevels,
       favorite: m.favorite,
     }));
   }
@@ -388,6 +394,14 @@ export class HeadlessPanelHost {
       case "ready":
         return this.onReady(String(msg.surface || "panel"));
       case "send": {
+        // Ack before onSend: see agentPanelProvider "send" (queued-send guard).
+        if (msg.clientSendId) {
+          this.post({
+            type: "sendAccepted",
+            chatId: this.store.activeChatId,
+            clientSendId: String(msg.clientSendId),
+          });
+        }
         // Do not await the full turn — otherwise openAgent/stop RPC stay queued
         // behind a long runAgentTurn. User bubble is persisted synchronously
         // before the first await inside onSend.
@@ -517,6 +531,10 @@ export class HeadlessPanelHost {
         return this.onBranchFromMessage(Number(msg.messageIndex));
       case "switchBranch":
         return this.onSwitchBranch(String(msg.chatId || ""));
+      case "commitAndPush":
+        return this.onCommitAndPush(
+          Array.isArray(msg.paths) ? (msg.paths as unknown[]) : []
+        );
       case "discardChanges":
         return this.onDiscardChanges(
           Array.isArray(msg.paths) ? (msg.paths as unknown[]) : []
@@ -1640,6 +1658,153 @@ export class HeadlessPanelHost {
     } else {
       // Explicitly clear composer SCM strip when no review cards remain dirty.
       this.post({ type: "scmButtons", reviews: [], chatId });
+    }
+  }
+
+  /** Сообщение в ленту чата (store + текущая лента, если чат открыт). */
+  private appendUiToChat(
+    chatId: string,
+    message: UiMessage,
+    post: boolean
+  ): void {
+    const chat = this.store.chats[chatId];
+    if (!chat) {
+      return;
+    }
+    const next = [...(chat.uiMessages || []), message].slice(-200);
+    touchChat(this.store, chatId, { uiMessages: next });
+    if (this.isViewingChat(chatId)) {
+      this.uiMessages = next;
+    }
+    this.persist();
+    if (post && this.isViewingChat(chatId)) {
+      this.post({ type: "append", ...message, chatId });
+    }
+  }
+
+  /**
+   * «Закоммитить» в WebStorm — тот же детерминированный commit + push, что в
+   * VS Code (agentPanelProvider.handleCommitAndPush): живой вывод хуков в
+   * статусе, push в фоне после коммита.
+   */
+  private async onCommitAndPush(rawPaths: unknown[]): Promise<unknown> {
+    const chatId = this.store.activeChatId;
+    const lang = resolveUiLanguage(getConfig().language);
+    if (!chatId || !this.store.chats[chatId]) {
+      this.post({ type: "idle", chatId });
+      return { ok: false, error: "no chat" };
+    }
+    if (this.chatRuns.has(chatId)) {
+      this.post({
+        type: "status",
+        chatId,
+        text:
+          lang === "ru"
+            ? "Дождитесь завершения текущего ответа."
+            : "Wait for the current response to finish.",
+        hidden: false,
+      });
+      return { ok: false, error: "busy" };
+    }
+    const paths = rawPaths.map((p) => String(p || "").trim()).filter(Boolean);
+    const controller = new AbortController();
+    this.chatRuns.set(chatId, controller);
+    this.chatRunStartedAt.set(chatId, Date.now());
+    const isCurrent = (): boolean => this.chatRuns.get(chatId) === controller;
+    this.setRunStateForChat(chatId, "running");
+    this.setStatusForChat(
+      chatId,
+      lang === "ru" ? "Коммичу…" : "Committing…",
+      false,
+      "running"
+    );
+    let stepSeq = 0;
+    try {
+      const result = await commitAndPushPaths(paths, {
+        signal: controller.signal,
+        // Чат свободен сразу после коммита; итог push придёт отдельно.
+        backgroundPush: true,
+        onPhase: (detail) => {
+          if (isCurrent()) {
+            this.setStatusForChat(chatId, detail, false, "running");
+          }
+        },
+        onStep: (step) => {
+          if (isCurrent()) {
+            this.appendUiToChat(chatId, commitStepToUiMessage(step, stepSeq++), true);
+          }
+        },
+      });
+      if (!isCurrent()) {
+        return { ok: false, aborted: true };
+      }
+      this.setStatusForChat(chatId, "", true);
+      this.appendUiToChat(
+        chatId,
+        { role: "assistant", text: result.answer },
+        false
+      );
+      this.setRunStateForChat(chatId, result.ok ? "success" : "error");
+      this.post({ type: "assistantDone", text: result.answer, chatId });
+      if (this.isViewingChat(chatId)) {
+        this.postRegenerateState();
+      }
+      this.post({
+        type: "runFinished",
+        outcome: result.ok ? "success" : "error",
+        chatId,
+      });
+      this.opts.onVfsRefresh?.(paths);
+      this.scheduleScmRefresh();
+      if (result.push) {
+        void result.push.then(
+          (outcome) => this.reportBackgroundPush(chatId, outcome),
+          (error) =>
+            this.reportBackgroundPush(chatId, {
+              ok: false,
+              answer:
+                lang === "ru"
+                  ? `Push не удался: ${error instanceof Error ? error.message : String(error)}`
+                  : `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+              step: { command: "git push", ok: false },
+            })
+        );
+      }
+      return { ok: result.ok, answer: result.answer };
+    } catch (err) {
+      if (!isCurrent()) {
+        return { ok: false, aborted: true };
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      const answer =
+        lang === "ru"
+          ? `Не удалось закоммитить и запушить: ${message}`
+          : `Failed to commit and push: ${message}`;
+      this.setStatusForChat(chatId, "", true);
+      this.appendUiToChat(chatId, { role: "error", text: answer }, true);
+      this.setRunStateForChat(chatId, "error");
+      return { ok: false, error: message };
+    } finally {
+      if (isCurrent()) {
+        this.chatRuns.delete(chatId);
+        this.chatRunStartedAt.delete(chatId);
+        this.post({ type: "idle", chatId });
+      }
+    }
+  }
+
+  /** Итог фонового push — в ленту, если в чате сейчас не идёт новый ответ. */
+  private reportBackgroundPush(
+    chatId: string,
+    outcome: CommitPushOutcome
+  ): void {
+    this.scheduleScmRefresh();
+    if (this.store.chats[chatId] && !this.isChatRunning(chatId)) {
+      this.appendUiToChat(
+        chatId,
+        { role: "assistant", text: outcome.answer },
+        true
+      );
     }
   }
 

@@ -709,6 +709,15 @@
   const messageQueues = new Map();
   const MAX_MESSAGE_QUEUE = 10;
   let drainingQueue = false;
+  /**
+   * Queued send posted, host not yet acked (`sendAccepted`). Until then
+   * idle / finale catch-up / runDuration still in flight from the previous
+   * run must not clear busy — that used to drain the next queued message
+   * right behind the first one.
+   * @type {{ id: string, chatId: string, at: number } | null}
+   */
+  let pendingQueuedSend = null;
+  const PENDING_QUEUED_SEND_TTL_MS = 15000;
   let drainScheduled = false;
   let mentionOpen = false;
   let mentionItems = [];

@@ -660,12 +660,11 @@ class HarborHostBridge(
         }
       }
       "commitAndPush" -> {
-        sidecar.request("commit.andPush", obj) { result ->
+        // Commit + push runs in the sidecar's headless host (same flow as VS Code:
+        // live hook output in the status line, push in the background).
+        sidecar.request("webview.handle", obj) { _ ->
           ApplicationManager.getApplication().invokeLater {
             vfsRefresh.refresh(emptyList())
-            if (result != null) {
-              postToWebview(gson.toJson(mapOf("type" to "status", "text" to "commit: $result")))
-            }
           }
         }
       }

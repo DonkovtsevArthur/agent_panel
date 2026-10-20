@@ -88,8 +88,8 @@ export function needsReplyLanguageRewrite(
  */
 export function replyLanguageUserNudge(lang: UiLanguage): string {
   return lang === "ru"
-    ? "[Harbor] Пиши ответ и промежуточные сообщения на русском — даже если в контексте много английского или китайского (код, логи, вывод инструментов). Идентификаторы, пути и команды оставляй как есть."
-    : "[Harbor] Write your reply and interim messages in English — even when the context is full of other languages (code, logs, tool output). Keep identifiers, paths and commands as-is.";
+    ? "[Harbor] Пиши ответ и промежуточные сообщения на русском — даже если в контексте много английского или китайского (код, логи, вывод инструментов). Подписи, заголовки и подготовленные тексты (описание MR, комментарии) тоже на русском. Идентификаторы, пути и команды оставляй как есть."
+    : "[Harbor] Write your reply and interim messages in English — even when the context is full of other languages (code, logs, tool output). Labels, headings and drafted texts (MR description, comments) too. Keep identifiers, paths and commands as-is.";
 }
 
 export function appendReplyLanguageRuntimeNudge(

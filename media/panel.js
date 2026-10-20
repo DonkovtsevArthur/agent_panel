@@ -452,6 +452,7 @@
         `Plan not updated · ${n} ${n === 1 ? "edit" : "edits"} since`,
       codeWrap: "Wrap lines",
       codeCopy: "Copy code",
+      codeSource: "Show source",
       welcomeTitle: "What are we working on?",
       welcomeSuggestExplain: "Explain how this project is structured",
       welcomeSuggestFix: "Find and fix problems in the open file",
@@ -1053,6 +1054,7 @@
       },
       codeWrap: "Переносить строки",
       codeCopy: "Копировать код",
+      codeSource: "Показать исходник",
       welcomeTitle: "Над чем работаем?",
       welcomeSuggestExplain: "Объясни, как устроен этот проект",
       welcomeSuggestFix: "Найди и исправь проблемы в открытом файле",
@@ -2614,6 +2616,15 @@
   const messageQueues = new Map();
   const MAX_MESSAGE_QUEUE = 10;
   let drainingQueue = false;
+  /**
+   * Queued send posted, host not yet acked (`sendAccepted`). Until then
+   * idle / finale catch-up / runDuration still in flight from the previous
+   * run must not clear busy — that used to drain the next queued message
+   * right behind the first one.
+   * @type {{ id: string, chatId: string, at: number } | null}
+   */
+  let pendingQueuedSend = null;
+  const PENDING_QUEUED_SEND_TTL_MS = 15000;
   let drainScheduled = false;
   let mentionOpen = false;
   let mentionItems = [];
@@ -3058,6 +3069,14 @@
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     setBusy(true, { restartRun: true });
+    // The previous run's fallback must not fire behind this send.
+    cancelQueueDrainFallback();
+    const clientSendId = `qs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pendingQueuedSend = {
+      id: clientSendId,
+      chatId: String(activeChatId || ""),
+      at: Date.now(),
+    };
     host.postMessage({
       type: "send",
       text,
@@ -3065,11 +3084,31 @@
       agentMode: modeForSend,
       reasoningEffort: item.reasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
+      clientSendId,
     });
   }
 
+  /**
+   * True while a queued send waits for the host ack in the active chat:
+   * terminal messages arriving now belong to the previous run.
+   */
+  function awaitingQueuedSendAck() {
+    if (!pendingQueuedSend) {
+      return false;
+    }
+    if (
+      Date.now() - pendingQueuedSend.at > PENDING_QUEUED_SEND_TTL_MS ||
+      pendingQueuedSend.chatId !== String(activeChatId || "")
+    ) {
+      // Older host without ack, or the user switched chats — stop guarding.
+      pendingQueuedSend = null;
+      return false;
+    }
+    return true;
+  }
+
   function tryDrainQueue() {
-    if (busy || drainingQueue) {
+    if (busy || drainingQueue || awaitingQueuedSendAck()) {
       return;
     }
     const queue = getActiveQueue();
@@ -5755,7 +5794,7 @@
     editingModelId = selectedModelId || models[0]?.id || "";
     editingModeId = normalizeAgentModeUi(item.mode || agentMode || "agent");
     editingReasoningEffort = modelSupportsReasoning(editingModelId)
-      ? normalizeReasonLevel(selectedReasoningEffort) ||
+      ? clampReasonLevel(selectedReasoningEffort, editingModelId) ||
         defaultReasonForModel(editingModelId)
       : "";
     editingAttachments = Array.isArray(item.attachments)
@@ -6173,7 +6212,7 @@
     editingModelId = next;
     if (modelSupportsReasoning(editingModelId)) {
       editingReasoningEffort =
-        normalizeReasonLevel(editingReasoningEffort) ||
+        clampReasonLevel(editingReasoningEffort, editingModelId) ||
         defaultReasonForModel(editingModelId);
     } else {
       editingReasoningEffort = "";
@@ -6473,7 +6512,7 @@
       return;
     }
     const level =
-      normalizeReasonLevel(editingReasoningEffort) ||
+      clampReasonLevel(editingReasoningEffort, editingModelId || selectedModelId) ||
       defaultReasonForModel(editingModelId || selectedModelId);
     const label = picker.querySelector(".msg-edit-reason-label");
     const trigger = picker.querySelector(".msg-edit-reason-trigger");
@@ -6490,8 +6529,9 @@
       return;
     }
     menuEl.innerHTML = "";
-    const activeLevel = normalizeReasonLevel(editingReasoningEffort);
-    for (const level of REASON_LEVELS) {
+    const editModelId = editingModelId || selectedModelId;
+    const activeLevel = clampReasonLevel(editingReasoningEffort, editModelId);
+    for (const level of reasonLevelsForModel(editModelId)) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className =
@@ -16734,6 +16774,67 @@
     return html + escapeHtml(source.slice(cursor));
   }
 
+  const MARKDOWN_FENCE_LANGS = new Set(["markdown", "md", "gfm", "mdx"]);
+
+  /**
+   * Unlabeled fence that is really Markdown prose (MR / PR descriptions,
+   * release notes): a heading plus list items, no code-ish line endings and
+   * no YAML-style «- key: value» lists.
+   */
+  function looksLikeMarkdownProse(text) {
+    const lines = String(text || "").split("\n");
+    const nonEmpty = lines.filter((l) => l.trim());
+    if (nonEmpty.length < 3) {
+      return false;
+    }
+    const hasHeading = nonEmpty.some((l) => /^#{1,6}\s+\S/.test(l));
+    const items = nonEmpty.filter((l) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(l));
+    if (!hasHeading || !items.length) {
+      return false;
+    }
+    const yamlItems = items.filter((l) => /^\s*-\s+[\w.-]+:(?:\s|$)/.test(l));
+    if (yamlItems.length * 2 >= items.length) {
+      return false;
+    }
+    const codeish = nonEmpty.filter((l) => /[;{}]\s*$|^\s*(?:import|export|const|let|function|def|class)\s/.test(l));
+    return codeish.length * 10 < nonEmpty.length;
+  }
+
+  /**
+   * Markdown fence → rendered preview in the code-block frame. Copy still
+   * takes the raw source (kept in a hidden <pre>), «Source» toggles it.
+   */
+  function renderMarkdownFenceHtml(inner) {
+    const api = getMarkedApi();
+    let previewHtml = "";
+    try {
+      previewHtml = api ? api.parse(inner, { async: false }) : "";
+    } catch {
+      previewHtml = "";
+    }
+    if (!previewHtml) {
+      return "";
+    }
+    const sourceLabel = escapeHtml(t("codeSource"));
+    const copyLabel = escapeHtml(t("codeCopy"));
+    return (
+      `<div class="md-pre-wrap is-md-preview">` +
+      `<div class="md-pre-box">` +
+      `<div class="md-pre-tools">` +
+      `<button type="button" class="md-pre-tool" data-code-action="source" aria-pressed="false" title="${sourceLabel}" aria-label="${sourceLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">code</span>` +
+      `</button>` +
+      `<button type="button" class="md-pre-tool" data-code-action="copy" title="${copyLabel}" aria-label="${copyLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>` +
+      `</button>` +
+      `</div>` +
+      `<div class="md-md-preview">${previewHtml}</div>` +
+      `<pre class="md-pre md-md-source"><code>${escapeHtml(inner)}</code></pre>` +
+      `</div>` +
+      `</div>\n`
+    );
+  }
+
   function renderCodeBlockHtml(text, langRaw) {
     const inner = String(text || "").replace(/\n$/, "");
     if (isFilePath(inner.trim()) && !inner.includes("\n")) {
@@ -16741,6 +16842,17 @@
     }
     const meta = parseCodeFenceMeta(langRaw);
     const language = inferCodeLanguage(meta);
+    if (
+      !meta.path &&
+      !meta.startLine &&
+      (MARKDOWN_FENCE_LANGS.has(language) ||
+        (!language && looksLikeMarkdownProse(inner)))
+    ) {
+      const mdHtml = renderMarkdownFenceHtml(inner);
+      if (mdHtml) {
+        return mdHtml;
+      }
+    }
     const lines = inner.split("\n");
     const showLines =
       meta.startLine > 0 &&
@@ -16848,6 +16960,11 @@
       btn.setAttribute("aria-pressed", on ? "true" : "false");
       return;
     }
+    if (action === "source") {
+      const on = wrap.classList.toggle("is-source");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
     if (action === "copy") {
       const text = codeBlockPlainText(wrap);
       if (!text) {
@@ -16895,6 +17012,16 @@
       const value = String(text || "");
       if (isFilePath(value)) {
         return fileLinkHtml(value);
+      }
+      // Models often wrap URLs in backticks («ссылка: `https://…`») — keep
+      // the code look but make it clickable like a plain link.
+      if (/^https?:\/\/\S+$/i.test(value.trim())) {
+        const href = value.trim();
+        return `<a class="md-link" href="${escapeHtml(
+          href
+        )}" data-href="${escapeHtml(href)}"><code class="md-code">${escapeHtml(
+          value
+        )}</code></a>`;
       }
       return `<code class="md-code">${escapeHtml(value)}</code>`;
     };
@@ -17353,8 +17480,10 @@
         );
         const editReasonLabel = editReasonSupported
           ? reasonLevelLabel(
-              normalizeReasonLevel(editingReasoningEffort) ||
-                defaultReasonForModel(editingModelId || selectedModelId)
+              clampReasonLevel(
+                editingReasoningEffort,
+                editingModelId || selectedModelId
+              ) || defaultReasonForModel(editingModelId || selectedModelId)
             )
           : "";
         body.innerHTML =
@@ -18141,13 +18270,38 @@
     return model?.supportsReasoningEffort === true;
   }
 
+  /** Уровни, которые принимает модель (пустой список модели = все). */
+  function reasonLevelsForModel(modelId) {
+    const id = String(modelId || selectedModelId || "").trim();
+    const model = models.find((m) => m.id === id);
+    const allowed = Array.isArray(model?.reasoningEffortLevels)
+      ? model.reasoningEffortLevels.map(normalizeReasonLevel).filter(Boolean)
+      : [];
+    return allowed.length
+      ? REASON_LEVELS.filter((level) => allowed.includes(level.id))
+      : REASON_LEVELS;
+  }
+
+  /** Неподдерживаемый уровень → ближайший допустимый не ниже (иначе самый высокий). */
+  function clampReasonLevel(levelId, modelId) {
+    const id = normalizeReasonLevel(levelId);
+    const levels = reasonLevelsForModel(modelId);
+    if (!id || levels.some((level) => level.id === id)) {
+      return id;
+    }
+    const rank = (value) => REASON_LEVELS.findIndex((level) => level.id === value);
+    const higher = levels.find((level) => rank(level.id) >= rank(id));
+    return (higher || levels[levels.length - 1]).id;
+  }
+
   function defaultReasonForModel(modelId) {
     const id = String(modelId || selectedModelId || "").trim();
     const model = models.find((m) => m.id === id);
-    return (
+    return clampReasonLevel(
       normalizeReasonLevel(model?.reasoningEffortDefault) ||
-      normalizeReasonLevel(model?.reasoningEffort) ||
-      "medium"
+        normalizeReasonLevel(model?.reasoningEffort) ||
+        "medium",
+      id
     );
   }
 
@@ -18155,17 +18309,21 @@
     if (!modelSupportsReasoning(modelId || selectedModelId)) {
       return "";
     }
-    const fromHost = normalizeReasonLevel(preferredId);
+    const targetModel = modelId || selectedModelId;
+    const fromHost = clampReasonLevel(preferredId, targetModel);
     if (fromHost) {
       return fromHost;
     }
     if (activeChatId && state.reasonByChat[activeChatId]) {
-      const fromChat = normalizeReasonLevel(state.reasonByChat[activeChatId]);
+      const fromChat = clampReasonLevel(
+        state.reasonByChat[activeChatId],
+        targetModel
+      );
       if (fromChat) {
         return fromChat;
       }
     }
-    const current = normalizeReasonLevel(selectedReasoningEffort);
+    const current = clampReasonLevel(selectedReasoningEffort, targetModel);
     if (current) {
       return current;
     }
@@ -18188,7 +18346,7 @@
       return;
     }
     reasonMenu.innerHTML = "";
-    for (const level of REASON_LEVELS) {
+    for (const level of reasonLevelsForModel(selectedModelId)) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className =
@@ -18266,7 +18424,7 @@
       return;
     }
     const level =
-      normalizeReasonLevel(next) ||
+      clampReasonLevel(next, modelId || selectedModelId) ||
       defaultReasonForModel(modelId || selectedModelId);
     selectedReasoningEffort = level;
     if (activeChatId) {
@@ -18453,6 +18611,13 @@
         tryDrainQueue();
       }
     }, 1500);
+  }
+
+  function cancelQueueDrainFallback() {
+    if (queueDrainFallbackTimer) {
+      clearTimeout(queueDrainFallbackTimer);
+      queueDrainFallbackTimer = 0;
+    }
   }
 
   updateSendButton();
@@ -21629,6 +21794,9 @@
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
+      // VS Code's webview shell has its own window-level click handler for
+      // <a href> (ignores defaultPrevented) — keep it from also opening.
+      event.stopPropagation();
       const path = file.getAttribute("data-path");
       const line = Number(file.getAttribute("data-line")) || 0;
       if (path) {
@@ -21643,6 +21811,9 @@
       return;
     }
     event.preventDefault();
+    // Otherwise VS Code opens the href a second time (did-click-link) and
+    // shows its «open external website?» prompt on top of our openExternal.
+    event.stopPropagation();
     const href = link.getAttribute("data-href") || link.getAttribute("href");
     if (href) {
       host.postMessage({ type: "openExternal", url: href });
@@ -22114,7 +22285,8 @@
         if (!settingsSwitchSuppressed()) {
           showScreen("chat");
         }
-        setBusy(Boolean(msg.busy), {
+        // A stale busy=false snapshot must not end an unacked queued send.
+        setBusy(Boolean(msg.busy) || awaitingQueuedSendAck(), {
           runStartedAt:
             typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
         });
@@ -22411,6 +22583,11 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
+        // Finale catch-up of the previous run (posted right after its idle)
+        // — the queued message is already sent; do not clear its busy.
+        if (awaitingQueuedSendAck()) {
+          break;
+        }
         if (streamingEl && !streamingEl.isConnected) {
           streamingEl = null;
         }
@@ -22524,6 +22701,9 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
+        if (awaitingQueuedSendAck()) {
+          break;
+        }
         if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
           lastRunDurationMs = msg.runDurationMs;
           lastRunDurationChatId = String(activeChatId || "");
@@ -22562,6 +22742,14 @@
           scrollToBottom();
         }
         break;
+      case "sendAccepted":
+        if (
+          pendingQueuedSend &&
+          String(msg.clientSendId || "") === pendingQueuedSend.id
+        ) {
+          pendingQueuedSend = null;
+        }
+        break;
       case "idle":
         // Only ignore when both sides know a chat id and they disagree.
         // If activeChatId was never hydrated (empty), still clear busy —
@@ -22570,6 +22758,10 @@
           activeChatId = msg.chatId;
         }
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        // Stale idle of the previous run — the queued send already started.
+        if (awaitingQueuedSendAck()) {
           break;
         }
         // The queue drain MUST run even if the cosmetic DOM work below

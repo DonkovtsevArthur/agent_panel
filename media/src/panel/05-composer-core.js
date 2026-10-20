@@ -373,6 +373,14 @@
     });
     appendMessage("user", text, uiMessagesCache.length - 1, -1, attachments);
     setBusy(true, { restartRun: true });
+    // The previous run's fallback must not fire behind this send.
+    cancelQueueDrainFallback();
+    const clientSendId = `qs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pendingQueuedSend = {
+      id: clientSendId,
+      chatId: String(activeChatId || ""),
+      at: Date.now(),
+    };
     host.postMessage({
       type: "send",
       text,
@@ -380,11 +388,31 @@
       agentMode: modeForSend,
       reasoningEffort: item.reasoningEffort || undefined,
       attachments: attachments.map(attachmentPayload),
+      clientSendId,
     });
   }
 
+  /**
+   * True while a queued send waits for the host ack in the active chat:
+   * terminal messages arriving now belong to the previous run.
+   */
+  function awaitingQueuedSendAck() {
+    if (!pendingQueuedSend) {
+      return false;
+    }
+    if (
+      Date.now() - pendingQueuedSend.at > PENDING_QUEUED_SEND_TTL_MS ||
+      pendingQueuedSend.chatId !== String(activeChatId || "")
+    ) {
+      // Older host without ack, or the user switched chats — stop guarding.
+      pendingQueuedSend = null;
+      return false;
+    }
+    return true;
+  }
+
   function tryDrainQueue() {
-    if (busy || drainingQueue) {
+    if (busy || drainingQueue || awaitingQueuedSendAck()) {
       return;
     }
     const queue = getActiveQueue();

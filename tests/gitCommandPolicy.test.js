@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  formatHookFailureOutput,
+  gitEnvWithUtf8Locale,
+  lastHookOutputLine,
   isBroadGitStageCommand,
   isBroadGitDiscardCommand,
   explicitlyRequestsAllChanges,
@@ -146,4 +149,73 @@ test("formatGitRemoteOutput keeps remote MR URLs and branch lines", () => {
 test("formatGitRemoteOutput returns empty for blank input", () => {
   assert.equal(formatGitRemoteOutput(), "");
   assert.equal(formatGitRemoteOutput("  ", "\n"), "");
+});
+
+test("allows git commit and push via shell when Settings auto-approves commands", () => {
+  const { shouldBlockGitCommitOrPush } = require("../out/gitCommandPolicy.js");
+  const {
+    harborBlockedGitCommandReason,
+  } = require("../out/gitCommandGuardExtension.js");
+  assert.equal(shouldBlockGitCommitOrPush("git push", "поправь и отправь", true), false);
+  assert.equal(
+    shouldBlockGitCommitOrPush("git push -u origin HEAD", "", true),
+    false
+  );
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "", true), false);
+  assert.equal(shouldBlockGitCommitOrPush("git commit -m 'x'", "", false), true);
+  assert.equal(
+    harborBlockedGitCommandReason("git add -A && git commit -m 'x'", "закоммить", true) !== undefined,
+    true
+  );
+  assert.equal(shouldBlockGitCommitOrPush("git push", "поправь и отправь", false), true);
+  assert.equal(harborBlockedGitCommandReason("git push", "", true), undefined);
+  assert.match(
+    String(harborBlockedGitCommandReason("git push", "", false)),
+    /blocks `git push`/
+  );
+});
+
+test("formatHookFailureOutput: stderr + stdout в fenced-блоке", () => {
+  const out = formatHookFailureOutput(
+    "src/a.ts\n  1:1  error  boom",
+    "> type-check:build"
+  );
+  assert.equal(
+    out,
+    "```\n> type-check:build\nsrc/a.ts\n  1:1  error  boom\n```"
+  );
+  assert.equal(formatHookFailureOutput("", "  "), "");
+});
+
+test("formatHookFailureOutput: только хвост длинного вывода", () => {
+  const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+  const out = formatHookFailureOutput(lines.join("\n"), "");
+  assert.match(out, /^```\n…\n/);
+  assert.match(out, /line 199\n```$/);
+  assert.doesNotMatch(out, /line 100\n/);
+});
+
+test("formatHookFailureOutput: fence длиннее бэктиков в выводе", () => {
+  const out = formatHookFailureOutput("", "see ```code```");
+  assert.match(out, /^````\n/);
+  assert.match(out, /\n````$/);
+});
+
+test("gitEnvWithUtf8Locale: без локали добавляет UTF-8 LC_CTYPE", () => {
+  assert.equal(gitEnvWithUtf8Locale({ PATH: "/bin" }, "darwin").LC_CTYPE, "en_US.UTF-8");
+  assert.equal(gitEnvWithUtf8Locale({ LANG: "C" }, "linux").LC_CTYPE, "C.UTF-8");
+  const utf = { LANG: "ru_RU.UTF-8" };
+  assert.equal(gitEnvWithUtf8Locale(utf, "darwin"), utf);
+  const explicit = { LC_ALL: "C" };
+  assert.equal(gitEnvWithUtf8Locale(explicit, "darwin"), explicit);
+});
+
+test("lastHookOutputLine: последняя непустая строка без ANSI", () => {
+  assert.equal(
+    lastHookOutputLine("> lint\n\u001b[33m  12:1  warning  x\u001b[39m\n\n"),
+    "12:1 warning x"
+  );
+  assert.equal(lastHookOutputLine("progress 10%\rprogress 90%"), "progress 90%");
+  assert.equal(lastHookOutputLine(" \n "), "");
+  assert.ok(lastHookOutputLine("x".repeat(500)).length <= 140);
 });

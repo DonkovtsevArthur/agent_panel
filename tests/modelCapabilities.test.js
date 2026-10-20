@@ -98,7 +98,7 @@ test("Claude 3.5+/4 supports reasoning_effort, Claude 3.0 does not", () => {
     false
   );
   assert.equal(
-    resolveModelCapabilities("DeepSeek-V4-Flash").supportsReasoningEffort,
+    resolveModelCapabilities("Qwen3-Coder-Next").supportsReasoningEffort,
     false
   );
 });
@@ -163,4 +163,24 @@ test("reasoningEffort override replaces the default", () => {
   });
   assert.equal(resolved.supportsReasoningEffort, true);
   assert.equal(resolved.reasoningEffortDefault, "medium");
+});
+
+test("DeepSeek V4 exposes reasoning effort without the unsupported medium level", () => {
+  const { resolveModelCapabilities } = require("../out/modelCapabilities.js");
+  const { clampReasoningEffortToLevels } = require("../out/reasoningEffort.js");
+  for (const id of ["deepseek-v4.1-flash", "DeepSeek-V4-Flash"]) {
+    const caps = resolveModelCapabilities(id);
+    assert.equal(caps.supportsReasoningEffort, true, id);
+    assert.equal(caps.reasoningEffortDefault, "high", id);
+    assert.deepEqual(caps.reasoningEffortLevels, ["low", "high", "xhigh"], id);
+    assert.equal(caps.supportsVision, false, id);
+  }
+  assert.equal(resolveModelCapabilities("claude-sonnet-4-5").reasoningEffortLevels, undefined);
+  const levels = ["low", "high", "xhigh"];
+  assert.equal(clampReasoningEffortToLevels("medium", levels), "high");
+  assert.equal(clampReasoningEffortToLevels("low", levels), "low");
+  assert.equal(clampReasoningEffortToLevels("max", levels), "xhigh");
+  assert.equal(clampReasoningEffortToLevels("xhigh", ["low", "medium"]), "medium");
+  assert.equal(clampReasoningEffortToLevels("medium", undefined), "medium");
+  assert.equal(clampReasoningEffortToLevels("", levels), undefined);
 });

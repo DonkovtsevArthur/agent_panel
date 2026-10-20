@@ -2171,6 +2171,9 @@
     const file = event.target.closest("a.md-file");
     if (file) {
       event.preventDefault();
+      // VS Code's webview shell has its own window-level click handler for
+      // <a href> (ignores defaultPrevented) — keep it from also opening.
+      event.stopPropagation();
       const path = file.getAttribute("data-path");
       const line = Number(file.getAttribute("data-line")) || 0;
       if (path) {
@@ -2185,6 +2188,9 @@
       return;
     }
     event.preventDefault();
+    // Otherwise VS Code opens the href a second time (did-click-link) and
+    // shows its «open external website?» prompt on top of our openExternal.
+    event.stopPropagation();
     const href = link.getAttribute("data-href") || link.getAttribute("href");
     if (href) {
       host.postMessage({ type: "openExternal", url: href });

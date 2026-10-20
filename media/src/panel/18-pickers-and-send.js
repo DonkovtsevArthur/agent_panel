@@ -428,13 +428,38 @@
     return model?.supportsReasoningEffort === true;
   }
 
+  /** Уровни, которые принимает модель (пустой список модели = все). */
+  function reasonLevelsForModel(modelId) {
+    const id = String(modelId || selectedModelId || "").trim();
+    const model = models.find((m) => m.id === id);
+    const allowed = Array.isArray(model?.reasoningEffortLevels)
+      ? model.reasoningEffortLevels.map(normalizeReasonLevel).filter(Boolean)
+      : [];
+    return allowed.length
+      ? REASON_LEVELS.filter((level) => allowed.includes(level.id))
+      : REASON_LEVELS;
+  }
+
+  /** Неподдерживаемый уровень → ближайший допустимый не ниже (иначе самый высокий). */
+  function clampReasonLevel(levelId, modelId) {
+    const id = normalizeReasonLevel(levelId);
+    const levels = reasonLevelsForModel(modelId);
+    if (!id || levels.some((level) => level.id === id)) {
+      return id;
+    }
+    const rank = (value) => REASON_LEVELS.findIndex((level) => level.id === value);
+    const higher = levels.find((level) => rank(level.id) >= rank(id));
+    return (higher || levels[levels.length - 1]).id;
+  }
+
   function defaultReasonForModel(modelId) {
     const id = String(modelId || selectedModelId || "").trim();
     const model = models.find((m) => m.id === id);
-    return (
+    return clampReasonLevel(
       normalizeReasonLevel(model?.reasoningEffortDefault) ||
-      normalizeReasonLevel(model?.reasoningEffort) ||
-      "medium"
+        normalizeReasonLevel(model?.reasoningEffort) ||
+        "medium",
+      id
     );
   }
 
@@ -442,17 +467,21 @@
     if (!modelSupportsReasoning(modelId || selectedModelId)) {
       return "";
     }
-    const fromHost = normalizeReasonLevel(preferredId);
+    const targetModel = modelId || selectedModelId;
+    const fromHost = clampReasonLevel(preferredId, targetModel);
     if (fromHost) {
       return fromHost;
     }
     if (activeChatId && state.reasonByChat[activeChatId]) {
-      const fromChat = normalizeReasonLevel(state.reasonByChat[activeChatId]);
+      const fromChat = clampReasonLevel(
+        state.reasonByChat[activeChatId],
+        targetModel
+      );
       if (fromChat) {
         return fromChat;
       }
     }
-    const current = normalizeReasonLevel(selectedReasoningEffort);
+    const current = clampReasonLevel(selectedReasoningEffort, targetModel);
     if (current) {
       return current;
     }
@@ -475,7 +504,7 @@
       return;
     }
     reasonMenu.innerHTML = "";
-    for (const level of REASON_LEVELS) {
+    for (const level of reasonLevelsForModel(selectedModelId)) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className =
@@ -553,7 +582,7 @@
       return;
     }
     const level =
-      normalizeReasonLevel(next) ||
+      clampReasonLevel(next, modelId || selectedModelId) ||
       defaultReasonForModel(modelId || selectedModelId);
     selectedReasoningEffort = level;
     if (activeChatId) {
@@ -740,6 +769,13 @@
         tryDrainQueue();
       }
     }, 1500);
+  }
+
+  function cancelQueueDrainFallback() {
+    if (queueDrainFallbackTimer) {
+      clearTimeout(queueDrainFallbackTimer);
+      queueDrainFallbackTimer = 0;
+    }
   }
 
   updateSendButton();

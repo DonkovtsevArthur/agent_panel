@@ -175,8 +175,10 @@
         );
         const editReasonLabel = editReasonSupported
           ? reasonLevelLabel(
-              normalizeReasonLevel(editingReasoningEffort) ||
-                defaultReasonForModel(editingModelId || selectedModelId)
+              clampReasonLevel(
+                editingReasoningEffort,
+                editingModelId || selectedModelId
+              ) || defaultReasonForModel(editingModelId || selectedModelId)
             )
           : "";
         body.innerHTML =

@@ -19,6 +19,7 @@ import type { ChatCompletionRequest } from "./openaiTypes";
 import {
   capWorkspaceRuleText,
   DEFAULT_WORKSPACE_RULE_CHAR_CAP,
+  findLinkedCommitRulePaths,
   readWorkspaceRuleFile,
 } from "./workspaceRules";
 
@@ -388,6 +389,28 @@ async function findGitCommitTemplate(cwd: string): Promise<string | undefined> {
   }
 }
 
+async function readLinkedCommitRule(
+  root: string,
+  fromRel: string,
+  body: string
+): Promise<string | undefined> {
+  const rootResolved = path.resolve(root);
+  for (const target of findLinkedCommitRulePaths(body)) {
+    const resolved = path.resolve(root, path.dirname(fromRel), target);
+    if (
+      resolved !== rootResolved &&
+      !resolved.startsWith(rootResolved + path.sep)
+    ) {
+      continue;
+    }
+    const linkedBody = await readWorkspaceRuleFile(resolved);
+    if (linkedBody) {
+      return capCommitRuleText(path.relative(root, resolved), linkedBody);
+    }
+  }
+  return undefined;
+}
+
 /** Правило коммитов из проекта, если есть; иначе undefined → дефолтный промпт. */
 export async function loadProjectCommitRule(
   root: string
@@ -397,11 +420,17 @@ export async function loadProjectCommitRule(
     if (!body) {
       continue;
     }
+    const isIndexDoc = /(^|\/)(AGENTS\.md|\.cursorrules)$/i.test(rel);
+    if (isIndexDoc) {
+      // AGENTS.md часто только ссылается на отдельный файл правил коммитов —
+      // берём сам файл (docs/agents/commits.md и т.п.), а не оглавление.
+      const linked = await readLinkedCommitRule(root, rel, body);
+      if (linked) {
+        return linked;
+      }
+    }
     // AGENTS.md / .cursorrules берём только если там есть секция про коммиты
-    if (
-      /(^|\/)(AGENTS\.md|\.cursorrules)$/i.test(rel) &&
-      !RULE_HINT.test(body)
-    ) {
+    if (isIndexDoc && !RULE_HINT.test(body)) {
       continue;
     }
     return capCommitRuleText(rel, body);
@@ -579,8 +608,9 @@ export async function composeCommitMessageText(
     rejection
   );
 
-  // Reasoning-модели на большом diff регулярно не укладываются в 10 с.
-  const COMMIT_MODEL_TIMEOUT_MS = 30_000;
+  // Reasoning-модели на большом diff регулярно не укладываются в 10 с;
+  // корпоративный шлюз даёт всплески до 20+ с — с 30 с коммит уходил с шаблоном.
+  const COMMIT_MODEL_TIMEOUT_MS = 60_000;
   // 256 съедался thinking-бюджетом reasoning-моделей → пустой content.
   // (Kimi/Claude/GLM registry всё равно поднимает floor до 16000.)
   const COMMIT_MAX_TOKENS = 1024;
@@ -590,7 +620,10 @@ export async function composeCommitMessageText(
   };
 
   let lastError: unknown;
-  for (const modelId of candidates) {
+  // Одна выбранная модель — один повтор: разовый сбой шлюза не должен
+  // превращать сообщение в шаблон «chore: обновить N файлов».
+  const attempts = candidates.length === 1 ? [...candidates, ...candidates] : candidates;
+  for (const modelId of attempts) {
     if (signal?.aborted) {
       throw new Error("aborted");
     }

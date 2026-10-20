@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-description: Write an implementation plan for a multi-step change before touching code. Load in Plan mode when the user asks for a plan, or when a feature / refactor spans several files or components and needs agreement on the approach first.
+description: Write an implementation plan for a multi-step change once the approach is chosen. Load in Plan mode when the user asks for a plan, or a feature / refactor spans several files. Approach still open (X or Y?) → design-options first.
 ---
 
 # Writing plans
@@ -11,7 +11,8 @@ Write the plan for an implementer who has not seen this codebase or this convers
 
 - Explore first: read the files you will touch, `code_nav` `references` for what you will change, nearby code that does something similar. A plan built on guesses about the code is worse than no plan.
 - Read workspace rules (`AGENTS.md`, `.cursor/rules`, `.harbor` rules) for constraints the plan must respect: platforms that must change together, forbidden actions, required version bumps, test policy.
-- Unclear request, or several reasonable approaches → ask the user before writing the plan. Questions never go inside the plan.
+- Unclear request → ask the user before writing the plan. Questions never go inside the plan.
+- Several reasonable approaches and the user has not picked one → do not write the plan yet: load `design-options`, compare, and let the user choose. An option chosen earlier in the chat (or named by the user) is the plan's **Approach** — do not re-open the comparison.
 - Request spans independent subsystems → propose separate plans, one per subsystem.
 
 ## Output format (Harbor Plan card)

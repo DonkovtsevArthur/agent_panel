@@ -22,6 +22,8 @@ export interface HarborSkillInfo {
   skillMdPath: string;
   source: HarborSkillSource;
   disabled: boolean;
+  /** Global copy seeded from `bundled-skills` (listed in the seed manifest). */
+  bundled?: boolean;
 }
 
 export interface HarborSkillsConfigSlice {
@@ -496,6 +498,7 @@ export function listHarborSkills(
   );
   const disabled = config.disabled || [];
   const byName = new Map<string, HarborSkillInfo>();
+  const globalRoot = normalizeDirPath(globalHarborSkillsDir());
 
   for (const root of dirs) {
     let entries: fs.Dirent[];
@@ -505,6 +508,10 @@ export function listHarborSkills(
       continue;
     }
     const source = sourceForDir(root, cwd, extraSet);
+    const seeded =
+      source === "global" && normalizeDirPath(root) === globalRoot
+        ? readSeedManifest(root).skills
+        : {};
     for (const entry of entries) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) {
         continue;
@@ -533,6 +540,9 @@ export function listHarborSkills(
         skillMdPath,
         source,
         disabled: isDisabledName(name, disabled),
+        ...(Object.prototype.hasOwnProperty.call(seeded, entry.name)
+          ? { bundled: true }
+          : {}),
       };
       const rank = (s: HarborSkillSource) =>
         s === "workspace" ? 0 : s === "global" ? 1 : 2;
@@ -563,7 +573,48 @@ export function enabledSkillNames(
 
 /** Per-skill description cap and list cap for the rules catalog. */
 const SKILL_RULES_DESCRIPTION_MAX = 240;
-const SKILL_RULES_MAX_SKILLS = 40;
+export const SKILL_RULES_MAX_SKILLS = 40;
+
+type CatalogSkill = Pick<HarborSkillInfo, "name" | "description"> &
+  Partial<Pick<HarborSkillInfo, "source" | "bundled">>;
+
+/** Lower = kept first when the catalog is over the cap. */
+function catalogPriority(s: CatalogSkill): number {
+  if (s.source === "workspace") {
+    return 0;
+  }
+  if (s.source === "global") {
+    return s.bundled ? 1 : 2;
+  }
+  return s.source === "extra" ? 3 : 2;
+}
+
+/**
+ * Skills that fit into the rules catalog / per-turn nudge. Over the cap the
+ * kept set is chosen by source — workspace, bundled Harbor skills, other
+ * global, extra directories — not by alphabet; output stays sorted by name.
+ * `dropped` lists names left out (the `skills` tool still accepts them).
+ */
+export function selectCatalogSkills<T extends CatalogSkill>(
+  skills: ReadonlyArray<T>,
+  max = SKILL_RULES_MAX_SKILLS
+): { skills: T[]; dropped: string[] } {
+  if (skills.length <= max) {
+    return { skills: [...skills], dropped: [] };
+  }
+  const byName = (a: T, b: T) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const ranked = [...skills].sort(
+    (a, b) => catalogPriority(a) - catalogPriority(b) || byName(a, b)
+  );
+  return {
+    skills: ranked.slice(0, max).sort(byName),
+    dropped: ranked
+      .slice(max)
+      .sort(byName)
+      .map((s) => s.name),
+  };
+}
 
 /**
  * Skill catalog for the Harbor rules slot. Cline's `skills` tool description
@@ -571,10 +622,10 @@ const SKILL_RULES_MAX_SKILLS = 40;
  * skill and almost never pick one on their own.
  */
 export function harborSkillsRulesForLanguage(
-  skills: ReadonlyArray<Pick<HarborSkillInfo, "name" | "description">>,
+  skills: ReadonlyArray<CatalogSkill>,
   lang: "en" | "ru"
 ): string {
-  const lines = skills.slice(0, SKILL_RULES_MAX_SKILLS).map((s) => {
+  const lines = selectCatalogSkills(skills).skills.map((s) => {
     let desc = String(s.description || "")
       .replace(/\s+/g, " ")
       .trim();
@@ -607,11 +658,11 @@ export function harborSkillsRulesForLanguage(
  */
 export function appendSkillsRuntimeNudge(
   userText: string,
-  skills: ReadonlyArray<Pick<HarborSkillInfo, "name">>,
+  skills: ReadonlyArray<CatalogSkill>,
   lang: "en" | "ru"
 ): string {
   const base = String(userText || "").trim();
-  const names = skills.slice(0, SKILL_RULES_MAX_SKILLS).map((s) => s.name);
+  const names = selectCatalogSkills(skills).skills.map((s) => s.name);
   if (!names.length) {
     return base;
   }

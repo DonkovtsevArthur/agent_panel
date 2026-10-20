@@ -1071,6 +1071,67 @@
     return html + escapeHtml(source.slice(cursor));
   }
 
+  const MARKDOWN_FENCE_LANGS = new Set(["markdown", "md", "gfm", "mdx"]);
+
+  /**
+   * Unlabeled fence that is really Markdown prose (MR / PR descriptions,
+   * release notes): a heading plus list items, no code-ish line endings and
+   * no YAML-style «- key: value» lists.
+   */
+  function looksLikeMarkdownProse(text) {
+    const lines = String(text || "").split("\n");
+    const nonEmpty = lines.filter((l) => l.trim());
+    if (nonEmpty.length < 3) {
+      return false;
+    }
+    const hasHeading = nonEmpty.some((l) => /^#{1,6}\s+\S/.test(l));
+    const items = nonEmpty.filter((l) => /^\s*(?:[-*+]|\d+[.)])\s+\S/.test(l));
+    if (!hasHeading || !items.length) {
+      return false;
+    }
+    const yamlItems = items.filter((l) => /^\s*-\s+[\w.-]+:(?:\s|$)/.test(l));
+    if (yamlItems.length * 2 >= items.length) {
+      return false;
+    }
+    const codeish = nonEmpty.filter((l) => /[;{}]\s*$|^\s*(?:import|export|const|let|function|def|class)\s/.test(l));
+    return codeish.length * 10 < nonEmpty.length;
+  }
+
+  /**
+   * Markdown fence → rendered preview in the code-block frame. Copy still
+   * takes the raw source (kept in a hidden <pre>), «Source» toggles it.
+   */
+  function renderMarkdownFenceHtml(inner) {
+    const api = getMarkedApi();
+    let previewHtml = "";
+    try {
+      previewHtml = api ? api.parse(inner, { async: false }) : "";
+    } catch {
+      previewHtml = "";
+    }
+    if (!previewHtml) {
+      return "";
+    }
+    const sourceLabel = escapeHtml(t("codeSource"));
+    const copyLabel = escapeHtml(t("codeCopy"));
+    return (
+      `<div class="md-pre-wrap is-md-preview">` +
+      `<div class="md-pre-box">` +
+      `<div class="md-pre-tools">` +
+      `<button type="button" class="md-pre-tool" data-code-action="source" aria-pressed="false" title="${sourceLabel}" aria-label="${sourceLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">code</span>` +
+      `</button>` +
+      `<button type="button" class="md-pre-tool" data-code-action="copy" title="${copyLabel}" aria-label="${copyLabel}">` +
+      `<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>` +
+      `</button>` +
+      `</div>` +
+      `<div class="md-md-preview">${previewHtml}</div>` +
+      `<pre class="md-pre md-md-source"><code>${escapeHtml(inner)}</code></pre>` +
+      `</div>` +
+      `</div>\n`
+    );
+  }
+
   function renderCodeBlockHtml(text, langRaw) {
     const inner = String(text || "").replace(/\n$/, "");
     if (isFilePath(inner.trim()) && !inner.includes("\n")) {
@@ -1078,6 +1139,17 @@
     }
     const meta = parseCodeFenceMeta(langRaw);
     const language = inferCodeLanguage(meta);
+    if (
+      !meta.path &&
+      !meta.startLine &&
+      (MARKDOWN_FENCE_LANGS.has(language) ||
+        (!language && looksLikeMarkdownProse(inner)))
+    ) {
+      const mdHtml = renderMarkdownFenceHtml(inner);
+      if (mdHtml) {
+        return mdHtml;
+      }
+    }
     const lines = inner.split("\n");
     const showLines =
       meta.startLine > 0 &&
@@ -1185,6 +1257,11 @@
       btn.setAttribute("aria-pressed", on ? "true" : "false");
       return;
     }
+    if (action === "source") {
+      const on = wrap.classList.toggle("is-source");
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      return;
+    }
     if (action === "copy") {
       const text = codeBlockPlainText(wrap);
       if (!text) {
@@ -1232,6 +1309,16 @@
       const value = String(text || "");
       if (isFilePath(value)) {
         return fileLinkHtml(value);
+      }
+      // Models often wrap URLs in backticks («ссылка: `https://…`») — keep
+      // the code look but make it clickable like a plain link.
+      if (/^https?:\/\/\S+$/i.test(value.trim())) {
+        const href = value.trim();
+        return `<a class="md-link" href="${escapeHtml(
+          href
+        )}" data-href="${escapeHtml(href)}"><code class="md-code">${escapeHtml(
+          value
+        )}</code></a>`;
       }
       return `<code class="md-code">${escapeHtml(value)}</code>`;
     };

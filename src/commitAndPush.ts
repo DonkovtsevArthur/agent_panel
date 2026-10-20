@@ -1,5 +1,4 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import * as vscode from "vscode";
 import {
   collectCommitDiff,
@@ -8,18 +7,72 @@ import {
   isCommitMessageModelNotConfiguredError,
 } from "./commitMessage";
 import { getConfig } from "./config";
-import { formatGitRemoteOutput } from "./gitCommandPolicy";
+import {
+  formatGitRemoteOutput,
+  formatHookFailureOutput,
+  gitEnvWithUtf8Locale,
+  lastHookOutputLine,
+} from "./gitCommandPolicy";
 import { resolveUiLanguage } from "./i18n";
 import { toRepoRelativePaths } from "./repoPaths";
-
-const execFileAsync = promisify(execFile);
 
 export type CommitAndPushStep = {
   command: string;
   ok: boolean;
   stdout?: string;
   stderr?: string;
+  timedOut?: boolean;
+  durationMs?: number;
 };
+
+/** Сколько вывода упавшей команды класть в карточку шага. */
+const STEP_ERROR_PREVIEW_CHARS = 400;
+
+/**
+ * Шаг «Закоммитить» как одна карточка инструмента в ленте (как шаги агента):
+ * `run_command` + статус + длительность. Раньше вывод git шёл отдельными
+ * tool-сообщениями без имени, и панель рисовала их пустыми строками «Tool».
+ */
+export function commitStepToUiMessage(
+  step: CommitAndPushStep,
+  seq: number
+): {
+  role: "tool";
+  text: string;
+  step: {
+    stepId: string;
+    kind: "tool";
+    name: string;
+    argsPreview: string;
+    status: "done" | "error";
+    resultPreview?: string;
+    durationMs?: number;
+  };
+} {
+  const argsPreview = JSON.stringify({ command: step.command });
+  const output = [step.stderr, step.stdout].filter(Boolean).join("\n").trim();
+  const resultPreview =
+    !step.ok && output
+      ? output.length > STEP_ERROR_PREVIEW_CHARS
+        ? `…${output.slice(-STEP_ERROR_PREVIEW_CHARS)}`
+        : output
+      : undefined;
+  return {
+    role: "tool",
+    text: `⚙ run_command(${argsPreview})`,
+    step: {
+      stepId: `commit-${Date.now().toString(36)}-${seq}`,
+      kind: "tool",
+      name: "run_command",
+      argsPreview,
+      status: step.ok ? "done" : "error",
+      ...(resultPreview ? { resultPreview } : {}),
+      ...(typeof step.durationMs === "number"
+        ? { durationMs: step.durationMs }
+        : {}),
+    },
+  };
+}
 
 export type CommitAndPushResult = {
   ok: boolean;
@@ -28,6 +81,17 @@ export type CommitAndPushResult = {
   steps: CommitAndPushStep[];
   /** Offer UI action to open Settings → Commit messages. */
   openCommitMessageSettings?: boolean;
+  /**
+   * С `backgroundPush`: коммит уже создан, `git push` идёт в фоне — хост
+   * освобождает чат сразу и показывает итог push, когда промис завершится.
+   */
+  push?: Promise<CommitPushOutcome>;
+};
+
+export type CommitPushOutcome = {
+  ok: boolean;
+  answer: string;
+  step: CommitAndPushStep;
 };
 
 /**
@@ -46,6 +110,23 @@ function isIndexLockError(stderr: string): boolean {
 }
 
 const INDEX_LOCK_RETRY_DELAYS_MS = [250, 500, 1000, 1500, 2000];
+
+/** Обычные git-команды (status / add / diff) — быстрые. */
+const GIT_TIMEOUT_MS = 60_000;
+/**
+ * commit и push запускают хуки (pre-commit с tsc / eslint по всему проекту,
+ * pre-push с тестами) — минуты на большом репозитории. С 60 с хук убивался
+ * посреди вывода, и в ответе были только первые warnings.
+ */
+const GIT_HOOK_TIMEOUT_MS = 10 * 60_000;
+/** Как часто обновлять статус строкой из вывода хука. */
+const LIVE_OUTPUT_THROTTLE_MS = 300;
+
+function timeoutForGitArgs(args: string[]): number {
+  return args[0] === "commit" || args[0] === "push"
+    ? GIT_HOOK_TIMEOUT_MS
+    : GIT_TIMEOUT_MS;
+}
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -73,9 +154,10 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 async function runGit(
   cwd: string,
   args: string[],
-  signal?: AbortSignal
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  let result = await runGitOnce(cwd, args, signal);
+  signal?: AbortSignal,
+  onOutput?: (chunk: string) => void
+): Promise<GitRunResult> {
+  let result = await runGitOnce(cwd, args, signal, onOutput);
   for (const ms of INDEX_LOCK_RETRY_DELAYS_MS) {
     if (result.ok || signal?.aborted || !isIndexLockError(result.stderr)) {
       break;
@@ -84,40 +166,104 @@ async function runGit(
     if (signal?.aborted) {
       break;
     }
-    result = await runGitOnce(cwd, args, signal);
+    result = await runGitOnce(cwd, args, signal, onOutput);
   }
   return result;
 }
 
-async function runGitOnce(
+type GitRunResult = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  /** Процесс убит по таймауту (не отмена пользователем). */
+  timedOut?: boolean;
+};
+
+/** Сколько вывода git держать в памяти на поток (хвост важнее начала). */
+const GIT_OUTPUT_CAP_CHARS = 8 * 1024 * 1024;
+
+function appendCapped(buffer: string, chunk: string): string {
+  const next = buffer + chunk;
+  return next.length > GIT_OUTPUT_CAP_CHARS
+    ? next.slice(-GIT_OUTPUT_CAP_CHARS)
+    : next;
+}
+
+/**
+ * spawn вместо execFile: вывод хуков (pre-commit с tsc / eslint) отдаётся по
+ * мере появления — хост показывает его в статусе, а не молчит минуту.
+ */
+function runGitOnce(
   cwd: string,
   args: string[],
-  signal?: AbortSignal
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync("git", args, {
-      cwd,
-      maxBuffer: 8 * 1024 * 1024,
-      timeout: 60_000,
-      signal,
+  signal?: AbortSignal,
+  onOutput?: (chunk: string) => void
+): Promise<GitRunResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settle = (ok: boolean, errorText?: string): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve({
+        ok,
+        stdout,
+        stderr: ok ? stderr : stderr || errorText || "git failed",
+        ...(timedOut && !signal?.aborted ? { timedOut: true } : {}),
+      });
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("git", args, {
+        cwd,
+        // Хуки (husky и т.п.) считают длину / ищут кириллицу через sh и grep:
+        // без UTF-8 локали русская строка в 80 символов «длиннее 100».
+        env: gitEnvWithUtf8Locale(process.env),
+        signal,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      settle(false, error instanceof Error ? error.message : String(error));
+      return;
+    }
+    timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, timeoutForGitArgs(args));
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout = appendCapped(stdout, chunk);
+      onOutput?.(chunk);
     });
-    return {
-      ok: true,
-      stdout: String(stdout || ""),
-      stderr: String(stderr || ""),
-    };
-  } catch (error) {
-    const err = error as {
-      stdout?: string | Buffer;
-      stderr?: string | Buffer;
-      message?: string;
-    };
-    return {
-      ok: false,
-      stdout: String(err.stdout || ""),
-      stderr: String(err.stderr || err.message || "git failed"),
-    };
+    child.stderr?.on("data", (chunk: string) => {
+      stderr = appendCapped(stderr, chunk);
+      onOutput?.(chunk);
+    });
+    child.on("error", (error) => settle(false, error.message));
+    child.on("close", (code) => settle(code === 0 && !timedOut));
+  });
+}
+
+function formatFallbackNote(
+  reason: string | undefined,
+  lang: string
+): string {
+  if (reason === undefined) {
+    return "";
   }
+  const detail = reason.trim();
+  return lang === "ru"
+    ? `\n\nСообщение коммита взято из шаблона: модель не сгенерировала его${detail ? ` (${detail})` : ""}. Проверьте модель в Settings → Commit messages.`
+    : `\n\nThe commit message is a template: the model did not generate one${detail ? ` (${detail})` : ""}. Check the model in Settings → Commit messages.`;
 }
 
 function shellQuote(value: string): string {
@@ -145,6 +291,11 @@ export async function commitAndPushPaths(
     signal?: AbortSignal;
     onStep?: (step: CommitAndPushStep) => void;
     onPhase?: (detail: string) => void;
+    /**
+     * Не ждать `git push`: вернуть результат сразу после коммита, а push
+     * отдать промисом в `result.push` (без `signal` — «Стоп» чата его не рвёт).
+     */
+    backgroundPush?: boolean;
   }
 ): Promise<CommitAndPushResult> {
   const lang = resolveUiLanguage(getConfig().language);
@@ -185,19 +336,55 @@ export async function commitAndPushPaths(
     steps.push(step);
     options?.onStep?.(step);
   };
-  const run = async (args: string[]): Promise<CommitAndPushStep> => {
+  const run = async (
+    args: string[],
+    runOptions?: {
+      /** Подпись фазы для живого вывода хуков: «pre-commit хук · <строка>». */
+      liveLabel?: string;
+      signal?: AbortSignal | null;
+      record?: boolean;
+    }
+  ): Promise<CommitAndPushStep> => {
     const command = formatCommand(args);
-    options?.onPhase?.(
-      lang === "ru" ? `Запускает · ${command}` : `Running · ${command}`
+    const startPhase =
+      lang === "ru" ? `Запускает · ${command}` : `Running · ${command}`;
+    options?.onPhase?.(startPhase);
+    let pending = "";
+    let lastShownAt = 0;
+    const liveLabel = runOptions?.liveLabel;
+    const onOutput = liveLabel
+      ? (chunk: string) => {
+          pending += chunk;
+          const now = Date.now();
+          if (now - lastShownAt < LIVE_OUTPUT_THROTTLE_MS) {
+            return;
+          }
+          const line = lastHookOutputLine(pending);
+          pending = pending.slice(-4096);
+          if (line) {
+            lastShownAt = now;
+            options?.onPhase?.(`${liveLabel} · ${line}`);
+          }
+        }
+      : undefined;
+    const startedAt = Date.now();
+    const result = await runGit(
+      cwd,
+      args,
+      runOptions?.signal === null ? undefined : signal,
+      onOutput
     );
-    const result = await runGit(cwd, args, signal);
     const step: CommitAndPushStep = {
       command,
       ok: result.ok,
       stdout: result.stdout.trim() || undefined,
       stderr: result.stderr.trim() || undefined,
+      ...(result.timedOut ? { timedOut: true } : {}),
+      durationMs: Date.now() - startedAt,
     };
-    record(step);
+    if (runOptions?.record !== false) {
+      record(step);
+    }
     return step;
   };
 
@@ -249,6 +436,8 @@ export async function commitAndPushPaths(
     lang === "ru" ? "Генерирую сообщение коммита…" : "Generating commit message…"
   );
   let commitMessage = "";
+  /** Модель не дала сообщение — коммит с шаблоном; причину показываем. */
+  let usedFallbackReason: string | undefined;
   let collected: Awaited<ReturnType<typeof collectCommitDiff>>;
   try {
     collected = await collectCommitDiff(cwd, scoped);
@@ -274,12 +463,19 @@ export async function commitAndPushPaths(
       });
     }
     commitMessage = fallbackCommitMessage(scoped, lang);
+    usedFallbackReason =
+      error instanceof Error ? error.message : String(error || "");
   }
   if (!commitMessage.trim()) {
     commitMessage = fallbackCommitMessage(scoped, lang);
+    usedFallbackReason = lang === "ru" ? "пустой ответ модели" : "empty model reply";
   }
 
-  let commit = await run(["commit", "-m", commitMessage]);
+  const commitLiveLabel =
+    lang === "ru" ? "Хуки git commit" : "git commit hooks";
+  let commit = await run(["commit", "-m", commitMessage], {
+    liveLabel: commitLiveLabel,
+  });
   if (
     !commit.ok &&
     !signal?.aborted &&
@@ -306,40 +502,89 @@ export async function commitAndPushPaths(
     }
     if (retryMessage.trim() && retryMessage.trim() !== commitMessage.trim()) {
       commitMessage = retryMessage;
-      commit = await run(["commit", "-m", commitMessage]);
+      commit = await run(["commit", "-m", commitMessage], {
+        liveLabel: commitLiveLabel,
+      });
     }
   }
   if (!commit.ok) {
-    return finish(
-      false,
-      lang === "ru"
-        ? `Не удалось создать коммит: ${(commit.stderr || "ошибка git").trim()}`
-        : `Failed to commit: ${(commit.stderr || "git error").trim()}`,
-      commitMessage
+    const output = formatHookFailureOutput(
+      commit.stdout || "",
+      commit.stderr || ""
     );
-  }
-
-  const push = await run(["push"]);
-  if (!push.ok) {
-    const detail = formatGitRemoteOutput(push.stdout, push.stderr);
+    const minutes = Math.round(GIT_HOOK_TIMEOUT_MS / 60_000);
+    const head = commit.timedOut
+      ? lang === "ru"
+        ? `Не удалось создать коммит: git commit (вместе с pre-commit хуком) не уложился в ${minutes} мин и был остановлен.`
+        : `Failed to commit: git commit (including the pre-commit hook) did not finish within ${minutes} min and was stopped.`
+      : lang === "ru"
+        ? "Не удалось создать коммит:"
+        : "Failed to commit:";
     return finish(
       false,
-      lang === "ru"
-        ? `Коммит создан, но push не удался:${detail ? `\n\n${detail}` : ` ${(push.stderr || "ошибка git").trim()}`}`
-        : `Commit created, but push failed:${detail ? `\n\n${detail}` : ` ${(push.stderr || "git error").trim()}`}`,
+      output
+        ? `${head}\n\n${output}`
+        : `${head}${commit.timedOut ? "" : lang === "ru" ? " ошибка git" : " git error"}`,
       commitMessage
     );
   }
 
   const filesLabel = formatPathsForAnswer(scoped);
-  const remoteOut = formatGitRemoteOutput(push.stdout, push.stderr);
-  const summary =
-    lang === "ru"
-      ? `Готово. Изменения (${filesLabel}) закоммичены и запушены.`
-      : `Done. Changes (${filesLabel}) committed and pushed.`;
+  const runPush = async (
+    background: boolean
+  ): Promise<CommitPushOutcome> => {
+    const push = await run(["push"], {
+      liveLabel: lang === "ru" ? "git push" : "git push",
+      // Фоновый push живёт дольше прогона чата: его AbortSignal не трогаем.
+      ...(background ? { signal: null, record: false } : {}),
+    });
+    if (!push.ok) {
+      const detail = push.timedOut
+        ? lang === "ru"
+          ? `git push (вместе с pre-push хуком) не уложился в ${Math.round(GIT_HOOK_TIMEOUT_MS / 60_000)} мин и был остановлен.`
+          : `git push (including the pre-push hook) did not finish within ${Math.round(GIT_HOOK_TIMEOUT_MS / 60_000)} min and was stopped.`
+        : formatGitRemoteOutput(push.stdout, push.stderr);
+      return {
+        ok: false,
+        step: push,
+        answer:
+          lang === "ru"
+            ? `Коммит создан, но push не удался:${detail ? `\n\n${detail}` : ` ${(push.stderr || "ошибка git").trim()}`}`
+            : `Commit created, but push failed:${detail ? `\n\n${detail}` : ` ${(push.stderr || "git error").trim()}`}`,
+      };
+    }
+    const remoteOut = formatGitRemoteOutput(push.stdout, push.stderr);
+    const summary = background
+      ? lang === "ru"
+        ? `Push выполнен (${filesLabel}).`
+        : `Push done (${filesLabel}).`
+      : lang === "ru"
+        ? `Готово. Изменения (${filesLabel}) закоммичены и запушены.`
+        : `Done. Changes (${filesLabel}) committed and pushed.`;
+    return {
+      ok: true,
+      step: push,
+      answer: remoteOut ? `${summary}\n\n${remoteOut}` : summary,
+    };
+  };
+
+  if (options?.backgroundPush) {
+    const subject = commitMessage.split(/\r?\n/, 1)[0]?.trim() || "";
+    const committed =
+      lang === "ru"
+        ? `Коммит создан (${filesLabel})${subject ? `: «${subject}»` : ""}. Push выполняется в фоне…`
+        : `Commit created (${filesLabel})${subject ? `: “${subject}”` : ""}. Pushing in the background…`;
+    const fallbackNote = formatFallbackNote(usedFallbackReason, lang);
+    return {
+      ...finish(true, `${committed}${fallbackNote}`, commitMessage),
+      push: runPush(true),
+    };
+  }
+
+  const pushed = await runPush(false);
   return finish(
-    true,
-    remoteOut ? `${summary}\n\n${remoteOut}` : summary,
+    pushed.ok,
+    `${pushed.answer}${formatFallbackNote(usedFallbackReason, lang)}`,
     commitMessage
   );
 }

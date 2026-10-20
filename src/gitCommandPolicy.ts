@@ -99,13 +99,18 @@ export function looksLikeExplicitPushRequest(text: string): boolean {
 }
 
 /**
- * Commit всегда только через UI-тег.
- * Push через run_command — только если пользователь явно попросил запушить.
+ * В Settings включено автоподтверждение команд (`allowShellGit`) —
+ * commit и push через run_command разрешены.
+ * Иначе commit только через UI-тег, а push — только по явной просьбе запушить.
  */
 export function shouldBlockGitCommitOrPush(
   command: string,
-  userText = ""
+  userText = "",
+  allowShellGit = false
 ): boolean {
+  if (allowShellGit) {
+    return false;
+  }
   if (isGitCommitCommand(command)) {
     return true;
   }
@@ -174,4 +179,77 @@ export function formatGitRemoteOutput(
     );
   });
   return (useful.length ? useful : lines).join("\n").trim();
+}
+
+/** Сколько хвоста вывода хука показывать в ответе: ошибки обычно в конце. */
+const HOOK_OUTPUT_TAIL_LINES = 60;
+const HOOK_OUTPUT_TAIL_CHARS = 6000;
+
+/**
+ * Вывод упавшего `git commit` для ответа: stderr + stdout (eslint и tsc
+ * печатают ошибки в stdout), только хвост, в fenced-блоке — иначе markdown
+ * съедает glob-паттерны вроде `**\/*.spec.ts`.
+ */
+export function formatHookFailureOutput(stdout: string, stderr: string): string {
+  const combined = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+  if (!combined) {
+    return "";
+  }
+  let lines = combined.split(/\r?\n/);
+  let truncated = false;
+  if (lines.length > HOOK_OUTPUT_TAIL_LINES) {
+    lines = lines.slice(-HOOK_OUTPUT_TAIL_LINES);
+    truncated = true;
+  }
+  let text = lines.join("\n");
+  if (text.length > HOOK_OUTPUT_TAIL_CHARS) {
+    text = text.slice(-HOOK_OUTPUT_TAIL_CHARS);
+    truncated = true;
+  }
+  const longestTicks = Math.max(
+    2,
+    ...(text.match(/`+/g) || []).map((run) => run.length)
+  );
+  const fence = "`".repeat(longestTicks + 1);
+  return `${fence}\n${truncated ? "…\n" : ""}${text}\n${fence}`;
+}
+
+/**
+ * Окружение для git из хоста: процесс расширений VS Code (и sidecar из
+ * WebStorm) часто стартует без LANG / LC_*, и хуки на sh считают `${#line}`
+ * в байтах, а grep не видит кириллицу. Добавляем только LC_CTYPE — язык
+ * сообщений git (LC_MESSAGES) не меняется. Явный LC_ALL пользователя не трогаем.
+ */
+export function gitEnvWithUtf8Locale(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform
+): NodeJS.ProcessEnv {
+  if (env.LC_ALL) {
+    return env;
+  }
+  const ctype = env.LC_CTYPE || env.LANG || "";
+  if (/utf-?8/i.test(ctype)) {
+    return env;
+  }
+  return {
+    ...env,
+    LC_CTYPE: platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
+  };
+}
+
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;?]*[A-Za-z]|\u001b\][^\u0007]*\u0007/g;
+const LIVE_LINE_MAX_CHARS = 140;
+
+/** Последняя непустая строка потокового вывода хука — для строки статуса. */
+export function lastHookOutputLine(output: string): string {
+  const lines = output.replace(ANSI_ESCAPE_RE, "").split(/\r\n|\r|\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].replace(/\s+/g, " ").trim();
+    if (line) {
+      return line.length > LIVE_LINE_MAX_CHARS
+        ? `${line.slice(0, LIVE_LINE_MAX_CHARS - 1)}…`
+        : line;
+    }
+  }
+  return "";
 }

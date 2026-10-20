@@ -310,7 +310,8 @@
         if (!settingsSwitchSuppressed()) {
           showScreen("chat");
         }
-        setBusy(Boolean(msg.busy), {
+        // A stale busy=false snapshot must not end an unacked queued send.
+        setBusy(Boolean(msg.busy) || awaitingQueuedSendAck(), {
           runStartedAt:
             typeof msg.runStartedAt === "number" ? msg.runStartedAt : 0,
         });
@@ -607,6 +608,11 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
+        // Finale catch-up of the previous run (posted right after its idle)
+        // — the queued message is already sent; do not clear its busy.
+        if (awaitingQueuedSendAck()) {
+          break;
+        }
         if (streamingEl && !streamingEl.isConnected) {
           streamingEl = null;
         }
@@ -720,6 +726,9 @@
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
           break;
         }
+        if (awaitingQueuedSendAck()) {
+          break;
+        }
         if (typeof msg.runDurationMs === "number" && msg.runDurationMs > 0) {
           lastRunDurationMs = msg.runDurationMs;
           lastRunDurationChatId = String(activeChatId || "");
@@ -758,6 +767,14 @@
           scrollToBottom();
         }
         break;
+      case "sendAccepted":
+        if (
+          pendingQueuedSend &&
+          String(msg.clientSendId || "") === pendingQueuedSend.id
+        ) {
+          pendingQueuedSend = null;
+        }
+        break;
       case "idle":
         // Only ignore when both sides know a chat id and they disagree.
         // If activeChatId was never hydrated (empty), still clear busy —
@@ -766,6 +783,10 @@
           activeChatId = msg.chatId;
         }
         if (msg.chatId && activeChatId && msg.chatId !== activeChatId) {
+          break;
+        }
+        // Stale idle of the previous run — the queued send already started.
+        if (awaitingQueuedSendAck()) {
           break;
         }
         // The queue drain MUST run even if the cosmetic DOM work below

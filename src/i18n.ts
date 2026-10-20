@@ -24,13 +24,19 @@ export function defaultSystemPromptForLanguage(lang: UiLanguage): string {
  * prompt (env block, tool list, parallelism, plan/act) is provided by Cline itself.
  * Used when the user has not customized the system prompt in Settings.
  */
-export function harborDefaultRulesForLanguage(lang: UiLanguage): string {
+export function harborDefaultRulesForLanguage(
+  lang: UiLanguage,
+  allowShellGit = false
+): string {
   if (lang === "ru") {
     return [
       "# Harbor Agents",
       "Отвечай кратко на русском.",
+      "Весь текст для пользователя — на русском, включая подписи, заголовки и метки полей («Заголовок:», «Описание:», «Ветки:»), а также тексты, которые ты готовишь для вставки (описание MR/PR, комментарий к задаче, changelog), если пользователь или шаблон проекта явно не требует другой язык. На английском оставляй только идентификаторы, пути, команды, имена веток и цитаты из кода.",
       "Для git status/log/diff и любых shell-команд используй run_commands — не проси пользователя запускать их вручную.",
-      "git commit / git push / git add . через shell блокируются Harbor — коммит и push только через тег панели «Commit and push» (или явная просьба только запушить).",
+      allowShellGit
+        ? "git commit и git push через run_commands разрешены (Settings → автоподтверждение команд) — выполняй их сам, когда пользователь просит закоммитить/запушить. Стейдж конкретные пути: git add . / -A / commit -a блокируются, если пользователь не просил все изменения."
+        : "git commit / git push / git add . через shell блокируются Harbor — коммит и push только через тег панели «Commit and push» (или явная просьба только запушить).",
       "Чтобы прочитать http(s) страницу, вызывай fetch_web_content. Никогда не говори, что не можешь открывать или загружать внешние URL, и не выдумывай требования авторизации.",
       "Для Figma используй MCP-инструменты, если подключены (Settings → MCP Servers).",
     ].join("\n");
@@ -39,7 +45,9 @@ export function harborDefaultRulesForLanguage(lang: UiLanguage): string {
     "# Harbor Agents",
     "Reply concisely in English.",
     "For git status/log/diff and any shell command, use run_commands instead of asking the user to run it manually.",
-    "git commit / git push / git add . via shell are blocked by Harbor — commit and push only via the panel «Commit and push» tag (or an explicit push-only request).",
+    allowShellGit
+      ? "git commit and git push via run_commands are allowed (Settings → auto-approve commands) — run them yourself when the user asks to commit/push. Stage specific paths: git add . / -A / commit -a are blocked unless the user asked for all changes."
+      : "git commit / git push / git add . via shell are blocked by Harbor — commit and push only via the panel «Commit and push» tag (or an explicit push-only request).",
     "To read an http(s) page, call fetch_web_content. Never claim you cannot open or load external URLs, and do not invent authorization requirements.",
     "For Figma use MCP tools when connected (Settings → MCP Servers).",
   ].join("\n");

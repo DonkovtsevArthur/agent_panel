@@ -21,11 +21,13 @@ import {
   clampUiFontSize,
   resolveModelEndpoint,
   resolveModelReasoningEffort,
+  resolveModelReasoningEffortLevels,
   resolveModelSupportsReasoningEffort,
   resolveModelSupportsVision,
   resolveProviderProbeUrl,
 } from "./config";
 import {
+  clampReasoningEffortToLevels,
   normalizeReasoningEffort,
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
@@ -75,7 +77,11 @@ import {
   resolveFilesForHarbor,
 } from "./editorContext";
 import { searchWorkspaceFiles } from "./fileMentions";
-import { commitAndPushPaths } from "./commitAndPush";
+import {
+  commitAndPushPaths,
+  commitStepToUiMessage,
+  type CommitPushOutcome,
+} from "./commitAndPush";
 import { discardPaths } from "./discardPaths";
 import type { VsCodeHarborCore } from "./vscodeHarborCore";
 import { hasUncommittedChanges } from "./gitStatus";
@@ -180,6 +186,7 @@ type SettingsPayload = {
     supportsReasoningEffort?: boolean;
     reasoningEffort?: string;
     reasoningEffortDefault?: string;
+    reasoningEffortLevels?: string[];
     requestOptions?: Record<string, unknown>;
   }>;
   language: string;
@@ -230,6 +237,8 @@ type WebviewToHost =
       attachments?: IncomingAttachment[];
       /** Не показывать user-сообщение в чате (например, тег commit/push). */
       hideUser?: boolean;
+      /** Queued send from the webview — echoed back as `sendAccepted`. */
+      clientSendId?: string;
     }
   | { type: "regenerate"; agentMode?: string; reasoningEffort?: string }
   | {
@@ -1206,11 +1215,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!resolveModelSupportsReasoningEffort(modelId)) {
       return undefined;
     }
-    return (
+    return clampReasoningEffortToLevels(
       normalizeReasoningEffort(preferred) ||
-      normalizeReasoningEffort(this.selectedReasoningEffort) ||
-      normalizeReasoningEffort(resolveModelReasoningEffort(modelId)) ||
-      "medium"
+        normalizeReasoningEffort(this.selectedReasoningEffort) ||
+        normalizeReasoningEffort(resolveModelReasoningEffort(modelId)) ||
+        "medium",
+      resolveModelReasoningEffortLevels(modelId)
     );
   }
 
@@ -3017,6 +3027,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         await this.pickModel();
         break;
       case "send":
+        // Ack before any await: everything the webview receives after this is
+        // for the new run; idle/finale catch-up of the previous run that was
+        // already in flight arrives before it (queued-send guard in panel).
+        if (message.clientSendId) {
+          this.postChat({
+            type: "sendAccepted",
+            chatId: this.store.activeChatId,
+            clientSendId: String(message.clientSendId),
+          });
+        }
         await this.handleSend(message.text, message.model, {
           attachments: message.attachments,
           agentMode: getModeById(message.agentMode).id,
@@ -4989,14 +5009,17 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.setRunStateForChat(runChatId, "running");
     this.setStatusForChat(
       runChatId,
-      lang === "ru" ? "Коммичу и пушу…" : "Committing and pushing…",
+      lang === "ru" ? "Коммичу…" : "Committing…",
       false,
       "running"
     );
 
+    let stepSeq = 0;
     try {
       const result = await commitAndPushPaths(paths, {
         signal: runRef.controller.signal,
+        // Чат свободен сразу после коммита; итог push придёт отдельно.
+        backgroundPush: true,
         onPhase: (detail) => {
           if (!this.isChatRunCurrent(runChatId, runRef)) {
             return;
@@ -5007,21 +5030,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           if (!this.isChatRunCurrent(runChatId, runRef)) {
             return;
           }
-          const toolText = `⚙ run_command(${JSON.stringify({
-            command: step.command,
-          })})`;
-          runUiMessages.push({ role: "tool", text: toolText });
+          const toolMsg = commitStepToUiMessage(step, stepSeq++);
+          runUiMessages.push(toolMsg);
           syncRunChat();
-          postToRunChat({ type: "append", role: "tool", text: toolText });
-          const output = [step.stdout, step.stderr].filter(Boolean).join("\n").trim();
-          if (output) {
-            const resultText = step.ok
-              ? output
-              : `Error: ${output}`;
-            runUiMessages.push({ role: "tool", text: resultText });
-            syncRunChat();
-            postToRunChat({ type: "append", role: "tool", text: resultText });
-          }
+          postToRunChat({ type: "append", ...toolMsg });
         },
       });
 
@@ -5043,6 +5055,20 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       this.scheduleScmRefresh();
       if (this.isChatRunCurrent(runChatId, runRef)) {
         this.postRunFinished(runChatId, result.ok ? "success" : "error");
+      }
+      if (result.push) {
+        void result.push.then(
+          (outcome) => this.reportBackgroundPush(runChatId, outcome),
+          (error) =>
+            this.reportBackgroundPush(runChatId, {
+              ok: false,
+              answer:
+                lang === "ru"
+                  ? `Push не удался: ${error instanceof Error ? error.message : String(error)}`
+                  : `Push failed: ${error instanceof Error ? error.message : String(error)}`,
+              step: { command: "git push", ok: false },
+            })
+        );
       }
       if (result.openCommitMessageSettings) {
         // Не ждём тост: промис с кнопкой резолвится только при закрытии
@@ -5082,6 +5108,30 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         this.postChat({ type: "idle", chatId: runChatId });
         this.finishChatRun(runChatId, runRef);
       }
+    }
+  }
+
+  /**
+   * Итог фонового `git push` после «Закоммитить»: в ленту чата (если в нём
+   * сейчас не идёт новый ответ — у прогона своя копия ленты) и тостом при ошибке.
+   */
+  private reportBackgroundPush(
+    chatId: string,
+    outcome: CommitPushOutcome
+  ): void {
+    this.scheduleScmRefresh();
+    if (this.store.chats[chatId] && !this.isChatRunning(chatId)) {
+      this.pushUiToChat(chatId, "assistant", outcome.answer);
+    }
+    if (!outcome.ok) {
+      void vscode.window.showErrorMessage(
+        outcome.answer.split(/\r?\n/, 1)[0] || outcome.answer
+      );
+    } else {
+      vscode.window.setStatusBarMessage(
+        `$(check) ${outcome.answer.split(/\r?\n/, 1)[0]}`,
+        5000
+      );
     }
   }
 
