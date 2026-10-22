@@ -645,6 +645,41 @@ function compareModelsByFavoriteThenLabel(a: AgentModel, b: AgentModel): number 
   });
 }
 
+/**
+ * Display name always carries the provider prefix: `гена · glm-5.3`.
+ * Shared by VS Code / JetBrains UI payloads and the settings webview.
+ */
+export function modelLabelWithProvider(
+  providerName: string | undefined,
+  providerId: string | undefined,
+  name: string | undefined
+): string {
+  const base = String(name || "").trim();
+  if (!base) {
+    return "";
+  }
+  const provider = String(providerName || providerId || "").trim();
+  if (!provider) {
+    return base;
+  }
+  const prefix = `${provider} · `;
+  return base.startsWith(prefix) ? base : prefix + base;
+}
+
+/** Prefixed label for a stored model row (any provider). */
+export function modelDisplayLabel(
+  model: Pick<AgentModel, "id" | "label" | "providerId">,
+  providers: readonly AgentProvider[] | undefined
+): string {
+  const providerId = String(model.providerId || "").trim();
+  const provider = providers?.find((p) => p.id === providerId);
+  return modelLabelWithProvider(
+    provider?.name,
+    provider?.id || providerId,
+    model.label || model.id
+  );
+}
+
 function readCommitMessageLanguage(
   value: unknown
 ): "auto" | "en" | "ru" {
@@ -1059,12 +1094,14 @@ export function getEnabledModels(): AgentModel[] {
   if (enabledModelsCache && key === enabledModelsCacheKey) {
     return enabledModelsCache;
   }
-  const models = getConfig()
-    .models.filter((m) => m.enabled !== false)
+  const config = getConfig();
+  const models = config.models
+    .filter((m) => m.enabled !== false)
     .slice()
     .sort(compareModelsByFavoriteThenLabel)
     .map((m) => ({
       ...m,
+      label: modelDisplayLabel(m, config.providers),
       supportsVision: resolveModelSupportsVision(m),
       supportsReasoningEffort: resolveModelSupportsReasoningEffort(m),
       reasoningEffortDefault: resolveModelReasoningEffort(m),
@@ -1073,6 +1110,17 @@ export function getEnabledModels(): AgentModel[] {
   enabledModelsCache = models;
   enabledModelsCacheKey = key;
   return models;
+}
+
+/** Base URL принадлежит провайдеру Gennadiy (токен Keycloak, нужен рефреш). */
+export function isGennadiyEndpointBaseUrl(baseUrl: string): boolean {
+  const wanted = normalizeBaseUrl(baseUrl);
+  if (!wanted) {
+    return false;
+  }
+  return getConfig().providers.some(
+    (p) => normalizeBaseUrl(p.baseUrl) === wanted && isGennadiyProvider(p)
+  );
 }
 
 /** Endpoint для модели через её провайдера (или primary). */

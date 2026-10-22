@@ -77,3 +77,43 @@ export class TurnTiming {
 		return this.tools.map((t) => `tool ${t.name} ${t.ms}ms`);
 	}
 }
+
+/** Effective model request parameters of one turn (as Harbor hands them to Cline). */
+export type TurnRequestParams = {
+	model: string;
+	provider?: string;
+	protocol?: string;
+	contextWindow?: number;
+	maxInputTokens?: number;
+	maxTokens?: number;
+	/** undefined — reasoning_effort is not sent. */
+	reasoningEffort?: string;
+	/** undefined — temperature is not sent (provider default). */
+	temperature?: number;
+	/** Capability registry strips temperature for this model. */
+	omitTemperature?: boolean;
+};
+
+/**
+ * One log line with the request params, so review/quality differences between
+ * models or providers can be traced to contextWindow / maxTokens / effort.
+ */
+export function formatTurnRequestParams(p: TurnRequestParams): string {
+	const num = (v: number | undefined) =>
+		typeof v === "number" && Number.isFinite(v) && v > 0 ? String(Math.round(v)) : "default";
+	const parts = [`model=${p.model || "?"}`];
+	if (p.provider) {
+		parts.push(`provider=${p.provider}`);
+	}
+	parts.push(`protocol=${p.protocol || "openai-compatible"}`);
+	parts.push(`contextWindow=${num(p.contextWindow)}`);
+	parts.push(`maxInputTokens=${num(p.maxInputTokens)}`);
+	parts.push(`maxTokens=${num(p.maxTokens)}`);
+	parts.push(`reasoning_effort=${p.reasoningEffort || "off"}`);
+	const temperature =
+		typeof p.temperature === "number" && Number.isFinite(p.temperature)
+			? String(p.temperature)
+			: "not-sent";
+	parts.push(`temperature=${temperature}${p.omitTemperature ? " (omitTemperature)" : ""}`);
+	return parts.join(" ");
+}

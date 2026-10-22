@@ -105,6 +105,28 @@ export async function startKeycloakDeviceFlow(
   };
 }
 
+/**
+ * Hint shown while waiting for the browser. `verification_uri_complete`
+ * already carries the code — nothing to type, just sign in and confirm; the
+ * code is shown only when the page will ask for it.
+ */
+export function gennadiyDeviceLoginHint(
+  start: KeycloakDeviceStart,
+  lang: string
+): string {
+  const codeInLink =
+    Boolean(start.verificationUriComplete) &&
+    start.verificationUriComplete !== start.verificationUri;
+  if (codeInLink) {
+    return lang === "ru"
+      ? "войдите на открывшейся странице и нажмите «Подтвердить» — код вводить не нужно"
+      : "sign in on the opened page and press Confirm — no code to type";
+  }
+  return lang === "ru"
+    ? `введите код ${start.userCode} на странице ${start.verificationUri}`
+    : `enter code ${start.userCode} at ${start.verificationUri}`;
+}
+
 export async function pollKeycloakDeviceToken(
   start: KeycloakDeviceStart & { codeVerifier?: string },
   cfg: KeycloakDeviceConfig = GENNADIY_KEYCLOAK_DEFAULT,
@@ -206,11 +228,29 @@ export function gennadiyAuthStorePath(): string {
   return path.join(dataHome, "gennadiy", "auth.json");
 }
 
+/** Token endpoint rejected a refresh (`oauthError` from the JSON body). */
+export class KeycloakRefreshError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly oauthError: string
+  ) {
+    super(message);
+    this.name = "KeycloakRefreshError";
+  }
+
+  /** Refresh token expired / revoked (offline session ended) — sign in again. */
+  get grantRejected(): boolean {
+    return this.oauthError === "invalid_grant";
+  }
+}
+
 /** Refresh an offline Keycloak token; throws when refresh is rejected. */
 export async function refreshKeycloakToken(
   refreshToken: string,
   cfg: KeycloakDeviceConfig = GENNADIY_KEYCLOAK_DEFAULT,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  options?: { signal?: AbortSignal }
 ): Promise<KeycloakTokenSuccess> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -227,11 +267,14 @@ export async function refreshKeycloakToken(
       Accept: "application/json",
     },
     body: body.toString(),
+    signal: options?.signal,
   });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || !json.access_token) {
-    throw new Error(
-      `Keycloak refresh failed: ${res.status} ${String(json.error || "")} ${String(json.error_description || "")}`
+    throw new KeycloakRefreshError(
+      `Keycloak refresh failed: ${res.status} ${String(json.error || "")} ${String(json.error_description || "")}`,
+      res.status,
+      String(json.error || "")
     );
   }
   const access = String(json.access_token);

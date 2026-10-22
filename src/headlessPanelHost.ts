@@ -20,6 +20,8 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  isGennadiyEndpointBaseUrl,
+  modelDisplayLabel,
   resolveModelEndpoint,
   resolveProviderProbeUrl,
 } from "./config";
@@ -63,6 +65,7 @@ import { maybeGenerateChatTitle } from "./chatTitle";
 import { maybeGeneratePromptSuggestion } from "./promptSuggestion";
 import {
   getOpenAICompatibleClient,
+  setOpenAIApiKeyResolver,
   type ChatMessage,
   type ListedProviderModel,
 } from "./openaiClient";
@@ -86,9 +89,15 @@ import {
   readGennadiyAccessToken,
   writeGennadiyKeycloakEntry,
 } from "./gennadiyAuth";
-import { ensureGennadiyAccessToken } from "./gennadiyAuthLogin";
+import {
+  createGennadiyApiKeyResolver,
+  refreshGennadiyAccessToken,
+  setGennadiyRefreshHooks,
+  startGennadiyKeepAlive,
+} from "./gennadiyTokenRefresh";
 import {
   GENNADIY_KEYCLOAK_DEFAULT,
+  gennadiyDeviceLoginHint,
   pollKeycloakDeviceToken,
   startKeycloakDeviceFlow,
   writeGennadiyAuthStore,
@@ -220,6 +229,7 @@ export class HeadlessPanelHost {
   constructor(opts: HeadlessPanelOptions) {
     this.opts = opts;
     this.reloadSettings();
+    this.registerGennadiyRefreshHooks();
     const loaded = readJsonFile(opts.sessionPath);
     if (isStoreV2(loaded)) {
       this.store = loaded;
@@ -720,7 +730,10 @@ export class HeadlessPanelHost {
       void headlessEnv.openExternal(start.verificationUriComplete);
       this.post({
         type: "status",
-        text: `Gennadiy: code ${start.userCode} — confirm sign-in in the browser.`,
+        text: `Gennadiy: ${gennadiyDeviceLoginHint(
+          start,
+          resolveUiLanguage(getConfig().language)
+        )}.`,
       });
       const tokens = await pollKeycloakDeviceToken(
         start,
@@ -735,6 +748,7 @@ export class HeadlessPanelHost {
         accountId: tokens.accountId || undefined,
       });
       this.syncGennadiyTokenToSettingsFile(tokens.access);
+      this.gennadiyExpiredNotified = false;
       this.post({
         type: "status",
         text: `Gennadiy: signed in${tokens.email ? ` (${tokens.email})` : ""}.`,
@@ -746,6 +760,46 @@ export class HeadlessPanelHost {
         text: `Gennadiy login failed: ${message}`,
       });
     }
+  }
+
+  /** One "session expired" status until the next successful sign-in. */
+  private gennadiyExpiredNotified = false;
+
+  /**
+   * VS Code parity (`registerGennadiyRefreshHooks`): settings-file copy of
+   * the token after each refresh, a re-login hint once the offline session
+   * is gone, per-request keys for utility LLM calls.
+   */
+  private registerGennadiyRefreshHooks(): void {
+    setGennadiyRefreshHooks({
+      onRefreshed: (access) => {
+        this.gennadiyExpiredNotified = false;
+        this.syncGennadiyTokenToSettingsFile(access);
+      },
+      onRejected: () => {
+        if (this.gennadiyExpiredNotified) {
+          return;
+        }
+        this.gennadiyExpiredNotified = true;
+        const lang = resolveUiLanguage(getConfig().language);
+        this.post({
+          type: "status",
+          text:
+            lang === "ru"
+              ? "Gennadiy: сессия Keycloak истекла, автообновление токена невозможно. Войдите заново (gennadiy auth login)."
+              : "Gennadiy: the Keycloak session has expired and the token cannot be refreshed. Sign in again (gennadiy auth login).",
+        });
+      },
+    });
+    setOpenAIApiKeyResolver(
+      createGennadiyApiKeyResolver(isGennadiyEndpointBaseUrl)
+    );
+    // Keep the Keycloak offline session alive while the IDE is open
+    // (sidecar lifetime; the timer is unref'd).
+    startGennadiyKeepAlive({
+      shouldRun: () =>
+        getConfig().providers.some((p) => isGennadiyProvider(p)),
+    });
   }
 
   private syncGennadiyTokenToSettingsFile(token: string): void {
@@ -1234,8 +1288,12 @@ export class HeadlessPanelHost {
     if (!id) {
       return "—";
     }
-    const row = getConfig().models.find((m) => m.id === id);
-    return String(row?.label || id).trim() || id;
+    const config = getConfig();
+    const row = config.models.find((m) => m.id === id);
+    if (!row) {
+      return id;
+    }
+    return modelDisplayLabel(row, config.providers) || id;
   }
 
   /** Label for the chat busy-line; empty so the webview omits `(—)`. */
@@ -2604,7 +2662,7 @@ export class HeadlessPanelHost {
         baseUrl: modelEndpoint.baseUrl,
       })
     ) {
-      await ensureGennadiyAccessToken();
+      await refreshGennadiyAccessToken();
     }
 
     // Copies pinned to runChatId — do not re-read this.history after awaits.

@@ -9,22 +9,26 @@
 
 import * as vscode from "vscode";
 import { resolveUiLanguage } from "./i18n";
-import { getConfig } from "./config";
+import { getConfig, isGennadiyEndpointBaseUrl } from "./config";
 import {
   gennadiyAuthEmail,
   isGennadiyProvider,
   readGennadiyAccessToken,
-  readGennadiyRefreshToken,
-  gennadiyTokenNeedsRefresh,
-  writeGennadiyKeycloakEntry,
 } from "./gennadiyAuth";
 import {
   GENNADIY_KEYCLOAK_DEFAULT,
+  gennadiyDeviceLoginHint,
   pollKeycloakDeviceToken,
-  refreshKeycloakToken,
   startKeycloakDeviceFlow,
   writeGennadiyAuthStore,
 } from "./keycloakDeviceAuth";
+import {
+  createGennadiyApiKeyResolver,
+  refreshGennadiyAccessToken,
+  setGennadiyRefreshHooks,
+  startGennadiyKeepAlive,
+} from "./gennadiyTokenRefresh";
+import { setOpenAIApiKeyResolver } from "./openaiClient";
 
 export const GENNADIY_AUTH_LOGIN_COMMAND = "gennadiy auth login";
 
@@ -32,47 +36,66 @@ export const GENNADIY_AUTH_LOGIN_COMMAND = "gennadiy auth login";
 const GENNADIY_AUTH_TERMINAL = "Harbor: Gennadiy Auth";
 
 let nativeLoginInFlight = false;
-let refreshInFlight: Promise<string> | undefined;
+/** One "session expired" toast until the next successful sign-in. */
+let expiredPromptShown = false;
 
 /**
  * Refresh the Keycloak access token via the offline refresh token (30 min
  * access). Safe to call before every run; concurrent callers share one
- * network refresh.
+ * network refresh. Settings sync runs from the refresh hooks.
  */
 export async function ensureGennadiyAccessToken(): Promise<string> {
-  const live = readGennadiyAccessToken();
-  if (live && !gennadiyTokenNeedsRefresh()) {
-    return live;
-  }
-  if (refreshInFlight) {
-    return refreshInFlight;
-  }
-  const refresh = readGennadiyRefreshToken();
-  if (!refresh) {
-    return live;
-  }
-  refreshInFlight = (async () => {
-    try {
-      const tokens = await refreshKeycloakToken(
-        refresh,
-        GENNADIY_KEYCLOAK_DEFAULT
-      );
-      writeGennadiyKeycloakEntry({
-        access: tokens.access,
-        refresh: tokens.refresh || refresh,
-        expires: tokens.expires,
-        email: tokens.email || undefined,
-        accountId: tokens.accountId || undefined,
-      });
+  return refreshGennadiyAccessToken();
+}
+
+/**
+ * Wire seamless refresh for the extension host: settings copy of the token
+ * after each refresh, a sign-in prompt once the offline session is gone, and
+ * per-request keys for utility LLM calls (titles, commit messages, …).
+ */
+export function registerGennadiyRefreshHooks(): void {
+  setGennadiyRefreshHooks({
+    onRefreshed: async () => {
+      expiredPromptShown = false;
       await syncGennadiyTokenToSettings();
-      return tokens.access;
-    } catch {
-      return readGennadiyAccessToken();
-    } finally {
-      refreshInFlight = undefined;
-    }
-  })();
-  return refreshInFlight;
+    },
+    onRejected: () => {
+      void promptGennadiySessionExpired();
+    },
+  });
+  setOpenAIApiKeyResolver(
+    createGennadiyApiKeyResolver(isGennadiyEndpointBaseUrl)
+  );
+}
+
+/**
+ * Keep the Keycloak offline session alive while VS Code is open so the
+ * sign-in form only returns after a long idle stretch.
+ */
+export function startGennadiyTokenKeepAlive(): vscode.Disposable {
+  const stop = startGennadiyKeepAlive({
+    shouldRun: () =>
+      getConfig().providers.some((p) => isGennadiyProvider(p)),
+  });
+  return new vscode.Disposable(stop);
+}
+
+async function promptGennadiySessionExpired(): Promise<void> {
+  if (expiredPromptShown || nativeLoginInFlight) {
+    return;
+  }
+  expiredPromptShown = true;
+  const lang = resolveUiLanguage(getConfig().language);
+  const login = lang === "ru" ? "Войти (Keycloak)" : "Sign in (Keycloak)";
+  const pick = await vscode.window.showWarningMessage(
+    lang === "ru"
+      ? "Gennadiy: сессия Keycloak истекла, автообновление токена невозможно. Войдите заново."
+      : "Gennadiy: the Keycloak session has expired and the token cannot be refreshed. Sign in again.",
+    login
+  );
+  if (pick === login) {
+    await openGennadiyAuthLogin();
+  }
 }
 
 /**
@@ -156,13 +179,30 @@ export async function openGennadiyAuthLoginNative(): Promise<boolean> {
   try {
     const start = await startKeycloakDeviceFlow(GENNADIY_KEYCLOAK_DEFAULT);
     await vscode.env.openExternal(vscode.Uri.parse(start.verificationUriComplete));
-    void vscode.window.showInformationMessage(
-      lang === "ru"
-        ? `Gennadiy: код ${start.userCode} — подтвердите вход в браузере (Keycloak).`
-        : `Gennadiy: code ${start.userCode} — confirm sign-in in the browser (Keycloak).`
+    // Progress notification: shows the code while waiting, Cancel aborts the
+    // poll, and it closes by itself once Keycloak confirms (no stale toast).
+    const tokens = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title:
+          lang === "ru"
+            ? "Gennadiy: подтвердите вход в браузере"
+            : "Gennadiy: confirm sign-in in the browser",
+        cancellable: true,
+      },
+      (progress, cancel) => {
+        progress.report({
+          message: gennadiyDeviceLoginHint(start, lang),
+        });
+        const abort = new AbortController();
+        cancel.onCancellationRequested(() => abort.abort());
+        return pollKeycloakDeviceToken(start, GENNADIY_KEYCLOAK_DEFAULT, {
+          signal: abort.signal,
+        });
+      }
     );
-    const tokens = await pollKeycloakDeviceToken(start, GENNADIY_KEYCLOAK_DEFAULT);
     writeGennadiyAuthStore(tokens);
+    expiredPromptShown = false;
     await syncGennadiyTokenToSettings();
     void vscode.window.showInformationMessage(
       lang === "ru"
@@ -172,8 +212,9 @@ export async function openGennadiyAuthLoginNative(): Promise<boolean> {
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // User pressed Cancel — handled, no CLI terminal fallback.
     if (/aborted/i.test(message)) {
-      return false;
+      return true;
     }
     void vscode.window.showWarningMessage(
       lang === "ru"

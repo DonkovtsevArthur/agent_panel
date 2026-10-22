@@ -89,17 +89,35 @@ const ISSUE_KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
 const LIST_JOINER_RE = /(?:\n|;|,| и | and | затем | then | потом )/i;
 
 /**
+ * Short but inherently multi-step requests («сделай ревью изменённых
+ * файлов», "review the diff", «отрефактори модуль») — many reads/commands,
+ * so the plan card must not be dropped by the short one-liner rule.
+ */
+const MULTI_STEP_WORK_RE = new RegExp(
+  [
+    "(?:ревью|code\\s*review|аудит|рефактор|отрефактор|порефактор|миграц|мигрир)",
+    "(?:изменённ|измененн|изменени|незакоммич|все\\s+файл|всех\\s+файл|всему\\s+проект|весь\\s+проект)",
+    "\\b(?:review|audit|refactor|migrate|migration|diff|changed\\s+files|uncommitted|whole\\s+(?:project|repo|codebase)|all\\s+files)\\b",
+  ].join("|"),
+  "i"
+);
+
+/**
  * «продолжи» / «continue» after a stop or a network error resumes multi-step
  * work — it is short, but the plan card must still come first.
  */
 const CONTINUE_RE =
   /^(?:ну\s+)?(?:давай(?:те)?\s+)?(?:продолж[а-яё]*|дальше|далее|доделай|доделывай|go\s+on|continue|keep\s+going|resume|carry\s+on)(?:\s+(?:работу|задачу|выполнение|дальше|please|working))?[\s.!]*$/i;
 
+/** Greetings / thanks / acknowledgements — a whole message of small talk. */
+const SMALL_TALK_RE =
+  /^(?:привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро)|спасибо|спс|благодарю|ок(?:ей)?|окей|хорошо|понятно|ясно|отлично|супер|класс|да|нет|ага|угу|hi|hello|hey|thanks|thank\s+you|thx|ok(?:ay)?|got\s+it|cool|great|nice|yes|no)(?:[\s,]+(?:спасибо|thanks|большое))?[\s.!)]*$/i;
+
 /**
  * Whether this turn carries the `update_todo` nudge (visible plan card).
  * Default is yes: the nudge itself tells the model to skip the card for
- * short work, so the model decides. Only obvious short Q&A and one-liners
- * skip it here (saves prompt tokens and a needless round-trip).
+ * short work, so the model decides. Only short Q&A / explanations and
+ * small talk skip it here (saves prompt tokens and a needless round-trip).
  */
 export function needsPlanCard(userText: string): boolean {
   const text = String(userText || "")
@@ -117,6 +135,9 @@ export function needsPlanCard(userText: string): boolean {
   if (CONTINUE_RE.test(text)) {
     return true;
   }
+  if (MULTI_STEP_WORK_RE.test(text) && !/[?？]\s*$/.test(text)) {
+    return true;
+  }
   const hasJoiner = LIST_JOINER_RE.test(text);
   if (
     (EXPLAIN_RE.test(text) || /[?？]\s*$/.test(text)) &&
@@ -128,8 +149,10 @@ export function needsPlanCard(userText: string): boolean {
   if (QUESTION_FRAME_RE.test(text) && text.length < 120) {
     return false;
   }
-  // One-liner («почини импорт», «давай обновим») — single action, no card.
-  if (text.length < 40 && !hasJoiner) {
+  // Small talk («спасибо», «ок», «привет») — nothing to plan. Short action
+  // requests («почини импорт») still get the nudge: the nudge itself tells
+  // the model to skip the card for a single action.
+  if (SMALL_TALK_RE.test(text)) {
     return false;
   }
   return true;

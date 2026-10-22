@@ -18,11 +18,19 @@ import { registerSelectionCodeLens } from "./selectionCodeLens";
 import { registerFigmaHostAutoStart } from "./figmaHostEnsure";
 import { seedDefaultHarborSkills } from "./harborSkills";
 import { applyRipgrepPathForCline } from "./ripgrepPath";
+import {
+  registerGennadiyRefreshHooks,
+  startGennadiyTokenKeepAlive,
+} from "./gennadiyAuthLogin";
 
 export function activate(context: vscode.ExtensionContext): void {
   applyFigmaTlsCaFromSettings();
   applyHarborTlsPolicy();
   setHarborTlsTrustPrompt(handleTlsTrustPrompt);
+  // Gennadiy Keycloak token (~30 min): settings sync + per-request refresh,
+  // plus a background keep-alive of the offline session.
+  registerGennadiyRefreshHooks();
+  context.subscriptions.push(startGennadiyTokenKeepAlive());
   // Cline search_files / file index spawn `rg`; the extension host PATH
   // usually has none, so point it at VS Code's bundled ripgrep.
   try {

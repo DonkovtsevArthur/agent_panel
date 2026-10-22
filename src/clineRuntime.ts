@@ -105,7 +105,11 @@ import {
   type ClineCreateMcpTools,
   type ClineCreateTool,
 } from "./clineMcpTools";
-import { TurnTiming } from "./turnTiming";
+import {
+  formatTurnRequestParams,
+  TurnRequestParams,
+  TurnTiming,
+} from "./turnTiming";
 import {
   activeFileAlreadyInlined,
   buildTurnContextBlock,
@@ -118,6 +122,8 @@ import {
 import { harborPlanModeRulesForLanguage } from "./planImplement";
 import { needsPlanCard, needsVerifyNudge } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
+import { isGennadiyProvider } from "./gennadiyAuth";
+import { wrapFetchWithGennadiyAuth } from "./gennadiyTokenRefresh";
 import { wrapFetchForMiMoCompat } from "./mimoOpenAiCompat";
 import { wrapFetchWithModelRequestOptions } from "./modelRequestOptions";
 import { withTurnImages } from "./turnImageInject";
@@ -325,6 +331,17 @@ function logTurnTiming(chatId: string, timing: TurnTiming): void {
     }
   } catch {
     // headless hosts without window — timing is diagnostics, never fatal
+  }
+}
+
+/** Log the effective model request params at turn start (same channel). */
+function logTurnRequestParams(chatId: string, params: TurnRequestParams): void {
+  try {
+    timingChannel ??= vscode.window.createOutputChannel("Harbor Agent Timing");
+    const id = chatId ? ` chat=${String(chatId).slice(0, 12)}` : "";
+    timingChannel.appendLine(`[turn]${id} request ${formatTurnRequestParams(params)}`);
+  } catch {
+    // headless hosts without window — diagnostics only, never fatal
   }
 }
 
@@ -2101,6 +2118,8 @@ function buildHarborProviderConfig(
     providerId?: string;
     model?: string;
     baseUrl?: string;
+    /** Gennadiy gateway: fresh Keycloak token per request + 401 retry. */
+    gennadiyAuth?: boolean;
   }
 ): {
   providerId: string;
@@ -2130,7 +2149,7 @@ function buildHarborProviderConfig(
   const sessionModelId = String(options?.model || modelInfo?.id || "");
   // Settings → model JSON `options` (e.g. chat_template_kwargs) on every
   // chat/completions body; read per request so edits apply without a restart.
-  const fetchImpl = wrapFetchWithModelRequestOptions(
+  const requestFetch = wrapFetchWithModelRequestOptions(
     wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
       model: resolveApiModelId(sessionModelId),
       baseUrl: options?.baseUrl,
@@ -2141,6 +2160,11 @@ function buildHarborProviderConfig(
             ?.requestOptions
         : undefined
   );
+  // The session's apiKey is fixed at core.start; the Keycloak token lives
+  // ~30 min, so swap the header per request instead of restarting sessions.
+  const fetchImpl = options?.gennadiyAuth
+    ? wrapFetchWithGennadiyAuth(requestFetch)
+    : requestFetch;
   return {
     providerId: options?.providerId || "openai-compatible",
     fetch: fetchImpl,
@@ -3174,6 +3198,21 @@ export async function runClineAgentTurn(options: {
   // Resolve real context window / max output so Cline budgets auto-compact and
   // output caps against the model's actual limits instead of a blind default.
   const modelInfoData = buildClineModelInfo(options.model);
+  {
+    const entry = modelInfoData.knownModels[options.model];
+    logTurnRequestParams(chatId, {
+      model: options.model,
+      provider: endpoint.providerName,
+      protocol: clineProviderId,
+      contextWindow: entry?.contextWindow,
+      maxInputTokens: entry?.maxInputTokens,
+      maxTokens: modelInfoData.maxTokensPerTurn ?? entry?.maxTokens,
+      reasoningEffort: reasoningOptions.reasoningEffort,
+      // Harbor does not pass temperature to Cline chat turns.
+      temperature: undefined,
+      omitTemperature: resolveModelCapabilities(options.model).omitTemperature,
+    });
+  }
   // Harbor always sends capabilities:["tools"] (so Cline does not emit
   // Anthropic-shaped thinking). Missing "images" then fail-closes: Cline
   // replaces pixels with "[Image attached — this model cannot view images]".
@@ -3336,6 +3375,11 @@ export async function runClineAgentTurn(options: {
               providerId: clineProviderId,
               model: resolveApiModelId(options.model),
               baseUrl: endpoint.baseUrl,
+              gennadiyAuth: isGennadiyProvider({
+                id: endpoint.providerId,
+                name: endpoint.providerName,
+                baseUrl: endpoint.baseUrl,
+              }),
             }
           ),
         },
@@ -3359,7 +3403,9 @@ export async function runClineAgentTurn(options: {
             (step) => emitStep(callbacks, step),
             () =>
               withTodoReminder(
-                createTodoReminderState(todoNudgeThisTurn, uiLang, harborModeId),
+                // Armed on every Agent/Plan turn: 3+ tool calls means multi-step
+                // work even when the request looked short.
+                createTodoReminderState(enableTodoTool, uiLang, harborModeId),
                 () => withTurnImages(userImages, runTurn)
               )
           )

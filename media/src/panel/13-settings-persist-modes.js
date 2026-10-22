@@ -82,7 +82,10 @@
     settingsModels = Array.isArray(settings.models)
       ? settings.models.map((m) => ({
           id: m.id || "",
-          label: m.label || "",
+          label: modelLabelWithProvider(
+            m.providerId || primaryId,
+            m.label || m.id || ""
+          ),
           providerId: m.providerId || primaryId,
           apiModelId: m.apiModelId || "",
           contextWindow: m.contextWindow,

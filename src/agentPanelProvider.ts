@@ -17,6 +17,7 @@ import {
   getEnabledModels,
   getModeById,
   getResolvedModes,
+  modelDisplayLabel,
   normalizeModelRequestOptions,
   clampUiFontSize,
   resolveModelEndpoint,
@@ -2135,8 +2136,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!id) {
       return "";
     }
-    const found = getConfig().models.find((m) => m.id === id);
-    return found?.label || id;
+    const config = getConfig();
+    const found = config.models.find((m) => m.id === id);
+    if (!found) {
+      return id;
+    }
+    return modelDisplayLabel(found, config.providers) || id;
   }
 
   private getProviderConnStatusForModel(

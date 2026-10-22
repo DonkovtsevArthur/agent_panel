@@ -730,6 +730,23 @@ export function parseListedProviderModels(
   return models;
 }
 
+export type OpenAIApiKeyResolver = (
+  baseUrl: string,
+  apiKey: string
+) => Promise<string>;
+
+let apiKeyResolver: OpenAIApiKeyResolver | undefined;
+
+/**
+ * Hosts plug in per-request key lookup for short-lived tokens (Gennadiy /
+ * Keycloak, ~30 min) so pooled clients never send an expired key.
+ */
+export function setOpenAIApiKeyResolver(
+  resolver: OpenAIApiKeyResolver | undefined
+): void {
+  apiKeyResolver = resolver;
+}
+
 export class OpenAICompatibleClient {
   private readonly retry: Required<TransportRetryOptions>;
 
@@ -757,6 +774,18 @@ export class OpenAICompatibleClient {
         Math.max(0, retry?.jitterRatio ?? DEFAULT_RETRY_OPTIONS.jitterRatio)
       ),
     };
+  }
+
+  /** Configured key, or the host resolver's fresh one (Gennadiy refresh). */
+  private async requestApiKey(): Promise<string> {
+    if (!apiKeyResolver) {
+      return this.apiKey;
+    }
+    try {
+      return (await apiKeyResolver(this.baseUrl, this.apiKey)) || this.apiKey;
+    } catch {
+      return this.apiKey;
+    }
   }
 
   private buildApiBody(
@@ -895,8 +924,9 @@ export class OpenAICompatibleClient {
     const headers = withHarborIdentity({
       "Content-Type": "application/json",
     });
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+    const apiKey = await this.requestApiKey();
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const capabilities = resolveModelCapabilities(body.model);
@@ -1004,8 +1034,9 @@ export class OpenAICompatibleClient {
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     });
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+    const apiKey = await this.requestApiKey();
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const apiBody = this.buildApiBody(body, true);
@@ -1183,8 +1214,9 @@ export class OpenAICompatibleClient {
     const headers = withHarborIdentity({
       "Content-Type": "application/json",
     });
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+    const apiKey = await this.requestApiKey();
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const apiBody = this.buildApiBody(body, false);
@@ -1230,8 +1262,9 @@ export class OpenAICompatibleClient {
 
   async listModels(signal?: AbortSignal): Promise<ListedProviderModel[]> {
     const headers = withHarborIdentity({});
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+    const apiKey = await this.requestApiKey();
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
     }
 
     const response = await withTransportRetry(async () => {
@@ -1256,8 +1289,9 @@ export class OpenAICompatibleClient {
   /** GET произвольного URL (health / status). 2xx = ok. */
   async probeGet(url: string, signal?: AbortSignal): Promise<void> {
     const headers = withHarborIdentity({});
-    if (this.apiKey) {
-      headers.Authorization = `Bearer ${this.apiKey}`;
+    const apiKey = await this.requestApiKey();
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
     }
     await withTransportRetry(async () => {
       const current = await requestJson(url, {

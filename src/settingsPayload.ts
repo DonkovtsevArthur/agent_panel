@@ -5,9 +5,11 @@
  */
 import {
   getConfig,
+  modelDisplayLabel,
   resolveModelSupportsVision,
   type AgentPanelConfig,
   type AgentModel,
+  type AgentProvider,
 } from "./config";
 import { resolveUiLanguage, type UiLanguage } from "./i18n";
 
@@ -51,11 +53,12 @@ export type HarborSettingsPayloadCore = {
 
 function modelRow(
   m: AgentModel,
-  supportsVision: boolean | undefined
+  supportsVision: boolean | undefined,
+  providers: readonly AgentProvider[] | undefined
 ): Record<string, unknown> {
   return {
     id: m.id,
-    label: m.label || "",
+    label: modelDisplayLabel(m, providers),
     providerId: m.providerId || "",
     ...(m.apiModelId ? { apiModelId: m.apiModelId } : {}),
     contextWindow: m.contextWindow || undefined,
@@ -96,7 +99,8 @@ export function buildHarborSettingsPayloadCore(
     models: config.models.map((m) =>
       modelRow(
         m,
-        resolveVision ? resolveModelSupportsVision(m) : m.supportsVision
+        resolveVision ? resolveModelSupportsVision(m) : m.supportsVision,
+        config.providers
       )
     ),
     defaultModel: config.defaultModel,

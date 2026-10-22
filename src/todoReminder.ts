@@ -1,6 +1,6 @@
 /**
- * update_todo reminder as a Cline `afterTool` extension. On a turn that got
- * the plan-card nudge (needsPlanCard), a model that has already made
+ * update_todo reminder as a Cline `afterTool` extension. On every Agent/Plan
+ * turn (with or without the needsPlanCard nudge), a model that has already made
  * TODO_REMINDER_AFTER_TOOLS tool calls without update_todo gets one note
  * appended to the next tool result: «create the plan now». Once per turn,
  * root agent only (spawned sub-agents never call update_todo).

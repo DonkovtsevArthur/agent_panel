@@ -97,3 +97,26 @@ test("refreshKeycloakToken exchanges offline refresh token", async () => {
   assert.equal(tokens.refresh, "refresh-new");
   assert.ok(tokens.expires > Date.now() + 1500 * 1000);
 });
+
+test("gennadiyDeviceLoginHint hides the code when the link carries it", () => {
+  const { gennadiyDeviceLoginHint } = require("../out/keycloakDeviceAuth.js");
+  const base = {
+    deviceCode: "d",
+    userCode: "NGTD-IQSA",
+    verificationUri: "https://sso.example/device",
+    expiresIn: 600,
+    interval: 5,
+  };
+  const withLink = gennadiyDeviceLoginHint(
+    { ...base, verificationUriComplete: "https://sso.example/device?user_code=NGTD-IQSA" },
+    "ru"
+  );
+  assert.doesNotMatch(withLink, /NGTD-IQSA/);
+  assert.match(withLink, /код вводить не нужно/);
+  const manual = gennadiyDeviceLoginHint(
+    { ...base, verificationUriComplete: base.verificationUri },
+    "en"
+  );
+  assert.match(manual, /NGTD-IQSA/);
+  assert.match(manual, /sso\.example\/device/);
+});

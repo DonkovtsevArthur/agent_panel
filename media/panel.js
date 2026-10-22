@@ -10634,6 +10634,20 @@
     return provider ? provider.name || provider.id : providerId || "—";
   }
 
+  /** Display name always carries the provider prefix: `гена · glm-5.3`. */
+  function modelLabelWithProvider(providerId, name) {
+    const base = String(name || "").trim();
+    if (!base) {
+      return "";
+    }
+    const provider = providerLabel(providerId);
+    if (!provider || provider === "—") {
+      return base;
+    }
+    const prefix = `${provider} · `;
+    return base.startsWith(prefix) ? base : prefix + base;
+  }
+
   function primaryProviderId() {
     const def = settingsProviders.find((p) => p.id === "default");
     return def?.id || settingsProviders[0]?.id || "";
@@ -11832,7 +11846,10 @@
         const prev = byId.get(key);
         byId.set(key, {
           id: model.id,
-          label: model.label || prev.label || model.id,
+          label: modelLabelWithProvider(
+            providerId,
+            model.label || prev.label || model.id
+          ),
           apiModelId: model.apiModelId || prev.apiModelId || "",
           providerId: providerId || prev.providerId || "",
           contextWindow:
@@ -11855,6 +11872,10 @@
       } else {
         const next = cloneModel(model);
         next.providerId = providerId || next.providerId || "";
+        next.label = modelLabelWithProvider(
+          next.providerId,
+          next.label || next.id
+        );
         // Newly added models start switched off — the user enables them explicitly.
         next.enabled = false;
         byId.set(`${next.providerId || ""}|${model.id}`, next);
@@ -11897,7 +11918,7 @@
       incoming.push({
         id: pickerId,
         apiModelId: idTaken ? id : "",
-        label: extra.label || (idTaken ? `${provider} · ${id}` : id),
+        label: modelLabelWithProvider(provider, extra.label || id),
         providerId: provider,
         contextWindow: extra.contextWindow,
         maxOutputTokens: extra.maxOutputTokens,
@@ -12744,7 +12765,7 @@
     const maxOutputTokens = Number(modelEditOutput?.value);
     const next = {
       id,
-      label: label || id,
+      label: modelLabelWithProvider(providerId, label || id),
       providerId,
       enabled: true,
       supportsVision: modelEditVision ? Boolean(modelEditVision.checked) : false,
@@ -13707,7 +13728,10 @@
     settingsModels = Array.isArray(settings.models)
       ? settings.models.map((m) => ({
           id: m.id || "",
-          label: m.label || "",
+          label: modelLabelWithProvider(
+            m.providerId || primaryId,
+            m.label || m.id || ""
+          ),
           providerId: m.providerId || primaryId,
           apiModelId: m.apiModelId || "",
           contextWindow: m.contextWindow,
