@@ -84,6 +84,7 @@
           id: m.id || "",
           label: m.label || "",
           providerId: m.providerId || primaryId,
+          apiModelId: m.apiModelId || "",
           contextWindow: m.contextWindow,
           maxOutputTokens: m.maxOutputTokens,
           enabled: m.enabled !== false,
@@ -244,6 +245,10 @@
         providerId: m.providerId || primaryProviderId(),
         enabled: m.enabled !== false,
       };
+      const apiModelId = String(m.apiModelId || "").trim();
+      if (apiModelId && apiModelId !== m.id) {
+        row.apiModelId = apiModelId;
+      }
       if (m.contextWindow) {
         row.contextWindow = m.contextWindow;
       }

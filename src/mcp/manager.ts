@@ -166,13 +166,22 @@ function nativeAtlassianTools(
     : { prefix: "jira", defs: JIRA_NATIVE_TOOLS, writes: JIRA_NATIVE_WRITE_TOOLS };
 }
 
+type McpOnDemandMode = {
+  onDemand: boolean;
+  atlassianOnDemand: boolean;
+  lazy: boolean;
+};
+
 function atlassianChatTools(
   serverId: string,
   native: { prefix: string; defs: AtlassianToolDef[]; writes: ReadonlySet<string> },
-  onDemand: boolean
+  onDemand: boolean,
+  lazy = false
 ): ChatTool[] {
   const defs = onDemand
-    ? compactAtlassianToolDefs(native.prefix, native.defs, native.writes)
+    ? compactAtlassianToolDefs(native.prefix, native.defs, native.writes, {
+        lazy,
+      })
     : native.defs;
   return defs.map((tool) => ({
     type: "function" as const,
@@ -438,11 +447,18 @@ export class McpManager {
     // connects lazily via ensureFigmaConnected on turns that reference a
     // Figma URL, plus explicit activation / Settings paths.
     void this.healCustomServers();
-    return this.collectOpenAiTools(
-      readonlyOnly,
-      this.mcpToolsOnDemand(),
-      this.atlassianToolsOnDemand()
-    );
+    return this.collectOpenAiTools(readonlyOnly, this.onDemandMode());
+  }
+
+  /** Settings → how MCP tools are sent (see toolsOnDemand.ts / atlassianCompact.ts). */
+  private onDemandMode(): McpOnDemandMode {
+    const lazy = this.mcpLazyTools();
+    return {
+      // Lazy implies on demand — it is a stricter form of the same dispatchers.
+      onDemand: lazy || this.mcpToolsOnDemand(),
+      atlassianOnDemand: lazy || this.atlassianToolsOnDemand(),
+      lazy,
+    };
   }
 
   /**
@@ -452,24 +468,24 @@ export class McpManager {
    */
   listDeferredOpenAiTools(readonlyOnly = false): ChatTool[] {
     const sent = new Set(
-      this.collectOpenAiTools(
-        readonlyOnly,
-        this.mcpToolsOnDemand(),
-        this.atlassianToolsOnDemand()
-      ).map((t) => t.function.name)
+      this.collectOpenAiTools(readonlyOnly, this.onDemandMode()).map(
+        (t) => t.function.name
+      )
     );
-    return this.collectOpenAiTools(readonlyOnly, false, false).filter(
-      (t) => !sent.has(t.function.name)
-    );
+    return this.collectOpenAiTools(readonlyOnly, {
+      onDemand: false,
+      atlassianOnDemand: false,
+      lazy: false,
+    }).filter((t) => !sent.has(t.function.name));
   }
 
   private collectOpenAiTools(
     readonlyOnly: boolean,
-    onDemand: boolean,
-    atlassianOnDemand: boolean
+    mode: McpOnDemandMode
   ): ChatTool[] {
+    const { onDemand, atlassianOnDemand, lazy } = mode;
     const serverTools = (id: string, list: ChatTool[]): ChatTool[] =>
-      onDemand ? compactMcpServerTools(id, list) : list;
+      onDemand ? compactMcpServerTools(id, list, { lazy }) : list;
     const tools = [
       ...(this.figmaStatus.enabled !== false &&
       this.figmaStatus.state === "connected"
@@ -484,12 +500,12 @@ export class McpManager {
           const native = cfg ? nativeAtlassianTools(cfg) : undefined;
           if (native) {
             return atlassianOnDemand
-              ? atlassianChatTools(id, native, true)
+              ? atlassianChatTools(id, native, true, lazy)
               : rt.tools;
           }
           return serverTools(id, rt.tools);
         }),
-      ...this.nativeToolsWhileConnecting(atlassianOnDemand),
+      ...this.nativeToolsWhileConnecting(mode),
     ];
     if (!readonlyOnly) {
       return tools;
@@ -505,7 +521,7 @@ export class McpManager {
    * connectCustom. Servers in error / backoff are left out, as before.
    */
   private nativeToolsWhileConnecting(
-    atlassianOnDemand = this.atlassianToolsOnDemand()
+    mode: McpOnDemandMode = this.onDemandMode()
   ): ChatTool[] {
     const out: ChatTool[] = [];
     for (const cfg of this.customConfigs) {
@@ -520,7 +536,12 @@ export class McpManager {
       const native = nativeAtlassianTools(cfg);
       if (native) {
         out.push(
-          ...atlassianChatTools(cfg.id, native, atlassianOnDemand)
+          ...atlassianChatTools(
+            cfg.id,
+            native,
+            mode.atlassianOnDemand,
+            mode.lazy
+          )
         );
       }
     }
@@ -532,6 +553,15 @@ export class McpManager {
     const figmaCatalog = this.figmaTools.map((t) => t.function.name);
     return this.figmaTools.filter(
       (t) => !shouldHideLegacyFigmaDataTool(t.function.name, figmaCatalog)
+    );
+  }
+
+  /** `agentPanel.mcp.lazyTools` (default on) — names-only dispatchers for every server. */
+  private mcpLazyTools(): boolean {
+    return (
+      vscode.workspace
+        .getConfiguration("agentPanel")
+        .get<boolean>("mcp.lazyTools") !== false
     );
   }
 
@@ -554,13 +584,26 @@ export class McpManager {
   }
 
   buildSystemHint(toolNames: string[]): string {
-    const figmaTools = toolNames.filter((n) =>
+    const sentFigma = toolNames.filter((n) =>
       n.startsWith(`mcp__${FIGMA_SERVER_ID}__`)
     );
+    // Lazy mode sends only figma_read / figma_write — the hint still names the
+    // real tools (get_design_context…); the dispatcher routes them.
+    const figmaTools =
+      sentFigma.length && this.onDemandMode().lazy
+        ? this.visibleFigmaTools().map((t) => t.function.name)
+        : sentFigma;
+    const lazyFigma =
+      figmaTools !== sentFigma
+        ? `Figma tools above are called through ${sentFigma.join(" / ")} with { tool, arguments }; describe: true returns a tool's schema.`
+        : "";
     return [
       mcpSystemHint(toolNames),
       figmaSystemHint(figmaTools.length > 0, figmaTools),
-    ].join("\n");
+      lazyFigma,
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   async callTool(qualifiedName: string, argsJson: string): Promise<string> {
@@ -623,12 +666,14 @@ export class McpManager {
       // Tools on demand: `figma_read` / `figma_write` run the inner tool, so
       // the legacy-tool guard and arg patching below see its real name.
       let figmaToolName = parsed.toolName;
-      if (this.mcpToolsOnDemand()) {
+      const mode = this.onDemandMode();
+      if (mode.onDemand) {
         const dispatch = resolveMcpDispatch(
           FIGMA_SERVER_ID,
           parsed.toolName,
           args,
-          this.visibleFigmaTools()
+          this.visibleFigmaTools(),
+          { lazy: mode.lazy }
         );
         if (dispatch.kind === "result") {
           return { content: [{ type: "text", text: dispatch.text }] };
@@ -674,13 +719,15 @@ export class McpManager {
     const nativeCfg = this.customConfigs.find((c) => c.id === parsed.serverId);
     const native = nativeCfg ? nativeAtlassianTools(nativeCfg) : undefined;
     let toolName = parsed.toolName;
+    const mode = this.onDemandMode();
     if (native) {
       const dispatch = resolveAtlassianDispatch(
         native.prefix,
         parsed.toolName,
         args,
         native.defs,
-        native.writes
+        native.writes,
+        { lazy: mode.lazy }
       );
       if (dispatch.kind === "result") {
         return { content: [{ type: "text", text: dispatch.text }] };
@@ -689,13 +736,14 @@ export class McpManager {
         toolName = dispatch.tool;
         args = dispatch.args;
       }
-    } else if (this.mcpToolsOnDemand()) {
+    } else if (mode.onDemand) {
       // Any other server: `<server>_read` / `_write` dispatchers.
       const dispatch = resolveMcpDispatch(
         parsed.serverId,
         parsed.toolName,
         args,
-        this.customRuntimes.get(parsed.serverId)?.tools || []
+        this.customRuntimes.get(parsed.serverId)?.tools || [],
+        { lazy: mode.lazy }
       );
       if (dispatch.kind === "result") {
         return { content: [{ type: "text", text: dispatch.text }] };

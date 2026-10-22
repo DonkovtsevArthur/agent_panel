@@ -2,6 +2,7 @@
  * Harbor turn runner backed by ClineCore local session host (@cline/sdk).
  * UI callbacks stay the Harbor AgentRunCallbacks contract.
  */
+import * as os from "os";
 import * as path from "path";
 import { createHash, randomUUID } from "crypto";
 import * as vscode from "vscode";
@@ -9,6 +10,7 @@ import {
   getConfig,
   getContextWindow,
   getModeById,
+  resolveApiModelId,
   resolveModelEndpoint,
   resolveModelPromptCache,
   resolveReasoningEffortForRun,
@@ -60,6 +62,10 @@ import {
   replyLanguageRewritePrompt,
 } from "./replyLanguage";
 import { toClineReasoningOptions } from "./reasoningEffort";
+import {
+  CLINE_COMPACTION_TRIGGER_RATIO,
+  harborCompactionInputBudget,
+} from "./compactionBudget";
 import {
   appendSkillUsage,
   buildSkillUsageEntry,
@@ -121,7 +127,10 @@ import { withInspectableImages } from "./inspectImagesContext";
 import { createInspectImagesTool } from "./inspectImagesTool";
 import { createHttpTool, HTTP_REQUEST_TOOL } from "./httpTool";
 import { withTodoStepEmitter } from "./todoStepContext";
-import { computeContextBreakdown } from "./contextBreakdown";
+import {
+  computeContextBreakdown,
+  type ContextRuleFile,
+} from "./contextBreakdown";
 import {
   withContextBreakdownSink,
   withHarborContextBreakdownExtension,
@@ -164,6 +173,7 @@ import {
 import {
   setHarborGitGuardAllowShellGit,
   setHarborGitGuardUserText,
+  setHarborGitGuardChatUserTexts,
   withHarborGitCommandGuardExtension,
 } from "./gitCommandGuardExtension";
 
@@ -414,30 +424,6 @@ type ClineKnownModelInfo = {
   capabilities?: string[];
 };
 
-/** Cline auto-compacts at this share of `maxInputTokens` (COMPACTION_TRIGGER_RATIO). */
-const CLINE_COMPACTION_TRIGGER_RATIO = 0.9;
-
-/**
- * `maxInputTokens` for Cline's compaction budget. Cline compacts at 90% of it,
- * which on 1M-window models means never — long chats then re-send hundreds of
- * thousands of tokens per step and time-to-first-token grows every turn. With
- * `agentPanel.autoCompact.thresholdTokens` the budget is lowered so compaction
- * fires at that request size; the model's real `contextWindow` is unchanged.
- */
-export function harborCompactionInputBudget(
-  contextWindow: number,
-  autoCompact: { enabled: boolean; thresholdTokens: number }
-): number {
-  const threshold = autoCompact.thresholdTokens;
-  if (!autoCompact.enabled || !(threshold > 0)) {
-    return contextWindow;
-  }
-  return Math.min(
-    contextWindow,
-    Math.ceil(threshold / CLINE_COMPACTION_TRIGGER_RATIO)
-  );
-}
-
 /**
  * Build knownModels + maxTokensPerTurn for Cline from Harbor's resolved model
  * capabilities so auto-compact / output caps match the real model, and so the
@@ -540,6 +526,8 @@ type ClineBundle = {
   }) => {
     start: () => Promise<void>;
     hasConfiguredSkills: (allowed?: ReadonlyArray<string>) => boolean;
+    /** Loaded rule files (name as rendered under `# Rules`) — Context popover. */
+    listRecords?: (type: "rule") => ClineRuleRecord[];
   };
   getClineDefaultSystemPrompt: (options: {
     /** Host-specific rules injected into {{CLINE_RULES}} (keeps the base prompt). */
@@ -689,6 +677,59 @@ function rememberMcpSystemHint(sessionId: string, hint: string): void {
     }
     mcpSystemHintBySession.delete(oldest);
   }
+}
+
+/** Cline sessionId → rule files of that session (Context popover). */
+const ruleFilesBySession = new Map<string, ContextRuleFile[]>();
+
+/**
+ * Rule names Cline rendered under `# Rules` for this session. A reused
+ * session was started with an earlier turn's service, so the names are
+ * remembered per session; this turn's service only runs on core.start.
+ */
+type ClineRuleRecord = {
+  filePath?: string;
+  item?: { name?: string; disabled?: boolean };
+};
+
+function contextRuleFiles(
+  sessionId: string,
+  service: { listRecords?: (type: "rule") => ClineRuleRecord[] } | undefined,
+  cwd: string
+): ContextRuleFile[] {
+  let records: ClineRuleRecord[] = [];
+  try {
+    records = service?.listRecords?.("rule") || [];
+  } catch {
+    records = [];
+  }
+  const home = os.homedir();
+  const files = records
+    .filter((record) => record.item?.name && record.item.disabled !== true)
+    .map((record) => {
+      const filePath = String(record.filePath || "");
+      const rel = filePath && cwd ? path.relative(cwd, filePath) : "";
+      const label =
+        rel && !rel.startsWith("..") && !path.isAbsolute(rel)
+          ? rel
+          : filePath.startsWith(home)
+            ? `~${filePath.slice(home.length)}`
+            : filePath;
+      return { name: String(record.item?.name), label: label || undefined };
+    });
+  if (files.length) {
+    ruleFilesBySession.delete(sessionId);
+    ruleFilesBySession.set(sessionId, files);
+    while (ruleFilesBySession.size > MCP_SYSTEM_HINT_SESSIONS_MAX) {
+      const oldest = ruleFilesBySession.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      ruleFilesBySession.delete(oldest);
+    }
+    return files;
+  }
+  return ruleFilesBySession.get(sessionId) || [];
 }
 
 function mapHarborModeToCline(agentMode?: string): ClineMode {
@@ -2091,7 +2132,7 @@ function buildHarborProviderConfig(
   // chat/completions body; read per request so edits apply without a restart.
   const fetchImpl = wrapFetchWithModelRequestOptions(
     wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
-      model: sessionModelId,
+      model: resolveApiModelId(sessionModelId),
       baseUrl: options?.baseUrl,
     }),
     () =>
@@ -2194,6 +2235,12 @@ export async function runClineAgentTurn(options: {
 
   // So Act git blockers see explicit "push" / "all changes" exceptions for this turn.
   setHarborGitGuardUserText(options.userText || "");
+  // A push request anywhere earlier in this chat still counts (auto-approve only).
+  setHarborGitGuardChatUserTexts(
+    (options.priorUiMessages || [])
+      .filter((m) => m?.role === "user")
+      .map((m) => String(m.text || ""))
+  );
   // Settings → auto-approve shell commands also lets `git commit` / `git push`
   // through the guard (rules below tell the model the same).
   const allowShellGit = isToolGroupAutoApproved("commands");
@@ -2482,6 +2529,7 @@ export async function runClineAgentTurn(options: {
       deferredMcpTools: listHarborDeferredMcpTools(clineMode === "plan"),
       contextWindow: contextWindowTokens,
       compactTriggerTokens,
+      rules: contextRuleFiles(sessionId, userInstructionService, cwd),
       usage,
     });
 
@@ -3225,7 +3273,7 @@ export async function runClineAgentTurn(options: {
         config: {
           sessionId,
           providerId: clineProviderId,
-          modelId: options.model,
+          modelId: resolveApiModelId(options.model),
           apiKey: endpoint.apiKey || "no-key",
           baseUrl: endpoint.baseUrl,
           cwd,
@@ -3286,7 +3334,7 @@ export async function runClineAgentTurn(options: {
             {
               promptCache: enablePromptCache,
               providerId: clineProviderId,
-              model: options.model,
+              model: resolveApiModelId(options.model),
               baseUrl: endpoint.baseUrl,
             }
           ),
@@ -3579,7 +3627,7 @@ export async function runClineAgentTurn(options: {
           workspaceRoot: cwd,
           chatId,
           mode: harborModeId,
-          model: options.model,
+          model: resolveApiModelId(options.model),
           loaded: loadedSkills,
           catalog: selectCatalogSkills(enabledSkills).skills.length,
           userText: options.userText || "",

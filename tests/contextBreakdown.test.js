@@ -8,6 +8,7 @@ const {
   messageMemoryFiles,
   systemPromptMemoryFiles,
   IMAGE_TOKENS_ESTIMATE,
+  RULES_FALLBACK_NAME,
 } = require("../out/contextBreakdown.js");
 const {
   createHarborContextBreakdownExtension,
@@ -26,21 +27,35 @@ test("estimateTokens: ~4 chars per ASCII token, ~2 per non-ASCII char", () => {
   assert.equal(estimateTokens("абвг".repeat(10)), 20);
 });
 
-test("systemPromptMemoryFiles: splits Cline # Rules sections by file", () => {
+test("systemPromptMemoryFiles: splits # Rules only at known rule names", () => {
   const prompt = [
     "You are Cline.",
     "",
     "# Rules",
-    "## AGENTS.md",
+    "## Workspace AGENTS.md",
+    "# Project",
+    "## Orientation",
+    "a".repeat(400),
+    "## Commands",
     "a".repeat(400),
     "",
-    "## .clinerules/style.md",
+    "## style",
     "b".repeat(200),
   ].join("\n");
-  const files = systemPromptMemoryFiles(prompt);
+  const files = systemPromptMemoryFiles(prompt, [
+    { name: "Workspace AGENTS.md", label: "AGENTS.md" },
+    { name: "style", label: ".clinerules/style.md" },
+    { name: "not-loaded", label: "x.md" },
+  ]);
   assert.deepEqual([...files.keys()], ["AGENTS.md", ".clinerules/style.md"]);
-  assert.ok(files.get("AGENTS.md") > 100);
+  assert.ok(files.get("AGENTS.md") > 200, "inner ## headings stay in AGENTS.md");
   assert.ok(files.get(".clinerules/style.md") >= 50);
+});
+
+test("systemPromptMemoryFiles: unknown rule names → one entry, not per heading", () => {
+  const prompt = ["base", "", "# Rules", "## A", "x", "## B", "y", "## C", "z"].join("\n");
+  const files = systemPromptMemoryFiles(prompt);
+  assert.deepEqual([...files.keys()], [RULES_FALLBACK_NAME]);
 });
 
 test("systemPromptMemoryFiles: Harbor capped AGENTS.md copy counts as AGENTS.md", () => {
@@ -114,8 +129,10 @@ test("computeContextBreakdown: categories, MCP split, autocompact buffer", () =>
     deferredMcpTools,
     contextWindow: 100_000,
     compactTriggerTokens: 90_000,
+    rules: [{ name: "AGENTS.md" }],
   });
   assert.equal(b.calibrated, false);
+  assert.equal(b.compactTriggerTokens, 90_000);
   assert.equal(category(b, "skills"), estimateTokens(skillsText));
   assert.equal(category(b, "mcpInstructions"), estimateTokens(mcpInstructions));
   assert.equal(category(b, "mcpTools"), estimateToolTokens(tools[1]));
@@ -150,6 +167,7 @@ test("computeContextBreakdown: scales to API usage so used matches the ring", ()
   // Rounding per category may drift by a few tokens.
   assert.ok(Math.abs(b.used - 6500) <= 3, `used ${b.used}`);
   assert.equal(category(b, "autocompactBuffer"), 0, "auto compact off");
+  assert.equal(b.compactTriggerTokens, 0);
   assert.equal(category(b, "freeSpace"), 200_000 - b.used);
 });
 

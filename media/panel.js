@@ -81,6 +81,8 @@
       noProvidersOrModels: "No providers yet — add a provider or a model.",
       selectProviderToSeeModels: "Select a provider to see its models.",
       noModelsForProvider: "No models for this provider yet.",
+      deleteAllModels: "Delete all models of this provider",
+      deleteAllModelsConfirm: (n) => `Delete all ${n} models?`,
       baseUrl: "Base URL",
       statusUrl: "Status URL",
       statusUrlHint: "Empty = Base URL + /models",
@@ -245,7 +247,7 @@
       parallelToolCallsNote:
         "Independent tools from one response run together.",
       autoCompact: "Auto compact",
-      autoCompactNote: "Compress the chat near the model window limit.",
+      autoCompactNote: "Compress the chat at 75% of the model window.",
       promptSuggestions: "Prompt suggestions",
       promptSuggestionsNote:
         "Suggest your next message in the empty composer. Tab accepts.",
@@ -317,6 +319,10 @@
       contextUsage: "Context usage",
       contextPopTitle: "Context",
       contextPopUsed: (pct) => `Used: ${pct} %`,
+      contextPopUsedBeforeCompact: (pct) => `Used: ${pct} % before auto compact`,
+      contextPopBudget: (trigger, win) => `Auto compact at ${trigger} of the ${win} window`,
+      contextBufferHint:
+        "The part of the window above the auto-compact threshold: the chat never gets there — Cline compacts the history at the threshold.",
       contextCatMessages: "Messages",
       contextCatSystemTools: "System tools",
       contextCatMcpTools: "MCP tools",
@@ -338,6 +344,13 @@
         "Character-based estimate, scaled to the prompt tokens reported by the API.",
       contextPopEstimated:
         "Character-based estimate: the API did not report usage.",
+      contextStatLastRequest: "Last request",
+      contextStatCached: (total, cached, pct) => `${total} · cached ${cached} (${pct} %)`,
+      contextStatChatTotal: "Chat total",
+      contextStatIn: "in",
+      contextStatOut: "out",
+      contextStatCacheRead: "cache read",
+      contextStatCacheWrite: "cache write",
       noModels: "No models",
       noModelsInSettings: "No models in settings",
       noFiles: "No files",
@@ -359,6 +372,8 @@
       you: "You",
       addProviderFirst: "Add a provider first",
       newProvider: "New Provider",
+      gennadiyLogin: "Sign in",
+      gennadiyLoginHint: "Corporate login via Keycloak (gennadiy auth login).",
       providerTitle: "Provider",
       promptCacheLabel: "Prompt cache",
       promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
@@ -399,14 +414,21 @@
       fetchModelsNeedBaseUrl: "Set a base URL for this provider first.",
       fetchModelsAlready: "Already added",
       fetchModelsSelectNew: "Select new",
-      fetchModelsAddSelected: "Add selected",
+      fetchModelsAddSelected: "Sync",
+      fetchModelsWillRemove: "No longer listed by the provider — will be removed",
       fetchModelsFilter: "Filter",
-      fetchModelsCount: (total, neu) =>
-        neu > 0 ? `${neu} new · ${total} from API` : `${total} from API`,
-      fetchModelsDone: (a, skipped) =>
-        skipped > 0
-          ? `Added ${a} model(s). ${skipped} already in the list.`
-          : `Added ${a} model(s).`,
+      fetchModelsCount: (total, neu, removed) =>
+        [
+          neu > 0 ? `${neu} new` : "",
+          removed > 0 ? `${removed} to remove` : "",
+          `${total} from API`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      fetchModelsDone: (a, skipped, removed) =>
+        `Added ${a} model(s).` +
+        (removed > 0 ? ` Removed ${removed}.` : "") +
+        (skipped > 0 ? ` ${skipped} already in the list.` : ""),
       fetchModelsFailed: (msg) => `Could not fetch models: ${msg}`,
       name: "Name",
       contextInput: "Context (input)",
@@ -680,6 +702,8 @@
       noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
       selectProviderToSeeModels: "Выберите провайдера, чтобы увидеть его модели.",
       noModelsForProvider: "У этого провайдера пока нет моделей.",
+      deleteAllModels: "Удалить все модели провайдера",
+      deleteAllModelsConfirm: (n) => `Удалить все модели (${n})?`,
       baseUrl: "Base URL",
       statusUrl: "URL проверки статуса",
       statusUrlHint: "Пусто = Base URL + /models",
@@ -847,7 +871,7 @@
       parallelToolCallsNote:
         "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
-      autoCompactNote: "Сжимать диалог у лимита окна модели.",
+      autoCompactNote: "Сжимать диалог на 75% окна модели.",
       promptSuggestions: "Подсказки ввода",
       promptSuggestionsNote:
         "Предлагать следующее сообщение в пустом поле. Tab — принять.",
@@ -920,6 +944,10 @@
       contextUsage: "Использование контекста",
       contextPopTitle: "Контекст",
       contextPopUsed: (pct) => `Использовано: ${pct} %`,
+      contextPopUsedBeforeCompact: (pct) => `Использовано: ${pct} % до автосжатия`,
+      contextPopBudget: (trigger, win) => `Автосжатие на ${trigger} из окна ${win}`,
+      contextBufferHint:
+        "Часть окна выше порога автосжатия: чат до неё не дойдёт — на пороге Cline сожмёт историю.",
       contextCatMessages: "Сообщения",
       contextCatSystemTools: "Системные инструменты",
       contextCatMcpTools: "MCP-инструменты",
@@ -941,6 +969,13 @@
         "Оценка по символам, приведённая к числу токенов промпта из ответа API.",
       contextPopEstimated:
         "Оценка по символам: API не вернул usage.",
+      contextStatLastRequest: "Последний запрос",
+      contextStatCached: (total, cached, pct) => `${total} · из кэша ${cached} (${pct} %)`,
+      contextStatChatTotal: "Всего в чате",
+      contextStatIn: "вход",
+      contextStatOut: "выход",
+      contextStatCacheRead: "чтение кэша",
+      contextStatCacheWrite: "запись в кэш",
       noModels: "Нет моделей",
       noModelsInSettings: "Нет моделей в настройках",
       noFiles: "Нет файлов",
@@ -962,6 +997,8 @@
       you: "Вы",
       addProviderFirst: "Сначала добавьте провайдера",
       newProvider: "Новый провайдер",
+      gennadiyLogin: "Войти",
+      gennadiyLoginHint: "Корпоративный вход через Keycloak (gennadiy auth login).",
       providerTitle: "Провайдер",
       promptCacheLabel: "Кеш промпта",
       promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
@@ -1002,14 +1039,21 @@
       fetchModelsNeedBaseUrl: "Сначала укажите base URL у этого провайдера.",
       fetchModelsAlready: "Уже есть",
       fetchModelsSelectNew: "Выбрать новые",
-      fetchModelsAddSelected: "Добавить выбранные",
+      fetchModelsAddSelected: "Синхронизировать",
+      fetchModelsWillRemove: "Провайдер больше не отдаёт эту модель — она будет удалена",
       fetchModelsFilter: "Фильтр",
-      fetchModelsCount: (total, neu) =>
-        neu > 0 ? `${neu} новых · ${total} с API` : `${total} с API`,
-      fetchModelsDone: (a, skipped) =>
-        skipped > 0
-          ? `Добавлено: ${a}. Уже в списке: ${skipped}.`
-          : `Добавлено моделей: ${a}.`,
+      fetchModelsCount: (total, neu, removed) =>
+        [
+          neu > 0 ? `${neu} новых` : "",
+          removed > 0 ? `${removed} будут удалены` : "",
+          `${total} с API`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      fetchModelsDone: (a, skipped, removed) =>
+        `Добавлено моделей: ${a}.` +
+        (removed > 0 ? ` Удалено: ${removed}.` : "") +
+        (skipped > 0 ? ` Уже в списке: ${skipped}.` : ""),
       fetchModelsFailed: (msg) => `Не удалось загрузить модели: ${msg}`,
       name: "Название",
       contextInput: "Контекст (вход)",
@@ -1535,7 +1579,6 @@
   const contextRingValueEl = contextRingEl
     ? contextRingEl.querySelector(".context-ring-value")
     : null;
-  const contextTipEl = document.getElementById("contextTip");
 
   let agentsRailOpen = Boolean(state.agentsRailOpen);
   let workspaceNarrow = false;
@@ -1959,6 +2002,9 @@
 
   const DELETE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">delete</span>';
+
+  const DELETE_SWEEP_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>';
 
   const CLOSE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">close</span>';
@@ -6992,9 +7038,6 @@
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
     const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
-    if (contextTipEl) {
-      contextTipEl.textContent = tip;
-    }
     contextRingEl.setAttribute(
       "aria-label",
       `Context: ${tip.replace(/\n/g, " · ")}`
@@ -9928,6 +9971,15 @@
       attributeFilter: ["data-status", "data-cancelled"],
     });
   }
+  // Раздел берём из DOM: в JetBrains навигацию по меню перехватывает
+  // capture-обработчик хоста и панельный click не срабатывает.
+  function activeSettingsCategory() {
+    const btn = document.querySelector(
+      "#settingsNav .settings-nav-item.is-active"
+    );
+    return (btn && btn.getAttribute("data-settings-cat")) || "models";
+  }
+
   function showSettingsCategory(category) {
     const allowed = [
       "models",
@@ -10067,6 +10119,8 @@
       setAgentsRailOpen(true);
       screen = "chat";
     }
+    const settingsAlreadyVisible =
+      currentScreen === "settings" || currentScreen === "mcp";
     currentScreen = screen;
     const settingsVisible = screen === "settings" || screen === "mcp";
     mcpScreenOpen = screen === "mcp";
@@ -10098,7 +10152,15 @@
       updateWorkspaceNarrow();
     }
     if (settingsVisible) {
-      showSettingsCategory(screen === "mcp" ? "mcp" : "models");
+      // Повторный показ уже открытых настроек (JetBrains шлёт showSettings
+      // несколько раз: sidecar + ретраи инъекции) не сбрасывает раздел.
+      showSettingsCategory(
+        screen === "mcp"
+          ? "mcp"
+          : settingsAlreadyVisible
+            ? activeSettingsCategory()
+            : "models"
+      );
     } else {
       closeMcpEditModal();
       closeMcpCustomEditModal();
@@ -10808,6 +10870,11 @@
     renderSettingsModels();
     fillModelProviderSelect(modelEditProvider?.value || "");
     schedulePersistSettings(0);
+    // Corporate Gennadiy gateway: open the login form as soon as the
+    // provider is saved — no need to hit 401 first.
+    if (looksLikeGennadiyProvider(next)) {
+      host.postMessage({ type: "gennadiyLogin" });
+    }
   }
 
   function renderSettingsProviders() {
@@ -10879,11 +10946,23 @@
     return providerLabel(selectedSettingsProviderKey);
   }
 
+  function looksLikeGennadiyProvider(provider) {
+    const id = String(provider?.id || "").toLowerCase();
+    const name = String(provider?.name || "").toLowerCase();
+    const baseUrl = String(provider?.baseUrl || "").toLowerCase();
+    return (
+      id.includes("gennadiy") ||
+      name.includes("gennadiy") ||
+      baseUrl.includes("gennadiy")
+    );
+  }
+
   function appendProviderHead(listEl, provider, index) {
     const row = document.createElement("div");
     const providerId = String(provider.id || "").trim();
     const selectionKey = providerId || ORPHANS_PROVIDER_KEY;
     const selected = selectedSettingsProviderKey === selectionKey;
+    const gennadiy = looksLikeGennadiyProvider(provider);
     row.className =
       "settings-provider-head settings-provider-select" +
       (selected ? " is-selected" : "");
@@ -10907,6 +10986,9 @@
       `<div class="settings-model-id"></div>` +
       `</div>` +
       `<span class="settings-provider-count" aria-hidden="true"></span>` +
+      (gennadiy
+        ? `<button type="button" class="text-btn settings-provider-login" data-index="${index}" title="${t("gennadiyLogin")}" aria-label="${t("gennadiyLogin")}">${t("gennadiyLogin")}</button>`
+        : "") +
       `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
       CLOUD_DOWNLOAD_ICON +
       `</button>` +
@@ -11071,6 +11153,11 @@
    * пользователь, ничего не отправляется до сохранения.
    */
   const PROVIDER_ONBOARDING_PRESETS = [
+    {
+      id: "gennadiy",
+      name: "Gennadiy",
+      baseUrl: "https://gennadiy-test.kube.severstal.severstalgroup.com/gennadiy/v1",
+    },
     { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
     { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
     { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
@@ -11169,6 +11256,11 @@
       : [];
     countEl.textContent = String(entries.length);
     header.appendChild(countEl);
+    if (entries.length) {
+      appendDeleteAllModelsControl(header, entries.length);
+    } else {
+      settingsModelsDeleteAllConfirmKey = "";
+    }
     settingsModelsList.appendChild(header);
 
     if (!selectedSettingsProviderKey) {
@@ -11188,6 +11280,68 @@
     }
 
     syncDefaultModelSelect();
+  }
+
+  /** Provider key whose «Delete all» is awaiting the inline confirmation. */
+  let settingsModelsDeleteAllConfirmKey = "";
+
+  function appendDeleteAllModelsControl(header, count) {
+    const confirming =
+      settingsModelsDeleteAllConfirmKey === selectedSettingsProviderKey;
+    if (!confirming) {
+      settingsModelsDeleteAllConfirmKey = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon-btn settings-models-delete-all";
+      btn.title = t("deleteAllModels");
+      btn.setAttribute("aria-label", t("deleteAllModels"));
+      btn.innerHTML = DELETE_SWEEP_ICON;
+      btn.addEventListener("click", () => {
+        settingsModelsDeleteAllConfirmKey = selectedSettingsProviderKey;
+        renderSettingsCatalog();
+      });
+      header.appendChild(btn);
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "settings-models-delete-all-confirm";
+    const text = document.createElement("span");
+    text.className = "settings-models-delete-all-text";
+    text.textContent = t("deleteAllModelsConfirm", count);
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "text-btn settings-models-delete-all-yes";
+    yes.textContent = t("delete");
+    yes.addEventListener("click", () => {
+      deleteAllModelsOfSelectedProvider();
+    });
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "text-btn";
+    no.textContent = t("cancel");
+    no.addEventListener("click", () => {
+      settingsModelsDeleteAllConfirmKey = "";
+      renderSettingsCatalog();
+    });
+    wrap.append(text, yes, no);
+    header.appendChild(wrap);
+  }
+
+  function deleteAllModelsOfSelectedProvider() {
+    const key = selectedSettingsProviderKey;
+    settingsModelsDeleteAllConfirmKey = "";
+    if (!key) {
+      return;
+    }
+    const drop = new Set(modelsForProviderKey(key).map(({ index }) => index));
+    if (!drop.size) {
+      renderSettingsCatalog();
+      return;
+    }
+    settingsModels = settingsModels.filter((_, index) => !drop.has(index));
+    setModelsHint("");
+    renderSettingsModels();
+    schedulePersistSettings(0);
   }
 
   function renderSettingsModels() {
@@ -11608,11 +11762,16 @@
     return model;
   }
 
+  function wireModelId(model) {
+    return String(model?.apiModelId || model?.id || "").trim();
+  }
+
   function cloneModel(model) {
     return {
       id: model.id || "",
       label: model.label || "",
       providerId: model.providerId || "",
+      apiModelId: model.apiModelId || "",
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
       enabled: model.enabled !== false,
@@ -11651,10 +11810,12 @@
   function upsertModels(incoming, defaultProviderId) {
     const fallbackProvider = String(defaultProviderId || "").trim();
     const byId = new Map();
+    const rowKey = (m) =>
+      `${String(m.providerId || "").trim()}|${String(m.id || "").trim()}`;
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
       if (id) {
-        byId.set(id, cloneModel(model));
+        byId.set(rowKey(model), cloneModel(model));
       }
     }
     let added = 0;
@@ -11666,11 +11827,13 @@
       }
       const providerId =
         String(model.providerId || "").trim() || fallbackProvider;
-      if (byId.has(model.id)) {
-        const prev = byId.get(model.id);
-        byId.set(model.id, {
+      const key = `${providerId}|${model.id}`;
+      if (byId.has(key)) {
+        const prev = byId.get(key);
+        byId.set(key, {
           id: model.id,
           label: model.label || prev.label || model.id,
+          apiModelId: model.apiModelId || prev.apiModelId || "",
           providerId: providerId || prev.providerId || "",
           contextWindow:
             model.contextWindow || prev.contextWindow || undefined,
@@ -11692,7 +11855,9 @@
       } else {
         const next = cloneModel(model);
         next.providerId = providerId || next.providerId || "";
-        byId.set(model.id, next);
+        // Newly added models start switched off — the user enables them explicitly.
+        next.enabled = false;
+        byId.set(`${next.providerId || ""}|${model.id}`, next);
         added += 1;
       }
     }
@@ -11704,8 +11869,12 @@
 
   function addMissingModelsFromIds(ids, providerId) {
     const provider = String(providerId || "").trim();
+    // Key by provider+id: the same wire id can exist on several providers
+    // (ai-platform + гена both serve `deepseek-v4.1-flash`).
     const existing = new Set(
-      settingsModels.map((m) => String(m.id || "").trim()).filter(Boolean)
+      settingsModels
+        .map((m) => `${String(m.providerId || "").trim()}|${String(m.id || "").trim()}`)
+        .filter((k) => !k.endsWith("|"))
     );
     const incoming = [];
     let skipped = 0;
@@ -11714,21 +11883,28 @@
       if (!id) {
         continue;
       }
-      if (existing.has(id)) {
+      const key = `${provider}|${id}`;
+      if (existing.has(key)) {
         skipped += 1;
         continue;
       }
       const extra = fetchModelsById.get(id) || {};
+      // Unique picker id when another provider already owns this wire id.
+      const idTaken = settingsModels.some(
+        (m) => String(m.id || "").trim() === id
+      );
+      const pickerId = idTaken ? `${provider}/${id}` : id;
       incoming.push({
-        id,
-        label: extra.label || id,
+        id: pickerId,
+        apiModelId: idTaken ? id : "",
+        label: extra.label || (idTaken ? `${provider} · ${id}` : id),
         providerId: provider,
         contextWindow: extra.contextWindow,
         maxOutputTokens: extra.maxOutputTokens,
         enabled: true,
         supportsVision: guessModelSupportsVision(id),
       });
-      existing.add(id);
+      existing.add(key);
     }
     if (!incoming.length) {
       return { added: 0, skipped, total: settingsModels.filter((m) => m.id).length };
@@ -11832,17 +12008,23 @@
       ? newIds.filter((id) => id.toLowerCase().includes(filter))
       : newIds.slice()
     );
+    const staleIds = fetchStaleModelIds();
+    const staleShown = filter
+      ? staleIds.filter((id) => id.toLowerCase().includes(filter))
+      : staleIds;
     const hasNew = newIds.length > 0;
-    const showList = hasNew && !fetchModelsLoading && !fetchModelsError;
+    const hasChanges = hasNew || staleIds.length > 0;
+    const showList = hasChanges && !fetchModelsLoading && !fetchModelsError;
 
     if (els.searchWrap) {
       els.searchWrap.hidden = !showList;
     }
+    // No per-model selection: every new model is added (switched off).
     if (els.selectWrap) {
-      els.selectWrap.hidden = !showList;
+      els.selectWrap.hidden = true;
     }
     if (els.selectBtn) {
-      els.selectBtn.hidden = !showList;
+      els.selectBtn.hidden = true;
     }
     if (els.list) {
       els.list.hidden = !showList;
@@ -11878,7 +12060,7 @@
       return;
     }
 
-    if (!hasNew) {
+    if (!hasChanges) {
       setFetchModelsHint(
         els.status,
         t("fetchModelsNoneNew", fetchModelsIds.length),
@@ -11890,7 +12072,7 @@
 
     setFetchModelsHint(
       els.status,
-      t("fetchModelsCount", fetchModelsIds.length, newIds.length),
+      t("fetchModelsCount", fetchModelsIds.length, newIds.length, staleIds.length),
       false
     );
 
@@ -11899,39 +12081,58 @@
       return;
     }
     for (const id of ids) {
-      const row = document.createElement("label");
-      row.className = "settings-fetch-model-row";
-      const checked = fetchModelsSelected.has(id);
-      row.innerHTML =
-        `<input type="checkbox" ${checked ? "checked" : ""} data-model-id="" />` +
-        `<span class="settings-fetch-model-id"></span>`;
-      const input = row.querySelector("input");
-      input.dataset.modelId = id;
+      const row = document.createElement("div");
+      row.className = "settings-fetch-model-row is-readonly";
+      row.innerHTML = `<span class="settings-fetch-model-id"></span>`;
       row.querySelector(".settings-fetch-model-id").textContent = id;
-      input.addEventListener("change", () => {
-        if (input.checked) {
-          fetchModelsSelected.add(id);
-        } else {
-          fetchModelsSelected.delete(id);
-        }
-        syncFetchModelsAddEnabled();
-      });
+      els.list.appendChild(row);
+    }
+    // Models gone from the provider's /models — removed on apply.
+    for (const id of staleShown) {
+      const row = document.createElement("div");
+      row.className = "settings-fetch-model-row is-readonly is-removed";
+      row.title = t("fetchModelsWillRemove");
+      row.innerHTML =
+        DELETE_ICON + `<span class="settings-fetch-model-id"></span>`;
+      row.querySelector(".settings-fetch-model-id").textContent = id;
       els.list.appendChild(row);
     }
     syncFetchModelsAddEnabled();
+  }
+
+  /**
+   * Ids of this provider's saved models that the provider no longer lists.
+   * An empty /models answer never counts as «everything is gone».
+   */
+  function fetchStaleModelIds() {
+    const provider = String(fetchModelsProviderId || "").trim();
+    if (
+      !provider ||
+      fetchModelsLoading ||
+      fetchModelsError ||
+      !fetchModelsIds.length
+    ) {
+      return [];
+    }
+    const listed = new Set(fetchModelsIds.map((id) => String(id || "").trim()));
+    return settingsModels
+      .filter((m) => String(m.providerId || "").trim() === provider)
+      .map((m) => wireModelId(m))
+      .filter((id) => id && !listed.has(id));
   }
 
   function syncFetchModelsAddEnabled() {
     const selectedNew = Array.from(fetchModelsSelected).filter(
       (id) => !fetchModelsExisting.has(id)
     );
+    const hasChanges = selectedNew.length > 0 || fetchStaleModelIds().length > 0;
     if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
       fetchModelsAddBtn.disabled =
-        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+        fetchModelsLoading || Boolean(fetchModelsError) || !hasChanges;
     }
     if (modelEditDoneBtn && fetchModelsTarget === "editApi" && modelEditMode === "api") {
       modelEditDoneBtn.disabled =
-        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+        fetchModelsLoading || Boolean(fetchModelsError) || !hasChanges;
       if (!fetchModelsLoading && !fetchModelsError && fetchModelsIds.length === 0) {
         modelEditDoneBtn.disabled = true;
       }
@@ -11966,19 +12167,15 @@
     fetchModelsActiveRequestId = requestId;
     resetFetchModelsState();
     fetchModelsLoading = true;
+    // Wire ids already saved under THIS provider (apiModelId || id).
+    // Do not treat other providers' rows as "already here" — the same
+    // `deepseek-v4.1-flash` can exist on default and on гена.
     fetchModelsExisting = new Set(
       settingsModels
         .filter((m) => String(m.providerId || "").trim() === provider.id)
-        .map((m) => String(m.id || "").trim())
+        .map((m) => wireModelId(m))
         .filter(Boolean)
     );
-    // Also treat same id under other providers as existing globally
-    for (const m of settingsModels) {
-      const id = String(m.id || "").trim();
-      if (id) {
-        fetchModelsExisting.add(id);
-      }
-    }
     renderFetchModelsPicker();
 
     host.postMessage({
@@ -12030,7 +12227,8 @@
     const selectedNew = Array.from(fetchModelsSelected).filter(
       (id) => !fetchModelsExisting.has(id)
     );
-    if (!selectedNew.length) {
+    const stale = new Set(fetchStaleModelIds());
+    if (!selectedNew.length && !stale.size) {
       if (fetchModelsTarget === "editApi") {
         setFetchModelsHint(modelEditApiStatus, t("fetchModelsNoneSelected"), true);
       } else {
@@ -12038,8 +12236,25 @@
       }
       return false;
     }
-    const result = addMissingModelsFromIds(selectedNew, fetchModelsProviderId);
-    setModelsHint(t("fetchModelsDone", result.added, result.skipped));
+    // Sync with the provider: drop models it no longer lists, add new ones.
+    const provider = String(fetchModelsProviderId || "").trim();
+    let removed = 0;
+    if (stale.size) {
+      const before = settingsModels.length;
+      settingsModels = settingsModels.filter(
+        (m) =>
+          String(m.providerId || "").trim() !== provider ||
+          !stale.has(wireModelId(m))
+      );
+      removed = before - settingsModels.length;
+    }
+    const result = selectedNew.length
+      ? addMissingModelsFromIds(selectedNew, fetchModelsProviderId)
+      : { added: 0, skipped: 0 };
+    if (removed) {
+      renderSettingsModels();
+    }
+    setModelsHint(t("fetchModelsDone", result.added, result.skipped, removed));
     schedulePersistSettings(0);
     return true;
   }
@@ -12552,7 +12767,7 @@
           requestOptions: cloneRequestOptions(prev.requestOptions),
         };
       } else {
-        settingsModels.push(next);
+        settingsModels.push({ ...next, enabled: false });
       }
     } else if (
       Number.isFinite(modelEditIndex) &&
@@ -13494,6 +13709,7 @@
           id: m.id || "",
           label: m.label || "",
           providerId: m.providerId || primaryId,
+          apiModelId: m.apiModelId || "",
           contextWindow: m.contextWindow,
           maxOutputTokens: m.maxOutputTokens,
           enabled: m.enabled !== false,
@@ -13654,6 +13870,10 @@
         providerId: m.providerId || primaryProviderId(),
         enabled: m.enabled !== false,
       };
+      const apiModelId = String(m.apiModelId || "").trim();
+      if (apiModelId && apiModelId !== m.id) {
+        row.apiModelId = apiModelId;
+      }
       if (m.contextWindow) {
         row.contextWindow = m.contextWindow;
       }
@@ -19640,6 +19860,23 @@
     composerDropWatchdog = setTimeout(clearComposerDropState, 400);
   }
 
+  // dropId → File[] из drop, пока хост пробует прикрепить по путям
+  const pendingDropFallbacks = new Map();
+
+  function handleAttachUrisEmpty(msg) {
+    const dropId = msg && typeof msg.dropId === "string" ? msg.dropId : "";
+    const files = dropId ? pendingDropFallbacks.get(dropId) : null;
+    pendingDropFallbacks.delete(dropId);
+    if (!files || !files.length) {
+      return;
+    }
+    // file.path здесь вёл бы на тот же нечитаемый путь — берём байты
+    const bytesOnly = files.map((file) =>
+      file && file.path ? new File([file], file.name, { type: file.type }) : file
+    );
+    void ingestDroppedFiles(bytesOnly);
+  }
+
   // Drop принимаем на весь экран чата; визуально подсвечиваем только composer
   const dropRoot = chatScreen || composerWrapEl || composerEl;
   if (dropRoot) {
@@ -19680,7 +19917,19 @@
       clearComposerDropState();
       const uris = extractDropUris(event.dataTransfer);
       if (uris.length) {
-        host.postMessage({ type: "attachUris", uris });
+        // Путь из drop может не читаться хостом (миниатюра скриншота macOS
+        // отдаёт временный путь до записи файла) — держим сами файлы, хост
+        // ответит attachUrisEmpty, и тогда прикрепим их байты.
+        const droppedFiles = event.dataTransfer?.files?.length
+          ? Array.from(event.dataTransfer.files)
+          : [];
+        let dropId;
+        if (droppedFiles.length) {
+          dropId = `drop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          pendingDropFallbacks.set(dropId, droppedFiles);
+          setTimeout(() => pendingDropFallbacks.delete(dropId), 60000);
+        }
+        host.postMessage({ type: "attachUris", uris, dropId });
         return;
       }
       if (event.dataTransfer?.files?.length) {
@@ -20788,6 +21037,11 @@
         if (key) {
           selectSettingsProvider(key);
         }
+      }
+      const loginBtn = event.target.closest(".settings-provider-login");
+      if (loginBtn) {
+        host.postMessage({ type: "gennadiyLogin" });
+        return;
       }
       const fetchBtn = event.target.closest(".settings-provider-fetch");
       if (fetchBtn) {
@@ -22129,6 +22383,9 @@
         });
         renderMessageQueue();
         break;
+      case "attachUrisEmpty":
+        handleAttachUrisEmpty(msg);
+        break;
       case "clipboardImageResult":
         handleHostClipboardImageResult(msg);
         break;
@@ -22204,13 +22461,14 @@
       case "showSettings":
         settingsShownAt = Date.now();
         showScreen("settings");
-        showSettingsCategory(
-          msg.openMcp
-            ? "mcp"
-            : typeof msg.settingsCategory === "string" && msg.settingsCategory
-              ? msg.settingsCategory
-              : "models"
-        );
+        if (msg.openMcp) {
+          showSettingsCategory("mcp");
+        } else if (
+          typeof msg.settingsCategory === "string" &&
+          msg.settingsCategory
+        ) {
+          showSettingsCategory(msg.settingsCategory);
+        }
         // JetBrains OSR: the screen swap may come from a host-driven inject
         // without user input in the browser — force a paint frame.
         forceHarborUiRepaint();
@@ -23651,13 +23909,65 @@
     );
   }
 
+  /** Last request cache share + chat totals (was the ring hover tooltip). */
+  function contextUsageStatsHtml() {
+    const rows = [];
+    if (lastPromptTokens > 0) {
+      const cached = Math.min(lastCacheReadTokens, lastPromptTokens);
+      rows.push([
+        t("contextStatLastRequest"),
+        t(
+          "contextStatCached",
+          formatContextTokens(lastPromptTokens),
+          formatContextTokens(cached),
+          Math.round((cached / lastPromptTokens) * 100)
+        ),
+      ]);
+    }
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      const parts = [
+        `${t("contextStatIn")} ${formatContextTokens(totalInputTokens)}`,
+        `${t("contextStatOut")} ${formatContextTokens(totalOutputTokens)}`,
+      ];
+      if (totalCacheReadTokens > 0 || totalCacheWriteTokens > 0) {
+        parts.push(
+          `${t("contextStatCacheRead")} ${formatContextTokens(totalCacheReadTokens)}`,
+          `${t("contextStatCacheWrite")} ${formatContextTokens(totalCacheWriteTokens)}`
+        );
+      }
+      rows.push([t("contextStatChatTotal"), parts.join(" · ")]);
+    }
+    if (!rows.length) {
+      return "";
+    }
+    return (
+      `<div class="context-pop-stats">` +
+      rows
+        .map(
+          ([label, value]) =>
+            `<div class="context-pop-stat"><span>${escapeHtml(label)}</span>` +
+            `<span class="context-pop-tokens">${escapeHtml(value)}</span></div>`
+        )
+        .join("") +
+      `</div>`
+    );
+  }
+
   function renderContextPopover() {
     if (!contextPopoverEl) {
       return;
     }
     const data = contextBreakdownData;
-    const max = data ? data.contextWindow : contextMax;
+    const windowTokens = data ? data.contextWindow : contextMax;
     const used = data ? data.used : contextUsed;
+    const byId = {};
+    for (const c of data ? data.categories : []) {
+      byId[c.id] = Math.max(0, Number(c.tokens) || 0);
+    }
+    // Percentages are of the auto-compact budget: the chat never grows past
+    // it (Cline compacts there), so «11 % of 256k» would overstate the room.
+    const trigger = data ? contextCompactTrigger(data, byId) : 0;
+    const max = trigger > 0 ? trigger : windowTokens;
     const head =
       `<button type="button" class="context-pop-head" data-ctx-collapse aria-expanded="${!contextPopoverCollapsed}">` +
       `<span class="context-pop-title">${escapeHtml(t("contextPopTitle"))}</span>` +
@@ -23665,49 +23975,64 @@
         contextPopoverCollapsed ? "expand_more" : "expand_less"
       }</span>` +
       `</button>`;
+    const usedPct = formatContextPercent(used, max, 0);
     const summary =
       `<div class="context-pop-summary">` +
-      `<span>${escapeHtml(t("contextPopUsed", formatContextPercent(used, max, 0)))}</span>` +
+      `<span>${escapeHtml(
+        trigger > 0 ? t("contextPopUsedBeforeCompact", usedPct) : t("contextPopUsed", usedPct)
+      )}</span>` +
       `<span class="context-pop-total">${escapeHtml(
         `${formatContextTokens(used)} / ${formatContextTokens(max)}`
       )}</span>` +
-      `</div>`;
+      `</div>` +
+      (trigger > 0
+        ? `<div class="context-pop-budget">${escapeHtml(
+            t("contextPopBudget", formatContextTokens(trigger), formatContextTokens(windowTokens))
+          )}</div>`
+        : "");
 
-    const byId = {};
-    for (const c of data ? data.categories : []) {
-      byId[c.id] = Math.max(0, Number(c.tokens) || 0);
-    }
-    const barIds = data
-      ? [...CONTEXT_USED_CATEGORIES, "autocompactBuffer"]
-      : ["messages"];
+    const barIds = data ? CONTEXT_USED_CATEGORIES : ["messages"];
     const barTokens = data ? byId : { messages: used };
+    // Widths go through CSSOM after innerHTML: the VS Code webview CSP has no
+    // 'unsafe-inline' for styles, so a style="" attribute would be dropped.
     const bar =
       `<div class="context-pop-bar" aria-hidden="true">` +
       barIds
         .filter((id) => (barTokens[id] || 0) > 0)
         .map((id) => {
           const width = Math.min(100, ((barTokens[id] || 0) / Math.max(1, max)) * 100);
-          return `<span class="context-pop-seg ctx-c-${id}" style="width:${Math.max(0.6, width).toFixed(2)}%"></span>`;
+          return `<span class="context-pop-seg ctx-c-${id}" data-ctx-width="${Math.max(0.6, width).toFixed(2)}"></span>`;
         })
         .join("") +
       `</div>`;
 
     if (contextPopoverCollapsed) {
-      contextPopoverEl.innerHTML = head + summary + bar;
+      setContextPopoverHtml(head + summary + bar);
       return;
     }
     if (!data) {
-      contextPopoverEl.innerHTML =
+      setContextPopoverHtml(
         head +
         summary +
         bar +
-        `<div class="context-pop-note">${escapeHtml(t("contextPopEmpty"))}</div>`;
+        contextUsageStatsHtml() +
+        `<div class="context-pop-note">${escapeHtml(t("contextPopEmpty"))}</div>`
+      );
       return;
     }
 
     const rows = data.categories
+      .filter((c) => c.id !== "autocompactBuffer" || c.tokens > 0)
       .map((c) =>
-        contextRowHtml(c.id, t(CONTEXT_CATEGORY_LABEL_KEYS[c.id] || c.id), c.tokens, max)
+        contextRowHtml(
+          c.id,
+          t(CONTEXT_CATEGORY_LABEL_KEYS[c.id] || c.id),
+          c.tokens,
+          max,
+          c.id === "autocompactBuffer"
+            ? { noPct: true, title: t("contextBufferHint") }
+            : undefined
+        )
       )
       .join("");
     const deferred = data.deferred || {};
@@ -23731,16 +24056,35 @@
     const lists =
       contextListHtml("mcpTools", t("contextListMcpTools"), data.mcpTools || []) +
       contextListHtml("memoryFiles", t("contextListMemoryFiles"), data.memoryFiles || []);
-    contextPopoverEl.innerHTML =
+    setContextPopoverHtml(
       head +
       summary +
       bar +
       `<div class="context-pop-rows">${rows}</div>` +
       (deferredRows ? `<div class="context-pop-rows context-pop-deferred">${deferredRows}</div>` : "") +
       `<div class="context-pop-lists">${lists}</div>` +
+      contextUsageStatsHtml() +
       `<div class="context-pop-note">${escapeHtml(
         data.calibrated ? t("contextPopCalibrated") : t("contextPopEstimated")
-      )}</div>`;
+      )}</div>`
+    );
+  }
+
+  function setContextPopoverHtml(html) {
+    contextPopoverEl.innerHTML = html;
+    for (const seg of contextPopoverEl.querySelectorAll("[data-ctx-width]")) {
+      seg.style.width = `${seg.getAttribute("data-ctx-width")}%`;
+    }
+  }
+
+  /** Auto-compact trigger; older payloads only carry the buffer size. */
+  function contextCompactTrigger(data, byId) {
+    const trigger = Number(data.compactTriggerTokens) || 0;
+    if (trigger > 0) {
+      return trigger;
+    }
+    const buffer = byId.autocompactBuffer || 0;
+    return buffer > 0 ? Math.max(1, data.contextWindow - buffer) : 0;
   }
 
   function ensureContextPopover() {
@@ -23774,11 +24118,27 @@
     return contextPopoverEl;
   }
 
-  function setContextPopoverOpen(open) {
+  /** Click pins the popover; a hover-opened one closes when the pointer leaves. */
+  let contextPopoverPinned = false;
+  let contextHoverOpenTimer = 0;
+  let contextHoverCloseTimer = 0;
+  const CONTEXT_HOVER_OPEN_MS = 150;
+  const CONTEXT_HOVER_CLOSE_MS = 250;
+
+  function clearContextHoverTimers() {
+    clearTimeout(contextHoverOpenTimer);
+    clearTimeout(contextHoverCloseTimer);
+    contextHoverOpenTimer = 0;
+    contextHoverCloseTimer = 0;
+  }
+
+  function setContextPopoverOpen(open, pinned) {
     const el = ensureContextPopover();
     if (!el) {
       return;
     }
+    clearContextHoverTimers();
+    contextPopoverPinned = open && pinned === true;
     el.hidden = !open;
     contextRingEl.classList.toggle("is-open", open);
     contextRingEl.setAttribute("aria-expanded", open ? "true" : "false");
@@ -23787,13 +24147,58 @@
     }
   }
 
+  function onContextHoverEnter(event) {
+    if (event.pointerType && event.pointerType !== "mouse") {
+      return;
+    }
+    clearTimeout(contextHoverCloseTimer);
+    contextHoverCloseTimer = 0;
+    if (isContextPopoverOpen() || contextHoverOpenTimer) {
+      return;
+    }
+    contextHoverOpenTimer = setTimeout(() => {
+      contextHoverOpenTimer = 0;
+      setContextPopoverOpen(true, false);
+    }, CONTEXT_HOVER_OPEN_MS);
+  }
+
+  function onContextHoverLeave(event) {
+    if (event.pointerType && event.pointerType !== "mouse") {
+      return;
+    }
+    clearTimeout(contextHoverOpenTimer);
+    contextHoverOpenTimer = 0;
+    if (!isContextPopoverOpen() || contextPopoverPinned) {
+      return;
+    }
+    clearTimeout(contextHoverCloseTimer);
+    contextHoverCloseTimer = setTimeout(() => {
+      contextHoverCloseTimer = 0;
+      if (!contextPopoverPinned) {
+        setContextPopoverOpen(false);
+      }
+    }, CONTEXT_HOVER_CLOSE_MS);
+  }
+
   if (contextRingEl) {
     contextRingEl.setAttribute("aria-haspopup", "dialog");
     contextRingEl.setAttribute("aria-expanded", "false");
     contextRingEl.addEventListener("click", (event) => {
       event.stopPropagation();
-      setContextPopoverOpen(!isContextPopoverOpen());
+      // Hover-opened → click pins it; pinned → click closes.
+      if (isContextPopoverOpen() && contextPopoverPinned) {
+        setContextPopoverOpen(false);
+      } else {
+        setContextPopoverOpen(true, true);
+      }
     });
+    contextRingEl.addEventListener("pointerenter", onContextHoverEnter);
+    contextRingEl.addEventListener("pointerleave", onContextHoverLeave);
+    const popover = ensureContextPopover();
+    if (popover) {
+      popover.addEventListener("pointerenter", onContextHoverEnter);
+      popover.addEventListener("pointerleave", onContextHoverLeave);
+    }
   }
   document.addEventListener("click", (event) => {
     if (!isContextPopoverOpen()) {

@@ -81,6 +81,8 @@
       noProvidersOrModels: "No providers yet — add a provider or a model.",
       selectProviderToSeeModels: "Select a provider to see its models.",
       noModelsForProvider: "No models for this provider yet.",
+      deleteAllModels: "Delete all models of this provider",
+      deleteAllModelsConfirm: (n) => `Delete all ${n} models?`,
       baseUrl: "Base URL",
       statusUrl: "Status URL",
       statusUrlHint: "Empty = Base URL + /models",
@@ -245,7 +247,7 @@
       parallelToolCallsNote:
         "Independent tools from one response run together.",
       autoCompact: "Auto compact",
-      autoCompactNote: "Compress the chat near the model window limit.",
+      autoCompactNote: "Compress the chat at 75% of the model window.",
       promptSuggestions: "Prompt suggestions",
       promptSuggestionsNote:
         "Suggest your next message in the empty composer. Tab accepts.",
@@ -317,6 +319,10 @@
       contextUsage: "Context usage",
       contextPopTitle: "Context",
       contextPopUsed: (pct) => `Used: ${pct} %`,
+      contextPopUsedBeforeCompact: (pct) => `Used: ${pct} % before auto compact`,
+      contextPopBudget: (trigger, win) => `Auto compact at ${trigger} of the ${win} window`,
+      contextBufferHint:
+        "The part of the window above the auto-compact threshold: the chat never gets there — Cline compacts the history at the threshold.",
       contextCatMessages: "Messages",
       contextCatSystemTools: "System tools",
       contextCatMcpTools: "MCP tools",
@@ -338,6 +344,13 @@
         "Character-based estimate, scaled to the prompt tokens reported by the API.",
       contextPopEstimated:
         "Character-based estimate: the API did not report usage.",
+      contextStatLastRequest: "Last request",
+      contextStatCached: (total, cached, pct) => `${total} · cached ${cached} (${pct} %)`,
+      contextStatChatTotal: "Chat total",
+      contextStatIn: "in",
+      contextStatOut: "out",
+      contextStatCacheRead: "cache read",
+      contextStatCacheWrite: "cache write",
       noModels: "No models",
       noModelsInSettings: "No models in settings",
       noFiles: "No files",
@@ -359,6 +372,8 @@
       you: "You",
       addProviderFirst: "Add a provider first",
       newProvider: "New Provider",
+      gennadiyLogin: "Sign in",
+      gennadiyLoginHint: "Corporate login via Keycloak (gennadiy auth login).",
       providerTitle: "Provider",
       promptCacheLabel: "Prompt cache",
       promptCacheHint: "Emit Anthropic-style cache_control markers. Only for upstreams that accept them (LiteLLM / OpenRouter / Anthropic-compatible); strict OpenAI rejects with 400.",
@@ -399,14 +414,21 @@
       fetchModelsNeedBaseUrl: "Set a base URL for this provider first.",
       fetchModelsAlready: "Already added",
       fetchModelsSelectNew: "Select new",
-      fetchModelsAddSelected: "Add selected",
+      fetchModelsAddSelected: "Sync",
+      fetchModelsWillRemove: "No longer listed by the provider — will be removed",
       fetchModelsFilter: "Filter",
-      fetchModelsCount: (total, neu) =>
-        neu > 0 ? `${neu} new · ${total} from API` : `${total} from API`,
-      fetchModelsDone: (a, skipped) =>
-        skipped > 0
-          ? `Added ${a} model(s). ${skipped} already in the list.`
-          : `Added ${a} model(s).`,
+      fetchModelsCount: (total, neu, removed) =>
+        [
+          neu > 0 ? `${neu} new` : "",
+          removed > 0 ? `${removed} to remove` : "",
+          `${total} from API`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      fetchModelsDone: (a, skipped, removed) =>
+        `Added ${a} model(s).` +
+        (removed > 0 ? ` Removed ${removed}.` : "") +
+        (skipped > 0 ? ` ${skipped} already in the list.` : ""),
       fetchModelsFailed: (msg) => `Could not fetch models: ${msg}`,
       name: "Name",
       contextInput: "Context (input)",
@@ -680,6 +702,8 @@
       noProvidersOrModels: "Нет провайдеров — добавьте провайдера или модель.",
       selectProviderToSeeModels: "Выберите провайдера, чтобы увидеть его модели.",
       noModelsForProvider: "У этого провайдера пока нет моделей.",
+      deleteAllModels: "Удалить все модели провайдера",
+      deleteAllModelsConfirm: (n) => `Удалить все модели (${n})?`,
       baseUrl: "Base URL",
       statusUrl: "URL проверки статуса",
       statusUrlHint: "Пусто = Base URL + /models",
@@ -847,7 +871,7 @@
       parallelToolCallsNote:
         "Независимые tools из одного ответа — сразу.",
       autoCompact: "Автосжатие контекста",
-      autoCompactNote: "Сжимать диалог у лимита окна модели.",
+      autoCompactNote: "Сжимать диалог на 75% окна модели.",
       promptSuggestions: "Подсказки ввода",
       promptSuggestionsNote:
         "Предлагать следующее сообщение в пустом поле. Tab — принять.",
@@ -920,6 +944,10 @@
       contextUsage: "Использование контекста",
       contextPopTitle: "Контекст",
       contextPopUsed: (pct) => `Использовано: ${pct} %`,
+      contextPopUsedBeforeCompact: (pct) => `Использовано: ${pct} % до автосжатия`,
+      contextPopBudget: (trigger, win) => `Автосжатие на ${trigger} из окна ${win}`,
+      contextBufferHint:
+        "Часть окна выше порога автосжатия: чат до неё не дойдёт — на пороге Cline сожмёт историю.",
       contextCatMessages: "Сообщения",
       contextCatSystemTools: "Системные инструменты",
       contextCatMcpTools: "MCP-инструменты",
@@ -941,6 +969,13 @@
         "Оценка по символам, приведённая к числу токенов промпта из ответа API.",
       contextPopEstimated:
         "Оценка по символам: API не вернул usage.",
+      contextStatLastRequest: "Последний запрос",
+      contextStatCached: (total, cached, pct) => `${total} · из кэша ${cached} (${pct} %)`,
+      contextStatChatTotal: "Всего в чате",
+      contextStatIn: "вход",
+      contextStatOut: "выход",
+      contextStatCacheRead: "чтение кэша",
+      contextStatCacheWrite: "запись в кэш",
       noModels: "Нет моделей",
       noModelsInSettings: "Нет моделей в настройках",
       noFiles: "Нет файлов",
@@ -962,6 +997,8 @@
       you: "Вы",
       addProviderFirst: "Сначала добавьте провайдера",
       newProvider: "Новый провайдер",
+      gennadiyLogin: "Войти",
+      gennadiyLoginHint: "Корпоративный вход через Keycloak (gennadiy auth login).",
       providerTitle: "Провайдер",
       promptCacheLabel: "Кеш промпта",
       promptCacheHint: "Отправлять Anthropic-совместимые кеш-маркеры cache_control. Только для апстримов, которые их принимают (LiteLLM / OpenRouter / Anthropic-совместимые); строгий OpenAI отклоняет с ошибкой 400.",
@@ -1002,14 +1039,21 @@
       fetchModelsNeedBaseUrl: "Сначала укажите base URL у этого провайдера.",
       fetchModelsAlready: "Уже есть",
       fetchModelsSelectNew: "Выбрать новые",
-      fetchModelsAddSelected: "Добавить выбранные",
+      fetchModelsAddSelected: "Синхронизировать",
+      fetchModelsWillRemove: "Провайдер больше не отдаёт эту модель — она будет удалена",
       fetchModelsFilter: "Фильтр",
-      fetchModelsCount: (total, neu) =>
-        neu > 0 ? `${neu} новых · ${total} с API` : `${total} с API`,
-      fetchModelsDone: (a, skipped) =>
-        skipped > 0
-          ? `Добавлено: ${a}. Уже в списке: ${skipped}.`
-          : `Добавлено моделей: ${a}.`,
+      fetchModelsCount: (total, neu, removed) =>
+        [
+          neu > 0 ? `${neu} новых` : "",
+          removed > 0 ? `${removed} будут удалены` : "",
+          `${total} с API`,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      fetchModelsDone: (a, skipped, removed) =>
+        `Добавлено моделей: ${a}.` +
+        (removed > 0 ? ` Удалено: ${removed}.` : "") +
+        (skipped > 0 ? ` Уже в списке: ${skipped}.` : ""),
       fetchModelsFailed: (msg) => `Не удалось загрузить модели: ${msg}`,
       name: "Название",
       contextInput: "Контекст (вход)",

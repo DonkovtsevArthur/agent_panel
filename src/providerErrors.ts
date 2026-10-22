@@ -166,6 +166,18 @@ function errorText(error: unknown): string {
   if (error instanceof Error) {
     return error.message || "";
   }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; error?: unknown };
+    if (typeof row.message === "string" && row.message.trim()) {
+      return row.message;
+    }
+    if (typeof row.error === "string" && row.error.trim()) {
+      return row.error;
+    }
+  }
   return String(error || "");
 }
 
@@ -182,6 +194,50 @@ export function isVllmAutoToolChoiceError(message: string): boolean {
 export function isQuotaLikeProviderError(message: string): boolean {
   return /квот|quota|rate.?limit|resource_error|too many requests|\b429\b|request limit|лимит запросов/i.test(
     String(message || "")
+  );
+}
+
+/**
+ * Gateway 403 that means "this model is not enabled for your team" — not a
+ * bad API key. Login must not be re-prompted for this.
+ */
+export function isModelAccessProviderError(message: string): boolean {
+  return /no team has access|requested model|model\s+\S+\s+(?:is\s+)?(?:not\s+(?:found|available|enabled|allowed)|disabled)|not entitled|model.?access|unknown model|does not exist|invalid model/i.test(
+    String(message || "")
+  );
+}
+
+/**
+ * HTTP 401/403 or text that means the API rejected credentials.
+ * `rejectUnauthorized` (TLS toggle) must not count as Unauthorized.
+ * Model-access 403 ("No team has access…") is not an auth failure.
+ */
+export function isAuthLikeProviderError(error: unknown): boolean {
+  const status =
+    error && typeof error === "object"
+      ? (error as { status?: unknown }).status
+      : undefined;
+  const raw = errorText(error);
+  const haystack = `${raw}\n${extractGatewayErrorMessage(raw) || ""}`
+    .replace(/rejectUnauthorized/gi, " ")
+    .replace(/unauthoriz(?:ed|ation)\s*:\s*(?:boolean|certificate|tls)/gi, " ");
+  if (isModelAccessProviderError(haystack)) {
+    return false;
+  }
+  if (status === 401 || status === 403) {
+    return true;
+  }
+  return (
+    /\bAPI\s*40[13]\b/i.test(haystack) ||
+    /\b401\b/.test(haystack) ||
+    (/\b403\b/.test(haystack) && !isModelAccessProviderError(haystack)) ||
+    /\bunauthorized\b|\bunauthorised\b/i.test(haystack) ||
+    /invalid\s*api\s*key|incorrect\s*api\s*key|api\s*key\s*(?:is\s*)?(?:invalid|missing|required|not\s*(?:found|set|provided))|missing\s*api\s*key/i.test(
+      haystack
+    ) ||
+    /authentication\s*(?:failed|error|required|disabled)|not\s*authenticated|no\s*credentials|invalid\s*(?:authentication|credentials|token|bearer)|token\s*(?:is\s*)?(?:invalid|expired|revoked|missing)|bearer\s*(?:token|auth)/i.test(
+      haystack
+    )
   );
 }
 
@@ -216,6 +272,35 @@ export function explainKnownProviderError(
       "On vLLM enable --enable-auto-tool-choice and --tool-call-parser",
       "(for Qwen2.5 usually hermes).",
       "Until then, pick another model or ask the gateway admin to enable tool calling.",
+    ].join(" ");
+  }
+
+  if (isModelAccessProviderError(haystack)) {
+    if (lang === "ru") {
+      return [
+        "Эта модель не выдана вашей команде на гейтвее (не 401).",
+        "Откройте Настройки → Models и выберите доступную",
+        "(список моделей: GET …/models у провайдера).",
+      ].join(" ");
+    }
+    return [
+      "This model is not enabled for your team on the gateway (not a 401).",
+      "Open Settings → Models and pick a model listed in the provider GET …/models.",
+    ].join(" ");
+  }
+
+  if (isAuthLikeProviderError(error) || isAuthLikeProviderError(haystack)) {
+    if (lang === "ru") {
+      return [
+        "Модель отклонила ключ API (401/403).",
+        "Откройте Настройки → Models и проверьте API Key у провайдера,",
+        "затем отправьте запрос ещё раз.",
+      ].join(" ");
+    }
+    return [
+      "The model rejected the API key (401/403).",
+      "Open Settings → Models and check the provider API key,",
+      "then send the request again.",
     ].join(" ");
   }
 

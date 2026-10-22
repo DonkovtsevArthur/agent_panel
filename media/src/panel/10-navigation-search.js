@@ -1,3 +1,12 @@
+  // Раздел берём из DOM: в JetBrains навигацию по меню перехватывает
+  // capture-обработчик хоста и панельный click не срабатывает.
+  function activeSettingsCategory() {
+    const btn = document.querySelector(
+      "#settingsNav .settings-nav-item.is-active"
+    );
+    return (btn && btn.getAttribute("data-settings-cat")) || "models";
+  }
+
   function showSettingsCategory(category) {
     const allowed = [
       "models",
@@ -137,6 +146,8 @@
       setAgentsRailOpen(true);
       screen = "chat";
     }
+    const settingsAlreadyVisible =
+      currentScreen === "settings" || currentScreen === "mcp";
     currentScreen = screen;
     const settingsVisible = screen === "settings" || screen === "mcp";
     mcpScreenOpen = screen === "mcp";
@@ -168,7 +179,15 @@
       updateWorkspaceNarrow();
     }
     if (settingsVisible) {
-      showSettingsCategory(screen === "mcp" ? "mcp" : "models");
+      // Повторный показ уже открытых настроек (JetBrains шлёт showSettings
+      // несколько раз: sidecar + ретраи инъекции) не сбрасывает раздел.
+      showSettingsCategory(
+        screen === "mcp"
+          ? "mcp"
+          : settingsAlreadyVisible
+            ? activeSettingsCategory()
+            : "models"
+      );
     } else {
       closeMcpEditModal();
       closeMcpCustomEditModal();

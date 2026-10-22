@@ -9,8 +9,15 @@
  *   a write via `isMcpReadonlyTool`).
  *
  * The dispatcher description carries a compact catalog (name, params, first
- * sentence); `describe: true` returns the full schema of one tool. vscode-free.
+ * sentence); `describe: true` returns the full schema of one tool. Lazy mode
+ * (`agentPanel.mcp.lazyTools`): core tools move behind the dispatchers too and
+ * the catalog is names only. vscode-free.
  */
+
+export interface AtlassianCompactOptions {
+  /** Names-only dispatchers, no direct core tools. */
+  lazy?: boolean;
+}
 
 export interface AtlassianToolDef {
   name: string;
@@ -78,25 +85,44 @@ const DISPATCHER_TOPICS: Record<string, Record<"read" | "write", string>> = {
   },
 };
 
+/** Lazy read dispatchers also carry the core tools — name them first. */
+const LAZY_READ_TOPICS: Record<string, string> = {
+  jira: "Jira: поиск задач (JQL), карточка задачи, комментарии, статусы, worklog, спринты.",
+  confluence: "Confluence: поиск и чтение страниц, дочерние страницы, комментарии, вложения.",
+};
+
 function dispatcherTool(
   prefix: string,
   name: string,
   kind: "read" | "write",
-  defs: AtlassianToolDef[]
+  defs: AtlassianToolDef[],
+  lazy = false
 ): AtlassianToolDef {
-  const intro =
-    kind === "read"
+  const intro = lazy
+    ? kind === "read"
+      ? "Read-only tools of this server — use only when the task needs it."
+      : "Write tools of this server (change data visible to the team — only when the user asked for it)."
+    : kind === "read"
       ? "More read-only tools of this server. Call with tool + arguments."
       : "Write tools of this server (change data visible to the team — only when the user asked for it). Call with tool + arguments.";
-  const topics = DISPATCHER_TOPICS[prefix]?.[kind];
+  const topics = [
+    lazy && kind === "read" ? LAZY_READ_TOPICS[prefix] : "",
+    DISPATCHER_TOPICS[prefix]?.[kind] || "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const catalog = lazy
+    ? [
+        "Call with describe: true first to get a tool's description and schema, then call with tool + arguments. Tool names from rules / skills are called through here.",
+        `Tools: ${defs.map((d) => d.name).join(", ")}.`,
+      ]
+    : [
+        "`*` = required, `…` = more optional params. Unsure about arguments → call with describe: true first (returns the full schema). Tool names from rules / skills that are not in your tool list are called through here.",
+        ...defs.map(catalogLine),
+      ];
   return {
     name,
-    description: [
-      intro,
-      ...(topics ? [topics] : []),
-      "`*` = required, `…` = more optional params. Unsure about arguments → call with describe: true first (returns the full schema). Tool names from rules / skills that are not in your tool list are called through here.",
-      ...defs.map(catalogLine),
-    ].join("\n"),
+    description: [intro, ...(topics ? [topics] : []), ...catalog].join("\n"),
     inputSchema: {
       type: "object",
       properties: {
@@ -126,13 +152,18 @@ function dispatcherTool(
 export function compactAtlassianToolDefs(
   prefix: string,
   defs: AtlassianToolDef[],
-  writeTools: ReadonlySet<string>
+  writeTools: ReadonlySet<string>,
+  options: AtlassianCompactOptions = {}
 ): AtlassianToolDef[] {
+  const lazy = options.lazy === true;
   const core: AtlassianToolDef[] = [];
   const reads: AtlassianToolDef[] = [];
   const writes: AtlassianToolDef[] = [];
   for (const def of defs) {
-    if (ATLASSIAN_CORE_TOOLS.has(def.name) || !def.name.startsWith(`${prefix}_`)) {
+    if (
+      !def.name.startsWith(`${prefix}_`) ||
+      (!lazy && ATLASSIAN_CORE_TOOLS.has(def.name))
+    ) {
       core.push(def);
     } else if (writeTools.has(def.name)) {
       writes.push(def);
@@ -143,8 +174,10 @@ export function compactAtlassianToolDefs(
   const [readName, writeName] = atlassianDispatcherNames(prefix);
   return [
     ...core,
-    ...(reads.length ? [dispatcherTool(prefix, readName, "read", reads)] : []),
-    ...(writes.length ? [dispatcherTool(prefix, writeName, "write", writes)] : []),
+    ...(reads.length ? [dispatcherTool(prefix, readName, "read", reads, lazy)] : []),
+    ...(writes.length
+      ? [dispatcherTool(prefix, writeName, "write", writes, lazy)]
+      : []),
   ];
 }
 
@@ -162,21 +195,23 @@ export function resolveAtlassianDispatch(
   toolName: string,
   args: Record<string, unknown>,
   defs: AtlassianToolDef[],
-  writeTools: ReadonlySet<string>
+  writeTools: ReadonlySet<string>,
+  options: AtlassianCompactOptions = {}
 ): AtlassianDispatch {
   const [readName, writeName] = atlassianDispatcherNames(prefix);
   if (toolName !== readName && toolName !== writeName) {
     return { kind: "direct" };
   }
+  const lazy = options.lazy === true;
   const wantWrite = toolName === writeName;
   const inner = String(args.tool || "").trim();
   const def = defs.find((d) => d.name === inner);
   const allowed = defs
-    .filter((d) => !ATLASSIAN_CORE_TOOLS.has(d.name))
+    .filter((d) => lazy || !ATLASSIAN_CORE_TOOLS.has(d.name))
     .filter((d) => writeTools.has(d.name) === wantWrite)
     .map((d) => d.name);
   if (!def || !allowed.includes(inner)) {
-    const hint = ATLASSIAN_CORE_TOOLS.has(inner)
+    const hint = !lazy && ATLASSIAN_CORE_TOOLS.has(inner)
       ? ` ${inner} is a direct tool — call it by name.`
       : writeTools.has(inner) && !wantWrite
         ? ` ${inner} changes data — use ${writeName}.`

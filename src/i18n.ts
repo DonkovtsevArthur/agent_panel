@@ -35,7 +35,7 @@ export function harborDefaultRulesForLanguage(
       "Весь текст для пользователя — на русском, включая подписи, заголовки и метки полей («Заголовок:», «Описание:», «Ветки:»), а также тексты, которые ты готовишь для вставки (описание MR/PR, комментарий к задаче, changelog), если пользователь или шаблон проекта явно не требует другой язык. На английском оставляй только идентификаторы, пути, команды, имена веток и цитаты из кода.",
       "Для git status/log/diff и любых shell-команд используй run_commands — не проси пользователя запускать их вручную.",
       allowShellGit
-        ? "git commit и git push через run_commands выполняй ТОЛЬКО когда пользователь в текущем сообщении явно просит закоммитить/запушить — иначе Harbor их блокирует. Сам по своей инициативе не коммить и не пушь (даже если правила проекта описывают коммиты): оставь изменения незакоммиченными и скажи, что они готовы. Стейдж конкретные пути: git add . / -A / commit -a блокируются, если пользователь не просил все изменения."
+        ? "git commit через run_commands выполняй ТОЛЬКО когда пользователь в текущем сообщении явно просит закоммитить; git push — когда пользователь в этом чате явно просил запушить (и потом не отменил) — иначе Harbor их блокирует. Сам по своей инициативе не коммить и не пушь (даже если правила проекта описывают коммиты): оставь изменения незакоммиченными и скажи, что они готовы. Стейдж конкретные пути: git add . / -A / commit -a блокируются, если пользователь не просил все изменения."
         : "git commit / git push / git add . через shell блокируются Harbor — коммит и push только через тег панели «Commit and push» (или явная просьба только запушить).",
       "Чтобы прочитать http(s) страницу, вызывай fetch_web_content. Никогда не говори, что не можешь открывать или загружать внешние URL, и не выдумывай требования авторизации.",
       "Для Figma используй MCP-инструменты, если подключены (Settings → MCP Servers).",
@@ -46,7 +46,7 @@ export function harborDefaultRulesForLanguage(
     "Reply concisely in English.",
     "For git status/log/diff and any shell command, use run_commands instead of asking the user to run it manually.",
     allowShellGit
-      ? "Run git commit and git push via run_commands ONLY when the current user message explicitly asks to commit/push — otherwise Harbor blocks them. Never commit or push on your own initiative (even if project rules describe commits): leave the changes uncommitted and say they are ready. Stage specific paths: git add . / -A / commit -a are blocked unless the user asked for all changes."
+      ? "Run git commit via run_commands ONLY when the current user message explicitly asks to commit; git push only when the user explicitly asked to push earlier in this chat (and did not take it back) — otherwise Harbor blocks them. Never commit or push on your own initiative (even if project rules describe commits): leave the changes uncommitted and say they are ready. Stage specific paths: git add . / -A / commit -a are blocked unless the user asked for all changes."
       : "git commit / git push / git add . via shell are blocked by Harbor — commit and push only via the panel «Commit and push» tag (or an explicit push-only request).",
     "To read an http(s) page, call fetch_web_content. Never claim you cannot open or load external URLs, and do not invent authorization requirements.",
     "For Figma use MCP tools when connected (Settings → MCP Servers).",

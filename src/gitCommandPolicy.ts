@@ -85,7 +85,7 @@ export function looksLikeExplicitPushRequest(text: string): boolean {
     return false;
   }
   // Commit+push — отдельный UI-тег, не этот fast-path.
-  if (/(коммит|commit|закоммит)/.test(value)) {
+  if (/(комм?ит|commit)/.test(value)) {
     return false;
   }
 
@@ -114,10 +114,11 @@ function startsAsQuestion(value: string): boolean {
   );
 }
 
+// `м?` — частые опечатки с одной «м»: «закомить», «комитни», «сделай комит».
 const COMMIT_INTENT =
-  /(закоммит|коммитн|(?:сделай|сделать|создай|создать|оформи|оформить)\s+коммит|\bcommit\b(?!\s+messages?\b))/;
+  /(закомм?ит|комм?итн|(?:сделай|сделать|создай|создать|оформи|оформить)\s+комм?ит|\bcommit\b(?!\s+messages?\b))/;
 const COMMIT_NEGATION =
-  /(^|[\s,.;:!])(не|без|не надо|не нужно|не стоит|никаких)\s+(?:\S+\s+)?(закоммит|коммит|commit)|\b(?:don'?t|do not|no|without)\s+(?:\S+\s+)?commit/;
+  /(^|[\s,.;:!])(не|без|не надо|не нужно|не стоит|никаких)\s+(?:\S+\s+)?(закомм?ит|комм?ит|commit)|\b(?:don'?t|do not|no|without)\s+(?:\S+\s+)?commit/;
 const PUSH_INTENT = /(запуш|пушн|пушь|\bpush\b)/;
 const PUSH_NEGATION =
   /(^|[\s,.;:!])(не|без|не надо|не нужно|не стоит)\s+(?:\S+\s+)?(запуш|пуш|push)|\b(?:don'?t|do not|no|without)\s+(?:\S+\s+)?push/;
@@ -140,6 +141,27 @@ export function userRequestsGitPush(text: string): boolean {
   return PUSH_INTENT.test(value);
 }
 
+/**
+ * Просьба запушить где-то в этом чате (сообщения пользователя по порядку).
+ * Решает последнее сообщение, где push упомянут: «запушь» разрешает,
+ * «не пушь» снова закрывает.
+ */
+export function chatRequestsGitPush(userTexts: readonly string[]): boolean {
+  let allowed = false;
+  for (const text of userTexts || []) {
+    const value = normalizeGitRequestText(text);
+    if (!value) {
+      continue;
+    }
+    if (PUSH_NEGATION.test(value)) {
+      allowed = false;
+    } else if (userRequestsGitPush(value)) {
+      allowed = true;
+    }
+  }
+  return allowed;
+}
+
 /** `git commit` через shell заблокирован для этого хода. */
 export function shouldBlockGitCommit(
   command: string,
@@ -152,16 +174,24 @@ export function shouldBlockGitCommit(
   );
 }
 
-/** `git push` через shell заблокирован для этого хода. */
+/**
+ * `git push` через shell заблокирован для этого хода. С автоподтверждением
+ * команд хватает явной просьбы запушить в любом сообщении пользователя этого
+ * чата (`chatUserTexts`, включая текущее), если позже её не отменили.
+ */
 export function shouldBlockGitPush(
   command: string,
   userText = "",
-  allowShellGit = false
+  allowShellGit = false,
+  chatUserTexts: readonly string[] = []
 ): boolean {
   if (!isGitPushCommand(command) || looksLikeExplicitPushRequest(userText)) {
     return false;
   }
-  return !(allowShellGit && userRequestsGitPush(userText));
+  if (!allowShellGit) {
+    return true;
+  }
+  return !chatRequestsGitPush([...chatUserTexts, userText]);
 }
 
 /**

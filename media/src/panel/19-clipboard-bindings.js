@@ -1097,6 +1097,11 @@
           selectSettingsProvider(key);
         }
       }
+      const loginBtn = event.target.closest(".settings-provider-login");
+      if (loginBtn) {
+        host.postMessage({ type: "gennadiyLogin" });
+        return;
+      }
       const fetchBtn = event.target.closest(".settings-provider-fetch");
       if (fetchBtn) {
         const index = Number(fetchBtn.dataset.index);

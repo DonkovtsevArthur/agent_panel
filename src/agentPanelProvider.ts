@@ -70,8 +70,17 @@ import {
 import {
   explainKnownProviderError,
   humanizeProviderError,
+  isAuthLikeProviderError,
   providerErrorDetail,
 } from "./providerErrors";
+import {
+  providerNeedsGennadiyLogin,
+  promptGennadiyAuthLogin,
+  openGennadiyAuthLogin,
+  syncGennadiyTokenToSettings,
+  ensureGennadiyAccessToken,
+} from "./gennadiyAuthLogin";
+import { isGennadiyProvider, readGennadiyAccessToken } from "./gennadiyAuth";
 import type { FileEditStat } from "./diffStats";
 import {
   getEditorSelectionPayload,
@@ -261,6 +270,7 @@ type WebviewToHost =
   | { type: "showArchive" }
   | { type: "showSettings" }
   | { type: "closeSettings" }
+  | { type: "gennadiyLogin" }
   | { type: "saveSettings"; settings: SettingsPayload }
   | { type: "saveModes"; modes: SettingsPayload["modes"] }
   | { type: "renameAgent"; agentId: string; name: string }
@@ -300,7 +310,7 @@ type WebviewToHost =
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
   | { type: "pickAttachments"; imagesOnly?: boolean }
-  | { type: "attachUris"; uris: string[] }
+  | { type: "attachUris"; uris: string[]; dropId?: string }
   | { type: "attachFiles"; files: IncomingAttachment[] }
   | { type: "searchFiles"; query: string; requestId: string }
   | {
@@ -444,8 +454,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     string,
     { promptTokens: number; cacheReadTokens: number }
   >();
-  /** Last root request per chat split by category — «Context» popover; in memory only. */
-  private readonly contextBreakdown = new Map<string, ContextBreakdown>();
   private readonly chatRuns = new Map<string, AbortController>();
   private readonly chatRunTokens = new Map<string, number>();
   /**
@@ -919,10 +927,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "turn.failed": {
         const p = params as { error?: string } | undefined;
+        const errorText = p?.error || "Turn failed";
         this.postChat({
           type: "runFailed",
-          message: p?.error || "Turn failed",
+          text: errorText,
         });
+        if (isAuthLikeProviderError(errorText)) {
+          void this.handleAuthRequired();
+        }
         break;
       }
       case "turn.review":
@@ -955,6 +967,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     for (const d of this.disposables) {
       d.dispose();
     }
+  }
+
+  /**
+   * 401/Unauthorized: Gennadiy → corporate `gennadiy auth login` form;
+   * other providers → Models settings (API key).
+   */
+  private async handleAuthRequired(modelId?: string): Promise<void> {
+    const endpoint = resolveModelEndpoint(
+      String(modelId || this.selectedModel || "").trim()
+    );
+    if (providerNeedsGennadiyLogin(endpoint.providerId || "")) {
+      const handled = await promptGennadiyAuthLogin();
+      if (handled) {
+        return;
+      }
+    }
+    this.openSettingsEditor({ section: "models" });
   }
 
   /** Открыть настройки во вкладке редактора (не в сайдбаре). */
@@ -1286,20 +1315,23 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  async attachUrisFromDrop(uris: vscode.Uri[]): Promise<void> {
+  /** Returns how many attachments were added (0 — nothing readable). */
+  async attachUrisFromDrop(uris: vscode.Uri[]): Promise<number> {
     try {
       const fromUris = await attachmentsFromUris(uris.map((u) => u.toString()));
       if (!fromUris.length) {
-        return;
+        return 0;
       }
       const persisted = await persistIncomingAttachments(
         fromUris,
         this.storageUri()
       );
       await this.postAttachments(persisted);
+      return persisted.length;
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(text);
+      return 0;
     }
   }
 
@@ -1426,8 +1458,26 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       promptTokens: last.promptTokens,
       cacheReadTokens: last.cacheReadTokens,
       breakdown:
-        this.contextBreakdown.get(this.store.activeChatId || "") || null,
+        this.chatContextBreakdown(this.store.activeChatId),
     });
+  }
+
+  /**
+   * «Context» popover breakdown lives on the chat (workspaceState), so it
+   * survives reloads; written by the next save of the store.
+   */
+  private chatContextBreakdown(chatId: string | undefined): ContextBreakdown | null {
+    return (chatId && this.store.chats[chatId]?.contextBreakdown) || null;
+  }
+
+  private setChatContextBreakdown(
+    chatId: string,
+    breakdown: ContextBreakdown | undefined
+  ): void {
+    const chat = this.store.chats[chatId];
+    if (chat) {
+      chat.contextBreakdown = breakdown;
+    }
   }
 
   private activeLastRequestUsage(): {
@@ -2525,7 +2575,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
       contextBreakdown:
-        this.contextBreakdown.get(this.store.activeChatId || "") || null,
+        this.chatContextBreakdown(this.store.activeChatId),
       totalInputTokens: this.totalInputTokens,
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
@@ -2703,6 +2753,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "saveSettings":
         await this.saveSettings(message.settings);
+        break;
+      case "gennadiyLogin":
+        await openGennadiyAuthLogin();
         break;
       case "saveModes":
         await this.saveModes(message.modes);
@@ -2916,8 +2969,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "deleteBranch":
         void this.deleteBranch(String(message.chatId || ""));
         break;
-      case "attachUris":
-        await this.attachUrisFromDrop(
+      case "attachUris": {
+        const attached = await this.attachUrisFromDrop(
           (Array.isArray(message.uris) ? message.uris : [])
             .map((u) => {
               try {
@@ -2928,7 +2981,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             })
             .filter((u): u is vscode.Uri => Boolean(u))
         );
+        // Пути из drop не прочитались — панель прикрепит сами файлы из drop.
+        if (!attached && typeof message.dropId === "string" && message.dropId) {
+          this.postChat({ type: "attachUrisEmpty", dropId: message.dropId });
+        }
         break;
+      }
       case "attachFiles":
         try {
           const persisted = await persistIncomingAttachments(
@@ -3981,6 +4039,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     // uiMessages with a wrong-chat snapshot while attachments are writing.
     const runRef = this.beginChatRun(runChatId);
     const currentRun = runRef.controller;
+    // Refresh Keycloak access token (30 min TTL) before talking to the gateway.
+    if (providerNeedsGennadiyLogin(resolveModelEndpoint(chosen).providerId || "")) {
+      await ensureGennadiyAccessToken();
+    }
     touchChat(this.store, runChatId, {
       selectedMode: selectedMode.id,
       ...(reasoningEffortForRun
@@ -4416,7 +4478,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             runContextTokens = usage.used;
             if (usage.breakdown) {
-              this.contextBreakdown.set(runChatId, usage.breakdown);
+              this.setChatContextBreakdown(runChatId, usage.breakdown);
             }
             if ((usage.promptTokens || 0) > 0) {
               this.lastRequestUsage.set(runChatId, {
@@ -4690,6 +4752,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       if (this.isActiveChat(runChatId)) {
         this.postRegenerateState();
       }
+      // 401/Unauthorized: Gennadiy login form, else provider API-key settings.
+      if (isAuthLikeProviderError(error)) {
+        void this.handleAuthRequired(chosen);
+      }
     } finally {
       this.finishChatRun(runChatId, runRef);
       // Stamp the wall-clock run duration onto the turn's last tool step so
@@ -4937,6 +5003,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       uiMessages: nextUi.slice(-200),
       lastTurnModel: "",
       contextTokens: 0,
+      contextBreakdown: undefined,
       // History was truncated to the edit point — billing totals reset too.
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -6054,6 +6121,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           id: string;
           label?: string;
           providerId?: string;
+          apiModelId?: string;
           contextWindow?: number;
           maxOutputTokens?: number;
           enabled?: boolean;
@@ -6065,6 +6133,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           id,
           providerId,
         };
+        const apiModelId = String(
+          (m as Record<string, unknown>)?.apiModelId || ""
+        ).trim();
+        if (apiModelId && apiModelId !== id) {
+          row.apiModelId = apiModelId;
+        }
         if (label) {
           row.label = label;
         }
@@ -6102,6 +6176,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           id: string;
           label?: string;
           providerId?: string;
+          apiModelId?: string;
           contextWindow?: number;
           maxOutputTokens?: number;
           enabled?: boolean;
@@ -6112,15 +6187,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         } => Boolean(m)
       );
 
-    if (!models.length) {
-      void vscode.window.showWarningMessage(
-        "At least one model with a non-empty id is required."
-      );
-      return;
-    }
-
     const enabledModels = models.filter((m) => m.enabled !== false);
-    const resolvedDefault = enabledModels[0]?.id || models[0].id;
+    const resolvedDefault = enabledModels[0]?.id || models[0]?.id || "";
 
     const clamp = (value: unknown, min: number, max: number, fallback: number) => {
       const n = typeof value === "number" ? value : Number(value);
@@ -6300,6 +6368,18 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.providerConnStatuses.clear();
     this.ensureProviderProbe(this.selectedModel, true);
 
+    // New Gennadiy provider (or first setup): open the corporate login form
+    // right away — `gennadiy auth login` (Keycloak), no manual API key paste.
+    const gennadiyProviders = providers.filter((p) =>
+      isGennadiyProvider({ id: p.id, name: p.name, baseUrl: p.baseUrl })
+    );
+    if (gennadiyProviders.length) {
+      const synced = await syncGennadiyTokenToSettings();
+      if (!synced && !readGennadiyAccessToken()) {
+        void openGennadiyAuthLogin();
+      }
+    }
+
     if (languageChanged) {
       await vscode.commands.executeCommand("workbench.action.reloadWindow");
     }
@@ -6462,7 +6542,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
       contextBreakdown:
-        this.contextBreakdown.get(this.store.activeChatId || "") || null,
+        this.chatContextBreakdown(this.store.activeChatId),
       totalInputTokens: this.totalInputTokens,
       totalOutputTokens: this.totalOutputTokens,
       totalCacheReadTokens: this.totalCacheReadTokens,
@@ -6677,7 +6757,6 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             <circle class="context-ring-value" cx="12" cy="12" r="9" fill="none" stroke="#3794ff" stroke-width="3.5"
               stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 12 12)"/>
           </svg>
-          <span class="context-tip" id="contextTip" role="tooltip">0 / 128k</span>
         </button>
       </div>
     </div>

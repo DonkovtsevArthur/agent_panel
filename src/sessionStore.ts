@@ -1,3 +1,4 @@
+import type { ContextBreakdown } from "./contextBreakdown";
 import { randomUUID } from "crypto";
 import type { MessageAttachment } from "./attachments";
 import type { ChatMessage } from "./openaiTypes";
@@ -199,6 +200,8 @@ export interface ChatSession {
   archivedAt?: number;
   /** Последний известный расход контекста (токены). */
   contextTokens?: number;
+  /** Разбивка окна по категориям последнего запроса — попап «Контекст». */
+  contextBreakdown?: ContextBreakdown;
   /**
    * Накопленный биллинг по чату: суммарные input токены всех итераций
    * (включая повторы и спавны). Не то же, что contextTokens (занятость окна

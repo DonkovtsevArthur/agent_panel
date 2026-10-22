@@ -9,6 +9,10 @@
  * - `<server>_write` — every write tool (`isMcpReadonlyTool` false; hidden in
  *   Plan / Ask and approved as a write — the `_write` suffix is a write).
  *
+ * Lazy mode (`agentPanel.mcp.lazyTools`, default on) goes further: no direct
+ * tools at all and a names-only catalog — the model calls `describe` when the
+ * task needs the server, so unrelated servers cost a few dozen tokens.
+ *
  * The tool set is static per connected server, so the session fingerprint
  * (and the prompt cache) stays stable. Built-in Jira / Confluence keep their
  * own dispatchers. vscode-free.
@@ -64,12 +68,25 @@ function innerName(tool: ChatTool): string {
   return parseQualifiedToolName(name)?.toolName || name;
 }
 
+/**
+ * Lazy mode (`agentPanel.mcp.lazyTools`): every server with at least this many
+ * tools is sent as dispatchers only — no direct tools, names-only catalog.
+ */
+export const MCP_LAZY_MIN_TOOLS = 2;
+
+export interface McpOnDemandOptions {
+  /** Names-only dispatchers for every tool (the model loads schemas itself). */
+  lazy?: boolean;
+}
+
 /** Split a server's tools, or undefined when the server stays as-is. */
 function groupServerTools(
   serverId: string,
-  tools: readonly ChatTool[]
+  tools: readonly ChatTool[],
+  options: McpOnDemandOptions = {}
 ): ToolGroups | undefined {
-  if (tools.length < MCP_ON_DEMAND_MIN_TOOLS) {
+  const lazy = options.lazy === true;
+  if (tools.length < (lazy ? MCP_LAZY_MIN_TOOLS : MCP_ON_DEMAND_MIN_TOOLS)) {
     return undefined;
   }
   const names = mcpDispatcherNames(serverId);
@@ -79,7 +96,7 @@ function groupServerTools(
   }
   const groups: ToolGroups = { core: [], reads: [], writes: [] };
   for (const tool of tools) {
-    if (MCP_CORE_TOOL_NAMES.has(innerName(tool))) {
+    if (!lazy && MCP_CORE_TOOL_NAMES.has(innerName(tool))) {
       groups.core.push(tool);
     } else if (isMcpReadonlyTool(tool.function.name)) {
       groups.reads.push(tool);
@@ -88,7 +105,7 @@ function groupServerTools(
     }
   }
   // Moving one or two tools behind a dispatcher saves nothing.
-  if (groups.reads.length + groups.writes.length < 3) {
+  if (!lazy && groups.reads.length + groups.writes.length < 3) {
     return undefined;
   }
   return groups;
@@ -98,18 +115,22 @@ function dispatcherTool(
   serverId: string,
   name: string,
   kind: "read" | "write",
-  tools: ChatTool[]
+  tools: ChatTool[],
+  lazy = false
 ): ChatTool {
-  const intro =
-    kind === "read"
+  const intro = lazy
+    ? kind === "read"
+      ? `Read-only tools of MCP server "${serverId}" — use only when the task needs this server.`
+      : `Write tools of MCP server "${serverId}" (change data — only when the user asked for it).`
+    : kind === "read"
       ? `More read-only tools of MCP server "${serverId}". Call with tool + arguments.`
       : `Write tools of MCP server "${serverId}" (change data — only when the user asked for it). Call with tool + arguments.`;
-  return {
-    type: "function",
-    function: {
-      name: qualifyMcpToolName(serverId, name),
-      description: [
-        intro,
+  const catalog = lazy
+    ? [
+        "Call with describe: true first to get a tool's description and schema, then call with tool + arguments. Tool names from rules / skills / hints are called through here.",
+        `Tools: ${tools.map(innerName).join(", ")}.`,
+      ]
+    : [
         "`*` = required, `…` = more optional params. Unsure about arguments → call with describe: true first (returns the full schema). Tool names from rules / skills / hints that are not in your tool list are called through here.",
         ...tools.map((t) =>
           catalogLine({
@@ -118,7 +139,12 @@ function dispatcherTool(
             inputSchema: t.function.parameters,
           })
         ),
-      ].join("\n"),
+      ];
+  return {
+    type: "function",
+    function: {
+      name: qualifyMcpToolName(serverId, name),
+      description: [intro, ...catalog].join("\n"),
       parameters: {
         type: "object",
         properties: {
@@ -148,20 +174,22 @@ function dispatcherTool(
  */
 export function compactMcpServerTools(
   serverId: string,
-  tools: readonly ChatTool[]
+  tools: readonly ChatTool[],
+  options: McpOnDemandOptions = {}
 ): ChatTool[] {
-  const groups = groupServerTools(serverId, tools);
+  const groups = groupServerTools(serverId, tools, options);
   if (!groups) {
     return [...tools];
   }
   const names = mcpDispatcherNames(serverId);
+  const lazy = options.lazy === true;
   return [
     ...groups.core,
     ...(groups.reads.length
-      ? [dispatcherTool(serverId, names.read, "read", groups.reads)]
+      ? [dispatcherTool(serverId, names.read, "read", groups.reads, lazy)]
       : []),
     ...(groups.writes.length
-      ? [dispatcherTool(serverId, names.write, "write", groups.writes)]
+      ? [dispatcherTool(serverId, names.write, "write", groups.writes, lazy)]
       : []),
   ];
 }
@@ -180,13 +208,14 @@ export function resolveMcpDispatch(
   serverId: string,
   toolName: string,
   args: Record<string, unknown>,
-  tools: readonly ChatTool[]
+  tools: readonly ChatTool[],
+  options: McpOnDemandOptions = {}
 ): McpDispatch {
   const names = mcpDispatcherNames(serverId);
   if (toolName !== names.read && toolName !== names.write) {
     return { kind: "direct" };
   }
-  const groups = groupServerTools(serverId, tools);
+  const groups = groupServerTools(serverId, tools, options);
   if (!groups) {
     return { kind: "direct" };
   }

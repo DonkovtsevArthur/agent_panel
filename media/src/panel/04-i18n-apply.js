@@ -7,6 +7,9 @@
   const DELETE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">delete</span>';
 
+  const DELETE_SWEEP_ICON =
+    '<span class="material-symbols-outlined" aria-hidden="true">delete_sweep</span>';
+
   const CLOSE_ICON =
     '<span class="material-symbols-outlined" aria-hidden="true">close</span>';
 

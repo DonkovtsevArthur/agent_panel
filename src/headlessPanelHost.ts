@@ -67,7 +67,7 @@ import {
   type ListedProviderModel,
 } from "./openaiClient";
 import type { ChatSession } from "./sessionStore";
-import { HarborHeadless } from "./vscodeHeadlessStub";
+import { HarborHeadless, env as headlessEnv } from "./vscodeHeadlessStub";
 import {
   enrichAttachmentsForUi,
   persistIncomingAttachments,
@@ -77,6 +77,22 @@ import {
 } from "./attachments";
 import { resolveToolApproval } from "./toolApproval";
 import { resolveUiLanguage } from "./i18n";
+import {
+  humanizeProviderError,
+  isAuthLikeProviderError,
+} from "./providerErrors";
+import {
+  isGennadiyProvider,
+  readGennadiyAccessToken,
+  writeGennadiyKeycloakEntry,
+} from "./gennadiyAuth";
+import { ensureGennadiyAccessToken } from "./gennadiyAuthLogin";
+import {
+  GENNADIY_KEYCLOAK_DEFAULT,
+  pollKeycloakDeviceToken,
+  startKeycloakDeviceFlow,
+  writeGennadiyAuthStore,
+} from "./keycloakDeviceAuth";
 import {
   formatAbortedAssistantText,
   harborAbortInfoFromCode,
@@ -172,8 +188,6 @@ export class HeadlessPanelHost {
     string,
     { promptTokens: number; cacheReadTokens: number }
   >();
-  /** Last root request per chat split by category — «Context» popover; in memory only. */
-  private readonly contextBreakdown = new Map<string, ContextBreakdown>();
   /** Live turn per chat — parallel chats may run simultaneously (VS Code parity). */
   private readonly chatRuns = new Map<string, AbortController>();
   /**
@@ -257,6 +271,24 @@ export class HeadlessPanelHost {
       typeof chat?.contextTokens === "number" && chat.contextTokens > 0
         ? chat.contextTokens
         : 0;
+  }
+
+  /**
+   * «Context» popover breakdown lives on the chat (session file), so it
+   * survives restarts; written by the next persist (VS Code parity).
+   */
+  private chatContextBreakdown(chatId: string | undefined): ContextBreakdown | null {
+    return (chatId && this.store.chats[chatId]?.contextBreakdown) || null;
+  }
+
+  private setChatContextBreakdown(
+    chatId: string,
+    breakdown: ContextBreakdown | undefined
+  ): void {
+    const chat = this.store.chats[chatId];
+    if (chat) {
+      chat.contextBreakdown = breakdown;
+    }
   }
 
   private persist(): void {
@@ -612,6 +644,9 @@ export class HeadlessPanelHost {
         this.postSkillsList();
         this.post({ type: "showSettings" });
         return { ok: true };
+      case "gennadiyLogin":
+        void this.runGennadiyDeviceLogin();
+        return { ok: true };
       case "toggleFullscreen":
         // JetBrains maximizes the tool window host-side; VS Code handles this
         // in agentPanelProvider. Keep as no-op so sidecar does not error.
@@ -673,6 +708,80 @@ export class HeadlessPanelHost {
   }
 
   /** Map VS Code settings UI payload → global settings file. */
+  /**
+   * JetBrains/WebStorm parity with VS Code: open the same Keycloak device
+   * form in the system browser (host.openExternal), then store tokens.
+   */
+  private async runGennadiyDeviceLogin(): Promise<void> {
+    try {
+      const start = await startKeycloakDeviceFlow(GENNADIY_KEYCLOAK_DEFAULT);
+      // Same Keycloak form as VS Code — IDE opens the system browser
+      // (sidecar → host.openExternal → BrowserUtil.browse).
+      void headlessEnv.openExternal(start.verificationUriComplete);
+      this.post({
+        type: "status",
+        text: `Gennadiy: code ${start.userCode} — confirm sign-in in the browser.`,
+      });
+      const tokens = await pollKeycloakDeviceToken(
+        start,
+        GENNADIY_KEYCLOAK_DEFAULT
+      );
+      writeGennadiyAuthStore(tokens);
+      writeGennadiyKeycloakEntry({
+        access: tokens.access,
+        refresh: tokens.refresh,
+        expires: tokens.expires,
+        email: tokens.email || undefined,
+        accountId: tokens.accountId || undefined,
+      });
+      this.syncGennadiyTokenToSettingsFile(tokens.access);
+      this.post({
+        type: "status",
+        text: `Gennadiy: signed in${tokens.email ? ` (${tokens.email})` : ""}.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.post({
+        type: "runFailed",
+        text: `Gennadiy login failed: ${message}`,
+      });
+    }
+  }
+
+  private syncGennadiyTokenToSettingsFile(token: string): void {
+    if (!token) {
+      return;
+    }
+    const existing =
+      (readJsonFile(this.opts.settingsPath) as Record<string, unknown>) || {};
+    const agentPanel = (existing.agentPanel || {}) as Record<string, unknown>;
+    const raw = agentPanel.providers ?? existing.providers;
+    if (!Array.isArray(raw) || !raw.length) {
+      return;
+    }
+    let changed = false;
+    const next = raw.map((row) => {
+      const r = row as Record<string, unknown>;
+      if (
+        !isGennadiyProvider({
+          id: String(r?.id || ""),
+          name: String(r?.name || ""),
+          baseUrl: String(r?.baseUrl || ""),
+        })
+      ) {
+        return row;
+      }
+      if (String(r?.apiKey || "") === token) {
+        return row;
+      }
+      changed = true;
+      return { ...r, apiKey: token };
+    });
+    if (changed) {
+      this.persistUiSettings({ providers: next });
+    }
+  }
+
   private persistUiSettings(settings: Record<string, unknown>): void {
     const existing =
       (readJsonFile(this.opts.settingsPath) as Record<string, unknown>) || {};
@@ -686,6 +795,13 @@ export class HeadlessPanelHost {
       ...settings,
       agentPanel,
     };
+    // Keep providers/models/defaultModel identical at top level and under
+    // agentPanel — WebStorm settings.json uses both shapes.
+    for (const key of ["providers", "models", "defaultModel", "baseUrl", "apiKey"]) {
+      if (key in settings && key in agentPanel) {
+        next[key] = agentPanel[key];
+      }
+    }
     writeJsonFile(this.opts.settingsPath, next);
   }
 
@@ -1066,7 +1182,7 @@ export class HeadlessPanelHost {
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
       contextBreakdown:
-        this.contextBreakdown.get(this.store.activeChatId || "") || null,
+        this.chatContextBreakdown(this.store.activeChatId),
       lastPromptTokens:
         this.lastRequestUsage.get(this.store.activeChatId || "")
           ?.promptTokens || 0,
@@ -1097,7 +1213,7 @@ export class HeadlessPanelHost {
       contextUsed: this.contextTokens,
       contextMax: getContextWindow(this.selectedModel),
       contextBreakdown:
-        this.contextBreakdown.get(this.store.activeChatId || "") || null,
+        this.chatContextBreakdown(this.store.activeChatId),
       lastPromptTokens:
         this.lastRequestUsage.get(this.store.activeChatId || "")
           ?.promptTokens || 0,
@@ -2323,6 +2439,7 @@ export class HeadlessPanelHost {
         selectedModel: model,
         selectedMode: agentMode,
         contextTokens: 0,
+        contextBreakdown: undefined,
       });
       this.persist();
     }
@@ -2476,6 +2593,18 @@ export class HeadlessPanelHost {
     if (this.store.activeChatId === runChatId) {
       this.selectedModel = model;
       this.selectedMode = agentMode;
+    }
+
+    // Refresh Keycloak access token before the gateway call (VS Code parity).
+    const modelEndpoint = resolveModelEndpoint(model);
+    if (
+      isGennadiyProvider({
+        id: modelEndpoint.providerId,
+        name: modelEndpoint.providerName,
+        baseUrl: modelEndpoint.baseUrl,
+      })
+    ) {
+      await ensureGennadiyAccessToken();
     }
 
     // Copies pinned to runChatId — do not re-read this.history after awaits.
@@ -2801,7 +2930,7 @@ export class HeadlessPanelHost {
             if (!runActive()) return;
             runContextTokens = usage.used;
             if (usage.breakdown) {
-              this.contextBreakdown.set(runChatId, usage.breakdown);
+              this.setChatContextBreakdown(runChatId, usage.breakdown);
             }
             if ((usage.promptTokens || 0) > 0) {
               this.lastRequestUsage.set(runChatId, {
@@ -2950,11 +3079,35 @@ export class HeadlessPanelHost {
         );
         return { ok: true };
       }
-      runUiMessages = [...runUiMessages, { role: "error", text: message }];
+      const lang = resolveUiLanguage(getConfig().language);
+      let messageText = humanizeProviderError(err, lang) || message;
+      const endpoint = resolveModelEndpoint(model);
+      const gennadiy = isGennadiyProvider({
+        id: endpoint.providerId,
+        name: endpoint.providerName,
+        baseUrl: endpoint.baseUrl,
+      });
+      if (isAuthLikeProviderError(err) && gennadiy) {
+        // JetBrains/WebStorm: corporate login is `gennadiy auth login`.
+        messageText =
+          lang === "ru"
+            ? "Gennadiy: требуется авторизация. Выполните в терминале: gennadiy auth login"
+            : "Gennadiy: authorization required. Run in the terminal: gennadiy auth login";
+      }
+      runUiMessages = [
+        ...runUiMessages,
+        { role: "error", text: messageText },
+      ];
       postToRun({
         type: "runFailed",
-        message,
+        text: messageText,
       });
+      if (isAuthLikeProviderError(err)) {
+        this.post({
+          type: "showSettings",
+          settingsCategory: "models",
+        });
+      }
       touchChat(this.store, runChatId, {
         history: runHistory,
         uiMessages: runUiMessages,

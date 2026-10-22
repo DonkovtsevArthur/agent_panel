@@ -85,6 +85,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentPanel.openSettings", () => {
       provider.openSettingsEditor();
     }),
+    vscode.commands.registerCommand("agentPanel.gennadiyLogin", async () => {
+      const { openGennadiyAuthLogin } = await import("./gennadiyAuthLogin");
+      await openGennadiyAuthLogin();
+    }),
     vscode.commands.registerCommand(
       "agentPanel.openCommitMessageSettings",
       () => {

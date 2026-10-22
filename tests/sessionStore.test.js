@@ -334,3 +334,17 @@ test("deleteAllArchivedAgentsFromStore removes only archived agents", () => {
   assert.ok(store.agents.some((a) => a.id === keep.id));
   assert.equal(store.agents.some((a) => a.id === archived.id), false);
 });
+
+test("contextBreakdown is per chat and survives touchChat + reload", () => {
+  const { migrateToStoreV2 } = require("../out/sessionStore.js");
+  const store = createDefaultStore("gpt-4.1");
+  const first = store.activeChatId;
+  const second = "chat-second";
+  store.chats[second] = { ...store.chats[first], id: second };
+  store.chats[first].contextBreakdown = { used: 100, contextWindow: 1000, categories: [] };
+  store.chats[second].contextBreakdown = { used: 200, contextWindow: 1000, categories: [] };
+  touchChat(store, first, { contextTokens: 100 });
+  const reloaded = migrateToStoreV2(JSON.parse(JSON.stringify(store)), "gpt-4.1");
+  assert.equal(reloaded.chats[first].contextBreakdown.used, 100);
+  assert.equal(reloaded.chats[second].contextBreakdown.used, 200);
+});

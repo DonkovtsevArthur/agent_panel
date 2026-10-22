@@ -57,6 +57,7 @@ function modelRow(
     id: m.id,
     label: m.label || "",
     providerId: m.providerId || "",
+    ...(m.apiModelId ? { apiModelId: m.apiModelId } : {}),
     contextWindow: m.contextWindow || undefined,
     maxOutputTokens: m.maxOutputTokens || undefined,
     enabled: m.enabled !== false,

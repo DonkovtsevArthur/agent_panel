@@ -1497,9 +1497,6 @@
     const usedLabel = formatTokenCount(contextUsed);
     const maxLabel = formatTokenCount(contextMax);
     const tip = buildContextRingTip(usedLabel, maxLabel, pctLabel);
-    if (contextTipEl) {
-      contextTipEl.textContent = tip;
-    }
     contextRingEl.setAttribute(
       "aria-label",
       `Context: ${tip.replace(/\n/g, " · ")}`

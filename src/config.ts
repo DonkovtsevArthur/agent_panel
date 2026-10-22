@@ -24,6 +24,10 @@ import {
   type ReasoningEffortLevel,
 } from "./reasoningEffort";
 import { DEFAULT_DB_SCHEMA_GLOBS } from "./dbSchemaContext";
+import {
+  isGennadiyProvider,
+  resolveGennadiyApiKey,
+} from "./gennadiyAuth";
 
 export type { AgentModeDef } from "./modes";
 export { mergeModes, resolveMode } from "./modes";
@@ -113,6 +117,12 @@ export function baseUrlSuggestsPromptCache(baseUrl: string): boolean {
 export interface AgentModel {
   id: string;
   label?: string;
+  /**
+   * Wire id sent to the gateway (`body.model`). When omitted, `id` is used.
+   * Lets Harbor keep unique picker ids (`гена/deepseek-v4.1-flash`) while the
+   * API still receives `deepseek-v4.1-flash`.
+   */
+  apiModelId?: string;
   /** id провайдера из agentPanel.providers */
   providerId?: string;
   /** Размер контекстного окна модели в токенах (max input) */
@@ -540,6 +550,7 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     const row = item as {
       id?: unknown;
       label?: unknown;
+      apiModelId?: unknown;
       providerId?: unknown;
       enabled?: unknown;
       favorite?: unknown;
@@ -565,6 +576,13 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     const model: AgentModel = { id };
     if (label) {
       model.label = label;
+    }
+    const apiModelId =
+      typeof row.apiModelId === "string" && row.apiModelId.trim()
+        ? row.apiModelId.trim()
+        : undefined;
+    if (apiModelId && apiModelId !== id) {
+      model.apiModelId = apiModelId;
     }
     if (providerId) {
       model.providerId = providerId;
@@ -599,6 +617,10 @@ function readModels(cfg: vscode.WorkspaceConfiguration): AgentModel[] {
     models.push(model);
   }
 
+  // An explicitly saved empty list (user deleted every model) stays empty.
+  if (Array.isArray(raw) && raw.length === 0) {
+    return models;
+  }
   return models.length > 0 ? models : DEFAULT_MODELS;
 }
 
@@ -738,7 +760,7 @@ export function getConfig(): AgentPanelConfig {
       enabled: cfg.get<boolean>("autoCompact.enabled") !== false,
       thresholdTokens: Math.max(
         0,
-        Math.floor(Number(cfg.get<number>("autoCompact.thresholdTokens") ?? 120000) || 0)
+        Math.floor(Number(cfg.get<number>("autoCompact.thresholdTokens") ?? 0) || 0)
       ),
     },
     promptSuggestions: {
@@ -1076,12 +1098,28 @@ export function resolveModelEndpoint(modelId: string): ModelEndpoint {
   const statusUrl = normalizeBaseUrl(provider.statusUrl || "");
   return {
     baseUrl,
-    apiKey: provider.apiKey || "",
+    apiKey: isGennadiyProvider(provider)
+      ? resolveGennadiyApiKey(provider.apiKey)
+      : provider.apiKey || "",
     providerId: provider.id,
     providerName: provider.name || provider.id,
     statusUrl: statusUrl && statusUrl !== baseUrl ? statusUrl : undefined,
     protocol: provider.protocol,
   };
+}
+
+/**
+ * Wire model id for the API request. Picker ids may be unique per provider
+ * (`гена/deepseek-v4.1-flash`) while the gateway expects `deepseek-v4.1-flash`.
+ */
+export function resolveApiModelId(modelId: string): string {
+  const id = String(modelId || "").trim();
+  if (!id) {
+    return id;
+  }
+  const stored = getConfig().models.find((m) => m.id === id);
+  const apiId = String(stored?.apiModelId || "").trim();
+  return apiId || id;
 }
 
 /**

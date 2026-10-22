@@ -163,7 +163,7 @@ export type WebviewToHost =
   | { type: "openExternal"; url: string }
   | { type: "pickModel" }
   | { type: "pickAttachments"; imagesOnly?: boolean }
-  | { type: "attachUris"; uris: string[] }
+  | { type: "attachUris"; uris: string[]; dropId?: string }
   | { type: "attachFiles"; files: IncomingAttachment[] }
   | { type: "searchFiles"; query: string; requestId: string }
   | {

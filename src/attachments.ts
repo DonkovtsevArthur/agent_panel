@@ -401,7 +401,14 @@ export async function attachmentsFromUris(
     }
 
     // Вне workspace — копируем в storage при следующей persist; пока читаем в base64-путь через storage later
-    const data = await fs.readFile(uri.fsPath);
+    let data: Buffer;
+    try {
+      data = await fs.readFile(uri.fsPath);
+    } catch {
+      // Временный файл, которого уже нет (миниатюра скриншота macOS отдаёт
+      // путь до записи на диск) — пропускаем, панель прикрепит байты из drop.
+      continue;
+    }
     if (kind === "image" && data.byteLength > MAX_IMAGE_BYTES) {
       throw new Error(
         `Изображение «${name}» слишком большое (макс. ${Math.round(

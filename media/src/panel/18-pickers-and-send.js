@@ -1729,6 +1729,23 @@
     composerDropWatchdog = setTimeout(clearComposerDropState, 400);
   }
 
+  // dropId → File[] из drop, пока хост пробует прикрепить по путям
+  const pendingDropFallbacks = new Map();
+
+  function handleAttachUrisEmpty(msg) {
+    const dropId = msg && typeof msg.dropId === "string" ? msg.dropId : "";
+    const files = dropId ? pendingDropFallbacks.get(dropId) : null;
+    pendingDropFallbacks.delete(dropId);
+    if (!files || !files.length) {
+      return;
+    }
+    // file.path здесь вёл бы на тот же нечитаемый путь — берём байты
+    const bytesOnly = files.map((file) =>
+      file && file.path ? new File([file], file.name, { type: file.type }) : file
+    );
+    void ingestDroppedFiles(bytesOnly);
+  }
+
   // Drop принимаем на весь экран чата; визуально подсвечиваем только composer
   const dropRoot = chatScreen || composerWrapEl || composerEl;
   if (dropRoot) {
@@ -1769,7 +1786,19 @@
       clearComposerDropState();
       const uris = extractDropUris(event.dataTransfer);
       if (uris.length) {
-        host.postMessage({ type: "attachUris", uris });
+        // Путь из drop может не читаться хостом (миниатюра скриншота macOS
+        // отдаёт временный путь до записи файла) — держим сами файлы, хост
+        // ответит attachUrisEmpty, и тогда прикрепим их байты.
+        const droppedFiles = event.dataTransfer?.files?.length
+          ? Array.from(event.dataTransfer.files)
+          : [];
+        let dropId;
+        if (droppedFiles.length) {
+          dropId = `drop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          pendingDropFallbacks.set(dropId, droppedFiles);
+          setTimeout(() => pendingDropFallbacks.delete(dropId), 60000);
+        }
+        host.postMessage({ type: "attachUris", uris, dropId });
         return;
       }
       if (event.dataTransfer?.files?.length) {

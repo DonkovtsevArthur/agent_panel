@@ -85,6 +85,9 @@
         });
         renderMessageQueue();
         break;
+      case "attachUrisEmpty":
+        handleAttachUrisEmpty(msg);
+        break;
       case "clipboardImageResult":
         handleHostClipboardImageResult(msg);
         break;
@@ -160,13 +163,14 @@
       case "showSettings":
         settingsShownAt = Date.now();
         showScreen("settings");
-        showSettingsCategory(
-          msg.openMcp
-            ? "mcp"
-            : typeof msg.settingsCategory === "string" && msg.settingsCategory
-              ? msg.settingsCategory
-              : "models"
-        );
+        if (msg.openMcp) {
+          showSettingsCategory("mcp");
+        } else if (
+          typeof msg.settingsCategory === "string" &&
+          msg.settingsCategory
+        ) {
+          showSettingsCategory(msg.settingsCategory);
+        }
         // JetBrains OSR: the screen swap may come from a host-driven inject
         // without user input in the browser — force a paint frame.
         forceHarborUiRepaint();

@@ -20,6 +20,17 @@ export function setHarborGitGuardUserText(text: string): void {
   harborGitGuardUserTextRef.current = String(text || "");
 }
 
+/** Все сообщения пользователя этого чата до текущего — просьба запушить живёт весь чат. */
+export const harborGitGuardChatUserTextsRef: { current: string[] } = {
+  current: [],
+};
+
+export function setHarborGitGuardChatUserTexts(texts: readonly string[]): void {
+  harborGitGuardChatUserTextsRef.current = (texts || []).map((t) =>
+    String(t || "")
+  );
+}
+
 /**
  * Settings → auto-approve shell commands (`tools.approvals.commands`, else the
  * master toggle). When on, `git commit` / `git push` via shell are allowed only
@@ -79,7 +90,8 @@ export function extractRunCommandLines(input: unknown): string[] {
 export function harborBlockedGitCommandReason(
   command: string,
   userText: string,
-  allowShellGit = false
+  allowShellGit = false,
+  chatUserTexts: readonly string[] = []
 ): string | undefined {
   const cmd = String(command || "").trim();
   if (!cmd) {
@@ -95,10 +107,12 @@ export function harborBlockedGitCommandReason(
       "(the panel «Commit and push» control commits them).",
     ].join(" ");
   }
-  if (shouldBlockGitPush(cmd, userText, allowShellGit)) {
+  if (shouldBlockGitPush(cmd, userText, allowShellGit, chatUserTexts)) {
     return [
       "Command not executed: Harbor blocks `git push` via shell",
-      "unless the user explicitly asked to push in the current message.",
+      allowShellGit
+        ? "unless the user explicitly asked to push in this chat."
+        : "unless the user explicitly asked only to push in the current message.",
       "Do not push on your own; prefer the panel «Commit and push» control.",
     ].join(" ");
   }
@@ -155,7 +169,8 @@ export function createHarborGitCommandGuardExtension(): {
           const reason = harborBlockedGitCommandReason(
             command,
             userText,
-            harborGitGuardAllowShellGitRef.current
+            harborGitGuardAllowShellGitRef.current,
+            harborGitGuardChatUserTextsRef.current
           );
           if (reason) {
             return { skip: true, reason };

@@ -52,7 +52,7 @@
   "config.subagents.enabled.description": "Allow parallel sub-agents (spawn_agent) in Agent, Plan, and Ask. When on, the model is instructed to delegate independent work via spawn_agent; when off, the tool is unavailable. Children follow the current mode: Plan/Ask stay read-focused; Agent may edit.",
   "config.parallelToolCalls.enabled.description": "Execute multiple tool calls from one model response at the same time (reads, searches, and other independent tools).",
   "config.autoCompact.enabled.description": "Automatically compress conversation context when it approaches the model input limit.",
-  "config.autoCompact.thresholdTokens.description": "Compress the conversation once a request reaches this many tokens, even if the model window is larger. Smaller context = faster first token on long chats. 0 = use the model window.",
+  "config.autoCompact.thresholdTokens.description": "Optional cap: compress the conversation once a request reaches this many tokens, even before 75% of the model window. Smaller context = faster first token on long chats. 0 = compress at 75% of the model window only.",
   "config.promptSuggestions.enabled.description": "After each answer, suggest the likely next message as ghost text in the empty composer (Tab accepts). Uses the model selected in the chat.",
   "config.sessions.idleEvictMinutes.description": "Minutes an agent session may stay idle before it is stopped in the background; the next message in that chat starts a fresh session from saved history. Higher values keep sessions warm (faster first token) at the cost of memory.",
   "config.promptCache.enabled.description": "Send Anthropic-style prompt-cache markers (cache_control) on chat requests to OpenAI-compatible providers. Enable only when your endpoint accepts them (LiteLLM/OpenRouter proxying Claude or Qwen, Anthropic-compatible endpoints): cached prompt prefixes become several times cheaper and replies start faster. Strict OpenAI endpoints may reject the marker with a 400 error — keep it off there.",
@@ -91,6 +91,8 @@
   "config.figma.enabled.description": "Enable Figma MCP tools in Harbor Agents (Connect in panel Settings → MCP Servers)",
   "config.mcp.atlassianToolsOnDemand.description": "Built-in Jira / Confluence: send only the most used tools to the model; the rest are reached through jira_read / jira_write (confluence_read / confluence_write). About half the tool tokens in every request.",
   "config.mcp.toolsOnDemand.description": "Figma and custom MCP servers with 9+ tools: send only the most used tools to the model; the rest are reached through <server>_read / <server>_write with a short catalog (full schema on describe). Fewer tool tokens in every request.",
+  "config.mcp.lazyTools.description": "Lazy MCP tools: every MCP server (including Jira / Confluence / Figma) is sent as <server>_read / <server>_write with a list of tool names only. The model loads a tool schema (describe) only when the task needs that server, so unrelated servers cost almost nothing per request. Overrides the two on-demand settings above; one extra model call when a server is used.",
   "config.mcp.agentRules.enabled.description": "When a custom MCP server connects, write a block to the workspace AGENTS.md describing what the server is for and how to call its tools (removed when the server is deleted or disabled).",
-  "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers."
+  "config.mcp.servers.description": "Custom MCP servers (stdio or HTTP). Manage them in Harbor Agents Settings → MCP Servers.",
+  "command.gennadiyLogin.title": "Sign in to Gennadiy (auth login)"
 }

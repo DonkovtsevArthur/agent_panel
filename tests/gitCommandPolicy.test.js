@@ -182,6 +182,15 @@ test("auto-approved commands allow git commit / push only on an explicit request
     ),
     false
   );
+  // Опечатка «закомить» — всё равно явная просьба.
+  assert.equal(
+    harborBlockedGitCommandReason(
+      "git commit -m 'x' && git push",
+      "закомить и запуш",
+      true
+    ),
+    undefined
+  );
   assert.equal(harborBlockedGitCommandReason("git push", "запушь ветку в origin", true), undefined);
 
   // Commit разрешён, push — нет: блок по push-части цепочки.
@@ -221,6 +230,14 @@ test("userRequestsGitCommit / userRequestsGitPush: вопросы и отриц�
   assert.equal(userRequestsGitCommit("don't commit yet"), false);
   assert.equal(userRequestsGitCommit("напиши commit message"), false);
   assert.equal(userRequestsGitCommit("реши задачу ASUIP-3238"), false);
+  // Опечатки с одной «м».
+  assert.equal(userRequestsGitCommit("закомить и запуш"), true);
+  assert.equal(userRequestsGitCommit("закомить"), true);
+  assert.equal(userRequestsGitCommit("комитни это"), true);
+  assert.equal(userRequestsGitCommit("сделай комит"), true);
+  assert.equal(userRequestsGitCommit("поправь, но не комить"), false);
+  assert.equal(userRequestsGitCommit("почему закомитил?"), false);
+  assert.equal(userRequestsGitCommit("обсудим с комитетом"), false);
 
   assert.equal(userRequestsGitPush("закоммить и запушь"), true);
   assert.equal(userRequestsGitPush("push it"), true);
@@ -272,4 +289,55 @@ test("lastHookOutputLine: последняя непустая строка бе�
   assert.equal(lastHookOutputLine("progress 10%\rprogress 90%"), "progress 90%");
   assert.equal(lastHookOutputLine(" \n "), "");
   assert.ok(lastHookOutputLine("x".repeat(500)).length <= 140);
+});
+
+test("auto-approved commands: просьба запушить действует весь чат", () => {
+  const {
+    chatRequestsGitPush,
+    shouldBlockGitPush,
+  } = require("../out/gitCommandPolicy.js");
+  const {
+    harborBlockedGitCommandReason,
+  } = require("../out/gitCommandGuardExtension.js");
+
+  const chat = [
+    "так давай решим задачу ASUIP-3247",
+    "За коммить и запушь, старую ветку удали",
+  ];
+  const current = "Закоммить, пожалуйста, amend с ASUIP-3247";
+
+  // Push просили раньше в этом чате — force-push после amend проходит.
+  assert.equal(chatRequestsGitPush(chat), true);
+  assert.equal(
+    shouldBlockGitPush("git push --force-with-lease", current, true, chat),
+    false
+  );
+  assert.equal(
+    harborBlockedGitCommandReason("git push --force-with-lease", current, true, chat),
+    undefined
+  );
+
+  // Без автоподтверждения история чата не помогает.
+  assert.equal(
+    shouldBlockGitPush("git push --force-with-lease", current, false, chat),
+    true
+  );
+
+  // Никто не просил push — блок.
+  assert.equal(shouldBlockGitPush("git push", current, true, [chat[0]]), true);
+  assert.match(
+    String(harborBlockedGitCommandReason("git push", current, true, [chat[0]])),
+    /blocks `git push`.*in this chat/
+  );
+
+  // Позже отменили — снова блок; новая просьба снова разрешает.
+  assert.equal(chatRequestsGitPush([...chat, "пока не пушь"]), false);
+  assert.equal(
+    shouldBlockGitPush("git push", "закоммить", true, [...chat, "пока не пушь"]),
+    true
+  );
+  assert.equal(chatRequestsGitPush([...chat, "не пушь", "теперь запушь"]), true);
+
+  // Вопрос про push — не просьба.
+  assert.equal(chatRequestsGitPush(["как запушить ветку?"]), false);
 });

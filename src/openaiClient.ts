@@ -164,6 +164,24 @@ const DEFAULT_RETRY_OPTIONS: Required<TransportRetryOptions> = {
   jitterRatio: 0.25,
 };
 
+/**
+ * Stable client identity for gateway logs / rate-limit affinity.
+ * Honest product name (not a CLI impersonation). `X-Session-Id` groups one
+ * Harbor process the way gennadiy CLI sends a session id.
+ */
+export const HARBOR_USER_AGENT = "Harbor-Agents/2.9.116";
+const HARBOR_SESSION_ID = `harbor-${Math.random().toString(36).slice(2, 12)}`;
+
+function withHarborIdentity(
+  headers: Record<string, string>
+): Record<string, string> {
+  return {
+    "User-Agent": HARBOR_USER_AGENT,
+    "X-Session-Id": HARBOR_SESSION_ID,
+    ...headers,
+  };
+}
+
 class HttpStatusError extends Error {
   constructor(
     readonly status: number,
@@ -874,9 +892,9 @@ export class OpenAICompatibleClient {
     signal?: AbortSignal,
     options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
-    const headers: Record<string, string> = {
+    const headers = withHarborIdentity({
       "Content-Type": "application/json",
-    };
+    });
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
@@ -982,10 +1000,10 @@ export class OpenAICompatibleClient {
     signal?: AbortSignal,
     options?: ChatCompletionsCallOptions
   ): Promise<ChatCompletionResult> {
-    const headers: Record<string, string> = {
+    const headers = withHarborIdentity({
       "Content-Type": "application/json",
       Accept: "text/event-stream",
-    };
+    });
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
@@ -1162,9 +1180,9 @@ export class OpenAICompatibleClient {
     body: ChatCompletionRequest,
     signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
-    const headers: Record<string, string> = {
+    const headers = withHarborIdentity({
       "Content-Type": "application/json",
-    };
+    });
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
@@ -1211,7 +1229,7 @@ export class OpenAICompatibleClient {
   }
 
   async listModels(signal?: AbortSignal): Promise<ListedProviderModel[]> {
-    const headers: Record<string, string> = {};
+    const headers = withHarborIdentity({});
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
@@ -1237,7 +1255,7 @@ export class OpenAICompatibleClient {
 
   /** GET произвольного URL (health / status). 2xx = ok. */
   async probeGet(url: string, signal?: AbortSignal): Promise<void> {
-    const headers: Record<string, string> = {};
+    const headers = withHarborIdentity({});
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }

@@ -49,6 +49,8 @@ export interface ContextBreakdown {
   deferred: { mcpTools: number; systemTools: number };
   mcpTools: ContextBreakdownItem[];
   memoryFiles: ContextBreakdownItem[];
+  /** Request size that triggers auto compact (0 = off) — popover % base. */
+  compactTriggerTokens: number;
   /** True when the estimate was scaled to the API-reported prompt tokens. */
   calibrated: boolean;
   /** Request time (ms since epoch). */
@@ -68,6 +70,8 @@ export interface ContextBreakdownInput {
   contextWindow: number;
   /** Request size that triggers auto compact; 0 / undefined = auto compact off. */
   compactTriggerTokens?: number;
+  /** Rule files Cline loaded (names as rendered under `# Rules`). */
+  rules?: ContextRuleFile[];
   /** Last API usage for this request — used to scale the estimate. */
   usage?: { promptTokens?: number; completionTokens?: number };
   at?: number;
@@ -95,6 +99,8 @@ const TURN_CONTEXT_FOLLOWERS = [
 ];
 /** Cline `formatRulesForSystemPrompt` (vendor/cline runtime/safety/rules.ts). */
 const CLINE_RULES_HEADING = "\n# Rules\n";
+/** Popover label when Cline's rule names are unknown. */
+export const RULES_FALLBACK_NAME = "Rules (system prompt)";
 /** Harbor's capped copy of a huge AGENTS.md (workspaceRules.ts). */
 const OVERSIZED_AGENTS_MD_HEADING = "## Workspace AGENTS.md\n";
 
@@ -197,19 +203,51 @@ function addItem(map: Map<string, number>, name: string, tokens: number): void {
  * Rule files Cline appended to the system prompt (`# Rules` / `## <name>`)
  * plus Harbor's capped AGENTS.md copy. Returns per-file token estimates.
  */
-export function systemPromptMemoryFiles(systemPrompt: string): Map<string, number> {
+export interface ContextRuleFile {
+  /** Rule name as Cline renders it (`## <name>`), e.g. "Workspace AGENTS.md". */
+  name: string;
+  /** Label for the popover list (workspace-relative path); defaults to name. */
+  label?: string;
+}
+
+/**
+ * Rule files Cline appended to the system prompt (`# Rules` / `## <name>`)
+ * plus Harbor's capped AGENTS.md copy. Rule bodies have their own `## `
+ * headings, so the block is split only at the known rule names (from Cline's
+ * rule service); without them it counts as one entry.
+ */
+export function systemPromptMemoryFiles(
+  systemPrompt: string,
+  rules: ContextRuleFile[] = []
+): Map<string, number> {
   const files = new Map<string, number>();
   const prompt = String(systemPrompt || "");
   const rulesAt = prompt.lastIndexOf(CLINE_RULES_HEADING);
   if (rulesAt >= 0) {
-    const block = prompt.slice(rulesAt + CLINE_RULES_HEADING.length);
-    const sections = block.split(/^## /m).filter((part) => part.trim());
-    sections.forEach((section, index) => {
-      const newline = section.indexOf("\n");
-      const name = (newline >= 0 ? section.slice(0, newline) : section).trim();
+    const blockStart = rulesAt + CLINE_RULES_HEADING.length;
+    const block = prompt.slice(blockStart);
+    const starts: Array<{ at: number; label: string }> = [];
+    for (const rule of rules) {
+      const name = String(rule.name || "").trim();
+      if (!name) {
+        continue;
+      }
+      const heading = `## ${name}\n`;
+      const at = block.startsWith(heading) ? 0 : block.indexOf(`\n${heading}`);
+      if (at >= 0) {
+        starts.push({ at: at === 0 ? 0 : at + 1, label: rule.label || name });
+      }
+    }
+    starts.sort((a, b) => a.at - b.at);
+    if (!starts.length || starts[0].at > 0) {
+      // Unknown names (or text before the first known one) stay together.
+      starts.unshift({ at: 0, label: RULES_FALLBACK_NAME });
+    }
+    starts.forEach((start, index) => {
+      const end = index + 1 < starts.length ? starts[index + 1].at : block.length;
       // The shared "# Rules" heading rides on the first file.
       const heading = index === 0 ? estimateTokens(CLINE_RULES_HEADING) : 0;
-      addItem(files, name, heading + estimateTokens(`## ${section}`));
+      addItem(files, start.label, heading + estimateTokens(block.slice(start.at, end)));
     });
   }
   const agentsAt = prompt.indexOf(OVERSIZED_AGENTS_MD_HEADING);
@@ -292,7 +330,7 @@ export function computeContextBreakdown(input: ContextBreakdownInput): ContextBr
   const systemTotal = estimateTokens(systemPrompt);
   const skills = containedTokens(systemPrompt, input.skillsText);
   const mcpInstructions = containedTokens(systemPrompt, input.mcpInstructions);
-  const systemMemory = systemPromptMemoryFiles(systemPrompt);
+  const systemMemory = systemPromptMemoryFiles(systemPrompt, input.rules);
   const systemMemoryTokens = sumMap(systemMemory);
   const systemRest = Math.max(
     0,
@@ -400,6 +438,7 @@ export function computeContextBreakdown(input: ContextBreakdownInput): ContextBr
       ...deferredItems.sort((a, b) => b.tokens - a.tokens),
     ],
     memoryFiles,
+    compactTriggerTokens: trigger > 0 && trigger < contextWindow ? trigger : 0,
     calibrated,
     at: Number(input.at) || Date.now(),
   };

@@ -3719,33 +3719,6 @@ button.msg-attach-image {
   opacity: 0.9;
 }
 
-.context-tip {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 50;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--vscode-editorWidget-background, #252526);
-  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: pre;
-  font-variant-numeric: tabular-nums;
-  opacity: 0;
-  transform: translateY(2px);
-  pointer-events: none;
-  transition: opacity 0.12s ease, transform 0.12s ease;
-}
-
-.context-meter:hover .context-tip,
-.context-meter:focus-visible .context-tip {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 .context-meter.is-warn .context-ring-value {
   stroke: #e2a03f;
   stroke: var(--vscode-charts-orange, #e2a03f);
@@ -6139,6 +6112,22 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   opacity: 0.85;
 }
 
+.settings-models-delete-all {
+  flex-shrink: 0;
+}
+
+.settings-models-delete-all-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.settings-models-delete-all-yes {
+  color: var(--vscode-errorForeground);
+}
+
 .settings-provider-select {
   cursor: pointer;
   user-select: none;
@@ -6526,6 +6515,27 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 
 .settings-fetch-model-row:hover {
   background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.settings-fetch-model-row.is-readonly {
+  cursor: default;
+}
+
+.settings-fetch-model-row.is-readonly:hover {
+  background: transparent;
+}
+
+.settings-fetch-model-row.is-removed {
+  color: var(--vscode-errorForeground);
+}
+
+.settings-fetch-model-row.is-removed .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+
+.settings-fetch-model-row.is-removed .settings-fetch-model-id {
+  text-decoration: line-through;
 }
 
 .settings-fetch-model-row.is-existing {
@@ -8722,10 +8732,6 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
   cursor: pointer;
 }
 
-.context-meter.is-open .context-tip {
-  display: none;
-}
-
 .context-popover {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -8919,4 +8925,35 @@ html[data-harbor-host="jetbrains"] select.harbor-select-open {
 .ctx-c-freeSpace,
 .ctx-c-deferred {
   background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.context-pop-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.25));
+  font-size: 11px;
+}
+
+.context-pop-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-pop-stat > span:last-child {
+  text-align: right;
+}
+
+.context-pop-stat > span:first-child {
+  flex: none;
+  white-space: nowrap;
+}
+
+.context-pop-budget {
+  margin: -4px 0 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #888);
 }

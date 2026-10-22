@@ -145,7 +145,6 @@
   const contextRingValueEl = contextRingEl
     ? contextRingEl.querySelector(".context-ring-value")
     : null;
-  const contextTipEl = document.getElementById("contextTip");
 
   let agentsRailOpen = Boolean(state.agentsRailOpen);
   let workspaceNarrow = false;

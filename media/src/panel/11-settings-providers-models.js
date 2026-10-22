@@ -291,6 +291,11 @@
     renderSettingsModels();
     fillModelProviderSelect(modelEditProvider?.value || "");
     schedulePersistSettings(0);
+    // Corporate Gennadiy gateway: open the login form as soon as the
+    // provider is saved — no need to hit 401 first.
+    if (looksLikeGennadiyProvider(next)) {
+      host.postMessage({ type: "gennadiyLogin" });
+    }
   }
 
   function renderSettingsProviders() {
@@ -362,11 +367,23 @@
     return providerLabel(selectedSettingsProviderKey);
   }
 
+  function looksLikeGennadiyProvider(provider) {
+    const id = String(provider?.id || "").toLowerCase();
+    const name = String(provider?.name || "").toLowerCase();
+    const baseUrl = String(provider?.baseUrl || "").toLowerCase();
+    return (
+      id.includes("gennadiy") ||
+      name.includes("gennadiy") ||
+      baseUrl.includes("gennadiy")
+    );
+  }
+
   function appendProviderHead(listEl, provider, index) {
     const row = document.createElement("div");
     const providerId = String(provider.id || "").trim();
     const selectionKey = providerId || ORPHANS_PROVIDER_KEY;
     const selected = selectedSettingsProviderKey === selectionKey;
+    const gennadiy = looksLikeGennadiyProvider(provider);
     row.className =
       "settings-provider-head settings-provider-select" +
       (selected ? " is-selected" : "");
@@ -390,6 +407,9 @@
       `<div class="settings-model-id"></div>` +
       `</div>` +
       `<span class="settings-provider-count" aria-hidden="true"></span>` +
+      (gennadiy
+        ? `<button type="button" class="text-btn settings-provider-login" data-index="${index}" title="${t("gennadiyLogin")}" aria-label="${t("gennadiyLogin")}">${t("gennadiyLogin")}</button>`
+        : "") +
       `<button type="button" class="icon-btn settings-provider-fetch" data-index="${index}" title="${t("fetchModels")}" aria-label="${t("fetchModels")}">` +
       CLOUD_DOWNLOAD_ICON +
       `</button>` +
@@ -554,6 +574,11 @@
    * пользователь, ничего не отправляется до сохранения.
    */
   const PROVIDER_ONBOARDING_PRESETS = [
+    {
+      id: "gennadiy",
+      name: "Gennadiy",
+      baseUrl: "https://gennadiy-test.kube.severstal.severstalgroup.com/gennadiy/v1",
+    },
     { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
     { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
     { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },
@@ -652,6 +677,11 @@
       : [];
     countEl.textContent = String(entries.length);
     header.appendChild(countEl);
+    if (entries.length) {
+      appendDeleteAllModelsControl(header, entries.length);
+    } else {
+      settingsModelsDeleteAllConfirmKey = "";
+    }
     settingsModelsList.appendChild(header);
 
     if (!selectedSettingsProviderKey) {
@@ -671,6 +701,68 @@
     }
 
     syncDefaultModelSelect();
+  }
+
+  /** Provider key whose «Delete all» is awaiting the inline confirmation. */
+  let settingsModelsDeleteAllConfirmKey = "";
+
+  function appendDeleteAllModelsControl(header, count) {
+    const confirming =
+      settingsModelsDeleteAllConfirmKey === selectedSettingsProviderKey;
+    if (!confirming) {
+      settingsModelsDeleteAllConfirmKey = "";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon-btn settings-models-delete-all";
+      btn.title = t("deleteAllModels");
+      btn.setAttribute("aria-label", t("deleteAllModels"));
+      btn.innerHTML = DELETE_SWEEP_ICON;
+      btn.addEventListener("click", () => {
+        settingsModelsDeleteAllConfirmKey = selectedSettingsProviderKey;
+        renderSettingsCatalog();
+      });
+      header.appendChild(btn);
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "settings-models-delete-all-confirm";
+    const text = document.createElement("span");
+    text.className = "settings-models-delete-all-text";
+    text.textContent = t("deleteAllModelsConfirm", count);
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.className = "text-btn settings-models-delete-all-yes";
+    yes.textContent = t("delete");
+    yes.addEventListener("click", () => {
+      deleteAllModelsOfSelectedProvider();
+    });
+    const no = document.createElement("button");
+    no.type = "button";
+    no.className = "text-btn";
+    no.textContent = t("cancel");
+    no.addEventListener("click", () => {
+      settingsModelsDeleteAllConfirmKey = "";
+      renderSettingsCatalog();
+    });
+    wrap.append(text, yes, no);
+    header.appendChild(wrap);
+  }
+
+  function deleteAllModelsOfSelectedProvider() {
+    const key = selectedSettingsProviderKey;
+    settingsModelsDeleteAllConfirmKey = "";
+    if (!key) {
+      return;
+    }
+    const drop = new Set(modelsForProviderKey(key).map(({ index }) => index));
+    if (!drop.size) {
+      renderSettingsCatalog();
+      return;
+    }
+    settingsModels = settingsModels.filter((_, index) => !drop.has(index));
+    setModelsHint("");
+    renderSettingsModels();
+    schedulePersistSettings(0);
   }
 
   function renderSettingsModels() {
@@ -1091,11 +1183,16 @@
     return model;
   }
 
+  function wireModelId(model) {
+    return String(model?.apiModelId || model?.id || "").trim();
+  }
+
   function cloneModel(model) {
     return {
       id: model.id || "",
       label: model.label || "",
       providerId: model.providerId || "",
+      apiModelId: model.apiModelId || "",
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
       enabled: model.enabled !== false,
@@ -1134,10 +1231,12 @@
   function upsertModels(incoming, defaultProviderId) {
     const fallbackProvider = String(defaultProviderId || "").trim();
     const byId = new Map();
+    const rowKey = (m) =>
+      `${String(m.providerId || "").trim()}|${String(m.id || "").trim()}`;
     for (const model of settingsModels) {
       const id = String(model.id || "").trim();
       if (id) {
-        byId.set(id, cloneModel(model));
+        byId.set(rowKey(model), cloneModel(model));
       }
     }
     let added = 0;
@@ -1149,11 +1248,13 @@
       }
       const providerId =
         String(model.providerId || "").trim() || fallbackProvider;
-      if (byId.has(model.id)) {
-        const prev = byId.get(model.id);
-        byId.set(model.id, {
+      const key = `${providerId}|${model.id}`;
+      if (byId.has(key)) {
+        const prev = byId.get(key);
+        byId.set(key, {
           id: model.id,
           label: model.label || prev.label || model.id,
+          apiModelId: model.apiModelId || prev.apiModelId || "",
           providerId: providerId || prev.providerId || "",
           contextWindow:
             model.contextWindow || prev.contextWindow || undefined,
@@ -1175,7 +1276,9 @@
       } else {
         const next = cloneModel(model);
         next.providerId = providerId || next.providerId || "";
-        byId.set(model.id, next);
+        // Newly added models start switched off — the user enables them explicitly.
+        next.enabled = false;
+        byId.set(`${next.providerId || ""}|${model.id}`, next);
         added += 1;
       }
     }
@@ -1187,8 +1290,12 @@
 
   function addMissingModelsFromIds(ids, providerId) {
     const provider = String(providerId || "").trim();
+    // Key by provider+id: the same wire id can exist on several providers
+    // (ai-platform + гена both serve `deepseek-v4.1-flash`).
     const existing = new Set(
-      settingsModels.map((m) => String(m.id || "").trim()).filter(Boolean)
+      settingsModels
+        .map((m) => `${String(m.providerId || "").trim()}|${String(m.id || "").trim()}`)
+        .filter((k) => !k.endsWith("|"))
     );
     const incoming = [];
     let skipped = 0;
@@ -1197,21 +1304,28 @@
       if (!id) {
         continue;
       }
-      if (existing.has(id)) {
+      const key = `${provider}|${id}`;
+      if (existing.has(key)) {
         skipped += 1;
         continue;
       }
       const extra = fetchModelsById.get(id) || {};
+      // Unique picker id when another provider already owns this wire id.
+      const idTaken = settingsModels.some(
+        (m) => String(m.id || "").trim() === id
+      );
+      const pickerId = idTaken ? `${provider}/${id}` : id;
       incoming.push({
-        id,
-        label: extra.label || id,
+        id: pickerId,
+        apiModelId: idTaken ? id : "",
+        label: extra.label || (idTaken ? `${provider} · ${id}` : id),
         providerId: provider,
         contextWindow: extra.contextWindow,
         maxOutputTokens: extra.maxOutputTokens,
         enabled: true,
         supportsVision: guessModelSupportsVision(id),
       });
-      existing.add(id);
+      existing.add(key);
     }
     if (!incoming.length) {
       return { added: 0, skipped, total: settingsModels.filter((m) => m.id).length };
@@ -1315,17 +1429,23 @@
       ? newIds.filter((id) => id.toLowerCase().includes(filter))
       : newIds.slice()
     );
+    const staleIds = fetchStaleModelIds();
+    const staleShown = filter
+      ? staleIds.filter((id) => id.toLowerCase().includes(filter))
+      : staleIds;
     const hasNew = newIds.length > 0;
-    const showList = hasNew && !fetchModelsLoading && !fetchModelsError;
+    const hasChanges = hasNew || staleIds.length > 0;
+    const showList = hasChanges && !fetchModelsLoading && !fetchModelsError;
 
     if (els.searchWrap) {
       els.searchWrap.hidden = !showList;
     }
+    // No per-model selection: every new model is added (switched off).
     if (els.selectWrap) {
-      els.selectWrap.hidden = !showList;
+      els.selectWrap.hidden = true;
     }
     if (els.selectBtn) {
-      els.selectBtn.hidden = !showList;
+      els.selectBtn.hidden = true;
     }
     if (els.list) {
       els.list.hidden = !showList;
@@ -1361,7 +1481,7 @@
       return;
     }
 
-    if (!hasNew) {
+    if (!hasChanges) {
       setFetchModelsHint(
         els.status,
         t("fetchModelsNoneNew", fetchModelsIds.length),
@@ -1373,7 +1493,7 @@
 
     setFetchModelsHint(
       els.status,
-      t("fetchModelsCount", fetchModelsIds.length, newIds.length),
+      t("fetchModelsCount", fetchModelsIds.length, newIds.length, staleIds.length),
       false
     );
 
@@ -1382,39 +1502,58 @@
       return;
     }
     for (const id of ids) {
-      const row = document.createElement("label");
-      row.className = "settings-fetch-model-row";
-      const checked = fetchModelsSelected.has(id);
-      row.innerHTML =
-        `<input type="checkbox" ${checked ? "checked" : ""} data-model-id="" />` +
-        `<span class="settings-fetch-model-id"></span>`;
-      const input = row.querySelector("input");
-      input.dataset.modelId = id;
+      const row = document.createElement("div");
+      row.className = "settings-fetch-model-row is-readonly";
+      row.innerHTML = `<span class="settings-fetch-model-id"></span>`;
       row.querySelector(".settings-fetch-model-id").textContent = id;
-      input.addEventListener("change", () => {
-        if (input.checked) {
-          fetchModelsSelected.add(id);
-        } else {
-          fetchModelsSelected.delete(id);
-        }
-        syncFetchModelsAddEnabled();
-      });
+      els.list.appendChild(row);
+    }
+    // Models gone from the provider's /models — removed on apply.
+    for (const id of staleShown) {
+      const row = document.createElement("div");
+      row.className = "settings-fetch-model-row is-readonly is-removed";
+      row.title = t("fetchModelsWillRemove");
+      row.innerHTML =
+        DELETE_ICON + `<span class="settings-fetch-model-id"></span>`;
+      row.querySelector(".settings-fetch-model-id").textContent = id;
       els.list.appendChild(row);
     }
     syncFetchModelsAddEnabled();
+  }
+
+  /**
+   * Ids of this provider's saved models that the provider no longer lists.
+   * An empty /models answer never counts as «everything is gone».
+   */
+  function fetchStaleModelIds() {
+    const provider = String(fetchModelsProviderId || "").trim();
+    if (
+      !provider ||
+      fetchModelsLoading ||
+      fetchModelsError ||
+      !fetchModelsIds.length
+    ) {
+      return [];
+    }
+    const listed = new Set(fetchModelsIds.map((id) => String(id || "").trim()));
+    return settingsModels
+      .filter((m) => String(m.providerId || "").trim() === provider)
+      .map((m) => wireModelId(m))
+      .filter((id) => id && !listed.has(id));
   }
 
   function syncFetchModelsAddEnabled() {
     const selectedNew = Array.from(fetchModelsSelected).filter(
       (id) => !fetchModelsExisting.has(id)
     );
+    const hasChanges = selectedNew.length > 0 || fetchStaleModelIds().length > 0;
     if (fetchModelsAddBtn && fetchModelsTarget === "modal") {
       fetchModelsAddBtn.disabled =
-        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+        fetchModelsLoading || Boolean(fetchModelsError) || !hasChanges;
     }
     if (modelEditDoneBtn && fetchModelsTarget === "editApi" && modelEditMode === "api") {
       modelEditDoneBtn.disabled =
-        fetchModelsLoading || Boolean(fetchModelsError) || !selectedNew.length;
+        fetchModelsLoading || Boolean(fetchModelsError) || !hasChanges;
       if (!fetchModelsLoading && !fetchModelsError && fetchModelsIds.length === 0) {
         modelEditDoneBtn.disabled = true;
       }
@@ -1449,19 +1588,15 @@
     fetchModelsActiveRequestId = requestId;
     resetFetchModelsState();
     fetchModelsLoading = true;
+    // Wire ids already saved under THIS provider (apiModelId || id).
+    // Do not treat other providers' rows as "already here" — the same
+    // `deepseek-v4.1-flash` can exist on default and on гена.
     fetchModelsExisting = new Set(
       settingsModels
         .filter((m) => String(m.providerId || "").trim() === provider.id)
-        .map((m) => String(m.id || "").trim())
+        .map((m) => wireModelId(m))
         .filter(Boolean)
     );
-    // Also treat same id under other providers as existing globally
-    for (const m of settingsModels) {
-      const id = String(m.id || "").trim();
-      if (id) {
-        fetchModelsExisting.add(id);
-      }
-    }
     renderFetchModelsPicker();
 
     host.postMessage({
@@ -1513,7 +1648,8 @@
     const selectedNew = Array.from(fetchModelsSelected).filter(
       (id) => !fetchModelsExisting.has(id)
     );
-    if (!selectedNew.length) {
+    const stale = new Set(fetchStaleModelIds());
+    if (!selectedNew.length && !stale.size) {
       if (fetchModelsTarget === "editApi") {
         setFetchModelsHint(modelEditApiStatus, t("fetchModelsNoneSelected"), true);
       } else {
@@ -1521,8 +1657,25 @@
       }
       return false;
     }
-    const result = addMissingModelsFromIds(selectedNew, fetchModelsProviderId);
-    setModelsHint(t("fetchModelsDone", result.added, result.skipped));
+    // Sync with the provider: drop models it no longer lists, add new ones.
+    const provider = String(fetchModelsProviderId || "").trim();
+    let removed = 0;
+    if (stale.size) {
+      const before = settingsModels.length;
+      settingsModels = settingsModels.filter(
+        (m) =>
+          String(m.providerId || "").trim() !== provider ||
+          !stale.has(wireModelId(m))
+      );
+      removed = before - settingsModels.length;
+    }
+    const result = selectedNew.length
+      ? addMissingModelsFromIds(selectedNew, fetchModelsProviderId)
+      : { added: 0, skipped: 0 };
+    if (removed) {
+      renderSettingsModels();
+    }
+    setModelsHint(t("fetchModelsDone", result.added, result.skipped, removed));
     schedulePersistSettings(0);
     return true;
   }
@@ -2035,7 +2188,7 @@
           requestOptions: cloneRequestOptions(prev.requestOptions),
         };
       } else {
-        settingsModels.push(next);
+        settingsModels.push({ ...next, enabled: false });
       }
     } else if (
       Number.isFinite(modelEditIndex) &&
