@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.notification.NotificationGroupManager
+import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
@@ -86,6 +87,8 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
       }
       env["HARBOR_WORKSPACE"] = workspace
       env["HARBOR_IDE"] = "jetbrains"
+      // Product name for prompts ("WebStorm"), so the agent knows its host IDE.
+      env["HARBOR_HOST_IDE"] = ApplicationNamesInfo.getInstance().fullProductName
       env["HARBOR_OUT_DIR"] = script.parentFile.absolutePath
       env["HARBOR_PLUGIN_VERSION"] = HarborPluginInfo.version()
       val ideaHarbor = File(workspace, ".idea/harbor")

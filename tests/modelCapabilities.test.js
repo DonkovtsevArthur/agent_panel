@@ -172,7 +172,7 @@ test("DeepSeek V4 exposes reasoning effort without the unsupported medium level"
     const caps = resolveModelCapabilities(id);
     assert.equal(caps.supportsReasoningEffort, true, id);
     assert.equal(caps.reasoningEffortDefault, "high", id);
-    assert.deepEqual(caps.reasoningEffortLevels, ["low", "high", "xhigh"], id);
+    assert.deepEqual(caps.reasoningEffortLevels, ["none", "low", "high", "xhigh"], id);
     assert.equal(caps.supportsVision, false, id);
   }
   assert.equal(resolveModelCapabilities("claude-sonnet-4-5").reasoningEffortLevels, undefined);
@@ -183,4 +183,21 @@ test("DeepSeek V4 exposes reasoning effort without the unsupported medium level"
   assert.equal(clampReasoningEffortToLevels("xhigh", ["low", "medium"]), "medium");
   assert.equal(clampReasoningEffortToLevels("medium", undefined), "medium");
   assert.equal(clampReasoningEffortToLevels("", levels), undefined);
+});
+
+test("reasoning none: only where listed, sent as reasoning_effort none", () => {
+  const {
+    clampReasoningEffortToLevels,
+    normalizeReasoningEffort,
+    reasoningOffRequestOptions,
+    toClineReasoningOptions,
+  } = require("../out/reasoningEffort.js");
+  assert.equal(normalizeReasoningEffort("off"), "none");
+  assert.equal(clampReasoningEffortToLevels("none", ["none", "low", "high"]), "none");
+  assert.equal(clampReasoningEffortToLevels("none", ["low", "high"]), "low");
+  assert.equal(clampReasoningEffortToLevels("none", undefined), "low");
+  assert.deepEqual(toClineReasoningOptions("none"), {});
+  assert.deepEqual(toClineReasoningOptions("low"), { thinking: true, reasoningEffort: "low" });
+  assert.deepEqual(reasoningOffRequestOptions("none"), { reasoning_effort: "none" });
+  assert.equal(reasoningOffRequestOptions("low"), undefined);
 });

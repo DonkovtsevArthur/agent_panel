@@ -67,3 +67,20 @@ test("update_todo nudge: Plan does not say «execute immediately»", () => {
   assert.ok(out.startsWith("task\n\n[Harbor]"));
   assert.match(out, /исследования/);
 });
+
+test("update_todo in Agent: plan card for any task with actions, even one step", () => {
+  for (const text of [
+    harborTodoUserNudgeForLanguage("ru"),
+    harborTodoRulesForLanguage("ru", "agent"),
+  ]) {
+    assert.match(text, /даже из одного шага/);
+    assert.doesNotMatch(text, /одно действие/);
+  }
+  for (const text of [
+    harborTodoUserNudgeForLanguage("en"),
+    harborTodoRulesForLanguage("en", "agent"),
+  ]) {
+    assert.match(text, /even a single-step one/);
+    assert.doesNotMatch(text, /2\+ steps/);
+  }
+});

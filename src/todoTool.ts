@@ -49,8 +49,8 @@ export function createTodoTool(createTool: CreateTool): unknown {
     name: TODO_TOOL,
     description: [
       "Maintain the visible task plan shown to the user as a progress card.",
-      "Multi-step work only (2+ steps): call FIRST with the full step list (all 'pending', first 'in_progress'), then after each step with the FULL updated list (it replaces the card).",
-      "Skip for short questions and single actions. Finale: every step 'done'. Main agent only.",
+      "Any task with actions, even a single step: call FIRST with the full step list (all 'pending', first 'in_progress'), then after each step with the FULL updated list (it replaces the card).",
+      "Skip only for pure questions with no actions and small talk. Finale: every step 'done'. Main agent only.",
       "After calling this tool, IMMEDIATELY proceed to execute the next step — do NOT ask the user for confirmation.",
     ].join(" "),
     inputSchema: {

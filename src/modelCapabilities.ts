@@ -144,12 +144,13 @@ export const MODEL_CAPABILITY_REGISTRY: readonly ModelCapabilityRule[] = [
   },
   {
     // DeepSeek V4 / V4.1 thinking через LiteLLM: reasoning_effort принимает
-    // только low / high / xhigh / max (на `medium` — 400 BadRequest).
+    // только none / low / high / xhigh / max (на `medium` — 400 BadRequest);
+    // `none` выключает thinking (0 reasoning-токенов).
     pattern: /deepseek[-_.]?v4/i,
     capabilities: {
       supportsReasoningEffort: true,
       reasoningEffortDefault: "high",
-      reasoningEffortLevels: ["low", "high", "xhigh"],
+      reasoningEffortLevels: ["none", "low", "high", "xhigh"],
     },
   },
   {

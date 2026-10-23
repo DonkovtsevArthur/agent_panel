@@ -34,6 +34,7 @@ export async function describeChatImagesForMainModel(options: {
   const {
     getConfig,
     getEnabledModels,
+    resolveApiModelId,
     resolveModelEndpoint,
   } = require("./config") as typeof import("./config");
   const { getOpenAICompatibleClient } =
@@ -91,7 +92,7 @@ export async function describeChatImagesForMainModel(options: {
     try {
       const result = await client.chatCompletions(
         {
-          model: modelId,
+          model: resolveApiModelId(modelId),
           messages,
           temperature: 0.1,
           max_tokens: 1_500,
@@ -142,6 +143,7 @@ export async function describeMcpImagesForMainModel(options: {
   const {
     getConfig,
     getEnabledModels,
+    resolveApiModelId,
     resolveModelEndpoint,
   } = require("./config") as typeof import("./config");
   const { getOpenAICompatibleClient } =
@@ -198,7 +200,7 @@ export async function describeMcpImagesForMainModel(options: {
 
   const result = await client.chatCompletions(
     {
-      model: routed.modelId,
+      model: resolveApiModelId(routed.modelId),
       messages: buildVisionDescribeMessages(images, accompanying),
       temperature: 0.1,
       max_tokens: 1_500,

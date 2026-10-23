@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import {
   getConfig,
   getEnabledModels,
+  resolveApiModelId,
   resolveModelEndpoint,
   resolveModelSupportsReasoningEffort,
 } from "./config";
@@ -647,7 +648,7 @@ export async function composeCommitMessageText(
 
     try {
       const requestBody: ChatCompletionRequest = {
-        model: modelId,
+        model: resolveApiModelId(modelId),
         messages: [
           { role: "system", content: prompts.system },
           { role: "user", content: prompts.user },

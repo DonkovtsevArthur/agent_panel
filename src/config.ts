@@ -18,6 +18,7 @@ import {
   resolveModelContextWindow,
 } from "./modelCapabilities";
 import { readModelTokenLimits } from "./modelTokenLimits";
+import { apiModelIdFromPicker } from "./apiModelId";
 import {
   clampReasoningEffortToLevels,
   normalizeReasoningEffort,
@@ -1166,8 +1167,7 @@ export function resolveApiModelId(modelId: string): string {
     return id;
   }
   const stored = getConfig().models.find((m) => m.id === id);
-  const apiId = String(stored?.apiModelId || "").trim();
-  return apiId || id;
+  return apiModelIdFromPicker(id, stored);
 }
 
 /**

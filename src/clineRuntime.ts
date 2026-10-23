@@ -33,6 +33,7 @@ import {
   harborDefaultRulesForLanguage,
   harborFigmaUnavailableNoteForLanguage,
   harborFullPathRulesForLanguage,
+  harborHostIdentityRulesForLanguage,
   harborModelIdentityRulesForLanguage,
   harborReasoningLanguageRulesForLanguage,
   harborEvidenceRulesForLanguage,
@@ -61,7 +62,11 @@ import {
   replyLanguageRetryLabel,
   replyLanguageRewritePrompt,
 } from "./replyLanguage";
-import { toClineReasoningOptions } from "./reasoningEffort";
+import { hostIdeName } from "./hostIde";
+import {
+  reasoningOffRequestOptions,
+  toClineReasoningOptions,
+} from "./reasoningEffort";
 import {
   CLINE_COMPACTION_TRIGGER_RATIO,
   harborCompactionInputBudget,
@@ -827,7 +832,7 @@ function harborWorkspaceEnvBlock(cwd: string): string {
     "<env>",
     `1. Platform: ${process.platform}`,
     `2. Date: ${new Date().toLocaleDateString()}`,
-    "3. IDE: VS Code",
+    `3. IDE: ${hostIdeName()}`,
     `4. Working Directory: ${root}`,
     "</env>",
     "Use absolute paths under Working Directory (or paths relative to it).",
@@ -2120,6 +2125,8 @@ function buildHarborProviderConfig(
     baseUrl?: string;
     /** Gennadiy gateway: fresh Keycloak token per request + 401 retry. */
     gennadiyAuth?: boolean;
+    /** Run reasoning level; `none` adds `reasoning_effort: "none"` on the wire. */
+    reasoningEffort?: string;
   }
 ): {
   providerId: string;
@@ -2149,16 +2156,23 @@ function buildHarborProviderConfig(
   const sessionModelId = String(options?.model || modelInfo?.id || "");
   // Settings → model JSON `options` (e.g. chat_template_kwargs) on every
   // chat/completions body; read per request so edits apply without a restart.
+  // Reasoning `none` goes first so explicit model options still win. The level
+  // is part of the session fingerprint, so fixing it here per session is safe.
+  const reasoningOff = reasoningOffRequestOptions(options?.reasoningEffort);
   const requestFetch = wrapFetchWithModelRequestOptions(
     wrapFetchForMiMoCompat(harborFetch as typeof fetch, {
       model: resolveApiModelId(sessionModelId),
       baseUrl: options?.baseUrl,
     }),
-    () =>
-      sessionModelId
+    () => {
+      const modelOptions = sessionModelId
         ? getConfig().models.find((m) => m.id === sessionModelId)
             ?.requestOptions
-        : undefined
+        : undefined;
+      return reasoningOff
+        ? { ...reasoningOff, ...(modelOptions || {}) }
+        : modelOptions;
+    }
   );
   // The session's apiKey is fixed at core.start; the Keycloak token lives
   // ~30 min, so swap the header per request instead of restarting sessions.
@@ -2321,6 +2335,8 @@ export async function runClineAgentTurn(options: {
     // Truthful self-identification: the UI-selected model id, ahead of any
     // model names quoted by workspace AGENTS.md / rules docs.
     harborModelIdentityRulesForLanguage(options.model, uiLang),
+    // Product identity + host IDE: overrides the Cline base prompt's "You are Cline".
+    harborHostIdentityRulesForLanguage(hostIdeName(), uiLang),
     // Thinking cards follow the plugin UI language (Settings → language).
     harborReasoningLanguageRulesForLanguage(uiLang),
     // File paths in replies stay clickable: full paths, no `...` abbreviations.
@@ -2374,7 +2390,7 @@ export async function runClineAgentTurn(options: {
   const baseSystemPrompt = ensureHarborWorkspaceEnv(
     bundle.getClineDefaultSystemPrompt({
       rules: harborRules,
-      ide: "VS Code",
+      ide: hostIdeName(),
       mode: clineMode,
       workspaceRoot: cwd,
       providerId: "openai-compatible",
@@ -3191,9 +3207,11 @@ export async function runClineAgentTurn(options: {
     userPrompt = `${historyVisionNudge(uiLang)}\n\n${userPrompt}`;
   }
 
-  const reasoningOptions = toClineReasoningOptions(
-    resolveReasoningEffortForRun(options.model, options.reasoningEffort)
+  const runReasoningEffort = resolveReasoningEffortForRun(
+    options.model,
+    options.reasoningEffort
   );
+  const reasoningOptions = toClineReasoningOptions(runReasoningEffort);
 
   // Resolve real context window / max output so Cline budgets auto-compact and
   // output caps against the model's actual limits instead of a blind default.
@@ -3207,7 +3225,7 @@ export async function runClineAgentTurn(options: {
       contextWindow: entry?.contextWindow,
       maxInputTokens: entry?.maxInputTokens,
       maxTokens: modelInfoData.maxTokensPerTurn ?? entry?.maxTokens,
-      reasoningEffort: reasoningOptions.reasoningEffort,
+      reasoningEffort: runReasoningEffort,
       // Harbor does not pass temperature to Cline chat turns.
       temperature: undefined,
       omitTemperature: resolveModelCapabilities(options.model).omitTemperature,
@@ -3291,6 +3309,21 @@ export async function runClineAgentTurn(options: {
       }
 
       if (!reusedSession) {
+        const providerConfig = buildHarborProviderConfig(
+          modelInfoData.knownModels[options.model],
+          {
+            promptCache: enablePromptCache,
+            providerId: clineProviderId,
+            model: resolveApiModelId(options.model),
+            baseUrl: endpoint.baseUrl,
+            gennadiyAuth: isGennadiyProvider({
+              id: endpoint.providerId,
+              name: endpoint.providerName,
+              baseUrl: endpoint.baseUrl,
+            }),
+            reasoningEffort: runReasoningEffort,
+          }
+        );
         const startResult = await core.start({
           source: "vscode",
           interactive: persistSession,
@@ -3338,9 +3371,11 @@ export async function runClineAgentTurn(options: {
             // rename_symbol only in act.
             ...harborCodeNavTools(bundle.createTool, cwd, clineMode !== "plan"),
           ],
-          // TLS: pass Harbor fetch so corporate self-signed proxies work when
-          // Advanced → Validate TLS is off (default).
-          fetch: harborFetch as typeof fetch,
+          // TLS: Harbor fetch (corporate self-signed proxies when Advanced →
+          // Validate TLS is off) wrapped with Gennadiy auth / model options.
+          // Cline prefers config.fetch over providerConfig.fetch, so a bare
+          // harborFetch here would bypass those wrappers (stale token → 401).
+          fetch: providerConfig.fetch,
           ...(enableAutoCompact
             ? {
                 compaction: {
@@ -3368,20 +3403,7 @@ export async function runClineAgentTurn(options: {
           ...modelInfoData,
           // Surface upstream 4xx/5xx bodies (LiteLLM/OpenRouter) instead of bare
           // "Request failed with status code N" — critical for spawn_agent children.
-          providerConfig: buildHarborProviderConfig(
-            modelInfoData.knownModels[options.model],
-            {
-              promptCache: enablePromptCache,
-              providerId: clineProviderId,
-              model: resolveApiModelId(options.model),
-              baseUrl: endpoint.baseUrl,
-              gennadiyAuth: isGennadiyProvider({
-                id: endpoint.providerId,
-                name: endpoint.providerName,
-                baseUrl: endpoint.baseUrl,
-              }),
-            }
-          ),
+          providerConfig,
         },
       });
       sessionId = String(startResult.sessionId || sessionId);

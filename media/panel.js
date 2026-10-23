@@ -292,6 +292,7 @@
       provider: "Provider",
       mode: "Mode",
       intelligence: "Intelligence",
+      reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
       reasonHigh: "High",
@@ -916,6 +917,7 @@
       provider: "Провайдер",
       mode: "Режим",
       intelligence: "Intelligence",
+      reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
       reasonHigh: "High",
@@ -11777,7 +11779,18 @@
   }
 
   function wireModelId(model) {
-    return String(model?.apiModelId || model?.id || "").trim();
+    const explicit = String(model?.apiModelId || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    // Rows saved without apiModelId keep the provider prefix in the picker id
+    // (`гена/deepseek-v4.1-flash`); the provider lists the bare name.
+    const id = String(model?.id || "").trim();
+    const provider = String(model?.providerId || "").trim();
+    const prefix = provider ? `${provider}/` : "";
+    return prefix && id.startsWith(prefix) && id.length > prefix.length
+      ? id.slice(prefix.length)
+      : id;
   }
 
   function cloneModel(model) {
@@ -18556,6 +18569,8 @@
   }
 
   const REASON_LEVELS = [
+    // Только для моделей, которые явно перечисляют `none` (DeepSeek V4).
+    { id: "none", labelKey: "reasonOff" },
     { id: "low", labelKey: "reasonLow" },
     { id: "medium", labelKey: "reasonMedium" },
     { id: "high", labelKey: "reasonHigh" },
@@ -18568,6 +18583,9 @@
       .toLowerCase();
     if (id === "extra" || id === "extra-high" || id === "extrahigh" || id === "extra_high" || id === "max") {
       return "xhigh";
+    }
+    if (id === "off" || id === "disabled") {
+      return "none";
     }
     return REASON_LEVELS.some((item) => item.id === id) ? id : "";
   }
@@ -18592,7 +18610,7 @@
       : [];
     return allowed.length
       ? REASON_LEVELS.filter((level) => allowed.includes(level.id))
-      : REASON_LEVELS;
+      : REASON_LEVELS.filter((level) => level.id !== "none");
   }
 
   /** Неподдерживаемый уровень → ближайший допустимый не ниже (иначе самый высокий). */

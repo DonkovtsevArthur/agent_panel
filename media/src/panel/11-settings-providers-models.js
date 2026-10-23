@@ -1198,7 +1198,18 @@
   }
 
   function wireModelId(model) {
-    return String(model?.apiModelId || model?.id || "").trim();
+    const explicit = String(model?.apiModelId || "").trim();
+    if (explicit) {
+      return explicit;
+    }
+    // Rows saved without apiModelId keep the provider prefix in the picker id
+    // (`гена/deepseek-v4.1-flash`); the provider lists the bare name.
+    const id = String(model?.id || "").trim();
+    const provider = String(model?.providerId || "").trim();
+    const prefix = provider ? `${provider}/` : "";
+    return prefix && id.startsWith(prefix) && id.length > prefix.length
+      ? id.slice(prefix.length)
+      : id;
   }
 
   function cloneModel(model) {

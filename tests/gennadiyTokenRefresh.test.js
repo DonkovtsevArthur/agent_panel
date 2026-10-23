@@ -207,3 +207,16 @@ test("startGennadiyKeepAlive skips when there is no refresh token", async () => 
   stop();
   assert.equal(calls, 0);
 });
+
+test("clineRuntime: session fetch is the wrapped providerConfig fetch", () => {
+  const root = path.join(__dirname, "..");
+  const runtime = fs.readFileSync(path.join(root, "out/clineRuntime.js"), "utf8");
+  const bundle = fs.readFileSync(path.join(root, "out/clineBundle.js"), "utf8");
+  // Cline prefers config.fetch over providerConfig.fetch — so config.fetch
+  // must carry the Gennadiy wrapper, otherwise an old chat keeps its expired
+  // start-time token and every request fails with 401 Unauthorized.
+  assert.match(bundle, /let \w+=\w+\.fetch\?\?\w+\.fetch\?\?\w+;return \w+&&\(\w+\.fetch=\w+\)/);
+  assert.match(runtime, /fetch: providerConfig\.fetch,/);
+  assert.match(runtime, /providerConfig,\s*\n\s*\},\s*\n\s*\}\);/);
+  assert.doesNotMatch(runtime, /fetch: \(?(\w+\.)?harborFetch\)?,/);
+});

@@ -401,6 +401,8 @@
   }
 
   const REASON_LEVELS = [
+    // Только для моделей, которые явно перечисляют `none` (DeepSeek V4).
+    { id: "none", labelKey: "reasonOff" },
     { id: "low", labelKey: "reasonLow" },
     { id: "medium", labelKey: "reasonMedium" },
     { id: "high", labelKey: "reasonHigh" },
@@ -413,6 +415,9 @@
       .toLowerCase();
     if (id === "extra" || id === "extra-high" || id === "extrahigh" || id === "extra_high" || id === "max") {
       return "xhigh";
+    }
+    if (id === "off" || id === "disabled") {
+      return "none";
     }
     return REASON_LEVELS.some((item) => item.id === id) ? id : "";
   }
@@ -437,7 +442,7 @@
       : [];
     return allowed.length
       ? REASON_LEVELS.filter((level) => allowed.includes(level.id))
-      : REASON_LEVELS;
+      : REASON_LEVELS.filter((level) => level.id !== "none");
   }
 
   /** Неподдерживаемый уровень → ближайший допустимый не ниже (иначе самый высокий). */

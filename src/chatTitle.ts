@@ -1,5 +1,10 @@
 import { displayAttachmentName } from "./attachments";
-import { getConfig, getEnabledModels, resolveModelEndpoint } from "./config";
+import {
+  getConfig,
+  getEnabledModels,
+  resolveApiModelId,
+  resolveModelEndpoint,
+} from "./config";
 import { resolveUiLanguage } from "./i18n";
 import { selectUtilityModel } from "./modelRouting";
 import { getOpenAICompatibleClient, type ChatCompletionRequest } from "./openaiClient";
@@ -322,7 +327,7 @@ export async function completeUtilityText(
     caBundlePath: config.caBundlePath,
   });
   const requestBody: ChatCompletionRequest = {
-    model: modelId,
+    model: resolveApiModelId(modelId),
     messages: [
       { role: "system", content: prompts.system },
       { role: "user", content: prompts.user },
