@@ -98,8 +98,15 @@ import type { VsCodeHarborCore } from "./vscodeHarborCore";
 import { hasUncommittedChanges } from "./gitStatus";
 import { openWorkingTreeDiff } from "./gitDiff";
 import { toRepoRelativePath } from "./repoPaths";
-import { resolveRemainingReviewFiles } from "./turnFileChanges";
-import { AgentPendingDiffTracker } from "./agentPendingDiff";
+import {
+  resolveLiveLineSets,
+  resolveRemainingReviewFiles,
+} from "./turnFileChanges";
+import {
+  AgentPendingDiffTracker,
+  reviewLinesOf,
+  type AgentLineEdits,
+} from "./agentPendingDiff";
 import {
   buildSkillsListPayload,
   ensureHarborSkillRoots,
@@ -139,6 +146,7 @@ import {
   duplicateAgentInStore,
   setAgentPinnedInStore,
   collapseOldToolUiMessages,
+  resolveEditUserIndex,
   copyUiAttachmentsOntoHistory,
   createEmptyAgent,
   deleteAgentFromStore,
@@ -245,6 +253,7 @@ type WebviewToHost =
       model: string;
       agentMode?: string;
       reasoningEffort?: string;
+      tddMode?: boolean;
       attachments?: IncomingAttachment[];
       /** Не показывать user-сообщение в чате (например, тег commit/push). */
       hideUser?: boolean;
@@ -255,6 +264,8 @@ type WebviewToHost =
   | {
       type: "editUserMessage";
       index: number;
+      /** Count of user rows before the target in the webview cache. */
+      userOrdinal?: number;
       text: string;
       model: string;
       agentMode?: string;
@@ -288,6 +299,7 @@ type WebviewToHost =
       reasoningEffort: string;
       chatId?: string;
     }
+  | { type: "tddChanged"; tddMode: boolean; chatId?: string }
   | { type: "openFile"; path: string; line?: number }
   | { type: "openFileDiff"; path: string }
   | {
@@ -437,6 +449,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private selectedModel = "";
   private selectedMode = "auto";
   private selectedReasoningEffort: ReasoningEffortLevel | "" = "";
+  private selectedTddMode = false;
   private lastTurnModel = "";
   private contextTokens = 0;
   /** Накопленный биллинг по активному чату (input, excluding cache reads). */
@@ -471,7 +484,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   private readonly pendingDiff = new AgentPendingDiffTracker(
     () => this.store,
     () => this.postAgentsList(),
-    resolveRemainingReviewFiles
+    resolveLiveLineSets
   );
   private readonly chatStatusState = new Map<
     string,
@@ -1145,6 +1158,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.selectedModel = getConfig().defaultModel || "";
     this.selectedMode = "auto";
     this.selectedReasoningEffort = "";
+    this.selectedTddMode = false;
     this.lastTurnModel = "";
     this.contextTokens = 0;
     this.totalInputTokens = 0;
@@ -1162,6 +1176,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.selectedMode = getModeById(chat.selectedMode).id;
     this.selectedReasoningEffort =
       normalizeReasoningEffort(chat.selectedReasoningEffort) || "";
+    this.selectedTddMode = chat.tddMode === true;
     this.lastTurnModel = chat.lastTurnModel || "";
     this.contextTokens =
       typeof chat.contextTokens === "number" && chat.contextTokens > 0
@@ -1210,6 +1225,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       ...(this.selectedReasoningEffort
         ? { selectedReasoningEffort: this.selectedReasoningEffort }
         : { selectedReasoningEffort: undefined }),
+      tddMode: this.selectedTddMode,
       lastTurnModel: this.lastTurnModel,
       contextTokens: this.contextTokens,
       totalInputTokens: this.totalInputTokens,
@@ -2566,6 +2582,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedTddMode: this.selectedTddMode,
       selectedReasoningEffort:
         this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
@@ -2687,6 +2704,24 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
           touchChat(this.store, this.store.activeChatId, {
             selectedMode: this.selectedMode,
+          });
+        }
+        this.saveSession();
+        break;
+      }
+      case "tddChanged": {
+        const msgChatId = String(message.chatId || "");
+        if (
+          msgChatId &&
+          this.store.activeChatId &&
+          msgChatId !== this.store.activeChatId
+        ) {
+          break;
+        }
+        this.selectedTddMode = message.tddMode === true;
+        if (this.store.activeChatId && this.store.chats[this.store.activeChatId]) {
+          touchChat(this.store, this.store.activeChatId, {
+            tddMode: this.selectedTddMode,
           });
         }
         this.saveSession();
@@ -2900,6 +2935,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "editUserMessage":
         await this.handleEditUserMessage(
           Number(message.index),
+          message.userOrdinal,
           String(message.text || ""),
           String(message.model || ""),
           message.attachments,
@@ -3111,6 +3147,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           attachments: message.attachments,
           agentMode: getModeById(message.agentMode).id,
           reasoningEffort: message.reasoningEffort,
+          tddMode: message.tddMode === true,
         });
         break;
       case "toolApprovalResult":
@@ -3903,6 +3940,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       attachments?: IncomingAttachment[] | MessageAttachment[];
       agentMode?: string;
       reasoningEffort?: string;
+      /** Composer TDD toggle for this turn (falls back to chat/selection). */
+      tddMode?: boolean;
       /** Pin turn to this chat when edit/regenerate races a chat switch. */
       chatId?: string;
       /** Drop the live Cline session (regenerate / edit user message). */
@@ -4031,12 +4070,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
           ? this.selectedReasoningEffort
           : sourceChat.selectedReasoningEffort)
     );
+    const tddModeForRun =
+      options?.tddMode !== undefined
+        ? Boolean(options.tddMode)
+        : this.isActiveChat(runChatId)
+          ? this.selectedTddMode
+          : sourceChat.tddMode === true;
     if (this.isActiveChat(runChatId)) {
       // Keep the picker on the user's choice ("auto" stays auto).
       this.selectedMode = selectedMode.id;
       if (reasoningEffortForRun) {
         this.selectedReasoningEffort = reasoningEffortForRun;
       }
+      this.selectedTddMode = tddModeForRun;
       this.selectedModel = chosen;
     }
 
@@ -4050,6 +4096,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     }
     touchChat(this.store, runChatId, {
       selectedMode: selectedMode.id,
+      tddMode: tddModeForRun,
       ...(reasoningEffortForRun
         ? { selectedReasoningEffort: reasoningEffortForRun }
         : {}),
@@ -4208,6 +4255,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             signal: currentRun.signal,
             agentMode,
             reasoningEffort: reasoningEffortForRun,
+            tddMode: tddModeForRun,
             lastAgentEditedPaths:
               this.store.chats[runChatId]?.lastAgentEditedPaths || [],
             chatId: runChatId,
@@ -4448,7 +4496,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
             }
             postToRunChat({ type: "assistantStreamClear" });
           },
-          onReview: (edits) => {
+          onReview: (edits, lineEdits) => {
             if (!this.isChatRunCurrent(runChatId, runRef)) {
               return;
             }
@@ -4474,7 +4522,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               () =>
                 this.workspaceGeneration === runRef.workspaceGeneration &&
                 !runRef.controller.signal.aborted &&
-                Boolean(this.store.chats[runChatId])
+                Boolean(this.store.chats[runChatId]),
+              lineEdits
             );
           },
           onUsage: (usage) => {
@@ -4911,7 +4960,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async handleEditUserMessage(
-    index: number,
+    rawIndex: number,
+    userOrdinalHint: number | undefined,
     text: string,
     model: string,
     incomingAttachments?: IncomingAttachment[],
@@ -4935,13 +4985,9 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     const baseHistory = this.isActiveChat(runChatId)
       ? this.history.slice()
       : (this.store.chats[runChatId].history || []).slice();
-    const target = baseUi[index];
-    if (
-      !Number.isInteger(index) ||
-      index < 0 ||
-      !target ||
-      target.role !== "user"
-    ) {
+    const index = resolveEditUserIndex(baseUi, rawIndex, userOrdinalHint);
+    const target = index >= 0 ? baseUi[index] : undefined;
+    if (!target || target.role !== "user") {
       this.postRegenerateState();
       this.postChat({
         type: "idle",
@@ -5400,7 +5446,8 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     edits: FileEditStat[],
     chatId = this.store.activeChatId,
     targetUiMessages = this.uiMessages,
-    isStillValid: () => boolean = () => true
+    isStillValid: () => boolean = () => true,
+    lineEdits?: AgentLineEdits
   ): Promise<void> {
     // Keep every path the turn reported — including shell-side dirty files
     // whose numstat may be 0 (mode-only / binary). Empty path only is dropped.
@@ -5424,7 +5471,12 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     if (!isStillValid() || !this.store.chats[chatId]) {
       return;
     }
-    const payload = JSON.stringify({ files: unique, showScm });
+    // `lines` — собственные строки агента для «+N» в списке агентов.
+    const payload = JSON.stringify({
+      files: unique,
+      showScm,
+      ...(lineEdits && Object.keys(lineEdits).length ? { lines: lineEdits } : {}),
+    });
     targetUiMessages.push({ role: "review", text: payload });
     touchChat(this.store, chatId, {
       uiMessages: targetUiMessages.slice(-200),
@@ -5549,9 +5601,14 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
         });
       if (parsed.showScm !== showScm || !sameFiles) {
         changed = true;
+        const lines = reviewLinesOf(msg.text);
         this.uiMessages[i] = {
           ...msg,
-          text: JSON.stringify({ files, showScm }),
+          text: JSON.stringify({
+            files,
+            showScm,
+            ...(lines ? { lines } : {}),
+          }),
         };
       }
     }
@@ -6534,6 +6591,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedTddMode: this.selectedTddMode,
       selectedReasoningEffort:
         this.resolveReasoningEffortForModel(this.selectedModel) || "",
       uiMessages: await this.enrichUiMessages(this.uiMessages),
@@ -6728,6 +6786,10 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
               </button>
               <div class="model-menu" id="modeMenu" role="listbox" hidden></div>
             </div>
+            <button type="button" class="tdd-toggle" id="tddToggle" title="TDD" aria-label="TDD" aria-pressed="false">
+              <span class="material-symbols-outlined" aria-hidden="true">fact_check</span>
+              <span class="tdd-toggle-label" id="tddToggleLabel">TDD</span>
+            </button>
           </div>
           <div class="composer-footer-right">
             <div class="model-picker" id="modelPicker">

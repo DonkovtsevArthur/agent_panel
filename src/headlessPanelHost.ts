@@ -56,6 +56,7 @@ import {
   getAgentDisplayName,
   applyAgentName,
   backfillLegacyMessageTimes,
+  resolveEditUserIndex,
   restoreAgentInStore,
   setAgentPinnedInStore,
   switchAgentBranch,
@@ -113,8 +114,15 @@ import { applyHarborTlsPolicy } from "./tlsPolicy";
 import type { FileEditStat } from "./diffStats";
 import { hasUncommittedChanges } from "./gitStatus";
 import { toRepoRelativePath } from "./repoPaths";
-import { resolveRemainingReviewFiles } from "./turnFileChanges";
-import { AgentPendingDiffTracker } from "./agentPendingDiff";
+import {
+  resolveLiveLineSets,
+  resolveRemainingReviewFiles,
+} from "./turnFileChanges";
+import {
+  AgentPendingDiffTracker,
+  reviewLinesOf,
+  type AgentLineEdits,
+} from "./agentPendingDiff";
 import { discardPaths } from "./discardPaths";
 import {
   commitAndPushPaths,
@@ -188,6 +196,7 @@ export class HeadlessPanelHost {
   private selectedModel = "";
   private selectedMode = "agent";
   private selectedReasoningEffort = "";
+  private selectedTddMode = false;
   private contextTokens = 0;
   /**
    * Last model request per chat: full input + prompt-cache share. In memory
@@ -217,7 +226,7 @@ export class HeadlessPanelHost {
   private readonly pendingDiff = new AgentPendingDiffTracker(
     () => this.store,
     () => this.postAgentsList(),
-    resolveRemainingReviewFiles,
+    resolveLiveLineSets,
     () => this.opts.workspaceRoot
   );
   /** Busy-line under the transcript («Думаю…» / tool phases) — same as VS Code. */
@@ -268,6 +277,7 @@ export class HeadlessPanelHost {
       chat?.selectedModel || cfg.defaultModel || cfg.models[0]?.id || "";
     this.selectedMode = chat?.selectedMode || "auto";
     this.selectedReasoningEffort = String(chat?.selectedReasoningEffort || "");
+    this.selectedTddMode = chat?.tddMode === true;
     // Copy arrays — sharing store refs lets later mutations (or a concurrent
     // turn) silently rewrite another chat's transcript on disk.
     this.history = copyUiAttachmentsOntoHistory(
@@ -473,6 +483,7 @@ export class HeadlessPanelHost {
       case "editUserMessage":
         return this.onEditUserMessage(msg as {
           index?: unknown;
+          userOrdinal?: unknown;
           text?: unknown;
           model?: unknown;
           agentMode?: unknown;
@@ -608,6 +619,15 @@ export class HeadlessPanelHost {
         if (this.store.activeChatId) {
           touchChat(this.store, this.store.activeChatId, {
             selectedReasoningEffort: this.selectedReasoningEffort,
+          } as Partial<ChatSession>);
+          this.persist();
+        }
+        return { ok: true };
+      case "tddChanged":
+        this.selectedTddMode = msg.tddMode === true;
+        if (this.store.activeChatId) {
+          touchChat(this.store, this.store.activeChatId, {
+            tddMode: this.selectedTddMode,
           } as Partial<ChatSession>);
           this.persist();
         }
@@ -1226,6 +1246,7 @@ export class HeadlessPanelHost {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedTddMode: this.selectedTddMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: paintUi,
       busy,
@@ -1258,6 +1279,7 @@ export class HeadlessPanelHost {
       models,
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
+      selectedTddMode: this.selectedTddMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
       uiMessages: paintUi,
       busy,
@@ -1676,7 +1698,8 @@ export class HeadlessPanelHost {
   private async publishReview(
     edits: FileEditStat[],
     chatId: string,
-    runUiMessages: UiMessage[]
+    runUiMessages: UiMessage[],
+    lineEdits?: AgentLineEdits
   ): Promise<UiMessage[]> {
     const folder = this.opts.workspaceRoot;
     const unique = this.mergeEdits(edits)
@@ -1714,7 +1737,14 @@ export class HeadlessPanelHost {
       ...runUiMessages,
       {
         role: "review" as const,
-        text: JSON.stringify({ files, showScm }),
+        // `lines` — собственные строки агента для «+N» в списке агентов.
+        text: JSON.stringify({
+          files,
+          showScm,
+          ...(lineEdits && Object.keys(lineEdits).length
+            ? { lines: lineEdits }
+            : {}),
+        }),
       },
     ];
     touchChat(this.store, chatId, {
@@ -1817,9 +1847,14 @@ export class HeadlessPanelHost {
         });
       if (parsed.showScm !== showScm || !sameFiles) {
         changed = true;
+        const lines = reviewLinesOf(msg.text);
         uiMessages[i] = {
           ...msg,
-          text: JSON.stringify({ files, showScm }),
+          text: JSON.stringify({
+            files,
+            showScm,
+            ...(lines ? { lines } : {}),
+          }),
         };
       }
     }
@@ -2057,6 +2092,7 @@ export class HeadlessPanelHost {
       selectedModel: this.selectedModel,
       selectedMode: this.selectedMode,
       selectedReasoningEffort: this.selectedReasoningEffort,
+      tddMode: this.selectedTddMode,
       contextTokens: this.contextTokens,
       ...(running
         ? {}
@@ -2418,21 +2454,21 @@ export class HeadlessPanelHost {
 
   private async onEditUserMessage(msg: {
     index?: unknown;
+    userOrdinal?: unknown;
     text?: unknown;
     model?: unknown;
     agentMode?: unknown;
     reasoningEffort?: unknown;
     attachments?: unknown;
   }): Promise<unknown> {
-    const index = Number(msg.index);
+    const index = resolveEditUserIndex(
+      this.uiMessages,
+      msg.index,
+      msg.userOrdinal
+    );
     const nextText = String(msg.text || "").trim();
-    const target = this.uiMessages[index];
-    if (
-      !Number.isInteger(index) ||
-      index < 0 ||
-      !target ||
-      target.role !== "user"
-    ) {
+    const target = index >= 0 ? this.uiMessages[index] : undefined;
+    if (!target || target.role !== "user") {
       this.postRegenerateState();
       this.post({ type: "idle", chatId: this.store.activeChatId });
       return { ok: false, error: "bad index" };
@@ -2583,6 +2619,7 @@ export class HeadlessPanelHost {
     model?: unknown;
     agentMode?: unknown;
     reasoningEffort?: unknown;
+    tddMode?: unknown;
     attachments?: unknown;
     hideUser?: unknown;
     resetSession?: unknown;
@@ -2648,9 +2685,14 @@ export class HeadlessPanelHost {
         sourceChat.selectedReasoningEffort ||
         ""
     );
+    const tddMode =
+      msg.tddMode !== undefined
+        ? msg.tddMode === true
+        : this.selectedTddMode || sourceChat.tddMode === true;
     if (this.store.activeChatId === runChatId) {
       this.selectedModel = model;
       this.selectedMode = agentMode;
+      this.selectedTddMode = tddMode;
     }
 
     // Refresh Keycloak access token before the gateway call (VS Code parity).
@@ -2781,6 +2823,7 @@ export class HeadlessPanelHost {
         signal: ac.signal,
         agentMode: runModeId,
         reasoningEffort: reasoningEffort || undefined,
+        tddMode,
         lastAgentEditedPaths:
           this.store.chats[runChatId]?.lastAgentEditedPaths || [],
         chatId: runChatId,
@@ -2957,7 +3000,7 @@ export class HeadlessPanelHost {
               text: r,
             });
           },
-          onReview: async (edits) => {
+          onReview: async (edits, lineEdits) => {
             if (!runActive()) return;
             const reviewEdits =
               edits && edits.length
@@ -2973,7 +3016,8 @@ export class HeadlessPanelHost {
             runUiMessages = await this.publishReview(
               reviewEdits,
               runChatId,
-              runUiMessages
+              runUiMessages,
+              lineEdits
             );
             for (const e of reviewEdits) {
               if (e.path) {

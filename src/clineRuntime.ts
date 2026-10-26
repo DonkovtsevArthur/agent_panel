@@ -77,6 +77,9 @@ import {
   skillNameFromToolInput,
 } from "./skillUsageLog";
 import { FileEditStat } from "./diffStats";
+import { agentLineDelta, type AgentLineEdits } from "./agentPendingDiff";
+import { collectLineSets } from "./turnFileChanges";
+import { toRepoRelativePath } from "./repoPaths";
 import { ChatMessage } from "./openaiTypes";
 import type { MessageAttachment } from "./attachments";
 import {
@@ -125,6 +128,7 @@ import {
   HARBOR_CLINE_DISTINCT_ID,
 } from "./clineNoopTelemetry";
 import { harborPlanModeRulesForLanguage } from "./planImplement";
+import { harborTddModeRulesForLanguage } from "./tddMode";
 import { needsPlanCard, needsVerifyNudge } from "./autoMode";
 import { applyHarborTlsPolicy, harborFetch } from "./tlsPolicy";
 import { isGennadiyProvider } from "./gennadiyAuth";
@@ -1878,6 +1882,7 @@ function clineSessionFingerprint(parts: {
   checkpoints: boolean;
   promptCache: boolean;
   prompt: string;
+  tdd: boolean;
 }): string {
   return [
     parts.mode,
@@ -1892,6 +1897,7 @@ function clineSessionFingerprint(parts: {
     parts.approvals,
     parts.checkpoints ? "1" : "0",
     parts.promptCache ? "1" : "0",
+    parts.tdd ? "1" : "0",
     parts.prompt,
   ].join("|");
 }
@@ -2240,6 +2246,8 @@ export async function runClineAgentTurn(options: {
   agentMode?: string;
   /** Harbor UI intelligence level (low|medium|high|xhigh). */
   reasoningEffort?: string;
+  /** Composer TDD toggle — red-green-refactor rules in the system prompt. */
+  tddMode?: boolean;
   callbacks: AgentRunCallbacks;
   lastAgentEditedPaths?: string[];
   /** Stable Harbor chat id — keeps one Cline session across turns. */
@@ -2308,6 +2316,8 @@ export async function runClineAgentTurn(options: {
     harborModeId !== "ask" &&
     harborModeId !== "plan" &&
     modeDef.tools !== "readonly";
+  // TDD only where edits are possible (same gate as verify rules).
+  const tddRulesEnabled = Boolean(options.tddMode) && modeDef.tools === "agent";
   const verifyNudgeThisTurn =
     verifyRulesEnabled && needsVerifyNudge(options.userText || "");
   // built-in / legacy defaults are full prompts (with env block) that would
@@ -2349,6 +2359,8 @@ export async function runClineAgentTurn(options: {
     verifyRulesEnabled ? harborVerifyRulesForLanguage(uiLang) : "",
     // Finale needs path:line + real verify evidence — no fake «готово».
     verifyRulesEnabled ? harborEvidenceRulesForLanguage(uiLang) : "",
+    // Composer TDD toggle: red-green-refactor before any behavior change.
+    tddRulesEnabled ? harborTddModeRulesForLanguage(uiLang) : "",
     // When Parallel agents is on: tool + rules nudge to actually use spawn_agent.
     // When off: no tool (enableSpawnAgent false) and no rules below.
     enableSpawnAgent ? harborSubagentsRulesForLanguage(uiLang) : "",
@@ -2508,6 +2520,7 @@ export async function runClineAgentTurn(options: {
     approvals: harborToolApprovalsFingerprint(),
     checkpoints: enableCheckpoints,
     promptCache: enablePromptCache,
+    tdd: tddRulesEnabled,
     prompt: promptHash,
   });
 
@@ -2529,6 +2542,34 @@ export async function runClineAgentTurn(options: {
   const edits: FileEditStat[] = [];
   // verify_edits targets for this turn only (parallel chats keep their own).
   const turnEditedPaths = new Set<string>();
+  // Снимок diff HEAD до хода: в конце вычитается, чтобы «+N» агента в списке
+  // считал только его собственные строки, а не правки соседних чатов.
+  const lineRoot = memoryWorkspaceRoot();
+  const lineBaseline = collectLineSets(undefined, lineRoot);
+  const turnLineEdits = async (): Promise<AgentLineEdits> => {
+    if (!lineRoot) {
+      return {};
+    }
+    try {
+      const paths = [
+        ...new Set(
+          [...edits.map((e) => e.path), ...turnEditedPaths]
+            .map((p) => toRepoRelativePath(p, lineRoot))
+            .filter(Boolean)
+        ),
+      ];
+      if (!paths.length) {
+        return {};
+      }
+      const [start, end] = await Promise.all([
+        lineBaseline,
+        collectLineSets(paths, lineRoot),
+      ]);
+      return agentLineDelta(start, end, paths);
+    } catch {
+      return {};
+    }
+  };
   let assistantText = "";
   /**
    * Assistant text blocks this turn, one per model round (`content_end`).
@@ -3630,7 +3671,7 @@ export async function runClineAgentTurn(options: {
     callbacks.onAssistant(finalText, {
       ...(reasoningText ? { reasoning: reasoningText } : {}),
     });
-    await callbacks.onReview(edits);
+    await callbacks.onReview(edits, await turnLineEdits());
 
     const attachmentsForHistory =
       options.attachments?.length
@@ -3675,7 +3716,7 @@ export async function runClineAgentTurn(options: {
       const abortPlaceholder = formatAbortedAssistantText(uiLang, harborAbort);
       const partial = pendingTextTail().trim() || abortPlaceholder;
       callbacks.onAssistant(partial);
-      await callbacks.onReview(edits);
+      await callbacks.onReview(edits, await turnLineEdits());
       return [
         ...options.history,
         { role: "user", content: userPrompt },

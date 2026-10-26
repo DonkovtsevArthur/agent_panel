@@ -17,6 +17,7 @@ const {
   getAgentDisplayName,
   capUiMessageReasoning,
   collapseOldToolUiMessages,
+  resolveEditUserIndex,
   touchChat,
   MAX_PERSISTED_UI_REASONING_CHARS,
 } = require("../out/sessionStore.js");
@@ -347,4 +348,22 @@ test("contextBreakdown is per chat and survives touchChat + reload", () => {
   const reloaded = migrateToStoreV2(JSON.parse(JSON.stringify(store)), "gpt-4.1");
   assert.equal(reloaded.chats[first].contextBreakdown.used, 100);
   assert.equal(reloaded.chats[second].contextBreakdown.used, 200);
+});
+
+test("resolveEditUserIndex maps the webview user ordinal past host-only tool rows", () => {
+  const ui = [
+    { role: "user", text: "привет" },
+    { role: "tool", text: "" },
+    { role: "tool", text: "" },
+    { role: "assistant", text: "план" },
+    { role: "user", text: "ок, всё верно, приступай" },
+    { role: "assistant", text: "(остановлено: нажата кнопка Stop)" },
+  ];
+  // Webview cache had no tool rows: raw index 2, ordinal 1.
+  assert.equal(resolveEditUserIndex(ui, 2, 1), 4);
+  assert.equal(resolveEditUserIndex(ui, 0, 0), 0);
+  // Old webview without ordinal: raw index still works when it hits a user row.
+  assert.equal(resolveEditUserIndex(ui, 4), 4);
+  assert.equal(resolveEditUserIndex(ui, 2), -1);
+  assert.equal(resolveEditUserIndex(ui, 2, 5), -1);
 });

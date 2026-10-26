@@ -13,6 +13,12 @@ const {
   reviewSeedPathsForChat,
   pendingDiffByAgent,
   AgentPendingDiffTracker,
+  agentLineDelta,
+  agentLineEditsForChat,
+  hashLine,
+  lineSetsFromText,
+  parseUnifiedDiffLines,
+  reviewLinesOf,
 } = require("../out/agentPendingDiff.js");
 
 test("setAgentPinnedInStore pins, unpins and surfaces pinned in the list", () => {
@@ -90,17 +96,66 @@ test("reviewSeedPathsForChat collects unique review paths", () => {
   assert.deepEqual(paths, ["a.ts", "b.ts", "c.ts"]);
 });
 
-test("pendingDiffByAgent sums only still-dirty seed paths per agent", () => {
-  const seeds = new Map([
-    ["a1", ["src/a.ts", "src/b.ts"]],
-    ["a2", ["src/c.ts"]],
+test("parseUnifiedDiffLines collects added/removed lines per file", () => {
+  const diff = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "index 1..2 100644",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1 +1,2 @@",
+    "-old",
+    "+new",
+    "+--- not a header",
+    "diff --git a/b.ts b/b.ts",
+    "@@ -3,0 +4 @@",
+    "+x",
+  ].join("\n");
+  const out = parseUnifiedDiffLines(diff);
+  assert.deepEqual([...out.keys()], ["src/a.ts", "b.ts"]);
+  assert.deepEqual(out.get("src/a.ts").r, { [hashLine("old")]: 1 });
+  assert.deepEqual(out.get("src/a.ts").a, {
+    [hashLine("new")]: 1,
+    [hashLine("--- not a header")]: 1,
+  });
+});
+
+test("agentLineDelta keeps only lines the turn itself added", () => {
+  const start = new Map([["a.ts", lineSetsFromText("theirs\n")]]);
+  const end = new Map([["a.ts", lineSetsFromText("theirs\nmine\nmine\n")]]);
+  const delta = agentLineDelta(start, end, ["a.ts", "missing.ts"]);
+  assert.deepEqual(delta, { "a.ts": { a: { [hashLine("mine")]: 2 }, r: {} } });
+});
+
+function reviewWithLines(lines) {
+  return {
+    role: "review",
+    text: JSON.stringify({ files: Object.keys(lines).map((path) => ({ path })), lines }),
+  };
+}
+
+test("pendingDiffByAgent counts only the agent's own still-dirty lines", () => {
+  const mine = agentLineEditsForChat([
+    reviewWithLines({ "src/a.ts": { a: { [hashLine("m1")]: 1 }, r: { [hashLine("gone")]: 1 } } }),
+    reviewWithLines({ "src/a.ts": { a: { [hashLine("m2")]: 1 }, r: {} } }),
   ]);
-  const out = pendingDiffByAgent(seeds, [
-    { path: "src/a.ts", added: 10, removed: 2, created: false },
-    { path: "./src/b.ts", added: 5, removed: 0, created: false },
+  const live = new Map([
+    // m2 уже закоммичен; t1/t2 — чужие правки в том же файле.
+    ["./src/a.ts", {
+      a: { [hashLine("m1")]: 1, [hashLine("t1")]: 1, [hashLine("t2")]: 1 },
+      r: { [hashLine("gone")]: 1 },
+    }],
   ]);
-  assert.deepEqual(out.get("a1"), { added: 15, removed: 2, files: 2 });
+  const out = pendingDiffByAgent(new Map([["a1", mine], ["a2", new Map()]]), live);
+  assert.deepEqual(out.get("a1"), { added: 1, removed: 1, files: 1 });
   assert.equal(out.has("a2"), false);
+  assert.equal(pendingDiffByAgent(new Map([["a1", mine]]), new Map()).size, 0);
+});
+
+test("reviewLinesOf reads lines and tolerates legacy payloads", () => {
+  const lines = { "a.ts": { a: { x: 1 }, r: {} } };
+  assert.deepEqual(reviewLinesOf(JSON.stringify({ files: [], lines })), lines);
+  assert.equal(reviewLinesOf(JSON.stringify([{ path: "a.ts" }])), undefined);
+  assert.equal(reviewLinesOf("not json"), undefined);
 });
 
 test("AgentPendingDiffTracker resolves once for all agents and notifies on change", async () => {
@@ -108,11 +163,11 @@ test("AgentPendingDiffTracker resolves once for all agents and notifies on chang
   const chat = store.chats[store.agents[0].chatId];
   chat.uiMessages = [
     { role: "user", text: "do it" },
-    { role: "review", text: JSON.stringify({ files: [{ path: "x.ts" }] }) },
+    reviewWithLines({ "x.ts": { a: { [hashLine("l1")]: 1, [hashLine("l2")]: 1 }, r: {} } }),
   ];
   let calls = 0;
   let changes = 0;
-  let dirty = [{ path: "x.ts", added: 3, removed: 1, created: false }];
+  let live = new Map([["x.ts", lineSetsFromText("l1\nl2\nforeign\n")]]);
   const tracker = new AgentPendingDiffTracker(
     () => store,
     () => {
@@ -121,19 +176,20 @@ test("AgentPendingDiffTracker resolves once for all agents and notifies on chang
     async (paths) => {
       calls += 1;
       assert.deepEqual(paths, ["x.ts"]);
-      return dirty;
+      return live;
     }
   );
   await tracker.refresh();
   assert.deepEqual(tracker.get(store.agents[0].id), {
-    added: 3,
-    removed: 1,
+    added: 2,
+    removed: 0,
     files: 1,
   });
   assert.equal(changes, 1);
   await tracker.refresh();
   assert.equal(changes, 1, "no notify when nothing changed");
-  dirty = [];
+  // Агент закоммитил свои строки — осталась только чужая правка.
+  live = new Map([["x.ts", lineSetsFromText("foreign\n")]]);
   await tracker.refresh();
   assert.equal(tracker.get(store.agents[0].id), undefined);
   assert.equal(changes, 2);

@@ -2,6 +2,7 @@ import {
   MessageAttachment,
 } from "./attachments";
 import { FileEditStat } from "./diffStats";
+import type { AgentLineEdits } from "./agentPendingDiff";
 import {
   ChatMessage,
 } from "./openaiTypes";
@@ -71,7 +72,11 @@ export interface AgentRunCallbacks {
   /** Накопительный текст размышления модели (thinking / reasoning_content). */
   onReasoning?: (text: string) => void;
   /** Может быть async (SCM check) — ждём, иначе review теряется в finally. */
-  onReview: (edits: FileEditStat[]) => void | Promise<void>;
+  /** `lineEdits` — строки, которые агент сам изменил за ход («+N» в списке агентов). */
+  onReview: (
+    edits: FileEditStat[],
+    lineEdits?: AgentLineEdits
+  ) => void | Promise<void>;
   onUsage?: (usage: ContextUsageInfo) => void;
   /** Пользователь вставил URL Figma, но MCP не подключён. */
   onFigmaNeedsConnect?: () => void;
@@ -99,6 +104,8 @@ export async function runAgentTurn(options: {
   agentMode?: string;
   /** Уровень интеллекта Harbor UI → Cline reasoningEffort. */
   reasoningEffort?: string;
+  /** Composer TDD toggle: inject red-green-refactor rules into the system prompt. */
+  tddMode?: boolean;
   callbacks: AgentRunCallbacks;
   /** Пути из предыдущего хода правок агента — отбрасываем «свои». */
   lastAgentEditedPaths?: string[];

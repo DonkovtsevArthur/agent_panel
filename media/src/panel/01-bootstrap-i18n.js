@@ -26,6 +26,7 @@
     modelByChat: {},
     modeByChat: {},
     reasonByChat: {},
+    tddByChat: {},
     agentsRailOpen: false,
   };
   if (typeof state.draftPrompt !== "string") {
@@ -42,6 +43,9 @@
   }
   if (!state.reasonByChat || typeof state.reasonByChat !== "object") {
     state.reasonByChat = {};
+  }
+  if (!state.tddByChat || typeof state.tddByChat !== "object") {
+    state.tddByChat = {};
   }
   if (typeof state.agentsRailOpen !== "boolean") {
     state.agentsRailOpen = false;
@@ -292,6 +296,9 @@
       provider: "Provider",
       mode: "Mode",
       intelligence: "Intelligence",
+      tddToggle: "TDD",
+      tddToggleTitle:
+        "TDD mode: red-green-refactor — tests first for behavior changes",
       reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
@@ -917,6 +924,9 @@
       provider: "Провайдер",
       mode: "Режим",
       intelligence: "Intelligence",
+      tddToggle: "TDD",
+      tddToggleTitle:
+        "Режим TDD: red-green-refactor — сначала тесты для смены поведения",
       reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
@@ -1421,6 +1431,13 @@
     try {
       if (typeof updateReasonPickerVisibility === "function") {
         updateReasonPickerVisibility();
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (typeof setTddMode === "function" && typeof selectedTddMode === "boolean") {
+        setTddMode(selectedTddMode, { notify: false });
       }
     } catch {
       /* ignore */

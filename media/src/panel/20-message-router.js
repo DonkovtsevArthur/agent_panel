@@ -35,6 +35,7 @@
           applyModes(msg.modes);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedTddMode(msg.selectedTddMode, { notify: false });
         applySelectedReasoningEffort(msg.selectedReasoningEffort, {
           notify: false,
         });
@@ -267,6 +268,7 @@
           applyUiFontSize(msg.fontSize);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedTddMode(msg.selectedTddMode, { notify: false });
         applySelectedReasoningEffort(msg.selectedReasoningEffort, {
           notify: false,
         });

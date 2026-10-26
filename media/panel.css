@@ -3856,6 +3856,38 @@ button.msg-attach-image {
   flex-shrink: 0;
 }
 
+.composer-footer-left > .tdd-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.composer-footer-left > .tdd-toggle .material-symbols-outlined {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+}
+
+.composer-footer-left > .tdd-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.composer-footer-left > .tdd-toggle.is-active {
+  color: var(--vscode-focusBorder, #3794ff);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 16%, transparent);
+  border-color: color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 36%, transparent);
+}
+
 .composer-input-row > #prompt {
   flex: 1 1 auto;
   width: auto;

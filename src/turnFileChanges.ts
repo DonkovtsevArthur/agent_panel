@@ -4,6 +4,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import type { FileEditStat } from "./diffStats";
 import { lineDiffStats } from "./diffStats";
+import {
+  lineSetsFromText,
+  parseUnifiedDiffLines,
+  type LineSetsByPath,
+} from "./agentPendingDiff";
 import { toRepoRelativePath } from "./repoPaths";
 
 const execFileAsync = promisify(execFile);
@@ -12,10 +17,14 @@ function normalizeRel(filePath: string, cwd?: string | null): string {
   return toRepoRelativePath(filePath, cwd);
 }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
+async function runGit(
+  cwd: string,
+  args: string[],
+  maxBuffer = 8 * 1024 * 1024
+): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
-    maxBuffer: 8 * 1024 * 1024,
+    maxBuffer,
     timeout: 12_000,
   });
   return String(stdout || "");
@@ -325,6 +334,92 @@ export async function resolveRemainingReviewFiles(
         }
     )
     .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Untracked файлы крупнее этого не читаем построчно. */
+const MAX_UNTRACKED_BYTES = 1024 * 1024;
+const MAX_UNTRACKED_FILES = 400;
+
+/**
+ * Строки `git diff HEAD` по файлам (untracked — целиком как добавленные).
+ * `paths` не задан — весь workspace (снимок начала хода). Ошибка git → пусто.
+ */
+export async function collectLineSets(
+  paths?: string[],
+  cwd = workspaceCwd()
+): Promise<LineSetsByPath> {
+  const out: LineSetsByPath = new Map();
+  if (!cwd) {
+    return out;
+  }
+  let scope: string[] = [];
+  if (paths) {
+    scope = [...new Set(paths.map((p) => normalizeRel(p, cwd)).filter(Boolean))];
+    if (!scope.length) {
+      return out;
+    }
+  }
+  const tail = scope.length ? ["--", ...scope] : [];
+  try {
+    const [diff, status] = await Promise.all([
+      runGit(
+        cwd,
+        [
+          "-c",
+          "core.quotePath=false",
+          "diff",
+          "HEAD",
+          "--no-renames",
+          "--no-color",
+          "--no-ext-diff",
+          "-U0",
+          ...tail,
+        ],
+        64 * 1024 * 1024
+      ),
+      runGit(cwd, [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        ...tail,
+      ]),
+    ]);
+    for (const [rel, sets] of parseUnifiedDiffLines(diff)) {
+      out.set(rel, sets);
+    }
+    let read = 0;
+    for (const rawLine of status.split(/\r?\n/)) {
+      if (!rawLine.startsWith("?? ") || read >= MAX_UNTRACKED_FILES) {
+        continue;
+      }
+      const rel = normalizeRel(rawLine.slice(3), cwd);
+      if (!rel) {
+        continue;
+      }
+      try {
+        const abs = path.join(cwd, rel);
+        const st = await fs.stat(abs);
+        if (!st.isFile() || st.size > MAX_UNTRACKED_BYTES) {
+          continue;
+        }
+        read += 1;
+        out.set(rel, lineSetsFromText(await fs.readFile(abs, "utf8")));
+      } catch {
+        // файл исчез между status и чтением
+      }
+    }
+  } catch {
+    return new Map();
+  }
+  return out;
+}
+
+/** Резолвер для `AgentPendingDiffTracker`: живые строки по путям агентов. */
+export function resolveLiveLineSets(
+  paths: string[],
+  cwd = workspaceCwd()
+): Promise<LineSetsByPath> {
+  return collectLineSets(paths, cwd);
 }
 
 /**

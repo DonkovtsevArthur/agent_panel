@@ -115,6 +115,8 @@ export type WebviewToHost =
   | {
       type: "editUserMessage";
       index: number;
+      /** Count of user rows before the target in the webview cache. */
+      userOrdinal?: number;
       text: string;
       model: string;
       agentMode?: string;

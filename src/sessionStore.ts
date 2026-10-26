@@ -105,6 +105,38 @@ export function capUiMessageReasoning(
 }
 
 /**
+ * Map the webview's edit target onto the host's `uiMessages`. The webview
+ * cache does not hold live tool steps (and the host collapses/splices tool
+ * rows), so a raw index drifts after a tool-using turn or Stop. User rows
+ * exist on both sides — prefer the user ordinal, fall back to the raw index.
+ * Returns -1 when no user row matches.
+ */
+export function resolveEditUserIndex(
+  messages: UiMessage[],
+  index: unknown,
+  userOrdinal?: unknown
+): number {
+  const ordinal = Number(userOrdinal);
+  if (userOrdinal !== undefined && Number.isInteger(ordinal) && ordinal >= 0) {
+    let seen = 0;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i]?.role !== "user") {
+        continue;
+      }
+      if (seen === ordinal) {
+        return i;
+      }
+      seen += 1;
+    }
+  }
+  const raw = Number(index);
+  if (Number.isInteger(raw) && raw >= 0 && messages[raw]?.role === "user") {
+    return raw;
+  }
+  return -1;
+}
+
+/**
  * Collapse older `role: "tool"` UI rows into one compaction summary so the
  * 200-message window is not filled with explore noise. Does not touch
  * user/assistant/review/error — safe for history↔ui branching counts.
@@ -190,6 +222,8 @@ export interface ChatSession {
    * Имеет смысл для моделей с supportsReasoningEffort.
    */
   selectedReasoningEffort?: string;
+  /** TDD-режим композера для этого чата (red-green-refactor). */
+  tddMode?: boolean;
   lastTurnModel?: string;
   history: ChatMessage[];
   uiMessages: UiMessage[];
@@ -1501,6 +1535,7 @@ export function branchChatFromMessage(
     ...(source.selectedReasoningEffort
       ? { selectedReasoningEffort: source.selectedReasoningEffort }
       : {}),
+    ...(source.tddMode ? { tddMode: true } : {}),
     history: copyUiAttachmentsOntoHistory(prefix.history, prefix.uiMessages),
     uiMessages: prefix.uiMessages,
     createdAt: now,

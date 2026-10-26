@@ -26,6 +26,7 @@
     modelByChat: {},
     modeByChat: {},
     reasonByChat: {},
+    tddByChat: {},
     agentsRailOpen: false,
   };
   if (typeof state.draftPrompt !== "string") {
@@ -42,6 +43,9 @@
   }
   if (!state.reasonByChat || typeof state.reasonByChat !== "object") {
     state.reasonByChat = {};
+  }
+  if (!state.tddByChat || typeof state.tddByChat !== "object") {
+    state.tddByChat = {};
   }
   if (typeof state.agentsRailOpen !== "boolean") {
     state.agentsRailOpen = false;
@@ -292,6 +296,9 @@
       provider: "Provider",
       mode: "Mode",
       intelligence: "Intelligence",
+      tddToggle: "TDD",
+      tddToggleTitle:
+        "TDD mode: red-green-refactor — tests first for behavior changes",
       reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
@@ -917,6 +924,9 @@
       provider: "Провайдер",
       mode: "Режим",
       intelligence: "Intelligence",
+      tddToggle: "TDD",
+      tddToggleTitle:
+        "Режим TDD: red-green-refactor — сначала тесты для смены поведения",
       reasonOff: "Off",
       reasonLow: "Low",
       reasonMedium: "Medium",
@@ -1426,6 +1436,13 @@
       /* ignore */
     }
     try {
+      if (typeof setTddMode === "function" && typeof selectedTddMode === "boolean") {
+        setTddMode(selectedTddMode, { notify: false });
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
       if (typeof forceHarborUiRepaint === "function") {
         forceHarborUiRepaint();
       }
@@ -1444,6 +1461,8 @@
   const modeTrigger = document.getElementById("modeTrigger");
   const modeLabel = document.getElementById("modeLabel");
   const modeMenu = document.getElementById("modeMenu");
+  const tddToggle = document.getElementById("tddToggle");
+  const tddToggleLabel = document.getElementById("tddToggleLabel");
   const reasonPicker = document.getElementById("reasonPicker");
   const reasonTrigger = document.getElementById("reasonTrigger");
   const reasonLabel = document.getElementById("reasonLabel");
@@ -2124,6 +2143,14 @@
     modelTrigger.title = t("model");
     modeLabel.textContent = t("agent");
     modelLabel.textContent = t("model");
+    if (tddToggle) {
+      tddToggle.title =
+        tddToggle.setAttribute("aria-label", t("tddToggleTitle")) ||
+        t("tddToggleTitle");
+    }
+    if (tddToggleLabel) {
+      tddToggleLabel.textContent = t("tddToggle");
+    }
     if (reasonTrigger) {
       reasonTrigger.title = t("intelligence");
     }
@@ -2759,6 +2786,7 @@
   let reasonMenuOpen = false;
   let agentMode = "auto";
   let selectedReasoningEffort = "medium";
+  let selectedTddMode = false;
   let modeEditIndex = null;
   let modeEditSource = "settings";
   let chatModes = [];
@@ -3118,6 +3146,7 @@
     mode,
     model,
     reasoningEffort,
+    tddMode,
   }) {
     if (!activeChatId) {
       return false;
@@ -3134,6 +3163,7 @@
       mode,
       model: model || getSelectedModel(),
       reasoningEffort: reasoningEffort || undefined,
+      tddMode: tddMode === true,
     });
     messageQueues.set(activeChatId, queue);
     renderMessageQueue();
@@ -3177,6 +3207,7 @@
       model: item.model || getSelectedModel(),
       agentMode: modeForSend,
       reasoningEffort: item.reasoningEffort || undefined,
+      tddMode: item.tddMode === true,
       attachments: attachments.map(attachmentPayload),
       clientSendId,
     });
@@ -5955,10 +5986,19 @@
     pickAttachmentsForEdit = false;
     harborEditSaveAt = Date.now();
     stickToBottom = true;
+    // Live tool steps never enter uiMessagesCache, so the raw index drifts
+    // from the host's uiMessages; the user ordinal matches on both sides.
+    let userOrdinal = 0;
+    for (let i = 0; i < editingUserIndex; i++) {
+      if (uiMessagesCache[i]?.role === "user") {
+        userOrdinal += 1;
+      }
+    }
     setBusy(true, { restartRun: true });
     host.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
+      userOrdinal,
       text: nextText,
       model,
       agentMode: mode,
@@ -5972,6 +6012,21 @@
     editingModeId = "";
     editingReasoningEffort = "";
     editingAttachments = [];
+  }
+
+  /**
+   * Submit clears the edit state but leaves the composer DOM until the
+   * host's messagesReplaced. If the host rejects the edit (bare idle /
+   * stopped), drop that dead composer so the bubble can be edited again.
+   */
+  function dropStaleEditComposer() {
+    if (Number.isInteger(editingUserIndex) || !messagesEl) {
+      return;
+    }
+    if (!messagesEl.querySelector(".msg-edit-composer")) {
+      return;
+    }
+    renderMessages(uiMessagesCache, "restore", messagesEl.scrollTop);
   }
 
   function eventTargetElement(event) {
@@ -18791,6 +18846,33 @@
     });
   }
 
+  function setTddMode(next, { notify = true } = {}) {
+    selectedTddMode = next === true;
+    if (activeChatId) {
+      state.tddByChat[activeChatId] = selectedTddMode;
+      host.setState(state);
+    }
+    if (tddToggle) {
+      tddToggle.classList.toggle("is-active", selectedTddMode);
+      tddToggle.setAttribute("aria-pressed", selectedTddMode ? "true" : "false");
+    }
+    if (notify) {
+      host.postMessage({
+        type: "tddChanged",
+        tddMode: selectedTddMode,
+        chatId: activeChatId || "",
+      });
+    }
+  }
+
+  function applySelectedTddMode(preferred, { notify = false } = {}) {
+    let next = preferred;
+    if (next === undefined && activeChatId && state.tddByChat[activeChatId] !== undefined) {
+      next = state.tddByChat[activeChatId] === true;
+    }
+    setTddMode(next === true, { notify });
+  }
+
   /**
    * Start (or re-assert) the live stopwatch for `chatId`.
    * Re-asserts from showChat/init after a chat switch must keep the original
@@ -18912,6 +18994,7 @@
 
   function setIdleAndDrain() {
     setBusy(false);
+    dropStaleEditComposer();
     if (drainScheduled) {
       return;
     }
@@ -19565,6 +19648,7 @@
         mode: modeForSend,
         model: getSelectedModel(),
         reasoningEffort: selectedReasoningEffort || undefined,
+        tddMode: selectedTddMode,
       });
       if (!queued) {
         return;
@@ -19610,6 +19694,7 @@
       model: getSelectedModel(),
       agentMode: modeForSend,
       reasoningEffort: selectedReasoningEffort || undefined,
+      tddMode: selectedTddMode,
       attachments: attachments.map(attachmentPayload),
     });
   }
@@ -19737,6 +19822,34 @@
       toggleModeMenu();
     });
     modeTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  if (tddToggle) {
+    let tddPointerHandled = false;
+    tddToggle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      tddPointerHandled = true;
+      event.preventDefault();
+      event.stopPropagation();
+      setTddMode(!selectedTddMode, { notify: true });
+      setTimeout(() => {
+        tddPointerHandled = false;
+      }, 0);
+    });
+    tddToggle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (tddPointerHandled || event.button !== 0) {
+        return;
+      }
+      setTddMode(!selectedTddMode, { notify: true });
+    });
+    tddToggle.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
     });
@@ -22375,6 +22488,7 @@
           applyModes(msg.modes);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedTddMode(msg.selectedTddMode, { notify: false });
         applySelectedReasoningEffort(msg.selectedReasoningEffort, {
           notify: false,
         });
@@ -22607,6 +22721,7 @@
           applyUiFontSize(msg.fontSize);
         }
         applySelectedMode(msg.selectedMode, { notify: false });
+        applySelectedTddMode(msg.selectedTddMode, { notify: false });
         applySelectedReasoningEffort(msg.selectedReasoningEffort, {
           notify: false,
         });

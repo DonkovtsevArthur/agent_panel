@@ -412,10 +412,19 @@
     pickAttachmentsForEdit = false;
     harborEditSaveAt = Date.now();
     stickToBottom = true;
+    // Live tool steps never enter uiMessagesCache, so the raw index drifts
+    // from the host's uiMessages; the user ordinal matches on both sides.
+    let userOrdinal = 0;
+    for (let i = 0; i < editingUserIndex; i++) {
+      if (uiMessagesCache[i]?.role === "user") {
+        userOrdinal += 1;
+      }
+    }
     setBusy(true, { restartRun: true });
     host.postMessage({
       type: "editUserMessage",
       index: editingUserIndex,
+      userOrdinal,
       text: nextText,
       model,
       agentMode: mode,
@@ -429,6 +438,21 @@
     editingModeId = "";
     editingReasoningEffort = "";
     editingAttachments = [];
+  }
+
+  /**
+   * Submit clears the edit state but leaves the composer DOM until the
+   * host's messagesReplaced. If the host rejects the edit (bare idle /
+   * stopped), drop that dead composer so the bubble can be edited again.
+   */
+  function dropStaleEditComposer() {
+    if (Number.isInteger(editingUserIndex) || !messagesEl) {
+      return;
+    }
+    if (!messagesEl.querySelector(".msg-edit-composer")) {
+      return;
+    }
+    renderMessages(uiMessagesCache, "restore", messagesEl.scrollTop);
   }
 
   function eventTargetElement(event) {

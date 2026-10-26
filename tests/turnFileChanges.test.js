@@ -177,3 +177,50 @@ test("mergeNewlyDirtyEdits ignores files that were already dirty before the turn
     await fs.rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("collectLineSets: agent lines survive foreign edits and drop after commit", async () => {
+  const fs = require("node:fs/promises");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const execFileAsync = promisify(execFile);
+  const { collectLineSets } = require("../out/turnFileChanges.js");
+  const { agentLineDelta, pendingDiffByAgent } = require("../out/agentPendingDiff.js");
+
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "harbor-lines-"));
+  const run = (args) =>
+    execFileAsync("git", args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+
+  try {
+    await run(["init", "--template="]);
+    await run(["config", "user.email", "t@t"]);
+    await run(["config", "user.name", "t"]);
+    await fs.writeFile(path.join(cwd, "a.ts"), "base\nold\n");
+    await run(["add", "a.ts"]);
+    await run(["commit", "-m", "init"]);
+
+    // Другой чат уже правил файл до хода агента.
+    await fs.writeFile(path.join(cwd, "a.ts"), "base\nold\nforeign\n");
+    const start = await collectLineSets(undefined, cwd);
+    // Ход агента: удалил old, добавил mine; плюс новый файл.
+    await fs.writeFile(path.join(cwd, "a.ts"), "base\nforeign\nmine\n");
+    await fs.writeFile(path.join(cwd, "new.ts"), "n1\nn2\n");
+    const paths = ["a.ts", "new.ts"];
+    const delta = agentLineDelta(start, await collectLineSets(paths, cwd), paths);
+    const mine = new Map(Object.entries(delta));
+
+    let out = pendingDiffByAgent(new Map([["ag", mine]]), await collectLineSets(paths, cwd));
+    assert.deepEqual(out.get("ag"), { added: 3, removed: 1, files: 2 });
+
+    // Коммит только правок агента: чужая строка остаётся dirty, но не его.
+    await fs.writeFile(path.join(cwd, "a.ts"), "base\nmine\n");
+    await run(["add", "a.ts", "new.ts"]);
+    await run(["commit", "-m", "agent"]);
+    await fs.writeFile(path.join(cwd, "a.ts"), "base\nmine\nforeign\n");
+    out = pendingDiffByAgent(new Map([["ag", mine]]), await collectLineSets(paths, cwd));
+    assert.equal(out.has("ag"), false);
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -126,6 +126,14 @@
     modelTrigger.title = t("model");
     modeLabel.textContent = t("agent");
     modelLabel.textContent = t("model");
+    if (tddToggle) {
+      tddToggle.title =
+        tddToggle.setAttribute("aria-label", t("tddToggleTitle")) ||
+        t("tddToggleTitle");
+    }
+    if (tddToggleLabel) {
+      tddToggleLabel.textContent = t("tddToggle");
+    }
     if (reasonTrigger) {
       reasonTrigger.title = t("intelligence");
     }
@@ -761,6 +769,7 @@
   let reasonMenuOpen = false;
   let agentMode = "auto";
   let selectedReasoningEffort = "medium";
+  let selectedTddMode = false;
   let modeEditIndex = null;
   let modeEditSource = "settings";
   let chatModes = [];

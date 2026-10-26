@@ -623,6 +623,33 @@
     });
   }
 
+  function setTddMode(next, { notify = true } = {}) {
+    selectedTddMode = next === true;
+    if (activeChatId) {
+      state.tddByChat[activeChatId] = selectedTddMode;
+      host.setState(state);
+    }
+    if (tddToggle) {
+      tddToggle.classList.toggle("is-active", selectedTddMode);
+      tddToggle.setAttribute("aria-pressed", selectedTddMode ? "true" : "false");
+    }
+    if (notify) {
+      host.postMessage({
+        type: "tddChanged",
+        tddMode: selectedTddMode,
+        chatId: activeChatId || "",
+      });
+    }
+  }
+
+  function applySelectedTddMode(preferred, { notify = false } = {}) {
+    let next = preferred;
+    if (next === undefined && activeChatId && state.tddByChat[activeChatId] !== undefined) {
+      next = state.tddByChat[activeChatId] === true;
+    }
+    setTddMode(next === true, { notify });
+  }
+
   /**
    * Start (or re-assert) the live stopwatch for `chatId`.
    * Re-asserts from showChat/init after a chat switch must keep the original
@@ -744,6 +771,7 @@
 
   function setIdleAndDrain() {
     setBusy(false);
+    dropStaleEditComposer();
     if (drainScheduled) {
       return;
     }
@@ -1397,6 +1425,7 @@
         mode: modeForSend,
         model: getSelectedModel(),
         reasoningEffort: selectedReasoningEffort || undefined,
+        tddMode: selectedTddMode,
       });
       if (!queued) {
         return;
@@ -1442,6 +1471,7 @@
       model: getSelectedModel(),
       agentMode: modeForSend,
       reasoningEffort: selectedReasoningEffort || undefined,
+      tddMode: selectedTddMode,
       attachments: attachments.map(attachmentPayload),
     });
   }
@@ -1569,6 +1599,34 @@
       toggleModeMenu();
     });
     modeTrigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  if (tddToggle) {
+    let tddPointerHandled = false;
+    tddToggle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      tddPointerHandled = true;
+      event.preventDefault();
+      event.stopPropagation();
+      setTddMode(!selectedTddMode, { notify: true });
+      setTimeout(() => {
+        tddPointerHandled = false;
+      }, 0);
+    });
+    tddToggle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (tddPointerHandled || event.button !== 0) {
+        return;
+      }
+      setTddMode(!selectedTddMode, { notify: true });
+    });
+    tddToggle.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
     });

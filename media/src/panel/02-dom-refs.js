@@ -8,6 +8,8 @@
   const modeTrigger = document.getElementById("modeTrigger");
   const modeLabel = document.getElementById("modeLabel");
   const modeMenu = document.getElementById("modeMenu");
+  const tddToggle = document.getElementById("tddToggle");
+  const tddToggleLabel = document.getElementById("tddToggleLabel");
   const reasonPicker = document.getElementById("reasonPicker");
   const reasonTrigger = document.getElementById("reasonTrigger");
   const reasonLabel = document.getElementById("reasonLabel");

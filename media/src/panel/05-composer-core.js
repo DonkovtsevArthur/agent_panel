@@ -328,6 +328,7 @@
     mode,
     model,
     reasoningEffort,
+    tddMode,
   }) {
     if (!activeChatId) {
       return false;
@@ -344,6 +345,7 @@
       mode,
       model: model || getSelectedModel(),
       reasoningEffort: reasoningEffort || undefined,
+      tddMode: tddMode === true,
     });
     messageQueues.set(activeChatId, queue);
     renderMessageQueue();
@@ -387,6 +389,7 @@
       model: item.model || getSelectedModel(),
       agentMode: modeForSend,
       reasoningEffort: item.reasoningEffort || undefined,
+      tddMode: item.tddMode === true,
       attachments: attachments.map(attachmentPayload),
       clientSendId,
     });
