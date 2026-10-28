@@ -283,7 +283,7 @@ export function buildJiraAgentsSection(info: JiraAgentRuleInfo): string {
     `- Instance: ${url} (${spec.apiLabel}).`,
     `- Auth: Personal Access Token as HTTP header \`Authorization: Bearer <token>\`. The token is never stored in the repo — read it from the env var \`${tokenVar}\`; never print, log or commit it.`,
     `- MCP server: \`${command}\` with env ${envParts.join(", ")}.`,
-    `- Harbor Agents itself uses its built-in ${spec.label} tools (REST API from the IDE, no Python / uv); other tools use the MCP server above.`,
+    `- Harbor Agents itself uses its built-in ${spec.label} tools (REST API from the IDE, no Python / uv) with the token stored in the IDE — attachments included, so inside Harbor do not fall back to curl with the env token; other tools use the MCP server above.`,
     "- Ready MCP configs in this repo: `.mcp.json` (Claude Code), `.cursor/mcp.json`, `.vscode/mcp.json` (VS Code / Copilot). They take the token from the environment / an input prompt.",
     `- Without MCP: \`curl -s${tls} -H "Authorization: Bearer $${tokenVar}" "${spec.curlExample(url)}"\`, search via \`${spec.searchExample(url)}\`. Bearer only — Basic auth is not used.`,
     ...(tls

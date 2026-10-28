@@ -9,7 +9,11 @@
  * (`ca` + `pinIp`), applied per request. vscode-free.
  */
 
+import * as fs from "fs";
 import * as https from "https";
+import * as net from "net";
+import * as os from "os";
+import * as path from "path";
 import { pinnedLookup } from "./jiraConnect";
 
 /** Pseudo-command marking a Jira server handled in-process by Harbor. */
@@ -102,7 +106,238 @@ export function jiraRequest(
   });
 }
 
-function describeApiError(status: number, data: unknown): string {
+export interface RawDownload {
+  data: Buffer;
+  contentType: string;
+}
+
+export interface DownloadOptions {
+  maxBytes: number;
+  /** Product name for error messages (default "Jira"). */
+  label?: string;
+  redirects?: number;
+  /** The file itself is HTML — a `text/html` answer is then not a login page. */
+  expectHtml?: boolean;
+}
+
+/** Attachment endpoints: a redirect that stays on one of these is never a login. */
+const ATTACHMENT_PATH = /\/(download\/(attachments|thumbnails|temp)|secure\/(attachment|thumbnail))\//i;
+/** Login / SSO endpoints of Jira, Confluence and common IdPs (Keycloak, SAML, OAuth). */
+const LOGIN_PATH =
+  /\/(login|dologin|signin)\.(action|jsp)$|\/plugins\/servlet\/(samlsso|saml|oauth|sso|external-login|login)(\/|$)|\/(saml2?|sso|oauth2?|auth|realms|adfs)\//i;
+
+/** Redirect target looks like a sign-in page (not an attachment URL that merely mentions "sso"). */
+export function isLoginUrl(url: URL): boolean {
+  return !ATTACHMENT_PATH.test(url.pathname) && LOGIN_PATH.test(url.pathname);
+}
+
+function loginError(label: string, how: string): JiraApiError {
+  return new JiraApiError(`${label} ${how} the login page instead of the file (token rejected or expired).`, 401);
+}
+
+/**
+ * Bearer-PAT GET returning raw bytes (attachments; shared with Confluence).
+ * `target` is an API path or an absolute URL on the connection host.
+ * Redirects are followed; the token (and the VPN DNS pin) only go to the
+ * connection host — another host (S3 / object storage pre-signed URL) is
+ * fetched anonymously over HTTPS. A login page, redirected to or served as
+ * HTML in place of the file, is reported as a rejected token. Stops past
+ * `maxBytes` (Content-Length checked up front).
+ */
+export function jiraDownload(
+  conn: JiraConn,
+  target: string,
+  options: DownloadOptions,
+  redirected = false
+): Promise<RawDownload> {
+  const label = options.label || "Jira";
+  const redirects = options.redirects ?? 3;
+  const base = new URL(conn.baseUrl);
+  const url = /^https?:\/\//i.test(target)
+    ? new URL(target)
+    : new URL(`${conn.baseUrl.replace(/\/+$/, "")}${target.startsWith("/") ? "" : "/"}${target}`);
+  const sameHost = url.host === base.host;
+  if (!sameHost && !redirected) {
+    return Promise.reject(new Error(`Refusing to send the token to another host: ${url.host}`));
+  }
+  if (redirected && isLoginUrl(url)) {
+    return Promise.reject(loginError(label, "redirected the download to"));
+  }
+  if (!sameHost && url.protocol !== "https:") {
+    return Promise.reject(new Error(`${label} redirected the download to a non-HTTPS URL on ${url.host}.`));
+  }
+  const tooBigError = () =>
+    new Error(`Attachment is larger than ${Math.max(1, Math.round(options.maxBytes / 1024 / 1024))} MB`);
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      url,
+      {
+        method: "GET",
+        agent: false,
+        ca: conn.ca,
+        lookup: sameHost && conn.pinIp ? pinnedLookup(conn.pinIp) : undefined,
+        // SNI takes host names only (an IP here throws).
+        servername: net.isIP(url.hostname.replace(/^\[|\]$/g, "")) ? undefined : url.hostname,
+        timeout: REQUEST_TIMEOUT_MS,
+        headers: sameHost ? { Authorization: `Bearer ${conn.token}`, "X-Atlassian-Token": "no-check" } : {},
+      },
+      (res) => {
+        const status = res.statusCode || 0;
+        const location = res.headers.location;
+        if (status >= 300 && status < 400 && location && redirects > 0) {
+          res.resume();
+          jiraDownload(
+            conn,
+            new URL(location, url).toString(),
+            { ...options, redirects: redirects - 1 },
+            true
+          ).then(resolve, reject);
+          return;
+        }
+        const contentType = String(res.headers["content-type"] || "");
+        const ok = status >= 200 && status < 300;
+        if (ok && !options.expectHtml && /^text\/html\b/i.test(contentType)) {
+          res.resume();
+          reject(loginError(label, "returned"));
+          return;
+        }
+        if (ok && Number(res.headers["content-length"]) > options.maxBytes) {
+          reject(tooBigError());
+          req.destroy();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let tooBig = false;
+        res.on("data", (c: Buffer) => {
+          if (tooBig) {
+            return;
+          }
+          size += c.length;
+          if (size > options.maxBytes) {
+            tooBig = true;
+            reject(tooBigError());
+            req.destroy();
+            return;
+          }
+          chunks.push(c);
+        });
+        res.on("end", () => {
+          if (tooBig) {
+            return;
+          }
+          const data = Buffer.concat(chunks);
+          if (ok) {
+            resolve({ data, contentType });
+            return;
+          }
+          let parsed: unknown = data.toString("utf8");
+          try {
+            parsed = JSON.parse(String(parsed));
+          } catch {
+            // keep text
+          }
+          reject(new JiraApiError(describeApiError(status, parsed, label), status));
+        });
+        res.on("error", reject);
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error(`${label} request timed out`)));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+const ATTACHMENT_TEXT_MAX_CHARS = 400_000;
+const TEXT_EXTENSIONS =
+  /\.(md|markdown|txt|text|csv|tsv|json|jsonc|ya?ml|xml|html?|css|scss|less|js|mjs|cjs|ts|tsx|jsx|py|java|kt|go|rs|rb|php|cs|sql|sh|bash|zsh|ps1|bat|ini|cfg|conf|toml|properties|env|log|diff|patch|puml|plantuml|mmd|drawio|svg|graphql|gql|proto|adoc|rst|tex|feature|gherkin)$/i;
+
+/** Text attachment? By media type / extension, else no NUL in the first 8 KB of valid UTF-8. */
+const TEXT_MEDIA_TYPES = new Set([
+  "application/json",
+  "application/x-ndjson",
+  "application/xml",
+  "application/javascript",
+  "application/x-javascript",
+  "application/ecmascript",
+  "application/yaml",
+  "application/x-yaml",
+  "application/x-sh",
+  "application/sql",
+  "application/markdown",
+  "application/csv",
+  "application/graphql",
+  "application/x-httpd-php",
+]);
+
+/** Text media type: `text/*`, a known textual application type or a `+json` / `+xml` / `+yaml` suffix. */
+export function isTextMediaType(mediaType: string): boolean {
+  const mt = mediaType.split(";")[0].trim().toLowerCase();
+  return /^text\//.test(mt) || TEXT_MEDIA_TYPES.has(mt) || /\+(json|xml|yaml)$/.test(mt);
+}
+
+export function isTextAttachment(fileName: string, mediaType: string, data: Buffer): boolean {
+  const mt = mediaType.split(";")[0].trim().toLowerCase();
+  if (isTextMediaType(mt)) {
+    return true;
+  }
+  if (TEXT_EXTENSIONS.test(fileName)) {
+    return true;
+  }
+  if (mt && !/octet-stream|binary/.test(mt)) {
+    return false;
+  }
+  const head = data.subarray(0, 8192);
+  if (head.includes(0)) {
+    return false;
+  }
+  try {
+    // stream: a multi-byte character cut at the 8 KB edge is not an error.
+    new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: data.length > head.length });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeFileName(name: string): string {
+  const base = path.basename(name.replace(/\\/g, "/")).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim();
+  return base && base !== "." && base !== ".." ? base : "attachment";
+}
+
+/**
+ * Tool result for a downloaded attachment: text inline (capped), binary
+ * saved under the OS temp dir (`harbor-<product>-<key>-XXXXXX/<file>`).
+ */
+export async function attachmentResult(
+  product: string,
+  dirKey: string,
+  meta: Obj & { title: string },
+  mediaType: string,
+  data: Buffer
+): Promise<Obj> {
+  const out = { ...meta, media_type: mediaType, size: data.length };
+  if (isTextAttachment(meta.title, mediaType, data)) {
+    const text = data.toString("utf8");
+    if (text.length <= ATTACHMENT_TEXT_MAX_CHARS) {
+      return { ...out, encoding: "utf8", content: text };
+    }
+    let cut = ATTACHMENT_TEXT_MAX_CHARS;
+    const code = text.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      cut -= 1;
+    }
+    return { ...out, encoding: "utf8", truncated: true, content: text.slice(0, cut) };
+  }
+  // Fresh private dir per download (mkdtemp → 0700) and an exclusive 0600 write:
+  // a shared /tmp on Linux can neither read the file nor plant a symlink.
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `harbor-${product}-${safeFileName(dirKey || "attachment")}-`));
+  const file = path.join(dir, safeFileName(meta.title));
+  await fs.promises.writeFile(file, data, { flag: "wx", mode: 0o600 });
+  return { ...out, saved_to: file };
+}
+
+function describeApiError(status: number, data: unknown, label = "Jira"): string {
   const parts: string[] = [];
   if (data && typeof data === "object") {
     const d = data as { errorMessages?: unknown; errors?: unknown; message?: unknown };
@@ -128,7 +363,7 @@ function describeApiError(status: number, data: unknown): string {
         : status === 404
           ? " (not found or no access)"
           : "";
-  return `Jira HTTP ${status}${hint}${parts.length ? `: ${parts.join("; ")}` : ""}`;
+  return `${label} HTTP ${status}${hint}${parts.length ? `: ${parts.join("; ")}` : ""}`;
 }
 
 // —— shaping ——
@@ -595,6 +830,48 @@ async function buildIssueFields(conn: JiraConn, cache: Caches, args: Obj): Promi
 
 // —— tools ——
 
+export const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+
+/** The attachment itself is an HTML page (so `text/html` is expected). */
+export function isHtmlFile(fileName: string, mediaType: string): boolean {
+  return /\.(html?|xhtml)$/i.test(fileName) || /html/i.test(mediaType);
+}
+
+async function findJiraAttachment(
+  conn: JiraConn,
+  a: Obj
+): Promise<{ id: string; filename: string; mimeType: string; issueKey?: string }> {
+  const shape = (at: Obj, issueKey?: string) => ({
+    id: String(at.id ?? ""),
+    filename: String(at.filename ?? "attachment"),
+    mimeType: String(at.mimeType ?? ""),
+    issueKey,
+  });
+  const attId = String(a.attachment_id ?? "").trim();
+  if (attId) {
+    return shape(obj(await jiraRequest(conn, "GET", `/rest/api/2/attachment/${encodeURIComponent(attId)}`)));
+  }
+  const key = String(a.issue_key ?? "").trim();
+  const fileName = String(a.filename ?? "").trim();
+  if (!key || !fileName) {
+    throw new Error('Pass "attachment_id", or "issue_key" + "filename".');
+  }
+  const r = obj(
+    await jiraRequest(conn, "GET", `/rest/api/2/issue/${encodeURIComponent(key)}`, { query: { fields: "attachment" } })
+  );
+  const all = arr(obj(r.fields).attachment).map(obj);
+  const hit =
+    all.find((x) => String(x.filename ?? "") === fileName) ||
+    all.find((x) => String(x.filename ?? "").toLowerCase() === fileName.toLowerCase());
+  if (!hit) {
+    const names = all.map((x) => String(x.filename ?? "")).filter(Boolean);
+    throw new Error(
+      `Attachment "${fileName}" not found on ${key}.${names.length ? ` Available: ${names.slice(0, 30).join(", ")}` : " The issue has no attachments."}`
+    );
+  }
+  return shape(hit, String(r.key ?? key));
+}
+
 interface ToolDef {
   name: string;
   description: string;
@@ -695,7 +972,7 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
         }),
         attachments: arr(f.attachment).map((x) => {
           const at = obj(x);
-          return { filename: at.filename, size: at.size, created: at.created, url: at.content };
+          return { id: at.id, filename: at.filename, size: at.size, created: at.created, url: at.content };
         }),
         comments_total: obj(f.comment).total ?? comments.length,
         comments: comments.slice(-commentLimit).map((x) => {
@@ -879,6 +1156,32 @@ export const JIRA_NATIVE_TOOLS: ToolDef[] = [
             ...(allowed.length ? { allowed } : {}),
           };
         });
+    },
+  },
+  {
+    name: "jira_download_attachment",
+    description:
+      "Download an issue attachment with the connected account (no curl / env token needed). Text files (.md, .txt, .json, .csv, code…) are returned as content; binary files are saved to a temp folder and the local path is returned.",
+    inputSchema: schema({
+      issue_key: ISSUE_KEY,
+      filename: S("string", "Attachment file name (with issue_key)"),
+      attachment_id: S("string", "Attachment id from jira_get_issue (instead of issue_key + filename)"),
+    }),
+    run: async (conn, _c, a) => {
+      const att = await findJiraAttachment(conn, a);
+      // Path from the id on our base URL: `content` carries Jira's own base URL, which may differ.
+      const { data, contentType } = await jiraDownload(
+        conn,
+        `/secure/attachment/${encodeURIComponent(att.id)}/${encodeURIComponent(att.filename)}`,
+        { maxBytes: ATTACHMENT_MAX_BYTES, expectHtml: isHtmlFile(att.filename, att.mimeType) }
+      );
+      return attachmentResult(
+        "jira",
+        att.id,
+        { id: att.id, title: att.filename, issue_key: att.issueKey },
+        att.mimeType || contentType.split(";")[0].trim(),
+        data
+      );
     },
   },
   {

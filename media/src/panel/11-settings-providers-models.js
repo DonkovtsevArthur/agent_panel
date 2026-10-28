@@ -382,6 +382,9 @@
   }
 
   function looksLikeGennadiyProvider(provider) {
+    if (!CORPORATE_BUILD) {
+      return false;
+    }
     const id = String(provider?.id || "").toLowerCase();
     const name = String(provider?.name || "").toLowerCase();
     const baseUrl = String(provider?.baseUrl || "").toLowerCase();
@@ -588,11 +591,7 @@
    * пользователь, ничего не отправляется до сохранения.
    */
   const PROVIDER_ONBOARDING_PRESETS = [
-    {
-      id: "gennadiy",
-      name: "Gennadiy",
-      baseUrl: "https://gennadiy-test.kube.severstal.severstalgroup.com/gennadiy/v1",
-    },
+    ...CORPORATE_PROVIDER_PRESETS,
     { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" },
     { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
     { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1" },

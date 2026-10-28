@@ -4,6 +4,8 @@
 .zcode/**
 .idea/**
 .github/**
+# Local Jira MCP config for this repo — must not ship in the VSIX
+.mcp.json
 src/**
 scripts/**
 # Spawned at runtime by src/figmaHostEnsure.ts (agentPanel.figma.hostAutoStart)

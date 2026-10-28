@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.9.126",
+  "version": "2.9.130",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -799,7 +799,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "clean": "node scripts/clean-out.js",
-    "compile": "node scripts/clean-out.js && tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js",
+    "build:flags": "node scripts/gen-build-flags.js",
+    "compile": "node scripts/gen-build-flags.js && node scripts/clean-out.js && tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js && node scripts/build-panel.js",
     "build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
     "build:sidecar": "npm run compile",
     "build:figma": "node scripts/build-figma.js",
@@ -813,7 +814,8 @@
     "figma:package": "node scripts/package-figma.js",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
-    "package": "vsce package",
+    "package": "HARBOR_CORPORATE=0 node scripts/gen-build-flags.js && HARBOR_CORPORATE=0 node scripts/build-panel.js && HARBOR_CORPORATE=0 vsce package",
+    "package:corporate": "HARBOR_CORPORATE=1 node scripts/gen-build-flags.js && HARBOR_CORPORATE=1 node scripts/build-panel.js && HARBOR_CORPORATE=1 vsce package",
     "test": "npm run compile && node --test tests/*.test.js"
   },
   "devDependencies": {

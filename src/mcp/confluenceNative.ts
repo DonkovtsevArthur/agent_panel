@@ -8,7 +8,15 @@
  * written from Markdown (or raw storage / wiki markup). vscode-free.
  */
 
-import { JiraApiError, jiraRequest, type JiraConn } from "./jiraNative";
+import {
+  ATTACHMENT_MAX_BYTES,
+  JiraApiError,
+  attachmentResult,
+  isHtmlFile,
+  jiraDownload,
+  jiraRequest,
+  type JiraConn,
+} from "./jiraNative";
 
 /** Pseudo-command marking a Confluence server handled in-process by Harbor. */
 export const CONFLUENCE_NATIVE_COMMAND = "harbor-confluence";
@@ -468,6 +476,59 @@ function briefContent(conn: JiraConn, c: unknown): Obj {
   };
 }
 
+async function findAttachment(conn: JiraConn, a: Obj): Promise<{ id: string; title: string; mediaType: string; download: string; pageId?: string }> {
+  const shape = (c: Obj, pageId?: string) => {
+    const download = str(obj(c._links).download);
+    if (!download) {
+      throw new Error(`Attachment ${c.id ?? ""} has no download link.`);
+    }
+    return {
+      id: String(c.id ?? ""),
+      title: String(c.title ?? "attachment"),
+      mediaType: String(obj(c.extensions).mediaType ?? ""),
+      download,
+      pageId: pageId ?? (str(obj(c.container).id) || undefined),
+    };
+  };
+  const attId = String(a.attachment_id ?? "").trim();
+  if (attId) {
+    return shape(
+      obj(await cfRequest(conn, "GET", `/rest/api/content/${encodeURIComponent(attId)}`, { query: { expand: "container" } }))
+    );
+  }
+  const fileName = String(a.filename ?? "").trim();
+  if (!fileName) {
+    throw new Error('Pass "attachment_id", or the page + "filename".');
+  }
+  const pageId = await findPageId(conn, a);
+  const listPath = `/rest/api/content/${encodeURIComponent(pageId)}/child/attachment`;
+  // Exact name server-side first: works on pages with any number of attachments.
+  const exact = obj(await cfRequest(conn, "GET", listPath, { query: { filename: fileName, limit: 5 } }));
+  const direct = arr(exact.results).map(obj).find((c) => String(c.title ?? "") === fileName);
+  if (direct) {
+    return shape(direct, pageId);
+  }
+  const all: Obj[] = [];
+  for (let start = 0; start < 1000; start += 200) {
+    const r = obj(await cfRequest(conn, "GET", listPath, { query: { start, limit: 200 } }));
+    const page = arr(r.results).map(obj);
+    all.push(...page);
+    if (page.length < 200) {
+      break;
+    }
+  }
+  const hit =
+    all.find((c) => String(c.title ?? "") === fileName) ||
+    all.find((c) => String(c.title ?? "").toLowerCase() === fileName.toLowerCase());
+  if (!hit) {
+    const names = all.map((c) => String(c.title ?? "")).filter(Boolean);
+    throw new Error(
+      `Attachment "${fileName}" not found on page ${pageId}.${names.length ? ` Available: ${names.slice(0, 30).join(", ")}` : " The page has no attachments."}`
+    );
+  }
+  return shape(hit, pageId);
+}
+
 async function findPageId(conn: JiraConn, a: Obj): Promise<string> {
   const id = String(a.page_id ?? "").trim();
   if (id) {
@@ -623,7 +684,8 @@ export const CONFLUENCE_NATIVE_TOOLS: ToolDef[] = [
   },
   {
     name: "confluence_get_attachments",
-    description: "Attachments of a page (file name, size, type, download URL).",
+    description:
+      "Attachments of a page (id, file name, size, type, download URL). Read one with confluence_download_attachment.",
     inputSchema: schema({ ...PAGE_REF }),
     run: async (conn, a) => {
       const id = await findPageId(conn, a);
@@ -644,6 +706,31 @@ export const CONFLUENCE_NATIVE_TOOLS: ToolDef[] = [
           download: str(obj(c._links).download) ? `${base}${obj(c._links).download}` : undefined,
         };
       });
+    },
+  },
+  {
+    name: "confluence_download_attachment",
+    description:
+      "Download a page attachment with the connected account (no curl / env token needed). Text files (.md, .txt, .json, .csv, code…) are returned as content; binary files are saved to a temp folder and the local path is returned.",
+    inputSchema: schema({
+      ...PAGE_REF,
+      filename: S("string", "Attachment file name (with the page)"),
+      attachment_id: S("string", "Attachment id from confluence_get_attachments (instead of page + filename)"),
+    }),
+    run: async (conn, a) => {
+      const att = await findAttachment(conn, a);
+      const { data, contentType } = await jiraDownload(conn, att.download, {
+        maxBytes: ATTACHMENT_MAX_BYTES,
+        label: "Confluence",
+        expectHtml: isHtmlFile(att.title, att.mediaType),
+      });
+      return attachmentResult(
+        "confluence",
+        att.id || att.pageId || "",
+        { id: att.id, title: att.title, page_id: att.pageId },
+        att.mediaType || contentType.split(";")[0].trim(),
+        data
+      );
     },
   },
   {

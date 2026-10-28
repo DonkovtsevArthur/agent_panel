@@ -11,6 +11,11 @@
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  GENNADIY_KEYCLOAK_CLIENT_ID,
+  GENNADIY_KEYCLOAK_REALM,
+  GENNADIY_KEYCLOAK_URL,
+} from "./buildFlags.generated";
 
 export interface KeycloakDeviceConfig {
   url: string;
@@ -36,11 +41,14 @@ export interface KeycloakTokenSuccess {
   accountId: string;
 }
 
-/** Test-env defaults matching gennadiy 1.18.3 PRESETS.test.keycloak. */
+/**
+ * Defaults matching gennadiy 1.18.3 PRESETS.test.keycloak.
+ * Hostname is baked by scripts/gen-build-flags.js — empty on public builds.
+ */
 export const GENNADIY_KEYCLOAK_DEFAULT: KeycloakDeviceConfig = {
-  url: "https://sso-id-test-int.severstal.com",
-  realm: "common",
-  clientId: "gennadiy-df",
+  url: GENNADIY_KEYCLOAK_URL,
+  realm: GENNADIY_KEYCLOAK_REALM,
+  clientId: GENNADIY_KEYCLOAK_CLIENT_ID,
 };
 
 function pkcePair(): { verifier: string; challenge: string } {

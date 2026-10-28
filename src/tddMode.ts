@@ -14,7 +14,7 @@ export function harborTddModeRulesForLanguage(lang: "en" | "ru"): string {
       "",
       "## Зелёный",
       "Пиши ровно столько production-кода, сколько нужно, чтобы тест прошёл — не больше.",
-      "Запусти целевой тест (и смежные, если менялся общий модуль). Не переходи дальше, пока зелёный.",
+      "Прогоняй минимальный таргет (один тестовый файл/фильтр); смежные тесты или полный suite — только если менялся общий модуль. Не переходи дальше, пока зелёный.",
       "",
       "## Рефактор",
       "Только при зелёном тесте: улучшай структуру, не меняя поведения.",
@@ -26,6 +26,7 @@ export function harborTddModeRulesForLanguage(lang: "en" | "ru"): string {
       "Не выдавай финал за «готово», пока целевой тест(ы) не прогнаны и не показали успех.",
       "Q&A без изменения кода, чистка docs/комментариев/конфигов и чистый rename без смены поведения можно делать без TDD-цикла — но любой diff, меняющий runtime-поведение, идёт через красный→зелёный→рефактор.",
       "Если тестовый фреймворк/команда тестов в проекте неизвестны — сначала найди их в repo (package.json / Makefile / CI), не изобретай свой runner.",
+      "Финальные проверки (тесты + type-check + lint) объединяй в минимальное число команд, если проект это позволяет.",
     ].join("\n");
   }
   return [
@@ -38,7 +39,7 @@ export function harborTddModeRulesForLanguage(lang: "en" | "ru"): string {
     "",
     "## Green",
     "Write only as much production code as needed to make that test pass — no more.",
-    "Run the target test (and nearby tests if a shared module changed). Do not proceed until green.",
+    "Run the narrowest target (one test file / filter); nearby tests or full suite only if a shared module changed. Do not proceed until green.",
     "",
     "## Refactor",
     "Only while green: improve structure without changing behavior.",
@@ -50,5 +51,6 @@ export function harborTddModeRulesForLanguage(lang: "en" | "ru"): string {
     "Do not claim done until the target test(s) have been run and passed.",
     "Q&A with no code change, pure docs/comments/config cleanup, and behavior-preserving renames may skip the TDD cycle — but any runtime-behavior diff goes red→green→refactor.",
     "If the project's test framework/commands are unknown, discover them first (package.json / Makefile / CI) — do not invent a runner.",
+    "Combine final checks (tests + type-check + lint) into as few commands as the project allows.",
   ].join("\n");
 }

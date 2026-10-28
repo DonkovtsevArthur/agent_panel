@@ -8,6 +8,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { CORPORATE_BUILD } from "./buildFlags.generated";
 
 export interface GennadiyAuthEntry {
   type?: string;
@@ -31,6 +32,9 @@ export function isGennadiyProvider(provider: {
   name?: string;
   baseUrl?: string;
 }): boolean {
+  if (!CORPORATE_BUILD) {
+    return false;
+  }
   const id = String(provider?.id || "").trim();
   const name = String(provider?.name || "").trim();
   const baseUrl = String(provider?.baseUrl || "").trim();

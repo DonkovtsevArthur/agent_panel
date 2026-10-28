@@ -46,6 +46,8 @@ JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Figma: see `d
 
 After panel UI/logic changes: bump `version` in `package.json`, **delete old** `vscode-agent-panel-*.vsix` (and JetBrains `harbor-agents-*.zip` when packaging that), package with vsce, uninstall/remove installed `local.vscode-agent-panel-*`, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
 
+**Marketplace vs corporate build:** `npm run package` forces `HARBOR_CORPORATE=0` — no Gennadiy gateway / Keycloak SSO hostnames in the VSIX. `npm run package:corporate` keeps them (`HARBOR_CORPORATE=1`). Daily `npm run compile` defaults to corporate ON; `scripts/gen-build-flags.js` writes `src/buildFlags.generated.ts` + `media/src/panel/corporate-config.js` (both gitignored). Public packaging must also refresh `media/panel.js` (wired into `package` / `compile`).
+
 ## Runtime (what every chat model gets)
 
 All chat models run on the **ClineCore local session host** (`src/clineRuntime.ts` → `@cline/sdk` 0.0.75 / fork in `vendor/cline`). One Harbor chat = one interactive Cline session; a new session starts on regenerate/edit or when the mode / model / MCP / prompt fingerprint changes. Harbor Agent → Cline `act`; Plan / Ask (and `tools: "readonly"` custom modes) → Cline `plan`.
