@@ -44,7 +44,7 @@ npm run lint             # tsc --noEmit
 
 JetBrains: see `docs/jetbrains-port.md` and `jetbrains/README.md`. Figma: see `docs/figma-plugin.md` and `figma/README.md`. Shared logic belongs in `packages/harbor-core` / protocol; IDE shells stay thin. **Figma UI is a separate cut bundle** (`media/src/panel-figma/` via `scripts/build-panel-figma.js`) — never ship IDE panel modules into `figma/dist`. **VS Code regression gate** is required before merging shared changes (checklist in `docs/jetbrains-port.md`).
 
-After panel UI/logic changes: bump `version` in `package.json`, **delete old** `vscode-agent-panel-*.vsix` (and JetBrains `harbor-agents-*.zip` when packaging that), package with vsce, uninstall/remove installed `local.vscode-agent-panel-*`, install into **VS Code** (not Cursor), then **Developer: Reload Window**. Details: `.cursor/rules/vscode-build-and-workspace.mdc`.
+After panel UI/logic changes: bump `version` in `package.json`, **delete old** `vscode-agent-panel-*.vsix` (and JetBrains `harbor-agents-*.zip` when packaging that), package with vsce, uninstall/remove installed `local.vscode-agent-panel-*`, install into **VS Code** (not Cursor), then **Developer: Reload Window**.
 
 **Marketplace vs corporate build:** `npm run package` forces `HARBOR_CORPORATE=0` — no Gennadiy gateway / Keycloak SSO hostnames in the VSIX. `npm run package:corporate` keeps them (`HARBOR_CORPORATE=1`). Daily `npm run compile` defaults to corporate ON; `scripts/gen-build-flags.js` writes `src/buildFlags.generated.ts` + `media/src/panel/corporate-config.js` (both gitignored). Public packaging must also refresh `media/panel.js` (wired into `package` / `compile`).
 
@@ -66,16 +66,16 @@ Settings → runtime wiring (sub-agents, parallel tool calls, auto compact, prom
 
 ## Product constraints (always)
 
-- Target runtime is **VS Code**. Do not brand or compare the product to Cursor in user-facing copy (README, nls, toasts, Marketplace). See `.cursor/rules/no-cursor-branding.mdc`.
-- Panel icons: **Material Symbols Outlined** only. See `.cursor/rules/material-icons.mdc`.
+- Target runtime is **VS Code**. Do not brand or compare the product to Cursor in user-facing copy (README, nls, toasts, Marketplace).
+- Panel icons: **Material Symbols Outlined** only.
 - Agent list / chats live in **`workspaceState`** (`agentPanel.session.v2`), one store per workspace — not `globalState` (except one-shot migration).
-- **VS Code + WebStorm parity:** when changing plugin logic (chat, modes, settings, MCP, tools, sessions, panel UI), apply it for both IDE shells in the same change — prefer shared `media/` / `packages/`; mirror host-only fixes in `src/` and `jetbrains/`. See `.cursor/rules/vscode-webstorm-parity.mdc` and `docs/jetbrains-port.md`.
+- **VS Code + WebStorm parity:** when changing plugin logic (chat, modes, settings, MCP, tools, sessions, panel UI), apply it for both IDE shells in the same change — prefer shared `media/` / `packages/`; mirror host-only fixes in `src/` and `jetbrains/`. See `docs/jetbrains-port.md`.
 
 ## What agents MAY change in this repo
 
 - Feature / bugfix code under `src/`, `media/`, `tests/`, `packages/`, `jetbrains/` related to the user’s task.
 - `package.json` `version` when packaging a VSIX for the user.
-- `AGENTS.md` and `.cursor/rules/*.mdc` when documenting real product/runtime rules.
+- `AGENTS.md` when documenting real product/runtime rules.
 - `package.nls*.json` / UI copy when the task is about wording (still no Cursor branding).
 - `vendor/cline/` when patching the Cline fork (then rebuild SDK / `out/clineBundle.js`).
 
@@ -113,20 +113,6 @@ Settings → runtime wiring (sub-agents, parallel tool calls, auto compact, prom
 - Do **not** delete or “clean up” unrelated code during refactors or feature work unless the user explicitly asked for that cleanup. No drive-by removals of neighbors, comments, seeming-dead helpers, nls keys, or docs.
 - Pure logic that tests can import should avoid top-level `vscode` requires (lazy-require or keep helpers free of the API).
 - Commit messages for this repo: Russian, when the user asks to commit.
-
-## Supplementary rules (`.cursor/rules/*.mdc`)
-
-Before making changes, read the project rules in `.cursor/rules/`:
-
-| File | Covers |
-|------|--------|
-| `agent-edit-policy.mdc` | What agents may/must not edit; git via shell forbidden; no drive-by cleanup |
-| `vscode-webstorm-parity.mdc` | Plugin logic changes must cover both VS Code and WebStorm |
-| `vscode-build-and-workspace.mdc` | Build, package, install flow; agents stored in workspaceState only |
-| `no-cursor-branding.mdc` | Never mention Cursor in user-facing copy |
-| `material-icons.mdc` | UI icons: Material Symbols Outlined only, local font |
-
-These files are **not** auto-loaded into agent context — read them with `read_file` or `search_files` when the task touches the relevant area.
 
 <!-- harbor:jira:start -->
 ## Jira — connection (MCP)
