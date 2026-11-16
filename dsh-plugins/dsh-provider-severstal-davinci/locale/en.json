@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Severstal DaVinci Provider",
+    "description": "Registers the Severstal DaVinci AI platform (OpenAI-compatible gateway) as an LLM provider with its model catalog and capacities."
+  }
+}

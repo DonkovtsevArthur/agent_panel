@@ -1,0 +1,13 @@
+# Severstal DaVinci corporate provider bundle: one entry that mounts this
+# package's own module (index.js). On load it
+#   - trusts the corporate TLS CA (certs/severstal-ca.pem) — Node's bundled CA
+#     store lacks "SeverstalGroupRoot", so requests would fail as TRANSPORT;
+#   - materializes the `severstal-davinci` route (model catalog included) into
+#     the profile's own `llm-pi-ai` entry via the ConfigEditor service, so the
+#     Settings -> Models page renders the route's full editor — including the
+#     API-key input (which it only renders for the `llm-pi-ai` namespace);
+#   - optionally seeds the API key from `secrets/api-key` into the credential
+#     store when that file is present.
+- insert:
+    - id: llm-pi-ai-severstal
+      name: 'dsh-provider-severstal-davinci'

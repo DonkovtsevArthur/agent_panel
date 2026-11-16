@@ -1,0 +1,33 @@
+{
+  "name": "dsh-provider-severstal-davinci",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "description": "Severstal DaVinci corporate provider for DeepSeek Harness: installs the severstal-davinci LLM route (model catalog included) into the profile automatically, trusts the corporate TLS CA, and takes the API key in Settings -> Models (or secrets/api-key for scripted installs).",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "provider",
+    "llm",
+    "severstal",
+    "davinci"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "certs/*.pem",
+    "secrets/api-key.example",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

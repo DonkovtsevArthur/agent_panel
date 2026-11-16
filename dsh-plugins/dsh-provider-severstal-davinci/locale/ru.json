@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Провайдер Severstal DaVinci",
+    "description": "Подключает платформу Severstal DaVinci (OpenAI-совместимый шлюз) как LLM-провайдера: каталог моделей и их параметры."
+  }
+}

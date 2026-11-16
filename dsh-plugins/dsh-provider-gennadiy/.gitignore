@@ -1,0 +1,5 @@
+secrets/api-key
+debug.log
+dist/
+node_modules/
+secrets/keycloak-clients.json

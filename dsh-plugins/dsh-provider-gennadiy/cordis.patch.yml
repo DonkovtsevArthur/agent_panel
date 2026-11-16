@@ -1,0 +1,16 @@
+# Gennadiy corporate provider bundle: one entry that mounts this package's own
+# module (index.js). On load it
+#   - trusts the corporate TLS CA (certs/severstal-ca.pem) — Node's bundled CA
+#     store lacks "SeverstalGroupRoot", so requests would fail as TRANSPORT;
+#   - materializes the `gennadiy` route (model catalog included) into the
+#     profile's own `llm-pi-ai` entry via the ConfigEditor service, so the
+#     Settings -> Models page renders the route's full editor — including the
+#     API-key input (which it only renders for the `llm-pi-ai` namespace);
+#   - keeps the route's key (GENNADIY_API_KEY) fresh: the Keycloak access
+#     token from the gennadiy CLI auth store (~/.local/share/gennadiy/auth.json),
+#     refreshed via the refresh_token grant ~5 minutes before expiry (rotated
+#     tokens are written back into the shared CLI store); `secrets/api-key` is
+#     an optional static fallback when no live token is around.
+- insert:
+    - id: llm-pi-ai-gennadiy
+      name: 'dsh-provider-gennadiy'

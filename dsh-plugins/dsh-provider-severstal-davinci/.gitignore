@@ -1,0 +1,4 @@
+secrets/api-key
+debug.log
+dist/
+node_modules/

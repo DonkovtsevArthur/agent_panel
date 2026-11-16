@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Gennadiy Provider",
+    "description": "Registers the Gennadiy corporate gateway (OpenAI-compatible) as an LLM provider with its verified model catalog and capacities, and keeps the Keycloak API key fresh from the gennadiy CLI auth store."
+  }
+}

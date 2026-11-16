@@ -1,0 +1,30 @@
+{
+  "name": "dsh-provider-gennadiy",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Gennadiy corporate provider for DeepSeek Harness: installs the gennadiy LLM route (verified model catalog included) into the profile automatically, trusts the corporate TLS CA, and keeps the Keycloak API key fresh from the gennadiy CLI auth store (refresh_token grant included), with an optional secrets/api-key fallback.",
+  "keywords": [
+    "dsh",
+    "gennadiy",
+    "severstal"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "certs/*.pem",
+    "secrets/api-key.example",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
