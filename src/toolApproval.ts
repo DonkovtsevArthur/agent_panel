@@ -28,6 +28,14 @@ const TOOL_GROUP_BY_NAME: Record<string, ToolApprovalGroup> = {
   rename_symbol: "edits",
   run_commands: "commands",
   spawn_agent: "subagents",
+  // Pi built-in tools (src/runtime/piTurnRunner.ts): same groups as their Cline twins.
+  read: "reads",
+  grep: "reads",
+  find: "reads",
+  ls: "reads",
+  edit: "edits",
+  write: "edits",
+  bash: "commands",
 };
 
 /**

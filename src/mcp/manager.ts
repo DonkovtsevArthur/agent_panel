@@ -376,6 +376,27 @@ export class McpManager {
   getCustomConfig(id: string): McpServerConfig | undefined {
     return this.customConfigs.find((c) => c.id === id);
   }
+  /**
+   * Enabled servers whose tool list is known before the connection completes
+   * (built-in Jira / Confluence native — `nativeToolsWhileConnecting`). The Pi
+   * adapter must expose them exactly like the Cline tool list does: the turn
+   * does not wait for the pre-flight and the first call connects on demand
+   * (`callToolRaw` → `connectCustom`). Servers in error / backoff stay out.
+   */
+  serversWithStaticTools(): string[] {
+    return this.customConfigs
+      .filter((cfg) => cfg.enabled !== false && isNativeAtlassianConfig(cfg))
+      .filter((cfg) => {
+        const rt = this.customRuntimes.get(cfg.id);
+        const state = rt?.status.state;
+        return !(
+          state === "connected" ||
+          state === "error" ||
+          (rt?.failureCount ?? 0) > 0
+        );
+      })
+      .map((cfg) => cfg.id);
+  }
 
   async refreshSecretFlags(): Promise<void> {
     const pat = await this.context.secrets.get(SECRET_PAT);

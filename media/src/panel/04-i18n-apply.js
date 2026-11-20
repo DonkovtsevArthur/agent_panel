@@ -373,6 +373,14 @@
     if (settingsPromptSuggestionsNote) {
       settingsPromptSuggestionsNote.textContent = t("promptSuggestionsNote");
     }
+    const settingsRuntimeLabel = document.getElementById("settingsRuntimeLabel");
+    if (settingsRuntimeLabel) {
+      settingsRuntimeLabel.textContent = t("runtimeLabel");
+    }
+    const settingsRuntimeNote = document.getElementById("settingsRuntimeNote");
+    if (settingsRuntimeNote) {
+      settingsRuntimeNote.textContent = t("runtimeNote");
+    }
     const settingsToolsAutoApproveLabel = document.getElementById(
       "settingsToolsAutoApproveLabel"
     );

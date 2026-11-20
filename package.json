@@ -2,7 +2,7 @@
   "name": "vscode-agent-panel",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "2.9.130",
+  "version": "2.9.141",
   "publisher": "DonkovtsevArthur",
   "license": "MIT",
   "repository": {
@@ -60,6 +60,11 @@
         "title": "%command.openSettings.title%",
         "category": "%command.category%",
         "icon": "$(gear)"
+      },
+      {
+        "command": "agentPanel.showRuntime",
+        "title": "Show agent core",
+        "category": "%command.category%"
       },
       {
         "command": "agentPanel.newChat",
@@ -539,6 +544,19 @@
           "minimum": 1,
           "description": "%config.sessions.idleEvictMinutes.description%"
         },
+        "agentPanel.runtime": {
+          "type": "string",
+          "enum": [
+            "cline",
+            "pi"
+          ],
+          "enumDescriptions": [
+            "Cline core (vendor/cline) — rollback option, keeps the old runtime",
+            "Pi SDK (@earendil-works/pi-coding-agent) — default agent core"
+          ],
+          "default": "pi",
+          "markdownDescription": "Agent core behind the chat. `pi` is the default (streaming, tools, Stop; falls back to `cline` automatically when the Pi chunk is unavailable)."
+        },
         "agentPanel.promptCache.enabled": {
           "type": "boolean",
           "default": true,
@@ -800,7 +818,7 @@
     "vscode:prepublish": "npm run compile",
     "clean": "node scripts/clean-out.js",
     "build:flags": "node scripts/gen-build-flags.js",
-    "compile": "node scripts/gen-build-flags.js && node scripts/clean-out.js && tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js && node scripts/build-panel.js",
+    "compile": "node scripts/gen-build-flags.js && node scripts/clean-out.js && tsc -p ./ && node scripts/sync-bundled-skills.js && node scripts/bundle-mcp.js && node scripts/bundle-cline.js && node scripts/bundle-sidecar.js && node scripts/bundle-figma-sidecar.js && node scripts/build-panel.js && node scripts/bundle-pi.js",
     "build:core": "tsc -p packages/harbor-host-protocol/tsconfig.json && tsc -p packages/harbor-core/tsconfig.json",
     "build:sidecar": "npm run compile",
     "build:figma": "node scripts/build-figma.js",
@@ -816,7 +834,8 @@
     "lint": "tsc --noEmit",
     "package": "HARBOR_CORPORATE=0 node scripts/gen-build-flags.js && HARBOR_CORPORATE=0 node scripts/build-panel.js && HARBOR_CORPORATE=0 vsce package",
     "package:corporate": "HARBOR_CORPORATE=1 node scripts/gen-build-flags.js && HARBOR_CORPORATE=1 node scripts/build-panel.js && HARBOR_CORPORATE=1 vsce package",
-    "test": "npm run compile && node --test tests/*.test.js"
+    "test": "npm run compile && node --test tests/*.test.js",
+    "build:pi": "node scripts/bundle-pi.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -827,6 +846,7 @@
   },
   "dependencies": {
     "@cline/sdk": "^0.0.75",
+    "@earendil-works/pi-coding-agent": "^1.5.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "marked": "^15.0.12",
     "playwright-core": "^1.62.1",

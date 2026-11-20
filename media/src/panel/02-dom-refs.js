@@ -206,6 +206,7 @@
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
+  const settingsRuntime = document.getElementById("settingsRuntime");
   const settingsApprovalSelects = {
     reads: document.getElementById("settingsApprovalReads"),
     web: document.getElementById("settingsApprovalWeb"),

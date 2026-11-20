@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.harbor.agents"
-version = "2.1.98"
+version = "2.1.102"
 
 repositories {
     mavenCentral()
@@ -69,6 +69,12 @@ intellijPlatform {
         )
         changeNotes.set(
             """
+            <b>2.1.102</b>
+            <ul>
+              <li>Таймер хода не пропадает посреди работы: запечатанная промежуточным текстом лента продолжает отсчёт</li>
+              <li>Кнопка Stop нажимается всегда — не гасится дебаунсом edit-save, стоп уходит в текущий чат, черновик в очереди не съедает нажатие</li>
+              <li>Текст панели больше не пикселится после переноса окна (в т.ч. fullscreen) на экран с другим DPI</li>
+            </ul>
             <b>2.0.10</b>
             <ul>
               <li>Prompt cache — чекбокс заменён на свитч (toggle), перевод на русский</li>
@@ -208,6 +214,19 @@ tasks.register<Copy>("prepareHarborResources") {
     val cline = outDir.resolve("clineBundle.js")
     if (cline.exists()) {
         from(cline) { into("sidecar") }
+    }
+    // Pi is the default agent core (see AGENTS.md): without this chunk the
+    // sidecar silently falls back to Cline, so a packaged plugin must never
+    // ship without it.
+    val piChunk = outDir.resolve("pi/pi.mjs")
+    if (piChunk.exists()) {
+        from(piChunk) { into("sidecar/pi") }
+    }
+    doFirst {
+        check(piChunk.isFile) {
+            "harbor: out/pi/pi.mjs отсутствует — выполните `npm run compile` " +
+                "(шаг bundle-pi) перед сборкой плагина"
+        }
     }
     val bundledSkills = outDir.resolve("bundled-skills")
     if (bundledSkills.exists()) {

@@ -335,6 +335,14 @@ class HarborSidecarProcess(private val project: Project) : Disposable {
         val clineOut = File(dir, "clineBundle.js")
         clineStream.use { input -> clineOut.outputStream().use { input.copyTo(it) } }
       }
+      val piStream = javaClass.getResourceAsStream("/harbor/sidecar/pi/pi.mjs")
+        ?: javaClass.getResourceAsStream("/sidecar/pi/pi.mjs")
+      if (piStream != null) {
+        val piDir = File(dir, "pi")
+        piDir.mkdirs()
+        val piOut = File(piDir, "pi.mjs")
+        piStream.use { input -> piOut.outputStream().use { input.copyTo(it) } }
+      }
       return out
     }
 

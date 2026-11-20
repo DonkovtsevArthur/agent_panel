@@ -347,16 +347,16 @@
       }
       case "insertComposerText":
         insertComposerText(msg.text || "");
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         break;
       case "insertComposerMentions":
         insertComposerMentions(msg.paths);
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         forceHarborUiRepaint();
         break;
       case "insertComposerSelection":
         addPendingSelection(msg.selection);
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         forceHarborUiRepaint();
         break;
       case "agentRenamed":

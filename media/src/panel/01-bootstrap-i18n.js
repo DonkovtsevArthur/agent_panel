@@ -255,6 +255,8 @@
       promptSuggestions: "Prompt suggestions",
       promptSuggestionsNote:
         "Suggest your next message in the empty composer. Tab accepts.",
+      runtimeLabel: "Agent core",
+      runtimeNote: "Pi is the default; switch to Cline to roll back.",
       toolsAutoApprove: "Auto-approve tools",
       toolsAutoApproveNote: "No prompt. Off — ask every time.",
       approvalReads: "Reads",

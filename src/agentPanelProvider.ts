@@ -38,6 +38,7 @@ import { previewText } from "./agentSteps";
 import { TODO_STEP_ID, TODO_TOOL } from "./todoTool";
 import { readModelTokenLimits } from "./modelTokenLimits";
 import { runAgentTurn } from "./agentLoop";
+import { disposePiRuntime } from "./runtime/piTurnRunner";
 import type { AgentPhase } from "./agentLoop";
 import type { ContextBreakdown } from "./contextBreakdown";
 import { resolveToolApproval } from "./toolApproval";
@@ -210,6 +211,8 @@ type SettingsPayload = {
   }>;
   language: string;
   fontSize?: number;
+  /** Agent core selected in panel Settings. */
+  runtime?: "cline" | "pi";
   defaultModel: string;
   defaultContextWindow: number;
   baseUrl: string;
@@ -272,7 +275,7 @@ type WebviewToHost =
       reasoningEffort?: string;
       attachments?: IncomingAttachment[];
     }
-  | { type: "stop" }
+  | { type: "stop"; chatId?: string }
   | { type: "toggleFullscreen" }
   | { type: "newChat" }
   | { type: "requestPromptSuggestion"; chatId: string }
@@ -970,6 +973,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     this.saveStore();
     this.harborCore?.dispose();
     void disposeClineRuntime();
+    void disposePiRuntime();
     this.fullscreenPanel?.dispose();
     this.fullscreenPanel = undefined;
     this.settingsPanel?.dispose();
@@ -2914,15 +2918,19 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
       case "deleteAllArchived":
         await this.confirmDeleteAllArchived();
         break;
-      case "stop":
-        this.abortChatRun(this.store.activeChatId, "user-stop");
-        this.setStatusForChat(this.store.activeChatId, "", true);
+      case "stop": {
+        // The webview names the chat it is showing: the store's active chat can
+        // lag behind after a switch, and then Stop aborted nothing at all.
+        const stopChatId = message.chatId || this.store.activeChatId;
+        this.abortChatRun(stopChatId, "user-stop");
+        this.setStatusForChat(stopChatId, "", true);
         this.postRegenerateState();
         this.postChat({
           type: "stopped",
-          chatId: this.store.activeChatId,
+          chatId: stopChatId,
         });
         break;
+      }
       case "toggleFullscreen":
         this.toggleFullscreenChat();
         break;
@@ -6280,6 +6288,7 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
     await cfg.update("defaultModel", resolvedDefault, target);
     await cfg.update("language", nextLanguage, target);
     await cfg.update("fontSize", clampUiFontSize(raw.fontSize), target);
+    await cfg.update("runtime", raw.runtime === "cline" ? "cline" : "pi", target);
     await cfg.update(
       "defaultContextWindow",
       clamp(raw.defaultContextWindow, 1024, 2_000_000, 128_000),
@@ -7122,6 +7131,16 @@ export class AgentPanelProvider implements vscode.WebviewViewProvider {
                 <input id="settingsToolsAutoApprove" type="checkbox" />
                 <span class="mcp-switch-track"></span>
               </span>
+            </label>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-text">
+                <span class="settings-toggle-title" id="settingsRuntimeLabel">Agent core</span>
+                <span class="settings-toggle-hint" id="settingsRuntimeNote">Pi is the default; switch to Cline to roll back.</span>
+              </span>
+              <select id="settingsRuntime" class="settings-input">
+                <option value="cline">Cline</option>
+                <option value="pi">Pi (default)</option>
+              </select>
             </label>
             <div id="settingsApprovalsBlock" class="settings-approvals-block">
               <label class="settings-toggle-row settings-approval-row">

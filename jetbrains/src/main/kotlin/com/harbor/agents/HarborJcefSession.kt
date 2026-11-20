@@ -56,6 +56,7 @@ class HarborJcefSession(
     Disposer.register(this, hostBridge)
     parent.add(browser.component, BorderLayout.CENTER)
     HarborJcefFocus.install(browser)
+    HarborJcefScaleFix.install(browser, this)
     HarborJcefChrome.install(browser)
     installCopyKeys()
     HarborFileDrop.install(

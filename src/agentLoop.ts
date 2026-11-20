@@ -7,6 +7,12 @@ import {
   ChatMessage,
 } from "./openaiTypes";
 import { runClineAgentTurn } from "./clineRuntime";
+import {
+  PiRuntimeUnavailableError,
+  piRuntimeStatus,
+  runPiAgentTurn,
+} from "./runtime/piTurnRunner";
+import { agentRuntimeKind } from "./runtime/agentRuntime";
 import type * as vscode from "vscode";
 import type { AgentStepEvent } from "./agentSteps";
 import type { UiMessage } from "./sessionStore";
@@ -116,5 +122,24 @@ export async function runAgentTurn(options: {
    *  (вытеснена по простаиванию / перезагружена / изменился fingerprint). См. harborHistoryToClineMessages. */
   priorUiMessages?: UiMessage[];
 }): Promise<ChatMessage[]> {
+  if (agentRuntimeKind() === "pi") {
+    const status = piRuntimeStatus();
+    if (status.available) {
+      try {
+        return await runPiAgentTurn(options);
+      } catch (error) {
+        // Pi is the default core, so a missing/broken chunk must not block the
+        // chat: fall back to Cline while Pi has not started streaming yet.
+        if (!(error instanceof PiRuntimeUnavailableError)) {
+          throw error;
+        }
+        console.warn(`[harbor] ${error.message} — падаю на Cline core.`);
+      }
+    } else {
+      console.warn(
+        `[harbor] ${status.reason} — ядро Pi недоступно, работаю на Cline.`
+      );
+    }
+  }
   return runClineAgentTurn(options);
 }

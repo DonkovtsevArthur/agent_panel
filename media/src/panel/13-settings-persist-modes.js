@@ -168,6 +168,9 @@
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
+    if (settingsRuntime) {
+      settingsRuntime.value = settings.runtime === "cline" ? "cline" : "pi";
+    }
     const approvalOverrides =
       settings.toolsApprovals &&
       typeof settings.toolsApprovals === "object"
@@ -320,6 +323,11 @@
       promptSuggestionsEnabled: settingsPromptSuggestionsEnabled
         ? settingsPromptSuggestionsEnabled.checked
         : true,
+      runtime: settingsRuntime
+        ? settingsRuntime.value === "cline"
+          ? "cline"
+          : "pi"
+        : "pi",
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked
         : true,

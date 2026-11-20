@@ -39,3 +39,4 @@ jetbrains/**
 figma/**
 .tmp-harbor-qa/**
 .claude/**
+.delta/**

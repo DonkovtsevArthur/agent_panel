@@ -231,6 +231,8 @@ const DEFAULT_MODELS: AgentModel[] = [
 ];
 
 export interface AgentPanelConfig {
+  /** Agent core behind the chat: Cline (default) or Pi. See docs/pi-runtime-migration.md. */
+  runtime: "cline" | "pi";
   language: "auto" | "en" | "ru";
   /** Panel chat + composer font size in pixels. */
   fontSize: number;
@@ -750,6 +752,7 @@ export function getConfig(): AgentPanelConfig {
       : DEFAULT_CONTEXT_WINDOW;
 
   return {
+    runtime: cfg.get<string>("runtime") === "cline" ? "cline" : "pi",
     language,
     fontSize: clampUiFontSize(cfg.get<number>("fontSize")),
     baseUrl: primary?.baseUrl || legacyBaseUrl,
@@ -1177,15 +1180,29 @@ export function resolveApiModelId(modelId: string): string {
  * - `false` (default) keeps the legacy markerless behavior.
  *
  * Used by `clineRuntime` to set the `prompt-cache` model capability and the
- * gateway `routing.promptCache` metadata. Part of the Cline session fingerprint
- * so toggling restarts the session for that provider only.
+ * gateway `routing.promptCache` metadata (part of the Cline session
+ * fingerprint, so toggling restarts the session for that provider only) and by
+ * `piTurnRunner` to emit provider `compat.cacheControlFormat` into its
+ * `models.json`.
  */
 export function resolveModelPromptCache(modelId: string): boolean {
   const config = getConfig();
   const model = config.models.find((m) => m.id === modelId);
-  const wantedId = model?.providerId?.trim() || "";
-  const provider = wantedId
-    ? config.providers.find((p) => p.id === wantedId)
+  return resolveProviderPromptCache(model?.providerId?.trim() || "");
+}
+
+/**
+ * Effective prompt-cache flag for a provider. Same resolution as
+ * `resolveModelPromptCache`, but scoped to the provider — used where config is
+ * applied per provider rather than per model (the Pi runtime writes one
+ * `compat` block per provider into its `models.json`).
+ *
+ * An empty `providerId` falls back to the primary provider.
+ */
+export function resolveProviderPromptCache(providerId?: string): boolean {
+  const config = getConfig();
+  const provider = providerId
+    ? config.providers.find((p) => p.id === providerId)
     : primaryProvider(config.providers);
   if (provider && typeof provider.promptCache === "boolean") {
     return provider.promptCache;

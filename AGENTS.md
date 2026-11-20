@@ -50,7 +50,9 @@ After panel UI/logic changes: bump `version` in `package.json`, **delete old** `
 
 ## Runtime (what every chat model gets)
 
-All chat models run on the **ClineCore local session host** (`src/clineRuntime.ts` → `@cline/sdk` 0.0.75 / fork in `vendor/cline`). One Harbor chat = one interactive Cline session; a new session starts on regenerate/edit or when the mode / model / MCP / prompt fingerprint changes. Harbor Agent → Cline `act`; Plan / Ask (and `tools: "readonly"` custom modes) → Cline `plan`.
+**Pi is the default agent core.** `agentPanel.runtime` defaults to `pi`: `runAgentTurn` (`src/agentLoop.ts`) routes to `src/runtime/piTurnRunner.ts` (`@earendil-works/pi-coding-agent`, a real dependency bundled into `out/pi/pi.mjs` by `npm run compile` / `scripts/bundle-pi.js`; the JetBrains sidecar ships it as `sidecar/pi/pi.mjs`). If the chunk is missing or fails to import, the seam logs the reason and runs Cline instead (`PiRuntimeUnavailableError`) — so a build/install never leaves the chat unusable. `cline` is the rollback value of the same setting.
+
+With `agentPanel.runtime: "cline"`, chat models run on the **ClineCore local session host** (`src/clineRuntime.ts` → `@cline/sdk` 0.0.75 / fork in `vendor/cline`). One Harbor chat = one interactive Cline session; a new session starts on regenerate/edit or when the mode / model / MCP / prompt fingerprint changes. Harbor Agent → Cline `act`; Plan / Ask (and `tools: "readonly"` custom modes) → Cline `plan`.
 
 Settings → runtime wiring (sub-agents, parallel tool calls, auto compact, prompt cache, approvals, checkpoints, `@`-mentions, ripgrep, `http_request`, `code_nav`, slash commands, model limits, telemetry): `docs/architecture.md` → «Runtime wiring». Do **not** advertise the `reasoning` capability to Cline (breaks openai-compatible gateways) and keep the vendor patches listed in `vendor/README.md` on re-fork.
 

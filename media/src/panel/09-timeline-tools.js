@@ -7,6 +7,14 @@
     run_command: "run_commands",
     list_files: "list_files",
     fetch_url: "fetch_web_content",
+    // Pi SDK built-in tools (src/runtime/piTurnRunner.ts).
+    read: "read_files",
+    grep: "search_codebase",
+    find: "search_codebase",
+    ls: "list_files",
+    bash: "run_commands",
+    edit: "editor",
+    write: "editor",
   };
 
   function canonicalToolName(raw) {
@@ -113,11 +121,11 @@
       } catch {
         // Truncated JSON from step preview — try to pull common fields by regex.
         let pathMatch = rawArgs.match(
-          /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/
+          /"(?:relativePath|path|file_path|pattern)"\s*:\s*"((?:\\.|[^"\\])*)"/
         );
         if (!pathMatch) {
           pathMatch = rawArgs.match(
-            /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)/
+            /"(?:relativePath|path|file_path|pattern)"\s*:\s*"((?:\\.|[^"\\])*)/
           );
         }
         if (pathMatch) {
@@ -272,11 +280,13 @@
       case "list_files":
         return t("toolHumanList", fileBase(args.path || args.relativePath) || ".");
       case "search_codebase": {
-        const query = firstString(args.queries || args.query);
+        const query = firstString(args.queries || args.query || args.pattern);
+        const previewMatches =
+          typeof m.matches === "number"
+            ? m.matches
+            : (String(resultPreview || "").match(/:\d+:/g) || []).length;
         const countSuffix =
-          status === "done" && typeof m.matches === "number" && m.matches > 0
-            ? ` (${m.matches})`
-            : "";
+          status === "done" && previewMatches > 0 ? ` (${previewMatches})` : "";
         return t("toolHumanSearch", query) + countSuffix;
       }
       case "run_commands": {
@@ -1444,13 +1454,25 @@
     if (!runStartedAt) {
       return;
     }
-    const group = getActiveToolGroup();
+    const group = getLiveStopwatchGroup();
     if (!group) {
       return;
     }
+    paintLiveStopwatch(group);
+  }
+
+  /**
+   * Paint the live elapsed time into one group's .tool-group-duration.
+   * Returns false when the slot is owned by a host stamp / has no target —
+   * the caller must then leave (or hide) the element alone.
+   */
+  function paintLiveStopwatch(group) {
+    if (!group || !runStartedAt) {
+      return false;
+    }
     // Never clobber the final host stamp («выполнено · 18,6 с»).
     if (groupRunDurationMs(group) > 0) {
-      return;
+      return false;
     }
     let durationEl = group.querySelector(".tool-group-duration");
     if (!durationEl) {
@@ -1462,11 +1484,12 @@
       }
     }
     if (!durationEl) {
-      return;
+      return false;
     }
     const elapsed = Date.now() - runStartedAt;
     durationEl.hidden = false;
     durationEl.textContent = formatRunDuration(elapsed);
+    return true;
   }
 
   /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
@@ -1577,7 +1600,9 @@
         } else {
           durationEl.removeAttribute("title");
         }
-      } else {
+      } else if (!paintLiveStopwatch(group)) {
+        // Mid-run (no host stamp yet) the live stopwatch owns this slot —
+        // hiding it here is what made «сколько он работает» disappear.
         durationEl.hidden = true;
         durationEl.textContent = "";
         durationEl.removeAttribute("title");
@@ -1636,6 +1661,27 @@
       return open[open.length - 1];
     }
     return null;
+  }
+
+  /**
+   * Paint target for the live stopwatch. Prefers the open timeline of the
+   * run, but intermediate model text seals that timeline mid-run
+   * (sealToolGroups) — then the group is kept as «is-run-working» and still
+   * owns the clock. Without this fallback «сколько он работает» disappeared
+   * for the rest of the run.
+   */
+  function getLiveStopwatchGroup() {
+    const open = getActiveToolGroup();
+    if (open) {
+      return open;
+    }
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    const working = scope.querySelectorAll(".tool-group.is-run-working");
+    return working.length > 0 ? working[working.length - 1] : null;
   }
 
   /** Latest thinking step after the last committed tool in this timeline body. */

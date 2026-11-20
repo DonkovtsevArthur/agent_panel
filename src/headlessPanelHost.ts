@@ -497,8 +497,11 @@ export class HeadlessPanelHost {
         });
       case "stop": {
         // Per-chat: stop only the run of the chat the user is looking at.
-        // Background runs in other chats keep going.
-        const stopChatId = this.store.activeChatId || "";
+        // Background runs in other chats keep going. The webview names that
+        // chat explicitly — the store's active chat can lag behind after a
+        // switch, and then Stop used to abort nothing at all.
+        const stopChatId =
+          String(msg.chatId || "").trim() || this.store.activeChatId || "";
         this.abortChatRun(stopChatId, "user-stop");
         if (stopChatId) {
           this.setStatusForChat(stopChatId, "", true);

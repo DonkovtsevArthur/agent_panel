@@ -14,6 +14,8 @@ import {
 import { resolveUiLanguage, type UiLanguage } from "./i18n";
 
 export type HarborSettingsPayloadCore = {
+  /** Agent core behind the chat (panel Settings → Agent core). */
+  runtime: "cline" | "pi";
   providers: Array<Record<string, unknown>>;
   models: Array<Record<string, unknown>>;
   defaultModel: string;
@@ -85,6 +87,7 @@ export function buildHarborSettingsPayloadCore(
 ): HarborSettingsPayloadCore {
   const resolveVision = options?.resolveVision === true;
   return {
+    runtime: config.runtime,
     providers: config.providers.map((p) => ({
       id: p.id,
       name: p.name || "",

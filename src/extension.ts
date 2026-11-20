@@ -1,3 +1,4 @@
+import { describeAgentRuntime } from "./runtime/runtimeInfo";
 import * as vscode from "vscode";
 import { AgentPanelProvider } from "./agentPanelProvider";
 import { VsCodeHarborCore } from "./vscodeHarborCore";
@@ -72,6 +73,30 @@ export function activate(context: vscode.ExtensionContext): void {
   harborCore.setEventHandler((event, params) => {
     provider.handleCoreEvent(event, params);
   });
+  // Persistent indicator: which agent core is configured (Pi is experimental).
+  const runtimeItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
+  runtimeItem.command = "agentPanel.showRuntime";
+  const updateRuntimeItem = (): void => {
+    const info = describeAgentRuntime();
+    runtimeItem.text = info.kind === "pi" ? "$(beaker) Harbor: Pi" : "$(beaker) Harbor: Cline";
+    runtimeItem.tooltip =
+      info.kind === "pi"
+        ? `Harbor Agents: Pi SDK (${info.piChunkBuilt ? "чанк собран" : "чанк НЕ собран"}). Клик — подробности.`
+        : "Harbor Agents: Cline core. Клик — подробности.";
+    runtimeItem.backgroundColor =
+      info.kind === "pi" && !info.piChunkBuilt
+        ? new vscode.ThemeColor("statusBarItem.warningBackground")
+        : undefined;
+    runtimeItem.show();
+  };
+  updateRuntimeItem();
+  context.subscriptions.push(
+    runtimeItem,
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("agentPanel.runtime")) updateRuntimeItem();
+    })
+  );
+
   startEditorContextTracking(context.subscriptions);
   startTerminalOutputTracking(context.subscriptions);
   registerGitDiffProvider(context.subscriptions);
@@ -92,6 +117,27 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("agentPanel.openSettings", () => {
       provider.openSettingsEditor();
+    }),
+    vscode.commands.registerCommand("agentPanel.showRuntime", async () => {
+      const info = describeAgentRuntime();
+      const label =
+        info.kind === "pi"
+          ? "Pi (@earendil-works/pi-coding-agent)"
+          : "Cline (@cline/sdk + vendor/cline)";
+      const lines = [
+        `Ядро: ${label}`,
+        `Провайдеров: ${info.providers}, включённых моделей: ${info.models}`,
+        info.kind === "pi"
+          ? `Pi-чанк: ${info.piChunkBuilt ? "найден" : "НЕ собран (npm run build:pi)"}`
+          : undefined,
+      ].filter(Boolean) as string[];
+      const choice = await vscode.window.showInformationMessage(
+        `Harbor Agents — ${lines.join(" · ")}`,
+        "Открыть настройки"
+      );
+      if (choice) {
+        await vscode.commands.executeCommand("workbench.action.openSettings", "agentPanel.runtime");
+      }
     }),
     vscode.commands.registerCommand("agentPanel.gennadiyLogin", async () => {
       const { openGennadiyAuthLogin } = await import("./gennadiyAuthLogin");

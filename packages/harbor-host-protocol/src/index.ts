@@ -123,7 +123,7 @@ export type WebviewToHost =
       reasoningEffort?: string;
       attachments?: IncomingAttachment[];
     }
-  | { type: "stop" }
+  | { type: "stop"; chatId?: string }
   | { type: "newChat" }
   /** Composer opened a chat with no ghost-text suggestion: ask for a fresh one. */
   | { type: "requestPromptSuggestion"; chatId: string }

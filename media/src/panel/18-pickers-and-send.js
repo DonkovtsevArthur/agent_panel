@@ -769,6 +769,19 @@
     }
   }
 
+  /**
+   * The IDE pushes text / mentions / selections into the composer while the
+   * user works. That must not flip a running chat to idle: the live stopwatch
+   * and the Stop button used to disappear mid-run after such an insert.
+   */
+  function syncIdleAfterComposerInsert() {
+    if (busy) {
+      updateSendButton();
+      return;
+    }
+    setBusy(false);
+  }
+
   function setIdleAndDrain() {
     setBusy(false);
     dropStaleEditComposer();
@@ -1406,17 +1419,17 @@
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
         focusPrompt();
         updateSendButton();
-        return;
+        return false;
       }
       typed = command.sendText;
     }
     const text = buildMessageWithSelections(buildMessageWithMentions(typed));
     const attachments = pendingAttachments.slice();
     if (!text && !attachments.length) {
-      return;
+      return false;
     }
     if (!composerInputPassesSafetyCheck(text)) {
-      return;
+      return false;
     }
     if (busy) {
       const queued = enqueueComposerMessage({
@@ -1428,7 +1441,7 @@
         tddMode: selectedTddMode,
       });
       if (!queued) {
-        return;
+        return false;
       }
       promptEl.value = "";
       autoResizePrompt();
@@ -1440,7 +1453,7 @@
       closeMentionMenu();
       updateSendButton();
       focusPrompt();
-      return;
+      return true;
     }
     editingUserIndex = null;
     editingUserText = "";
@@ -1474,22 +1487,38 @@
       tddMode: selectedTddMode,
       attachments: attachments.map(attachmentPayload),
     });
+    return true;
   }
 
+  /**
+   * Dedupe stamp for the primary composer button only. The shared
+   * harborEditSaveAt belongs to edit-save / regenerate / branch and used to
+   * swallow a Stop press that came right after one of those actions.
+   */
+  let lastSendActivateAt = 0;
+
+  /**
+   * Press on the primary composer button: queue/send the draft while a run is
+   * active only when the draft really dispatches — otherwise stop the run.
+   */
   function activateSendButton(event) {
     if (event && typeof event.button === "number" && event.button !== 0) {
       return;
     }
-    if (Date.now() - harborEditSaveAt < 450) {
+    // Only dedupes the pointerdown → click double fire of one press (JCEF OSR
+    // delivers both).
+    if (Date.now() - lastSendActivateAt < 450) {
       return;
     }
+    lastSendActivateAt = Date.now();
     harborEditSaveAt = Date.now();
     if (busy) {
-      if (composerHasContent()) {
-        sendPrompt();
+      if (composerHasContent() && sendPrompt()) {
         return;
       }
-      host.postMessage({ type: "stop" });
+      // Stop must always work: name the chat explicitly so the host aborts the
+      // run the user is looking at, not whatever its store has as active.
+      host.postMessage({ type: "stop", chatId: activeChatId || "" });
       return;
     }
     sendPrompt();

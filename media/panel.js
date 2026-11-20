@@ -255,6 +255,8 @@
       promptSuggestions: "Prompt suggestions",
       promptSuggestionsNote:
         "Suggest your next message in the empty composer. Tab accepts.",
+      runtimeLabel: "Agent core",
+      runtimeNote: "Pi is the default; switch to Cline to roll back.",
       toolsAutoApprove: "Auto-approve tools",
       toolsAutoApproveNote: "No prompt. Off — ask every time.",
       approvalReads: "Reads",
@@ -1670,6 +1672,7 @@ const CORPORATE_PROVIDER_PRESETS = [
   const settingsToolsAutoApprove = document.getElementById(
     "settingsToolsAutoApprove"
   );
+  const settingsRuntime = document.getElementById("settingsRuntime");
   const settingsApprovalSelects = {
     reads: document.getElementById("settingsApprovalReads"),
     web: document.getElementById("settingsApprovalWeb"),
@@ -2400,6 +2403,14 @@ const CORPORATE_PROVIDER_PRESETS = [
     );
     if (settingsPromptSuggestionsNote) {
       settingsPromptSuggestionsNote.textContent = t("promptSuggestionsNote");
+    }
+    const settingsRuntimeLabel = document.getElementById("settingsRuntimeLabel");
+    if (settingsRuntimeLabel) {
+      settingsRuntimeLabel.textContent = t("runtimeLabel");
+    }
+    const settingsRuntimeNote = document.getElementById("settingsRuntimeNote");
+    if (settingsRuntimeNote) {
+      settingsRuntimeNote.textContent = t("runtimeNote");
     }
     const settingsToolsAutoApproveLabel = document.getElementById(
       "settingsToolsAutoApproveLabel"
@@ -7162,6 +7173,14 @@ const CORPORATE_PROVIDER_PRESETS = [
     run_command: "run_commands",
     list_files: "list_files",
     fetch_url: "fetch_web_content",
+    // Pi SDK built-in tools (src/runtime/piTurnRunner.ts).
+    read: "read_files",
+    grep: "search_codebase",
+    find: "search_codebase",
+    ls: "list_files",
+    bash: "run_commands",
+    edit: "editor",
+    write: "editor",
   };
 
   function canonicalToolName(raw) {
@@ -7268,11 +7287,11 @@ const CORPORATE_PROVIDER_PRESETS = [
       } catch {
         // Truncated JSON from step preview — try to pull common fields by regex.
         let pathMatch = rawArgs.match(
-          /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/
+          /"(?:relativePath|path|file_path|pattern)"\s*:\s*"((?:\\.|[^"\\])*)"/
         );
         if (!pathMatch) {
           pathMatch = rawArgs.match(
-            /"(?:relativePath|path|file_path)"\s*:\s*"((?:\\.|[^"\\])*)/
+            /"(?:relativePath|path|file_path|pattern)"\s*:\s*"((?:\\.|[^"\\])*)/
           );
         }
         if (pathMatch) {
@@ -7427,11 +7446,13 @@ const CORPORATE_PROVIDER_PRESETS = [
       case "list_files":
         return t("toolHumanList", fileBase(args.path || args.relativePath) || ".");
       case "search_codebase": {
-        const query = firstString(args.queries || args.query);
+        const query = firstString(args.queries || args.query || args.pattern);
+        const previewMatches =
+          typeof m.matches === "number"
+            ? m.matches
+            : (String(resultPreview || "").match(/:\d+:/g) || []).length;
         const countSuffix =
-          status === "done" && typeof m.matches === "number" && m.matches > 0
-            ? ` (${m.matches})`
-            : "";
+          status === "done" && previewMatches > 0 ? ` (${previewMatches})` : "";
         return t("toolHumanSearch", query) + countSuffix;
       }
       case "run_commands": {
@@ -8599,13 +8620,25 @@ const CORPORATE_PROVIDER_PRESETS = [
     if (!runStartedAt) {
       return;
     }
-    const group = getActiveToolGroup();
+    const group = getLiveStopwatchGroup();
     if (!group) {
       return;
     }
+    paintLiveStopwatch(group);
+  }
+
+  /**
+   * Paint the live elapsed time into one group's .tool-group-duration.
+   * Returns false when the slot is owned by a host stamp / has no target —
+   * the caller must then leave (or hide) the element alone.
+   */
+  function paintLiveStopwatch(group) {
+    if (!group || !runStartedAt) {
+      return false;
+    }
     // Never clobber the final host stamp («выполнено · 18,6 с»).
     if (groupRunDurationMs(group) > 0) {
-      return;
+      return false;
     }
     let durationEl = group.querySelector(".tool-group-duration");
     if (!durationEl) {
@@ -8617,11 +8650,12 @@ const CORPORATE_PROVIDER_PRESETS = [
       }
     }
     if (!durationEl) {
-      return;
+      return false;
     }
     const elapsed = Date.now() - runStartedAt;
     durationEl.hidden = false;
     durationEl.textContent = formatRunDuration(elapsed);
+    return true;
   }
 
   /** Status / tooltip: "1,2 → 18,6 с" when TTFT known, else just total. */
@@ -8732,7 +8766,9 @@ const CORPORATE_PROVIDER_PRESETS = [
         } else {
           durationEl.removeAttribute("title");
         }
-      } else {
+      } else if (!paintLiveStopwatch(group)) {
+        // Mid-run (no host stamp yet) the live stopwatch owns this slot —
+        // hiding it here is what made «сколько он работает» disappear.
         durationEl.hidden = true;
         durationEl.textContent = "";
         durationEl.removeAttribute("title");
@@ -8791,6 +8827,27 @@ const CORPORATE_PROVIDER_PRESETS = [
       return open[open.length - 1];
     }
     return null;
+  }
+
+  /**
+   * Paint target for the live stopwatch. Prefers the open timeline of the
+   * run, but intermediate model text seals that timeline mid-run
+   * (sealToolGroups) — then the group is kept as «is-run-working» and still
+   * owns the clock. Without this fallback «сколько он работает» disappeared
+   * for the rest of the run.
+   */
+  function getLiveStopwatchGroup() {
+    const open = getActiveToolGroup();
+    if (open) {
+      return open;
+    }
+    const turn =
+      currentChatTurnEl && messagesEl.contains(currentChatTurnEl)
+        ? currentChatTurnEl
+        : null;
+    const scope = turn || messagesEl;
+    const working = scope.querySelectorAll(".tool-group.is-run-working");
+    return working.length > 0 ? working[working.length - 1] : null;
   }
 
   /** Latest thinking step after the last committed tool in this timeline body. */
@@ -13892,6 +13949,9 @@ const CORPORATE_PROVIDER_PRESETS = [
     if (settingsToolsAutoApprove) {
       settingsToolsAutoApprove.checked = settings.toolsAutoApprove !== false;
     }
+    if (settingsRuntime) {
+      settingsRuntime.value = settings.runtime === "cline" ? "cline" : "pi";
+    }
     const approvalOverrides =
       settings.toolsApprovals &&
       typeof settings.toolsApprovals === "object"
@@ -14044,6 +14104,11 @@ const CORPORATE_PROVIDER_PRESETS = [
       promptSuggestionsEnabled: settingsPromptSuggestionsEnabled
         ? settingsPromptSuggestionsEnabled.checked
         : true,
+      runtime: settingsRuntime
+        ? settingsRuntime.value === "cline"
+          ? "cline"
+          : "pi"
+        : "pi",
       toolsAutoApprove: settingsToolsAutoApprove
         ? settingsToolsAutoApprove.checked
         : true,
@@ -19002,6 +19067,19 @@ const CORPORATE_PROVIDER_PRESETS = [
     }
   }
 
+  /**
+   * The IDE pushes text / mentions / selections into the composer while the
+   * user works. That must not flip a running chat to idle: the live stopwatch
+   * and the Stop button used to disappear mid-run after such an insert.
+   */
+  function syncIdleAfterComposerInsert() {
+    if (busy) {
+      updateSendButton();
+      return;
+    }
+    setBusy(false);
+  }
+
   function setIdleAndDrain() {
     setBusy(false);
     dropStaleEditComposer();
@@ -19639,17 +19717,17 @@ const CORPORATE_PROVIDER_PRESETS = [
         showCopyToast(t("slashModeSwitched", modeLabel ? modeLabel.textContent : command.mode));
         focusPrompt();
         updateSendButton();
-        return;
+        return false;
       }
       typed = command.sendText;
     }
     const text = buildMessageWithSelections(buildMessageWithMentions(typed));
     const attachments = pendingAttachments.slice();
     if (!text && !attachments.length) {
-      return;
+      return false;
     }
     if (!composerInputPassesSafetyCheck(text)) {
-      return;
+      return false;
     }
     if (busy) {
       const queued = enqueueComposerMessage({
@@ -19661,7 +19739,7 @@ const CORPORATE_PROVIDER_PRESETS = [
         tddMode: selectedTddMode,
       });
       if (!queued) {
-        return;
+        return false;
       }
       promptEl.value = "";
       autoResizePrompt();
@@ -19673,7 +19751,7 @@ const CORPORATE_PROVIDER_PRESETS = [
       closeMentionMenu();
       updateSendButton();
       focusPrompt();
-      return;
+      return true;
     }
     editingUserIndex = null;
     editingUserText = "";
@@ -19707,22 +19785,38 @@ const CORPORATE_PROVIDER_PRESETS = [
       tddMode: selectedTddMode,
       attachments: attachments.map(attachmentPayload),
     });
+    return true;
   }
 
+  /**
+   * Dedupe stamp for the primary composer button only. The shared
+   * harborEditSaveAt belongs to edit-save / regenerate / branch and used to
+   * swallow a Stop press that came right after one of those actions.
+   */
+  let lastSendActivateAt = 0;
+
+  /**
+   * Press on the primary composer button: queue/send the draft while a run is
+   * active only when the draft really dispatches — otherwise stop the run.
+   */
   function activateSendButton(event) {
     if (event && typeof event.button === "number" && event.button !== 0) {
       return;
     }
-    if (Date.now() - harborEditSaveAt < 450) {
+    // Only dedupes the pointerdown → click double fire of one press (JCEF OSR
+    // delivers both).
+    if (Date.now() - lastSendActivateAt < 450) {
       return;
     }
+    lastSendActivateAt = Date.now();
     harborEditSaveAt = Date.now();
     if (busy) {
-      if (composerHasContent()) {
-        sendPrompt();
+      if (composerHasContent() && sendPrompt()) {
         return;
       }
-      host.postMessage({ type: "stop" });
+      // Stop must always work: name the chat explicitly so the host aborts the
+      // run the user is looking at, not whatever its store has as active.
+      host.postMessage({ type: "stop", chatId: activeChatId || "" });
       return;
     }
     sendPrompt();
@@ -22810,16 +22904,16 @@ const CORPORATE_PROVIDER_PRESETS = [
       }
       case "insertComposerText":
         insertComposerText(msg.text || "");
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         break;
       case "insertComposerMentions":
         insertComposerMentions(msg.paths);
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         forceHarborUiRepaint();
         break;
       case "insertComposerSelection":
         addPendingSelection(msg.selection);
-        setBusy(false);
+        syncIdleAfterComposerInsert();
         forceHarborUiRepaint();
         break;
       case "agentRenamed":

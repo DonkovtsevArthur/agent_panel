@@ -9,7 +9,7 @@
  * Types are defined locally (not imported from packages/harbor-core)
  * because tsconfig rootDir is `src/` and cannot reach `packages/`.
  */
-import { runClineAgentTurn } from "./clineRuntime";
+import { runAgentTurn } from "./agentLoop";
 import type { AgentRunCallbacks } from "./agentLoop";
 import type { ChatMessage } from "./openaiTypes";
 import type { MessageAttachment } from "./attachments";
@@ -106,7 +106,7 @@ export function createVsCodeTurnRunner(options: {
     };
 
     try {
-      const result = await runClineAgentTurn({
+      const result = await runAgentTurn({
         model: params.model,
         history,
         userText: params.text,
